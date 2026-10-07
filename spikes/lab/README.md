@@ -33,21 +33,24 @@ TOTE_LAB_AUTO=viewer \
 TOTE_LAB_VIDEO="$PWD/fixtures/테스트 영상.mp4" \
 TOTE_LAB_VIDEO2="$PWD/fixtures/테스트 영상 moov끝.mp4" \
 TOTE_LAB_IMAGE="$PWD/fixtures/테스트 이미지.png" \
-perl -e 'alarm shift; exec @ARGV' 120 ./src-tauri/target/debug/lab 2> results/viewer-rust.log
+perl -e 'alarm shift; exec @ARGV' 240 ./src-tauri/target/debug/lab 2> results/viewer-rust.log
 echo "exit=$?"
 grep -oE '/[0-9a-f]{32} range=Some' results/viewer-rust.log | sort | uniq -c   # 토큰별 Range 수
 grep -c '\[ipc-probe\] reached source=frame' results/viewer-rust.log   # 0 이어야 한다
-grep -c '\[ipc-probe\] reached source=host' results/viewer-rust.log    # 1 이상이어야 한다(탐침이 동작한다는 양성 대조)
+grep -c '\[ipc-probe\] reached source=host' results/viewer-rust.log    # 1 이상이어야 한다 — ipc_probe 가 실행되면 찍힌다는 확인(메인 프레임은 fetch 채널)
+grep -c 'but received wrong-key' results/viewer-rust.log   # 2(케이스 수)여야 한다 — 프레임의 네이티브 메시지가 키 검사까지 갔다는 증거
 ```
 
-음성 대조 — CSP meta 를 뺀 페이지로 같은 측정을 한다. 본 실행의 `blocked` 가 CSP 덕이라면 여기서 `networkFetch` 가 `reachable` 로 바뀌고 `cspViolations` 가 비어야 한다.
+음성 대조 — CSP meta 를 뺀 페이지로 같은 측정을 한다. 본 실행은 `cspViolations` 에 `ipc://localhost/ipc_probe` 와 `https://example.com/` 가 둘 다 있어야 하고, 그 `blocked` 가 CSP 덕이라면 여기서 `networkFetch` 가 `reachable` 로 바뀌고 `cspViolations` 가 비어야 한다.
 
 ```bash
+rm -f results/viewer-nocsp.json results/error-viewer.json
+diff public/viewer/sandbox.html public/viewer/sandbox-nocsp.html   # CSP meta 만 달라야 한다
 TOTE_LAB_AUTO=viewer TOTE_LAB_VIEWER_PAGE=nocsp \
 TOTE_LAB_VIDEO="$PWD/fixtures/테스트 영상.mp4" \
 TOTE_LAB_VIDEO2="$PWD/fixtures/테스트 영상 moov끝.mp4" \
 TOTE_LAB_IMAGE="$PWD/fixtures/테스트 이미지.png" \
-perl -e 'alarm shift; exec @ARGV' 120 ./src-tauri/target/debug/lab 2> results/viewer-nocsp-rust.log
+perl -e 'alarm shift; exec @ARGV' 240 ./src-tauri/target/debug/lab 2> results/viewer-nocsp-rust.log
 echo "exit=$?"
 ```
 

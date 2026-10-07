@@ -5,6 +5,7 @@ import { exitApp, issueFileToken, type LabEnv, recordResult } from "../lab-api";
 type ViewerLog = Record<string, unknown>;
 
 // Must stay above the sandbox's own timeouts (15 + 15 + 10 s plus two 5 s probe fetches).
+// The perl alarm in the README must be larger than (number of cases) x CASE_TIMEOUT_MS.
 const CASE_TIMEOUT_MS = 90_000;
 
 async function runCase(

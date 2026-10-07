@@ -114,7 +114,7 @@
           log.ipcFetch = "blocked: " + e.name;
         }
         log.ipcProbeAttempts.push(
-          "fetch ipc://localhost/ipc_probe, no-cors, wrong Tauri-Invoke-Key: " + log.ipcFetch,
+          "fetch ipc://localhost/ipc_probe, no-cors, Tauri headers stripped: " + log.ipcFetch,
         );
         try {
           await fetch("https://example.com/", {
