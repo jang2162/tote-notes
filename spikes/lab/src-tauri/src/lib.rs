@@ -111,12 +111,14 @@ pub fn run() {
     // and pulls it in front of whatever the person is working in.
     #[cfg(target_os = "macos")]
     let builder = builder.activate_ignoring_other_apps(false);
-    // The window stays behind other apps, which is where App Nap throttles a process and skews
-    // every timing the lab records. The activity is never ended, so it lasts as long as the app.
+    // Auto runs sit in a corner window and may be left alone for minutes, which is where App Nap
+    // throttles a process and skews every timing the lab records. The activity is never ended, so
+    // it lasts as long as the app. Interactive runs skip it: the person measures with the window in
+    // front, and holding it would also keep the whole system from idle-sleeping.
     // It covers this process only: the WebView's content process is throttled separately when the
     // window is hidden, which place_auto_window avoids.
     #[cfg(target_os = "macos")]
-    {
+    if std::env::var_os("TOTE_LAB_AUTO").is_some() {
         use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
         std::mem::forget(
             NSProcessInfo::processInfo().beginActivityWithOptions_reason(

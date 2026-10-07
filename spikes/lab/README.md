@@ -56,13 +56,24 @@ perl -e 'alarm shift; exec @ARGV' 240 ./src-tauri/target/debug/lab 2> results/vi
 echo "exit=$?"
 ```
 
-`throughput` 모드는 픽스처 파일이 필요 없다(입력을 코드로 만든다). 엔진 2 × 케이스 5 로 10건을 재고, 케이스마다 120초 타임아웃이 걸려 10건이 전부 시간 초과해도 1200초이므로 alarm 은 1500초다. 결과 행의 `valid` 가 `false` 면 그 케이스 도중에 페이지가 `hidden` 이었던 것이라 수치를 쓸 수 없다.
+`throughput` 모드는 픽스처 파일이 필요 없다(입력을 코드로 만든다). 엔진 2 × 케이스 5 로 10건을 재고, 케이스마다 120초 타임아웃이 걸려 10건이 전부 시간 초과해도 1200초이므로 alarm 은 1500초다. 결과 행의 `valid` 가 `false` 면 그 케이스 도중에 페이지가 `hidden` 이었던 것이라 수치를 쓸 수 없다. `valid: true` 는 측정 중에 페이지가 한 번도 가려지지 않았다는 뜻일 뿐, 스로틀이 없었다는 보증은 아니다.
 
 ```bash
 rm -f results/throughput.json results/error-throughput.json
 TOTE_LAB_AUTO=throughput perl -e 'alarm shift; exec @ARGV' 1500 ./src-tauri/target/debug/lab
 echo "exit=$?"
 ```
+
+`smoke` 모드는 편집기 + Worker 하이라이트 파이프라인이 끝까지 도는지 확인한다(10MB 코드 픽스처, Oniguruma). `highlightedOnOpen`·`insertedTextHighlighted`·`workerErrorReqIdMatches` 가 `true`, `docGrewBy` 가 `220` 이어야 한다 — 이 넷은 측정값이 아니라 통과 조건이다. `openMs` 는 가려진 창에서 rAF 가 멈추면 1초 fallback 값이라 판정에 쓰지 않는다. `valid` 는 `throughput` 과 같은 뜻이다(위 설명). 시작·끝·중간의 `document.visibilityState` 가 `visibilityAtStart`·`visibilityAtEnd`·`hiddenDuringRun` 으로 남는다.
+
+```bash
+rm -f results/smoke.json results/error-smoke.json
+TOTE_LAB_AUTO=smoke perl -e 'alarm shift; exec @ARGV' 180 ./src-tauri/target/debug/lab
+echo "exit=$?"
+cat results/smoke.json
+```
+
+모르는 `TOTE_LAB_AUTO` 값(빈 값 포함)은 `results/error-unknown-auto.json` 을 쓰고 곧바로 종료한다.
 
 ## 픽스처
 
@@ -91,7 +102,7 @@ done
 ./src-tauri/target/debug/lab
 ```
 
-- `#latency` — 실제 타이핑 지연과 스크롤 프레임. 결과: `results/latency-<픽스처>-<엔진>.json`.
+- `#latency` — 파일(`code-10mb`·`json-10mb-one-line`·`log-100k`)과 엔진(기본 `oniguruma`, 비교용 `javascript`)을 골라 열고, 실제 타이핑 지연과 스크롤 프레임을 잰다. 결과: `results/latency-<픽스처>-<엔진>.json`.
 - `#ime` — 한글 IME 조합 시나리오 7개. 결과: `results/ime.json`.
 
 창을 다른 창으로 가리지 않은 상태에서 잰다. 가려진 창은 프레임이 줄어 수치가 틀어진다.
