@@ -62,6 +62,46 @@ fn issue_file_token(store: State<'_, TokenStore>, path: String) -> String {
     format!("tote-file://localhost/{}", store.issue(PathBuf::from(path)))
 }
 
+/// Auto runs keep a small window on top in the primary monitor's bottom-right corner. Once the
+/// window is covered, macOS throttles the WebView's content process and every timing is invalid.
+fn place_auto_window(app: &tauri::App) -> tauri::Result<()> {
+    use tauri::Manager;
+    const MARGIN: f64 = 16.0;
+    let Some(window) = app.get_webview_window("main") else {
+        return Ok(());
+    };
+    window.set_always_on_top(true)?;
+    // A full-screen app on the monitor shows its own Space there, which hides every other window
+    // unless the window joins all Spaces and may sit beside a full-screen window.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_app_kit::{NSWindow, NSWindowCollectionBehavior};
+        // SAFETY: setup runs on the main thread, and the pointer is this window's live NSWindow.
+        let ns_window = unsafe { &*window.ns_window()?.cast::<NSWindow>() };
+        ns_window.setCollectionBehavior(
+            ns_window.collectionBehavior()
+                | NSWindowCollectionBehavior::CanJoinAllSpaces
+                | NSWindowCollectionBehavior::FullScreenAuxiliary,
+        );
+    }
+    // The new size is not reflected by outer_size() yet, so the title bar is measured beforehand.
+    let (outer, inner) = (window.outer_size()?, window.inner_size()?);
+    let size = tauri::LogicalSize::new(480.0, 320.0);
+    window.set_size(size)?;
+    if let Some(monitor) = window.primary_monitor()? {
+        let area = monitor.work_area();
+        let size = size.to_physical::<u32>(monitor.scale_factor());
+        let width = size.width + outer.width - inner.width;
+        let height = size.height + outer.height - inner.height;
+        let margin = (MARGIN * monitor.scale_factor()).round() as i32;
+        window.set_position(tauri::PhysicalPosition::new(
+            area.position.x + area.size.width as i32 - width as i32 - margin,
+            area.position.y + area.size.height as i32 - height as i32 - margin,
+        ))?;
+    }
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     let store = TokenStore::default();
@@ -71,9 +111,31 @@ pub fn run() {
     // and pulls it in front of whatever the person is working in.
     #[cfg(target_os = "macos")]
     let builder = builder.activate_ignoring_other_apps(false);
+    // The window stays behind other apps, which is where App Nap throttles a process and skews
+    // every timing the lab records. The activity is never ended, so it lasts as long as the app.
+    // It covers this process only: the WebView's content process is throttled separately when the
+    // window is hidden, which place_auto_window avoids.
+    #[cfg(target_os = "macos")]
+    {
+        use objc2_foundation::{NSActivityOptions, NSProcessInfo, NSString};
+        std::mem::forget(
+            NSProcessInfo::processInfo().beginActivityWithOptions_reason(
+                NSActivityOptions::UserInitiated | NSActivityOptions::LatencyCritical,
+                &NSString::from_str("tote lab measurements"),
+            ),
+        );
+    }
     builder
         .plugin(tauri_plugin_opener::init())
         .manage(store)
+        .setup(|app| {
+            if std::env::var_os("TOTE_LAB_AUTO").is_some() {
+                #[cfg(target_os = "macos")]
+                app.set_activation_policy(tauri::ActivationPolicy::Accessory);
+                place_auto_window(app)?;
+            }
+            Ok(())
+        })
         .register_asynchronous_uri_scheme_protocol("tote-file", move |_ctx, request, responder| {
             let store = scheme_store.clone();
             let path = request.uri().path().to_string();

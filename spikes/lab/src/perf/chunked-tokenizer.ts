@@ -14,7 +14,10 @@ export interface ChunkedTokenizerOptions {
   lang: string;
   theme: string;
   chunkLines?: number;
+  /** Lines longer than this are left as one uncolored token; 0 tokenizes every line. */
   maxLineLength?: number;
+  /** Per-line tokenizing time limit in ms; 0 lifts it, and leaving it out keeps Shiki's default. */
+  timeLimit?: number;
 }
 
 /**
@@ -41,6 +44,11 @@ export class ChunkedTokenizer {
 
   get lineCount(): number {
     return this.lines.length;
+  }
+
+  /** Number of chunks whose start state is cached; exposed so tests can catch over-invalidation. */
+  get cachedChunkCount(): number {
+    return this.states.length;
   }
 
   /** Replaces lines [fromLine, toLine) with `insert` and drops every cached state the edit can affect. */
@@ -71,7 +79,10 @@ export class ChunkedTokenizer {
       lang: this.opts.lang,
       theme: this.opts.theme,
       grammarState,
-      tokenizeMaxLineLength: this.maxLineLength,
+      // Shiki skips lines whose length is >= this, while maxLineLength is the longest line still
+      // tokenized; 0 means no limit in both.
+      tokenizeMaxLineLength: this.maxLineLength > 0 ? this.maxLineLength + 1 : 0,
+      tokenizeTimeLimit: this.opts.timeLimit,
     });
   }
 }
@@ -79,7 +90,8 @@ export class ChunkedTokenizer {
 function toLineTokens(line: ThemedToken[]): LineToken[] {
   let offset = 0;
   return line.map((t) => {
-    const token = { content: t.content, offset, color: t.color };
+    // Shiki marks a skipped line with an empty color string.
+    const token = { content: t.content, offset, color: t.color || undefined };
     offset += t.content.length;
     return token;
   });

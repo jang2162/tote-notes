@@ -13,6 +13,8 @@ pnpm tauri build --debug --no-bundle   # 결과: src-tauri/target/debug/lab
 
 `TOTE_LAB_AUTO` 로 모드를 고르면 측정한 뒤 `results/<이름>.json` 을 쓰고 스스로 종료한다. `perl -e 'alarm shift; exec @ARGV' <초>` 는 그 시간 안에 끝나지 않으면 강제로 끊는다.
 
+자동 모드는 작은 창(480×320)을 주 모니터 오른쪽 아래에 항상 위로 띄운다(키보드 포커스는 가져가지 않는다). 창이 가려지면 macOS 가 WebView 를 스로틀해 측정이 무효가 된다. 주 모니터에 다른 앱이 전체 화면으로 떠 있어도 그 위에 보이도록, 자동 모드는 Dock 아이콘 없는 액세서리 앱으로 돌고 창을 모든 Space 에 둔다.
+
 | 모드         | 재는 것                                           | 결과 파일                                        |
 | ------------ | ------------------------------------------------- | ------------------------------------------------ |
 | `ping`       | IPC 와 결과 기록 경로                             | `results/ping.json`                              |
@@ -54,7 +56,7 @@ perl -e 'alarm shift; exec @ARGV' 240 ./src-tauri/target/debug/lab 2> results/vi
 echo "exit=$?"
 ```
 
-`throughput` 모드는 픽스처 파일이 필요 없다(입력을 코드로 만든다). 엔진 2 × 케이스 5 로 10건을 재고, 케이스마다 120초 타임아웃이 걸려 10건이 전부 시간 초과해도 1200초이므로 alarm 은 1500초다.
+`throughput` 모드는 픽스처 파일이 필요 없다(입력을 코드로 만든다). 엔진 2 × 케이스 5 로 10건을 재고, 케이스마다 120초 타임아웃이 걸려 10건이 전부 시간 초과해도 1200초이므로 alarm 은 1500초다. 결과 행의 `valid` 가 `false` 면 그 케이스 도중에 페이지가 `hidden` 이었던 것이라 수치를 쓸 수 없다.
 
 ```bash
 rm -f results/throughput.json results/error-throughput.json
