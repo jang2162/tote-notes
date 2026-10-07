@@ -1,4 +1,5 @@
 import { exitApp, labEnv, recordResult } from "./lab-api";
+import { runThroughputAuto } from "./perf/throughput";
 import { runViewerAuto } from "./viewer/host";
 
 const app = document.querySelector<HTMLDivElement>("#app")!;
@@ -11,6 +12,8 @@ async function main(): Promise<void> {
       return exitApp();
     case "viewer":
       return runViewerAuto(env);
+    case "throughput":
+      return runThroughputAuto();
   }
   app.innerHTML = `<h1>tote lab</h1><p>측정용 실험 앱이다. 제품 코드가 아니다.</p>`;
 }

@@ -54,6 +54,14 @@ perl -e 'alarm shift; exec @ARGV' 240 ./src-tauri/target/debug/lab 2> results/vi
 echo "exit=$?"
 ```
 
+`throughput` 모드는 픽스처 파일이 필요 없다(입력을 코드로 만든다). 엔진 2 × 케이스 5 로 10건을 재고, 케이스마다 120초 타임아웃이 걸려 10건이 전부 시간 초과해도 1200초이므로 alarm 은 1500초다.
+
+```bash
+rm -f results/throughput.json results/error-throughput.json
+TOTE_LAB_AUTO=throughput perl -e 'alarm shift; exec @ARGV' 1500 ./src-tauri/target/debug/lab
+echo "exit=$?"
+```
+
 ## 픽스처
 
 `fixtures/` 는 gitignore 되어 있어 클론마다 직접 만든다. 이름에 한글과 공백이 들어 있는 것은 의도다(경로 처리 검증).
