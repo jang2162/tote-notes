@@ -25,7 +25,37 @@ mkdir -p results
 TOTE_LAB_AUTO=ping perl -e 'alarm shift; exec @ARGV' 60 ./src-tauri/target/debug/lab
 ```
 
-`viewer` 모드에 필요한 픽스처와 실행 명령은 아래 「픽스처」 절.
+`viewer` 모드는 환경 변수 셋으로 픽스처 경로를 받는다(픽스처 만들기는 아래 「픽스처」 절). stderr 의 Range 요청 로그가 `results/viewer-rust.log` 로 남는다.
+
+```bash
+TOTE_LAB_AUTO=viewer \
+TOTE_LAB_VIDEO="$PWD/fixtures/테스트 영상.mp4" \
+TOTE_LAB_VIDEO2="$PWD/fixtures/테스트 영상 moov끝.mp4" \
+TOTE_LAB_IMAGE="$PWD/fixtures/테스트 이미지.png" \
+perl -e 'alarm shift; exec @ARGV' 120 ./src-tauri/target/debug/lab 2> results/viewer-rust.log
+grep -c 'range=Some' results/viewer-rust.log
+```
+
+## 픽스처
+
+`fixtures/` 는 gitignore 되어 있어 클론마다 직접 만든다. 이름에 한글과 공백이 들어 있는 것은 의도다(경로 처리 검증).
+
+```bash
+mkdir -p fixtures results
+ffmpeg -y -loglevel error -f lavfi -i testsrc=duration=60:size=640x360:rate=30 -c:v libx264 -pix_fmt yuv420p -movflags +faststart "fixtures/테스트 영상.mp4"
+ffmpeg -y -loglevel error -f lavfi -i testsrc=duration=60:size=640x360:rate=30 -c:v libx264 -pix_fmt yuv420p "fixtures/테스트 영상 moov끝.mp4"
+ffmpeg -y -loglevel error -f lavfi -i testsrc=size=320x240 -frames:v 1 "fixtures/테스트 이미지.png"
+```
+
+`libx264` 가 없으면 `-c:v h264_videotoolbox` 로 바꿔 만든다.
+
+moov 위치 확인 — 첫 파일은 `moov` 가 `mdat` 보다 먼저, 둘째 파일은 `mdat` 이 먼저여야 한다.
+
+```bash
+for f in "fixtures/테스트 영상.mp4" "fixtures/테스트 영상 moov끝.mp4"; do
+  echo "$f"; ffprobe -v trace "$f" 2>&1 | grep -m2 -oE "type:'(moov|mdat)'"
+done
+```
 
 ## 사람이 하는 측정
 

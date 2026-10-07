@@ -1,0 +1,103 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; media-src tote-file:; img-src tote-file:; connect-src tote-file:"
+    />
+  </head>
+  <body>
+    <video id="v" muted playsinline preload="auto" width="320"></video>
+    <img id="i" alt="" />
+    <script>
+      const log = {};
+
+      function wait(el, eventName, ms) {
+        return new Promise((resolve, reject) => {
+          const timer = setTimeout(() => reject(new Error(eventName + " timeout")), ms);
+          el.addEventListener(
+            eventName,
+            () => {
+              clearTimeout(timer);
+              resolve();
+            },
+            { once: true },
+          );
+          el.addEventListener(
+            "error",
+            () => {
+              clearTimeout(timer);
+              reject(new Error(eventName + " error " + (el.error ? el.error.code : "")));
+            },
+            { once: true },
+          );
+        });
+      }
+
+      async function probeIsolation() {
+        log.origin = String(self.origin);
+        log.tauriInternalsInFrame = typeof window.__TAURI_INTERNALS__;
+        if (window.__TAURI_INTERNALS__) {
+          try {
+            await window.__TAURI_INTERNALS__.invoke("lab_env");
+            log.ipcInvoke = "reachable";
+          } catch (e) {
+            log.ipcInvoke = "blocked: " + e;
+          }
+        }
+        try {
+          log.parentAccess = typeof window.parent.document;
+        } catch (e) {
+          log.parentAccess = "blocked: " + e.name;
+        }
+        try {
+          await fetch("ipc://localhost/lab_env", { method: "POST", body: "{}" });
+          log.ipcFetch = "reachable";
+        } catch (e) {
+          log.ipcFetch = "blocked: " + e.name;
+        }
+        try {
+          await fetch("https://example.com/");
+          log.networkFetch = "reachable";
+        } catch (e) {
+          log.networkFetch = "blocked: " + e.name;
+        }
+      }
+
+      async function run(videoUrl, imageUrl) {
+        await probeIsolation();
+        const v = document.getElementById("v");
+        try {
+          v.src = videoUrl;
+          await wait(v, "loadedmetadata", 15000);
+          log.videoDuration = v.duration;
+          const target = v.duration * 0.8;
+          v.currentTime = target;
+          await wait(v, "seeked", 15000);
+          log.videoSeekedTo = v.currentTime;
+          log.videoSeekOk = Math.abs(v.currentTime - target) < 1;
+          log.videoReadyState = v.readyState;
+        } catch (e) {
+          log.videoError = String(e.message || e);
+        }
+        if (imageUrl) {
+          const i = document.getElementById("i");
+          try {
+            i.src = imageUrl;
+            await wait(i, "load", 10000);
+            log.imageSize = [i.naturalWidth, i.naturalHeight];
+          } catch (e) {
+            log.imageError = String(e.message || e);
+          }
+        }
+        parent.postMessage({ type: "result", result: log }, "*");
+      }
+
+      addEventListener("message", (e) => {
+        if (e.data && e.data.type === "init") run(e.data.videoUrl, e.data.imageUrl);
+      });
+      parent.postMessage({ type: "ready" }, "*");
+    </script>
+  </body>
+</html>
