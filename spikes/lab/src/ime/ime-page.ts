@@ -77,11 +77,13 @@ const SCENARIOS: Scenario[] = [
 
 export function mountImePage(root: HTMLElement): void {
   root.innerHTML = `
+    <p><a href="#">← 메뉴</a></p>
     <h1>한글 IME 검사</h1>
-    <p>각 항목의 「시작」 → 지시대로 입력 → 「확인」. 모두 끝나면 「결과 저장」.</p>
+    <p>각 항목의 「시작」 → 지시대로 입력 → 「확인」. 모두 끝나면 「결과 저장」. 시작을 누른 뒤 편집기를 클릭하지 말고 바로 입력한다(클릭하면 준비된 커서·선택이 사라져 거짓 실패가 나온다).</p>
     <div id="ime-list"></div>
     <div id="ime-editor" style="border:1px solid #888;height:200px;margin:8px 0"></div>
     <button id="ime-save">결과 저장</button>
+    <div id="ime-save-status"></div>
     <pre id="ime-out"></pre>`;
   const view = new EditorView({
     parent: root.querySelector<HTMLElement>("#ime-editor")!,
@@ -110,7 +112,13 @@ export function mountImePage(root: HTMLElement): void {
   }
 
   root.querySelector("#ime-save")!.addEventListener("click", async () => {
-    await recordResult("ime", { userAgent: navigator.userAgent, results });
+    const status = root.querySelector("#ime-save-status")!;
+    try {
+      await recordResult("ime", { userAgent: navigator.userAgent, results });
+      status.textContent = `저장됨 (${Object.keys(results).length}개 항목)`;
+    } catch (err) {
+      status.textContent = `저장 실패: ${String(err)}`;
+    }
     root.querySelector("#ime-out")!.textContent = JSON.stringify(results, null, 2);
   });
 }

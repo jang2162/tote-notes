@@ -32,6 +32,24 @@ export function decorationsIn(view: EditorView, from: number, to: number): numbe
   return count;
 }
 
+export interface LineDecoration {
+  /** Offset from the start of the line. */
+  start: number;
+  length: number;
+  style: string;
+}
+
+/** Decorations that lie inside one line (1-based), as plain data so two lines can be compared. */
+export function lineDecorations(view: EditorView, lineNo: number): LineDecoration[] {
+  const line = view.state.doc.line(lineNo);
+  const found: LineDecoration[] = [];
+  view.state.field(highlightField).between(line.from, line.to, (from, to, value) => {
+    if (from < line.from || to > line.to) return;
+    found.push({ start: from - line.from, length: to - from, style: value.spec.attributes.style });
+  });
+  return found;
+}
+
 type TokensReply = Extract<WorkerReply, { type: "tokens-result" }>;
 
 export function workerHighlighting(worker: Worker, engine: Engine, lang: Lang): Extension {

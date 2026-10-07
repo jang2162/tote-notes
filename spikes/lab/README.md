@@ -64,7 +64,7 @@ TOTE_LAB_AUTO=throughput perl -e 'alarm shift; exec @ARGV' 1500 ./src-tauri/targ
 echo "exit=$?"
 ```
 
-`smoke` 모드는 편집기 + Worker 하이라이트 파이프라인이 끝까지 도는지 확인한다(10MB 코드 픽스처, Oniguruma). `highlightedOnOpen`·`insertedTextHighlighted`·`workerErrorReqIdMatches` 가 `true`, `docGrewBy` 가 `220` 이어야 한다 — 이 넷은 측정값이 아니라 통과 조건이다. `openMs` 는 가려진 창에서 rAF 가 멈추면 1초 fallback 값이라 판정에 쓰지 않는다. `valid` 는 `throughput` 과 같은 뜻이다(위 설명). 시작·끝·중간의 `document.visibilityState` 가 `visibilityAtStart`·`visibilityAtEnd`·`hiddenDuringRun` 으로 남는다.
+`smoke` 모드는 편집기 + Worker 하이라이트 파이프라인이 끝까지 도는지 확인한다(10MB 코드 픽스처, Oniguruma). `highlightedOnOpen`·`insertedTextHighlighted`·`workerErrorReqIdMatches`·`editedLinesKeepColors`·`staleReplyDiscarded` 가 `true`, `docGrewBy` 가 `220` 이어야 한다 — 이 여섯은 측정값이 아니라 통과 조건이다. `openMs` 는 가려진 창에서 rAF 가 멈추면 1초 fallback 값이라 판정에 쓰지 않는다. `valid` 는 `throughput` 과 같은 뜻이다(위 설명). 시작·끝·중간의 `document.visibilityState` 가 `visibilityAtStart`·`visibilityAtEnd`·`hiddenDuringRun` 으로 남는다.
 
 ```bash
 rm -f results/smoke.json results/error-smoke.json
@@ -102,7 +102,17 @@ done
 ./src-tauri/target/debug/lab
 ```
 
-- `#latency` — 파일(`code-10mb`·`json-10mb-one-line`·`log-100k`)과 엔진(기본 `oniguruma`, 비교용 `javascript`)을 골라 열고, 실제 타이핑 지연과 스크롤 프레임을 잰다. 결과: `results/latency-<픽스처>-<엔진>.json`.
-- `#ime` — 한글 IME 조합 시나리오 7개. 결과: `results/ime.json`.
+- `#latency` — 픽스처를 고르고 「열기」(여는 동안 버튼이 잠긴다), 편집기를 눌러 20초 이상 타이핑(영문·한글 섞어서)하고 위아래로 크게 스크롤한 뒤 「저장」한다. 화면 위쪽의 `← 메뉴` 로 돌아간다. 저장 결과는 버튼 아래 줄에 남고 다음 입력이 지우지 않는다. 엔진은 모두 `oniguruma`(기본값)다. 네 조합을 각각 열어 저장한다:
+
+  | 픽스처               | 용도             | 기대 결과 파일                                      |
+  | -------------------- | ---------------- | --------------------------------------------------- |
+  | `code-small`         | 기준선(약 200줄) | `results/latency-code-small-oniguruma.json`         |
+  | `code-10mb`          | 큰 코드          | `results/latency-code-10mb-oniguruma.json`          |
+  | `json-10mb-one-line` | 한 줄 10MB       | `results/latency-json-10mb-one-line-oniguruma.json` |
+  | `log-100k`           | 로그 10만 줄     | `results/latency-log-100k-oniguruma.json`           |
+
+  판정은 **같은 세션의 `code-small` 대비 늘어난 `keys.p95`** 로 한다. 차이가 한 프레임(`frameIntervalMs`) 이하면 된다, 두 프레임 이하면 조건부다. `keys` 는 문서를 바꾼 키만 센다(Shift·화살표·PageDown 은 `keyEvents` 에만 들어간다). `keySamples` 에 `{ key, isComposing, docChanged, ms }` 원본이 남는다. `highlightDecorations` 가 0 이거나 `workerErrors` 가 0 이 아니면 색 없는 편집기를 잰 것이니 결과를 쓰지 않는다.
+
+- `#ime` — 한글 IME 조합 시나리오 7개. 「시작」을 누른 뒤 편집기를 클릭하지 말고 바로 입력한다. 결과: `results/ime.json`.
 
 창을 다른 창으로 가리지 않은 상태에서 잰다. 가려진 창은 프레임이 줄어 수치가 틀어진다.

@@ -2,11 +2,13 @@ import { EditorView, basicSetup } from "codemirror";
 
 import { recordResult } from "../lab-api";
 import { makeCodeFixture, makeLogFixture, makeSingleLineJson } from "./fixtures";
-import { workerHighlighting } from "./shiki-decorations";
+import { highlightCount, workerHighlighting } from "./shiki-decorations";
 import { summarize } from "./stats";
-import type { Engine, Lang } from "./worker-protocol";
+import type { Engine, Lang, WorkerReply } from "./worker-protocol";
 
 export const LATENCY_FIXTURES: Record<string, { lang: Lang; make: () => string }> = {
+  // Baseline of the same session: same code generator and worker pipeline, about 200 lines.
+  "code-small": { lang: "typescript", make: () => makeCodeFixture(6_000) },
   "code-10mb": { lang: "typescript", make: () => makeCodeFixture(10_000_000) },
   "json-10mb-one-line": { lang: "json", make: () => makeSingleLineJson(10_000_000) },
   "log-100k": { lang: "log", make: () => makeLogFixture(100_000) },
@@ -15,6 +17,8 @@ export const LATENCY_FIXTURES: Record<string, { lang: Lang; make: () => string }
 export interface OpenedEditor {
   view: EditorView;
   openMs: number;
+  /** `error` replies plus `worker.onerror` events so far; counted only, highlighting is unchanged. */
+  workerErrors(): number;
   destroy(): void;
 }
 
@@ -27,6 +31,13 @@ export function openEditor(
 ): Promise<OpenedEditor> {
   const worker = new Worker(new URL("./highlight-worker.ts", import.meta.url), { type: "module" });
   const t0 = performance.now();
+  let workerErrors = 0;
+  worker.addEventListener("message", (e: MessageEvent<WorkerReply>) => {
+    if (e.data.type === "error") workerErrors++;
+  });
+  worker.addEventListener("error", () => {
+    workerErrors++;
+  });
   const view = new EditorView({
     doc: text,
     parent,
@@ -40,6 +51,7 @@ export function openEditor(
       resolve({
         view,
         openMs: performance.now() - t0,
+        workerErrors: () => workerErrors,
         destroy() {
           view.destroy();
           worker.terminate();
@@ -51,24 +63,40 @@ export function openEditor(
   });
 }
 
+interface KeySample {
+  key: string;
+  /** True for IME composition keys (`isComposing` or keyCode 229). */
+  isComposing: boolean;
+  /** Whether the document changed between the keydown and the paint after it. */
+  docChanged: boolean;
+  ms: number;
+}
+
 interface Session {
   editor: OpenedEditor;
   fixture: string;
   engine: Engine;
-  keys: number[];
+  keys: KeySample[];
   frames: number[];
+  /** Every rAF interval while the session ran, to know the real refresh period. */
+  intervals: number[];
   stop(): void;
 }
 
+const MENU_LINK = `<a href="#">← 메뉴</a>`;
+
 export function mountLatencyPage(root: HTMLElement): void {
   root.innerHTML = `
+    <style>#lat-editor .cm-editor{height:100%}</style>
+    <p>${MENU_LINK}</p>
     <h1>입력 지연 측정</h1>
-    <p>파일과 엔진을 고르고 「열기」. 편집기를 눌러 20초 이상 타이핑(영문·한글 섞어서)하고, 위아래로 크게 스크롤한 뒤 「저장」. 창을 다른 창으로 가리지 않는다.</p>
+    <p>파일과 엔진을 고르고 「열기」. 편집기를 눌러 20초 이상 타이핑(영문·한글 섞어서)하고, 위아래로 크게 스크롤한 뒤 「저장」. 창을 다른 창으로 가리지 않는다. 파일마다 따로 열어 저장한다.</p>
     <select id="lat-fixture">${Object.keys(LATENCY_FIXTURES)
       .map((k) => `<option>${k}</option>`)
       .join("")}</select>
     <select id="lat-engine"><option>oniguruma</option><option>javascript</option></select>
     <button id="lat-open">열기</button> <button id="lat-save">저장</button>
+    <div id="lat-save-status"></div>
     <pre id="lat-stats"></pre>
     <div id="lat-editor" style="height:65vh;border:1px solid #888;overflow:hidden"></div>`;
   const $ = <T extends HTMLElement>(sel: string) => root.querySelector<T>(sel)!;
@@ -78,62 +106,105 @@ export function mountLatencyPage(root: HTMLElement): void {
     fixture: s.fixture,
     engine: s.engine,
     openMs: s.editor.openMs,
-    keys: summarize(s.keys),
+    // Only keys that changed the document: Shift, arrows and PageDown just wait for a frame.
+    keys: summarize(s.keys.filter((k) => k.docChanged).map((k) => k.ms)),
+    keyEvents: s.keys.length,
+    composingKeys: s.keys.filter((k) => k.isComposing).length,
+    // Judge keys.p95 against the baseline fixture of the same session, in units of this period.
+    frameIntervalMs: summarize(s.intervals).p50,
+    frameIntervalSamples: s.intervals.length,
     scrollFrames: s.frames.length,
     scrollFramesOver25ms: s.frames.filter((f) => f > 25).length,
+    highlightDecorations: highlightCount(s.editor.view),
+    workerErrors: s.editor.workerErrors(),
   });
 
-  $("#lat-open").addEventListener("click", async () => {
-    current?.stop();
-    current = null;
-    const fixture = $<HTMLSelectElement>("#lat-fixture").value;
-    const engine = $<HTMLSelectElement>("#lat-engine").value as Engine;
-    const { lang, make } = LATENCY_FIXTURES[fixture];
-    $("#lat-stats").textContent = "여는 중…";
-    const editor = await openEditor($("#lat-editor"), make(), engine, lang);
-    const keys: number[] = [];
-    const frames: number[] = [];
-    const session: Session = { editor, fixture, engine, keys, frames, stop: () => undefined };
-    const render = () => {
-      $("#lat-stats").textContent = JSON.stringify(snapshot(session), null, 2);
-    };
-    editor.view.contentDOM.addEventListener("keydown", (e) => {
-      const start = e.timeStamp;
-      // rAF runs right before the paint; the timeout lands just after it.
-      requestAnimationFrame(() =>
-        setTimeout(() => {
-          keys.push(performance.now() - start);
-          render();
-        }, 0),
-      );
-    });
-    let lastScroll = -Infinity;
-    editor.view.scrollDOM.addEventListener("scroll", () => {
-      lastScroll = performance.now();
-    });
-    let prev = performance.now();
-    let raf = 0;
-    const loop = (t: number) => {
-      if (t - lastScroll < 100) frames.push(t - prev);
-      prev = t;
+  const openButton = $<HTMLButtonElement>("#lat-open");
+  openButton.addEventListener("click", async () => {
+    // Making a 10MB fixture blocks the page, so a second click would otherwise build a second editor.
+    openButton.disabled = true;
+    try {
+      current?.stop();
+      current = null;
+      $("#lat-editor").replaceChildren();
+      $("#lat-save-status").textContent = "";
+      const fixture = $<HTMLSelectElement>("#lat-fixture").value;
+      const engine = $<HTMLSelectElement>("#lat-engine").value as Engine;
+      const { lang, make } = LATENCY_FIXTURES[fixture];
+      $("#lat-stats").textContent = "여는 중…";
+      const editor = await openEditor($("#lat-editor"), make(), engine, lang);
+      const keys: KeySample[] = [];
+      const frames: number[] = [];
+      const intervals: number[] = [];
+      const session: Session = {
+        editor,
+        fixture,
+        engine,
+        keys,
+        frames,
+        intervals,
+        stop: () => undefined,
+      };
+      const render = () => {
+        $("#lat-stats").textContent = JSON.stringify(snapshot(session), null, 2);
+      };
+      editor.view.contentDOM.addEventListener("keydown", (e) => {
+        const start = e.timeStamp;
+        const docBefore = editor.view.state.doc;
+        const key = e.key;
+        const isComposing = e.isComposing || e.keyCode === 229;
+        // rAF runs right before the paint; the timeout lands just after it.
+        requestAnimationFrame(() =>
+          setTimeout(() => {
+            keys.push({
+              key,
+              isComposing,
+              docChanged: editor.view.state.doc !== docBefore,
+              ms: performance.now() - start,
+            });
+            render();
+          }, 0),
+        );
+      });
+      let lastScroll = -Infinity;
+      editor.view.scrollDOM.addEventListener("scroll", () => {
+        lastScroll = performance.now();
+      });
+      let prev = performance.now();
+      let raf = 0;
+      const loop = (t: number) => {
+        intervals.push(t - prev);
+        if (t - lastScroll < 100) frames.push(t - prev);
+        prev = t;
+        raf = requestAnimationFrame(loop);
+      };
       raf = requestAnimationFrame(loop);
-    };
-    raf = requestAnimationFrame(loop);
-    session.stop = () => {
-      cancelAnimationFrame(raf);
-      editor.destroy();
-    };
-    current = session;
-    render();
+      // Highlight state arrives asynchronously, so the panel also refreshes without key presses.
+      const timer = setInterval(render, 500);
+      session.stop = () => {
+        cancelAnimationFrame(raf);
+        clearInterval(timer);
+        editor.destroy();
+      };
+      current = session;
+      render();
+    } finally {
+      openButton.disabled = false;
+    }
   });
 
   $("#lat-save").addEventListener("click", async () => {
     if (!current) return;
-    await recordResult(`latency-${current.fixture}-${current.engine}`, {
-      userAgent: navigator.userAgent,
-      ...snapshot(current),
-      keySamples: current.keys,
-    });
-    $("#lat-stats").textContent += "\n저장됨";
+    const status = $("#lat-save-status");
+    try {
+      await recordResult(`latency-${current.fixture}-${current.engine}`, {
+        userAgent: navigator.userAgent,
+        ...snapshot(current),
+        keySamples: current.keys,
+      });
+      status.textContent = `저장됨 (keys ${current.keys.filter((k) => k.docChanged).length}개)`;
+    } catch (err) {
+      status.textContent = `저장 실패: ${String(err)}`;
+    }
   });
 }
