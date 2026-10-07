@@ -111,7 +111,11 @@ done
   | `json-10mb-one-line` | 한 줄 10MB       | `results/latency-json-10mb-one-line-oniguruma.json` |
   | `log-100k`           | 로그 10만 줄     | `results/latency-log-100k-oniguruma.json`           |
 
-  판정은 **같은 세션의 `code-small` 대비 늘어난 `keys.p95`** 로 한다. 차이가 한 프레임(`frameIntervalMs`) 이하면 된다, 두 프레임 이하면 조건부다. `keys` 는 문서를 바꾼 키만 센다(Shift·화살표·PageDown 은 `keyEvents` 에만 들어간다). `keySamples` 에 `{ key, isComposing, docChanged, ms }` 원본이 남는다. `highlightDecorations` 가 0 이거나 `workerErrors` 가 0 이 아니면 색 없는 편집기를 잰 것이니 결과를 쓰지 않는다.
+  판정은 **같은 세션의 `code-small` 대비 늘어난 `keys.p95`** 로 한다. 차이가 한 프레임(`frameIntervalMs`) 이하면 된다, 두 프레임 이하면 조건부다. `keys` 는 문서를 바꾼 키만 센다(Enter·Backspace·Delete 도 센다. 문서를 바꾸지 않는 Shift·화살표·PageDown 만 `keyEvents` 에 들어간다). `composingKeys` 는 한글 조합 키 수, `composingKeysChanged` 는 그중 문서를 바꿔 `keys` 에 들어간 수다. `keySamples` 에 `{ key, isComposing, docChanged, ms }` 원본이 남는다. `code-small`·`code-10mb`·`log-100k` 에서 `highlightDecorations` 가 0 이거나 `workerErrors` 가 0 이 아니면 색 없는 편집기를 잰 것이니 결과를 쓰지 않는다.
+
+  **`json-10mb-one-line` 은 예외다.** 한 줄이 20,000자 한도(`MAX_TOKENIZED_LINE_LENGTH`)를 넘으므로 설계상 색이 없다. 이 조합만은 `highlightDecorations: 0` 이 정상이고 `workerErrors` 만 본다. 세로로 스크롤할 것이 없으니 가로로 크게 스크롤한다(`scrollFrames` 는 가로 스크롤도 센다 — 아래 확인 참조).
+
+  **같은 조건으로 잰다.** 네 조합을 같은 모니터에서 잰다. 한 프레임은 `code-small` 의 `frameIntervalMs` 다. 대상의 `frameIntervalMs` 가 그것과 ±10% 넘게 다르면 그 조합을 다시 잰다.
 
 - `#ime` — 한글 IME 조합 시나리오 7개. 「시작」을 누른 뒤 편집기를 클릭하지 말고 바로 입력한다. 결과: `results/ime.json`.
 

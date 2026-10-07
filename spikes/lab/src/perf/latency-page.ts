@@ -110,6 +110,7 @@ export function mountLatencyPage(root: HTMLElement): void {
     keys: summarize(s.keys.filter((k) => k.docChanged).map((k) => k.ms)),
     keyEvents: s.keys.length,
     composingKeys: s.keys.filter((k) => k.isComposing).length,
+    composingKeysChanged: s.keys.filter((k) => k.isComposing && k.docChanged).length,
     // Judge keys.p95 against the baseline fixture of the same session, in units of this period.
     frameIntervalMs: summarize(s.intervals).p50,
     frameIntervalSamples: s.intervals.length,
@@ -148,24 +149,30 @@ export function mountLatencyPage(root: HTMLElement): void {
       const render = () => {
         $("#lat-stats").textContent = JSON.stringify(snapshot(session), null, 2);
       };
-      editor.view.contentDOM.addEventListener("keydown", (e) => {
-        const start = e.timeStamp;
-        const docBefore = editor.view.state.doc;
-        const key = e.key;
-        const isComposing = e.isComposing || e.keyCode === 229;
-        // rAF runs right before the paint; the timeout lands just after it.
-        requestAnimationFrame(() =>
-          setTimeout(() => {
-            keys.push({
-              key,
-              isComposing,
-              docChanged: editor.view.state.doc !== docBefore,
-              ms: performance.now() - start,
-            });
-            render();
-          }, 0),
-        );
-      });
+      // Capture on an ancestor so this runs before CodeMirror's own keydown listener: keymap edits
+      // (Enter, Backspace, Delete) change the document synchronously inside that listener.
+      editor.view.dom.addEventListener(
+        "keydown",
+        (e) => {
+          const start = e.timeStamp;
+          const docBefore = editor.view.state.doc;
+          const key = e.key;
+          const isComposing = e.isComposing || e.keyCode === 229;
+          // rAF runs right before the paint; the timeout lands just after it.
+          requestAnimationFrame(() =>
+            setTimeout(() => {
+              keys.push({
+                key,
+                isComposing,
+                docChanged: editor.view.state.doc !== docBefore,
+                ms: performance.now() - start,
+              });
+              render();
+            }, 0),
+          );
+        },
+        { capture: true },
+      );
       let lastScroll = -Infinity;
       editor.view.scrollDOM.addEventListener("scroll", () => {
         lastScroll = performance.now();
@@ -194,15 +201,18 @@ export function mountLatencyPage(root: HTMLElement): void {
   });
 
   $("#lat-save").addEventListener("click", async () => {
-    if (!current) return;
+    const session = current;
+    if (!session) return;
     const status = $("#lat-save-status");
+    // Taken before the await: opening another file while saving must not change what is reported.
+    const saved = snapshot(session);
     try {
-      await recordResult(`latency-${current.fixture}-${current.engine}`, {
+      await recordResult(`latency-${session.fixture}-${session.engine}`, {
         userAgent: navigator.userAgent,
-        ...snapshot(current),
-        keySamples: current.keys,
+        ...saved,
+        keySamples: session.keys,
       });
-      status.textContent = `저장됨 (keys ${current.keys.filter((k) => k.docChanged).length}개)`;
+      status.textContent = `저장됨 (keys ${saved.keys.count}개)`;
     } catch (err) {
       status.textContent = `저장 실패: ${String(err)}`;
     }

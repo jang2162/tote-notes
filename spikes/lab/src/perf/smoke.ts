@@ -69,14 +69,16 @@ async function staleReplyDiscarded(parent: HTMLElement): Promise<boolean> {
   });
   try {
     if (!(await waitFor(() => sent.some((m) => m.type === "tokens"), 5_000))) return false;
-    const first = sent.find((m) => m.type === "tokens");
-    if (first?.type !== "tokens") return false;
+    // The latest request: an earlier one could be dropped by the reqId check instead of the stale one.
+    const requests = sent.filter((m) => m.type === "tokens");
+    const last = requests[requests.length - 1];
+    if (last?.type !== "tokens") return false;
     view.dispatch({ changes: { from: 0, insert: "XX\n" } });
     const token = (content: string) => [{ content, offset: 0, color: "#ff0000" }];
     hook.listener?.({
       data: {
         type: "tokens-result",
-        reqId: first.reqId,
+        reqId: last.reqId,
         from: 0,
         lines: [token("aaaa"), token("bbbb"), token("cccc")],
       },
@@ -120,6 +122,7 @@ export async function runSmokeAuto(parent: HTMLElement): Promise<void> {
   // Read once, right after the fresh reply: marks mapped through the edits would match earlier.
   const movedLineAfter = lineDecorations(editor.view, 21);
   const editedLinesKeepColors =
+    insertedTextHighlighted &&
     firstLineBefore.length > 0 &&
     JSON.stringify(movedLineAfter) === JSON.stringify(firstLineBefore);
   const errorReqIdMatches = await workerErrorReqIdMatches();
