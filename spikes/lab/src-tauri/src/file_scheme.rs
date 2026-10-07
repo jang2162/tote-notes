@@ -6,7 +6,7 @@ use std::sync::{Arc, Mutex};
 
 use tauri::http::{header, Response, StatusCode};
 
-/// Maps one-time tokens to file paths so a viewer URL never carries a path it could rewrite.
+/// Maps tokens to file paths so a viewer URL never carries a path it could rewrite. A token serves every request until the app quits: one seek alone sends dozens of Range requests to the same URL.
 #[derive(Clone, Default)]
 pub struct TokenStore(Arc<Mutex<HashMap<String, PathBuf>>>);
 

@@ -60,7 +60,8 @@ const SCENARIOS: Scenario[] = [
   {
     id: "enter",
     title: "조합 직후 Enter",
-    instruction: "「한글」을 입력하고 바로 Enter, 이어서 「끝」을 입력한다",
+    instruction:
+      "「한글」을 입력하고 바로 Enter, 이어서 「끝」을 입력한 뒤 Enter 없이 「확인」을 누른다",
     doc: "",
     selection: EditorSelection.single(0),
     expected: "한글\n끝",
@@ -79,7 +80,7 @@ export function mountImePage(root: HTMLElement): void {
   root.innerHTML = `
     <p><a href="#">← 메뉴</a></p>
     <h1>한글 IME 검사</h1>
-    <p>각 항목의 「시작」 → 지시대로 입력 → 「확인」. 모두 끝나면 「결과 저장」. 시작을 누른 뒤 편집기를 클릭하지 말고 바로 입력한다(클릭하면 준비된 커서·선택이 사라져 거짓 실패가 나온다).</p>
+    <p>각 항목의 「시작」 → 지시대로 입력 → 「확인」. 모두 끝나면 「결과 저장」. 시작을 누른 뒤 편집기를 클릭하지 말고 바로 입력한다(클릭하면 준비된 커서·선택이 사라져 거짓 실패가 나온다). 마지막 글자는 Enter 로 확정하지 말고 바로 「확인」을 누른다(「확인」이 조합을 확정한다).</p>
     <div id="ime-list"></div>
     <div id="ime-editor" style="border:1px solid #888;height:200px;margin:8px 0"></div>
     <button id="ime-save">결과 저장</button>

@@ -7,7 +7,7 @@ import { summarize } from "./stats";
 import type { Engine, Lang, WorkerReply } from "./worker-protocol";
 
 export const LATENCY_FIXTURES: Record<string, { lang: Lang; make: () => string }> = {
-  // Baseline of the same session: same code generator and worker pipeline, about 200 lines.
+  // Baseline of the same session: same code generator and worker pipeline, 253 lines.
   "code-small": { lang: "typescript", make: () => makeCodeFixture(6_000) },
   "code-10mb": { lang: "typescript", make: () => makeCodeFixture(10_000_000) },
   "json-10mb-one-line": { lang: "json", make: () => makeSingleLineJson(10_000_000) },
@@ -90,7 +90,7 @@ export function mountLatencyPage(root: HTMLElement): void {
     <style>#lat-editor .cm-editor{height:100%}</style>
     <p>${MENU_LINK}</p>
     <h1>입력 지연 측정</h1>
-    <p>파일과 엔진을 고르고 「열기」. 편집기를 눌러 20초 이상 타이핑(영문·한글 섞어서)하고, 위아래로 크게 스크롤한 뒤 「저장」. 창을 다른 창으로 가리지 않는다. 파일마다 따로 열어 저장한다.</p>
+    <p>파일과 엔진을 고르고 「열기」. 편집기를 눌러 20초 이상 영문으로만 타이핑하고, 크게 스크롤한 뒤(json 한 줄 파일은 가로로) 「저장」. 한글은 저장한 뒤에 쳐서 눈으로만 본다. 창을 다른 창으로 가리지 않는다. 파일마다 따로 열어 저장한다.</p>
     <select id="lat-fixture">${Object.keys(LATENCY_FIXTURES)
       .map((k) => `<option>${k}</option>`)
       .join("")}</select>
