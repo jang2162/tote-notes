@@ -46,7 +46,12 @@ fn exit_app(app: tauri::AppHandle) {
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let builder = tauri::Builder::default();
+    // focus:false only affects the window; without this macOS still activates the app on launch
+    // and pulls it in front of whatever the person is working in.
+    #[cfg(target_os = "macos")]
+    let builder = builder.activate_ignoring_other_apps(false);
+    builder
         .plugin(tauri_plugin_opener::init())
         .invoke_handler(tauri::generate_handler![lab_env, record_result, exit_app])
         .run(tauri::generate_context!())
