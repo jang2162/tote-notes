@@ -7,11 +7,13 @@ use serde::Serialize;
 use tauri::State;
 
 #[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
 struct LabEnv {
     auto: Option<String>,
     video: Option<String>,
     video2: Option<String>,
     image: Option<String>,
+    viewer_page: Option<String>,
 }
 
 #[tauri::command]
@@ -22,6 +24,7 @@ fn lab_env() -> LabEnv {
         video: var("TOTE_LAB_VIDEO"),
         video2: var("TOTE_LAB_VIDEO2"),
         image: var("TOTE_LAB_IMAGE"),
+        viewer_page: var("TOTE_LAB_VIEWER_PAGE"),
     }
 }
 
@@ -41,6 +44,12 @@ fn record_result(name: String, json: String) -> Result<(), String> {
     let dir = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../results");
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     std::fs::write(dir.join(format!("{name}.json")), json).map_err(|e| e.to_string())
+}
+
+// Probe for the viewer spike: if a sandboxed frame ever gets a command through, this line shows up.
+#[tauri::command]
+fn ipc_probe(source: String) {
+    eprintln!("[ipc-probe] reached source={source}");
 }
 
 #[tauri::command]
@@ -83,6 +92,7 @@ pub fn run() {
             lab_env,
             record_result,
             exit_app,
+            ipc_probe,
             issue_file_token
         ])
         .run(tauri::generate_context!())

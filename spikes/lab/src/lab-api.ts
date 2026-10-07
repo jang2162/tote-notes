@@ -5,6 +5,7 @@ export interface LabEnv {
   video: string | null;
   video2: string | null;
   image: string | null;
+  viewerPage: string | null;
 }
 
 export const labEnv = () => invoke<LabEnv>("lab_env");

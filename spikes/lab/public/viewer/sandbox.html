@@ -11,7 +11,19 @@
     <video id="v" muted playsinline preload="auto" width="320"></video>
     <img id="i" alt="" />
     <script>
-      const log = {};
+      const log = { cspViolations: [], ipcProbeAttempts: [] };
+
+      // Collected first so a blocked probe can be told apart from a CORS failure after the request left.
+      addEventListener("securitypolicyviolation", (e) => {
+        log.cspViolations.push({
+          violatedDirective: e.violatedDirective,
+          blockedURI: e.blockedURI,
+        });
+      });
+
+      function progress() {
+        parent.postMessage({ type: "progress", log }, "*");
+      }
 
       function wait(el, eventName, ms) {
         return new Promise((resolve, reject) => {
@@ -35,6 +47,42 @@
         });
       }
 
+      function ranges(timeRanges) {
+        const out = [];
+        for (let k = 0; k < timeRanges.length; k++)
+          out.push([timeRanges.start(k), timeRanges.end(k)]);
+        return out;
+      }
+
+      // The invoke key is unknown to a sandboxed frame, so every attempt carries none or a wrong one.
+      // A command that still ran would print "[ipc-probe] reached source=frame..." in the Rust log.
+      function probeNativeIpc() {
+        log.webkitIpcHandler = typeof window.webkit?.messageHandlers?.ipc;
+        if (log.webkitIpcHandler === "undefined") return;
+        const body = (key) => {
+          const m = {
+            cmd: "ipc_probe",
+            callback: 1,
+            error: 2,
+            payload: { source: "frame-webkit" },
+            options: {},
+          };
+          if (key !== null) m.__TAURI_INVOKE_KEY__ = key;
+          return JSON.stringify(m);
+        };
+        for (const [name, key] of [
+          ["webkit postMessage, wrong invoke key", "wrong-key"],
+          ["webkit postMessage, no invoke key", null],
+        ]) {
+          try {
+            window.webkit.messageHandlers.ipc.postMessage(body(key));
+            log.ipcProbeAttempts.push(name + ": posted");
+          } catch (e) {
+            log.ipcProbeAttempts.push(name + ": threw " + e.name);
+          }
+        }
+      }
+
       async function probeIsolation() {
         log.origin = String(self.origin);
         log.tauriInternalsInFrame = typeof window.__TAURI_INTERNALS__;
@@ -51,18 +99,37 @@
         } catch (e) {
           log.parentAccess = "blocked: " + e.name;
         }
+        probeNativeIpc();
         try {
-          await fetch("ipc://localhost/lab_env", { method: "POST", body: "{}" });
+          await fetch("ipc://localhost/ipc_probe", {
+            method: "POST",
+            mode: "no-cors",
+            headers: {
+              "Content-Type": "application/json",
+              "Tauri-Callback": "1",
+              "Tauri-Error": "2",
+              "Tauri-Invoke-Key": "wrong-key",
+            },
+            body: JSON.stringify({ source: "frame-fetch" }),
+            signal: AbortSignal.timeout(5000),
+          });
           log.ipcFetch = "reachable";
         } catch (e) {
           log.ipcFetch = "blocked: " + e.name;
         }
+        log.ipcProbeAttempts.push(
+          "fetch ipc://localhost/ipc_probe, no-cors, wrong Tauri-Invoke-Key: " + log.ipcFetch,
+        );
         try {
-          await fetch("https://example.com/");
+          await fetch("https://example.com/", {
+            mode: "no-cors",
+            signal: AbortSignal.timeout(5000),
+          });
           log.networkFetch = "reachable";
         } catch (e) {
           log.networkFetch = "blocked: " + e.name;
         }
+        progress();
       }
 
       async function run(videoUrl, imageUrl) {
@@ -72,15 +139,20 @@
           v.src = videoUrl;
           await wait(v, "loadedmetadata", 15000);
           log.videoDuration = v.duration;
+          log.videoBufferedBeforeSeek = ranges(v.buffered);
+          log.videoSeekableBeforeSeek = ranges(v.seekable);
+          progress();
           const target = v.duration * 0.8;
           v.currentTime = target;
           await wait(v, "seeked", 15000);
           log.videoSeekedTo = v.currentTime;
           log.videoSeekOk = Math.abs(v.currentTime - target) < 1;
           log.videoReadyState = v.readyState;
+          log.videoBufferedAfterSeek = ranges(v.buffered);
         } catch (e) {
           log.videoError = String(e.message || e);
         }
+        progress();
         if (imageUrl) {
           const i = document.getElementById("i");
           try {

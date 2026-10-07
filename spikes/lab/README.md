@@ -28,12 +28,27 @@ TOTE_LAB_AUTO=ping perl -e 'alarm shift; exec @ARGV' 60 ./src-tauri/target/debug
 `viewer` 모드는 환경 변수 셋으로 픽스처 경로를 받는다(픽스처 만들기는 아래 「픽스처」 절). stderr 의 Range 요청 로그가 `results/viewer-rust.log` 로 남는다.
 
 ```bash
+rm -f results/viewer.json results/viewer-nocsp.json results/error-viewer.json
 TOTE_LAB_AUTO=viewer \
 TOTE_LAB_VIDEO="$PWD/fixtures/테스트 영상.mp4" \
 TOTE_LAB_VIDEO2="$PWD/fixtures/테스트 영상 moov끝.mp4" \
 TOTE_LAB_IMAGE="$PWD/fixtures/테스트 이미지.png" \
 perl -e 'alarm shift; exec @ARGV' 120 ./src-tauri/target/debug/lab 2> results/viewer-rust.log
-grep -c 'range=Some' results/viewer-rust.log
+echo "exit=$?"
+grep -oE '/[0-9a-f]{32} range=Some' results/viewer-rust.log | sort | uniq -c   # 토큰별 Range 수
+grep -c '\[ipc-probe\] reached source=frame' results/viewer-rust.log   # 0 이어야 한다
+grep -c '\[ipc-probe\] reached source=host' results/viewer-rust.log    # 1 이상이어야 한다(탐침이 동작한다는 양성 대조)
+```
+
+음성 대조 — CSP meta 를 뺀 페이지로 같은 측정을 한다. 본 실행의 `blocked` 가 CSP 덕이라면 여기서 `networkFetch` 가 `reachable` 로 바뀌고 `cspViolations` 가 비어야 한다.
+
+```bash
+TOTE_LAB_AUTO=viewer TOTE_LAB_VIEWER_PAGE=nocsp \
+TOTE_LAB_VIDEO="$PWD/fixtures/테스트 영상.mp4" \
+TOTE_LAB_VIDEO2="$PWD/fixtures/테스트 영상 moov끝.mp4" \
+TOTE_LAB_IMAGE="$PWD/fixtures/테스트 이미지.png" \
+perl -e 'alarm shift; exec @ARGV' 120 ./src-tauri/target/debug/lab 2> results/viewer-nocsp-rust.log
+echo "exit=$?"
 ```
 
 ## 픽스처
