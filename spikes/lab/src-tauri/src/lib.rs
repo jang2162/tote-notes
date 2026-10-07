@@ -1,6 +1,10 @@
+mod file_scheme;
+
 use std::path::PathBuf;
 
+use file_scheme::TokenStore;
 use serde::Serialize;
+use tauri::State;
 
 #[derive(Serialize)]
 struct LabEnv {
@@ -44,8 +48,15 @@ fn exit_app(app: tauri::AppHandle) {
     app.exit(0);
 }
 
+#[tauri::command]
+fn issue_file_token(store: State<'_, TokenStore>, path: String) -> String {
+    format!("tote-file://localhost/{}", store.issue(PathBuf::from(path)))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let store = TokenStore::default();
+    let scheme_store = store.clone();
     let builder = tauri::Builder::default();
     // focus:false only affects the window; without this macOS still activates the app on launch
     // and pulls it in front of whatever the person is working in.
@@ -53,7 +64,27 @@ pub fn run() {
     let builder = builder.activate_ignoring_other_apps(false);
     builder
         .plugin(tauri_plugin_opener::init())
-        .invoke_handler(tauri::generate_handler![lab_env, record_result, exit_app])
+        .manage(store)
+        .register_asynchronous_uri_scheme_protocol("tote-file", move |_ctx, request, responder| {
+            let store = scheme_store.clone();
+            let path = request.uri().path().to_string();
+            let range = request
+                .headers()
+                .get(tauri::http::header::RANGE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            std::thread::spawn(move || {
+                // Logged so the viewer spike can count how many Range requests WebKit actually sent.
+                eprintln!("[tote-file] {path} range={range:?}");
+                responder.respond(file_scheme::respond(&store, &path, range.as_deref()));
+            });
+        })
+        .invoke_handler(tauri::generate_handler![
+            lab_env,
+            record_result,
+            exit_app,
+            issue_file_token
+        ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
 }
