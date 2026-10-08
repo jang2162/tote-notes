@@ -309,7 +309,7 @@ pub struct WorkspaceListItem {
 }
 
 #[tauri::command]
-pub fn list_workspaces(core: State<'_, AppCore>) -> Vec<WorkspaceListItem> {
+pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<WorkspaceListItem>> {
     let recent = core.recent();
     let mut list: Vec<WorkspaceListItem> = Workspace::list(&core.workspace_root)
         .into_iter()
@@ -329,7 +329,7 @@ pub fn list_workspaces(core: State<'_, AppCore>) -> Vec<WorkspaceListItem> {
             .position(|p| *p == item.path)
             .unwrap_or(usize::MAX)
     });
-    list
+    Ok(list)
 }
 
 #[tauri::command]

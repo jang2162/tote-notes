@@ -29,7 +29,18 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
         focus(app, &label);
         return Ok(label);
     }
-    let workspace = Workspace::open(&path)?;
+    // Another request is already opening this folder: it shows the window, so opening it again
+    // here would run `Workspace::open` twice and could undo the first one's registration.
+    if !core.reserve(&label) {
+        return Ok(label);
+    }
+    let workspace = match Workspace::open(&path) {
+        Ok(workspace) => workspace,
+        Err(err) => {
+            core.release(&label);
+            return Err(err.into());
+        }
+    };
     let title = workspace.name();
     let frame = read_window_frame(workspace.root(), &core.machine.device_id);
     core.register(&label, workspace);
@@ -42,7 +53,7 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
     };
     if let Err(err) = builder.build() {
-        core.forget(&label);
+        core.release(&label);
         return Err(err.into());
     }
     core.opened(&label);

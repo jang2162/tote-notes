@@ -54,11 +54,14 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
             let created = fs::read(file)
                 .map_err(WorkspaceError::from)
                 .and_then(|text| lock(&workspace).create_memo("md", &text));
+            // The parked file is the only copy of the piped text until it is a memo.
             match created {
-                Ok(info) => core.push_pending(&label, PendingOpen::Memo { id: info.id }),
+                Ok(info) => {
+                    core.push_pending(&label, PendingOpen::Memo { id: info.id });
+                    let _ = fs::remove_file(file);
+                }
                 Err(err) => eprintln!("tote: {}: {err}", file.display()),
             }
-            let _ = fs::remove_file(file);
         }
     }
     // The frontend picks these up now, or when it finishes loading if the window is new.
@@ -94,6 +97,7 @@ mod tests {
         let outside = dir.path().join("secret.txt");
         fs::write(&outside, "x").unwrap();
         let link = inbox.join("link.md");
+        #[cfg(unix)]
         std::os::unix::fs::symlink(&outside, &link).unwrap();
 
         assert!(is_inbox_file(&inbox, &inside));

@@ -9,7 +9,7 @@ pub mod menu;
 pub mod requests;
 pub mod windows;
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -49,6 +49,9 @@ pub struct AppCore {
 
 struct Inner {
     windows: HashMap<String, OpenWindow>,
+    /// Labels whose window is being opened: claimed before `Workspace::open`, so two requests
+    /// for one folder cannot both open it.
+    reserved: HashSet<String>,
     /// Window labels, most recently focused first.
     focus: Vec<String>,
     launch: LaunchState,
@@ -89,6 +92,7 @@ impl AppCore {
             external,
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
+                reserved: HashSet::new(),
                 focus: Vec::new(),
                 launch,
                 flush: FlushCoordinator::default(),
@@ -107,17 +111,32 @@ impl AppCore {
         )
     }
 
+    /// Claims `label` for opening. False when it is registered or another request is opening it;
+    /// only the caller that got true may `register` and, on failure, `release` it.
+    pub fn reserve(&self, label: &str) -> bool {
+        let mut inner = lock(&self.inner);
+        if inner.windows.contains_key(label) {
+            return false;
+        }
+        inner.reserved.insert(label.to_string())
+    }
+
+    /// Undoes this caller's own `reserve` (and `register`) after a failed open.
+    pub fn release(&self, label: &str) {
+        let mut inner = lock(&self.inner);
+        inner.reserved.remove(label);
+        inner.windows.remove(label);
+    }
+
     pub fn register(&self, label: &str, workspace: Workspace) {
         let window = OpenWindow {
             path: workspace.root().to_path_buf(),
             workspace: Arc::new(Mutex::new(workspace)),
             pending: Vec::new(),
         };
-        lock(&self.inner).windows.insert(label.to_string(), window);
-    }
-
-    pub fn forget(&self, label: &str) {
-        lock(&self.inner).windows.remove(label);
+        let mut inner = lock(&self.inner);
+        inner.reserved.remove(label);
+        inner.windows.insert(label.to_string(), window);
     }
 
     pub fn workspace(&self, label: &str) -> Option<Arc<Mutex<Workspace>>> {
@@ -335,6 +354,23 @@ mod tests {
             vec![core.path_of(&b).unwrap(), core.path_of(&a).unwrap()]
         );
         assert!(core.is_quitting());
+    }
+
+    #[test]
+    fn a_label_is_reserved_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let workspace = Workspace::create(&core.workspace_root, "가").unwrap();
+        let label = AppCore::label_for(workspace.root());
+        assert!(core.reserve(&label));
+        assert!(!core.reserve(&label));
+        core.register(&label, workspace);
+        // The second request lost the reservation, so it cleans up nothing.
+        assert!(!core.reserve(&label));
+        assert!(core.workspace(&label).is_some());
+        core.release(&label);
+        assert!(core.workspace(&label).is_none());
+        assert!(core.reserve(&label));
     }
 
     #[test]
