@@ -14,6 +14,10 @@ use super::{atomic_write, content_hash};
 use crate::session::drafts::DraftStore;
 use crate::workspace::{kind_for, FileKind};
 
+/// Largest file the editor opens. The frontend has a constant of the same name and value
+/// (Task 13); keep them equal.
+pub const MAX_EDITOR_BYTES: u64 = 100 * 1024 * 1024;
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ExternalInfo {
@@ -59,13 +63,20 @@ impl ExternalFiles {
                 "a folder is not a file",
             ));
         }
-        let disk_hash = match meta {
-            Some(_) => Some(content_hash(&fs::read(path)?)),
-            None => None,
+        // Only a file the editor can open is read and hashed: a video opened through `tote` must
+        // not be loaded into memory. Such a file has no base; a missing one has base `None`.
+        let editable = meta.as_ref().is_some_and(|m| is_editable(path, m.len()));
+        let tracked = meta.is_none() || editable;
+        let disk_hash = if editable {
+            Some(content_hash(&fs::read(path)?))
+        } else {
+            None
         };
         let (base, draft) = match self.drafts.get(path)? {
             Some((header, _)) => {
-                let changed = header.base_hash != disk_hash;
+                // A draft is only made while the file is editable, so an uneditable file has
+                // certainly changed since.
+                let changed = !tracked || header.base_hash != disk_hash;
                 (
                     header.base_hash,
                     Some(DraftInfo {
@@ -75,7 +86,11 @@ impl ExternalFiles {
             }
             None => (disk_hash, None),
         };
-        self.bases_lock().insert(path.to_path_buf(), base);
+        if tracked {
+            self.bases_lock().insert(path.to_path_buf(), base);
+        } else {
+            self.bases_lock().remove(path);
+        }
         Ok(ExternalInfo {
             path: path.to_path_buf(),
             exists: meta.is_some(),
@@ -104,7 +119,11 @@ impl ExternalFiles {
         let remembered = self.bases_lock().get(path).cloned();
         let base = match remembered {
             Some(base) => base,
-            None => fs::read(path).ok().map(|bytes| content_hash(&bytes)),
+            None => fs::metadata(path)
+                .ok()
+                .filter(|m| is_editable(path, m.len()))
+                .and_then(|_| fs::read(path).ok())
+                .map(|bytes| content_hash(&bytes)),
         };
         self.drafts.put(path, base.as_deref(), contents)
     }
@@ -117,7 +136,11 @@ impl ExternalFiles {
     /// the new base.
     pub fn save(&self, path: &Path, contents: &[u8]) -> io::Result<u64> {
         atomic_write(path, contents)?;
-        self.drafts.remove(path)?;
+        // The file already has the new contents; failing here would send the caller into the
+        // retry-and-block-quit path for a save that worked.
+        if let Err(err) = self.drafts.remove(path) {
+            eprintln!("could not remove the draft of {}: {err}", path.display());
+        }
         self.bases_lock()
             .insert(path.to_path_buf(), Some(content_hash(contents)));
         Ok(contents.len() as u64)
@@ -128,6 +151,11 @@ impl ExternalFiles {
             .lock()
             .unwrap_or_else(|poisoned| poisoned.into_inner())
     }
+}
+
+fn is_editable(path: &Path, size: u64) -> bool {
+    size <= MAX_EDITOR_BYTES
+        && kind_for(&path.file_name().unwrap_or_default().to_string_lossy()) == FileKind::Text
 }
 
 #[cfg(test)]
@@ -221,5 +249,60 @@ mod tests {
         fs::write(&photo, [0u8, 1, 2]).unwrap();
         let info = ext.open(&photo).unwrap();
         assert_eq!((info.kind, info.size), (FileKind::Image, 3));
+    }
+
+    #[test]
+    fn a_file_over_the_editor_limit_opens_without_reading() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext = files(dir.path());
+        let big = dir.path().join("big.txt");
+        fs::File::create(&big)
+            .unwrap()
+            .set_len(MAX_EDITOR_BYTES + 1)
+            .unwrap();
+        let info = ext.open(&big).unwrap();
+        assert!(info.exists);
+        assert_eq!(info.size, MAX_EDITOR_BYTES + 1);
+        let photo = dir.path().join("a.png");
+        fs::write(&photo, [1u8]).unwrap();
+        ext.open(&photo).unwrap();
+        let bases = ext.bases_lock();
+        assert!(!bases.contains_key(&big));
+        assert!(!bases.contains_key(&photo));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_refused_save_keeps_the_draft() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("locked.txt");
+        fs::write(&path, "disk").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        let ext = files(dir.path());
+        ext.open(&path).unwrap();
+        ext.keep_draft(&path, b"typed").unwrap();
+        let err = ext.save(&path, b"typed").unwrap_err();
+        assert_eq!(err.kind(), std::io::ErrorKind::PermissionDenied);
+        assert_eq!(ext.read_draft(&path).unwrap(), b"typed");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "disk");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_draft_that_cannot_be_removed_does_not_fail_the_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "disk").unwrap();
+        let ext = files(dir.path());
+        ext.open(&path).unwrap();
+        ext.keep_draft(&path, b"edited").unwrap();
+        let buffers = dir.path().join("buffers");
+        fs::set_permissions(&buffers, fs::Permissions::from_mode(0o555)).unwrap();
+        let result = ext.save(&path, b"edited");
+        fs::set_permissions(&buffers, fs::Permissions::from_mode(0o755)).unwrap();
+        assert_eq!(result.unwrap(), 6);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "edited");
     }
 }

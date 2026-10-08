@@ -136,5 +136,9 @@ mod tests {
         fs::write(&file, "no header line").unwrap();
         assert_eq!(store.get(path).unwrap(), None);
         assert!(!file.exists());
+        assert!(fs::read_dir(dir.path())
+            .unwrap()
+            .flatten()
+            .any(|e| e.file_name().to_string_lossy().contains(".corrupt-")));
     }
 }

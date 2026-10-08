@@ -61,6 +61,14 @@ mod tests {
     use super::*;
     use std::fs;
 
+    fn corrupt_copies(dir: &std::path::Path) -> usize {
+        fs::read_dir(dir)
+            .unwrap()
+            .flatten()
+            .filter(|e| e.file_name().to_string_lossy().contains(".corrupt-"))
+            .count()
+    }
+
     #[test]
     fn sessions_round_trip_per_device() {
         let root = tempfile::tempdir().unwrap();
@@ -88,6 +96,7 @@ mod tests {
         fs::write(&file, "{ broken").unwrap();
         assert_eq!(read_session(root.path(), "d").unwrap(), None);
         assert!(!file.exists());
+        assert_eq!(corrupt_copies(file.parent().unwrap()), 1);
     }
 
     #[test]
