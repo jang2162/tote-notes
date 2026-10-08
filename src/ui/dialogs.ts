@@ -11,7 +11,7 @@ function modal<T>(build: (close: (value: T | null) => void) => HTMLElement): Pro
       resolve(value);
     };
     const onKey = (event: KeyboardEvent) => {
-      if (event.key !== "Escape" || event.isComposing) return;
+      if (event.key !== "Escape" || isCompositionKey(event)) return;
       event.preventDefault();
       event.stopPropagation();
       close(null);
@@ -23,10 +23,15 @@ function modal<T>(build: (close: (value: T | null) => void) => HTMLElement): Pro
   });
 }
 
-/** An Enter that finishes a Korean syllable is not a submit: WebKit reports it while composing,
- * and taking it as one would submit the name without its last syllable. */
+/** A key that belongs to an IME composition. WebKit sends the Enter that finishes a Korean syllable
+ * (and the Escape that cancels one) after `compositionend`, with `isComposing` already false but
+ * `keyCode` 229. Taking it as a submit would submit the name without its last syllable. */
+function isCompositionKey(event: KeyboardEvent): boolean {
+  return event.isComposing || event.keyCode === 229;
+}
+
 function isSubmitEnter(event: KeyboardEvent): boolean {
-  return event.key === "Enter" && !event.isComposing && event.keyCode !== 229;
+  return event.key === "Enter" && !isCompositionKey(event);
 }
 
 function button(label: string, onClick: () => void, className = ""): HTMLButtonElement {
@@ -114,10 +119,19 @@ export async function workspacePicker(
     const input = h("input", { placeholder: "새 워크스페이스 이름" });
     input.spellcheck = false;
     const error = h("p", { class: "modal-error" });
+    let creating = false;
     const create = async () => {
-      const problem = await actions.create(input.value.trim());
-      if (problem) error.textContent = problem;
-      else close(true);
+      if (creating) return;
+      creating = true;
+      try {
+        const problem = await actions.create(input.value.trim());
+        if (problem) error.textContent = problem;
+        else close(true);
+      } catch (e) {
+        error.textContent = e instanceof Error ? e.message : String(e);
+      } finally {
+        creating = false;
+      }
     };
     input.addEventListener("keydown", (event) => {
       if (!isSubmitEnter(event)) return;

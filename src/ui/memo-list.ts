@@ -42,7 +42,10 @@ export class MemoList {
 
   constructor(private readonly onOpen: (id: string) => void) {
     this.filter.spellcheck = false;
-    this.filter.addEventListener("input", () => this.refilter());
+    this.filter.addEventListener("input", () => {
+      this.scroller.scrollTop = 0;
+      this.refilter();
+    });
     this.scroller.addEventListener("scroll", () => this.render(), { passive: true });
     new ResizeObserver(() => this.render()).observe(this.scroller);
   }

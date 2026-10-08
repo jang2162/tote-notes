@@ -1,6 +1,6 @@
 type Child = Node | string | null | undefined | false;
 type Props<K extends keyof HTMLElementTagNameMap> = Partial<
-  Omit<HTMLElementTagNameMap[K], "className" | "dataset" | "style">
+  Omit<HTMLElementTagNameMap[K], "className" | "dataset" | "style" | "innerHTML" | "outerHTML">
 > & { class?: string; data?: Record<string, string> };
 
 /** `document.createElement` with properties and children in one call. */

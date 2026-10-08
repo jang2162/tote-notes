@@ -25,6 +25,14 @@ test("Enter that finishes a composition does not submit", async ({ page }) => {
   await input.fill("회의록.md");
   await input.dispatchEvent("keydown", { key: "Enter", isComposing: true, keyCode: 229 });
   await expect(page.locator(".modal")).toHaveCount(1);
+  // WebKit's real case: the composition already ended, only the key code says so.
+  await input.dispatchEvent("keydown", { key: "Enter", isComposing: false, keyCode: 229 });
+  await expect(page.locator(".modal")).toHaveCount(1);
+  // The other half: no key code, but still composing.
+  await input.dispatchEvent("keydown", { key: "Enter", isComposing: true });
+  await expect(page.locator(".modal")).toHaveCount(1);
+  await input.dispatchEvent("keydown", { key: "Escape", isComposing: false, keyCode: 229 });
+  await expect(page.locator(".modal")).toHaveCount(1);
   await input.press("Enter");
   await expect.poll(() => page.evaluate(() => window.result)).toBe("회의록.md");
 });
@@ -43,4 +51,35 @@ test("the workspace picker shows why a name was refused", async ({ page }) => {
   await page.locator(".modal input").fill("새 곳");
   await page.getByRole("button", { name: "만들기" }).click();
   await expect(page.locator(".modal")).toHaveCount(0);
+
+  // A create still running is not started again; one that rejects keeps the dialog open.
+  await page.evaluate(() => {
+    window.result = 0;
+    void window.workspacePicker([], {
+      open: () => {},
+      create: () => {
+        window.result = (window.result as number) + 1;
+        return new Promise(() => {});
+      },
+    });
+  });
+  await page.locator(".modal input").fill("느린 곳");
+  await page.getByRole("button", { name: "만들기" }).dblclick();
+  await page.locator(".modal input").press("Enter");
+  await expect.poll(() => page.evaluate(() => window.result)).toBe(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+
+  await page.evaluate(
+    () =>
+      void window.workspacePicker([], {
+        open: () => {},
+        create: () => Promise.reject(new Error("<b>디스크가 가득 찼습니다</b>")),
+      }),
+  );
+  await page.locator(".modal input").fill("실패할 곳");
+  await page.getByRole("button", { name: "만들기" }).click();
+  await expect(page.locator(".modal-error")).toHaveText("<b>디스크가 가득 찼습니다</b>");
+  await expect(page.locator(".modal-error b")).toHaveCount(0);
+  await expect(page.locator(".modal")).toHaveCount(1);
 });
