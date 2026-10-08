@@ -1,0 +1,141 @@
+import type { WorkspaceListItem } from "../backend/types";
+import { h } from "./dom";
+
+/** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape. */
+function modal<T>(build: (close: (value: T | null) => void) => HTMLElement): Promise<T | null> {
+  return new Promise((resolve) => {
+    const backdrop = h("div", { class: "modal-backdrop" });
+    const close = (value: T | null) => {
+      document.removeEventListener("keydown", onKey, true);
+      backdrop.remove();
+      resolve(value);
+    };
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || event.isComposing) return;
+      event.preventDefault();
+      event.stopPropagation();
+      close(null);
+    };
+    backdrop.append(build(close));
+    document.addEventListener("keydown", onKey, true);
+    document.body.append(backdrop);
+    backdrop.querySelector<HTMLElement>("input, button.primary")?.focus();
+  });
+}
+
+/** An Enter that finishes a Korean syllable is not a submit: WebKit reports it while composing,
+ * and taking it as one would submit the name without its last syllable. */
+function isSubmitEnter(event: KeyboardEvent): boolean {
+  return event.key === "Enter" && !event.isComposing && event.keyCode !== 229;
+}
+
+function button(label: string, onClick: () => void, className = ""): HTMLButtonElement {
+  const b = h("button", { textContent: label, class: className });
+  b.addEventListener("click", onClick);
+  return b;
+}
+
+export type UnsavedChoice = "save" | "discard" | "cancel";
+
+export async function askUnsaved(name: string): Promise<UnsavedChoice> {
+  const choice = await modal<UnsavedChoice>((close) =>
+    h(
+      "div",
+      { class: "modal", role: "dialog" },
+      h("p", { textContent: `「${name}」의 바뀐 내용을 저장할까요?` }),
+      h("p", { class: "modal-note", textContent: "저장하지 않으면 바뀐 내용이 사라집니다." }),
+      h(
+        "div",
+        { class: "modal-buttons" },
+        button("버리기", () => close("discard"), "danger"),
+        button("취소", () => close("cancel")),
+        button("저장", () => close("save"), "primary"),
+      ),
+    ),
+  );
+  return choice ?? "cancel";
+}
+
+export function promptText(message: string, initial: string): Promise<string | null> {
+  return modal<string>((close) => {
+    const input = h("input", { value: initial });
+    input.spellcheck = false;
+    input.addEventListener("keydown", (event) => {
+      if (!isSubmitEnter(event)) return;
+      event.preventDefault();
+      close(input.value);
+    });
+    // Select the name without its extension, the part people usually change.
+    queueMicrotask(() => {
+      const dot = initial.lastIndexOf(".");
+      input.setSelectionRange(0, dot > 0 ? dot : initial.length);
+    });
+    return h(
+      "div",
+      { class: "modal", role: "dialog" },
+      h("p", { textContent: message }),
+      input,
+      h(
+        "div",
+        { class: "modal-buttons" },
+        button("취소", () => close(null)),
+        button("확인", () => close(input.value), "primary"),
+      ),
+    );
+  });
+}
+
+export interface PickerActions {
+  open(path: string): void;
+  /** Resolves with the reason a name was refused, or `null` when the workspace was made. */
+  create(name: string): Promise<string | null>;
+}
+
+export async function workspacePicker(
+  items: WorkspaceListItem[],
+  actions: PickerActions,
+): Promise<void> {
+  await modal<true>((close) => {
+    const list = h(
+      "ul",
+      { class: "picker-list" },
+      ...items.map((item) => {
+        const li = h("li", {
+          textContent: item.open ? `${item.name} (열림)` : item.name,
+          title: item.path,
+        });
+        li.addEventListener("click", () => {
+          actions.open(item.path);
+          close(true);
+        });
+        return li;
+      }),
+    );
+    const input = h("input", { placeholder: "새 워크스페이스 이름" });
+    input.spellcheck = false;
+    const error = h("p", { class: "modal-error" });
+    const create = async () => {
+      const problem = await actions.create(input.value.trim());
+      if (problem) error.textContent = problem;
+      else close(true);
+    };
+    input.addEventListener("keydown", (event) => {
+      if (!isSubmitEnter(event)) return;
+      event.preventDefault();
+      void create();
+    });
+    return h(
+      "div",
+      { class: "modal picker", role: "dialog" },
+      h("p", { textContent: "워크스페이스" }),
+      list,
+      h(
+        "div",
+        { class: "picker-create" },
+        input,
+        button("만들기", () => void create(), "primary"),
+      ),
+      error,
+    );
+  });
+}
