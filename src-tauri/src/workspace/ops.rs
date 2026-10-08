@@ -123,6 +123,16 @@ impl Workspace {
         to: String,
         auto_title: bool,
     ) -> Result<MemoInfo, WorkspaceError> {
+        // Title updates fire on every cursor move off the first line, nearly always with the same
+        // title; skip the fsync'd index write then.
+        if from == to
+            && self
+                .index
+                .get(id)
+                .is_some_and(|e| e.auto_title == auto_title)
+        {
+            return self.memo_info(id);
+        }
         if from != to {
             fs::rename(self.root.join(from), self.root.join(&to))?;
         }
@@ -207,6 +217,24 @@ mod tests {
         assert_eq!(info.file, "회의.md");
         assert_eq!(ws.read_memo(&memo.id).unwrap(), "# 회의\n안건".as_bytes());
         assert_eq!(listed(&ws), vec!["회의.md"]);
+        // A vanished file is created again under its name.
+        fs::remove_file(ws.root().join("회의.md")).unwrap();
+        ws.write_memo(&memo.id, b"back").unwrap();
+        assert!(ws.root().join("회의.md").exists());
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), b"back");
+    }
+
+    #[test]
+    fn an_unchanged_title_does_not_rewrite_the_index() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.retitle_memo(&memo.id, "회의").unwrap();
+        let index = ws.root().join(".tote/index.json");
+        fs::remove_file(&index).unwrap();
+        ws.retitle_memo(&memo.id, "회의").unwrap();
+        assert!(!index.exists());
+        ws.retitle_memo(&memo.id, "다른").unwrap();
+        assert!(index.exists());
     }
 
     #[test]
@@ -308,6 +336,18 @@ mod tests {
         assert!(!first.auto_title && !second.auto_title);
         assert_eq!(fs::read_to_string(&outside).unwrap(), "echo hi\n");
         assert_eq!(ws.read_memo(&second.id).unwrap(), b"echo edited\n");
+
+        // The original's permissions do not follow the copy: a locked file imports as writable.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let locked = root.path().join("locked.txt");
+            fs::write(&locked, "x").unwrap();
+            fs::set_permissions(&locked, fs::Permissions::from_mode(0o444)).unwrap();
+            let memo = ws.import_file(&locked).unwrap();
+            ws.write_memo(&memo.id, b"y").unwrap();
+            assert_eq!(ws.read_memo(&memo.id).unwrap(), b"y");
+        }
     }
 
     #[test]
