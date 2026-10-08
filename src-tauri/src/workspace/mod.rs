@@ -98,7 +98,7 @@ impl Workspace {
         };
         let root = fs::canonicalize(path)?;
         remove_temp_files(&root);
-        remove_temp_files(&root.join(TOTE_DIR));
+        remove_temp_files_below(&root.join(TOTE_DIR));
         let index = MemoIndex::load(&root)?;
         Ok(Workspace {
             root,
@@ -157,6 +157,20 @@ fn remove_temp_files(root: &Path) {
     for entry in entries.flatten() {
         if entry.file_name().to_str().is_some_and(is_temp_file) {
             let _ = fs::remove_file(entry.path());
+        }
+    }
+}
+
+/// `.tote/` itself and each folder directly inside it (`sessions/`, …). Symlinked folders are not
+/// followed, and folders are not listed by name so a new one needs no change here.
+fn remove_temp_files_below(tote_dir: &Path) {
+    remove_temp_files(tote_dir);
+    let Ok(entries) = fs::read_dir(tote_dir) else {
+        return;
+    };
+    for entry in entries.flatten() {
+        if entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+            remove_temp_files(&entry.path());
         }
     }
 }
@@ -244,8 +258,13 @@ mod tests {
         fs::write(&leftover, "half").unwrap();
         let in_tote = root.path().join("w/.tote/.tote-tmp-deadbeef");
         fs::write(&in_tote, "half").unwrap();
+        let sessions = root.path().join("w/.tote/sessions");
+        fs::create_dir_all(&sessions).unwrap();
+        let in_sessions = sessions.join(".tote-tmp-deadbeef");
+        fs::write(&in_sessions, "half").unwrap();
         Workspace::open(&root.path().join("w")).unwrap();
         assert!(!leftover.exists());
         assert!(!in_tote.exists());
+        assert!(!in_sessions.exists());
     }
 }

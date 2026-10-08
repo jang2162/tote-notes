@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{atomic_write, content_hash, set_aside};
+use crate::persist::{atomic_write, content_hash, is_temp_file, set_aside};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -24,7 +24,15 @@ pub struct DraftStore {
 }
 
 impl DraftStore {
+    /// Clears temp files an interrupted write left in `dir`; the store is made once at startup.
     pub fn new(dir: PathBuf) -> DraftStore {
+        if let Ok(entries) = fs::read_dir(&dir) {
+            for entry in entries.flatten() {
+                if entry.file_name().to_str().is_some_and(is_temp_file) {
+                    let _ = fs::remove_file(entry.path());
+                }
+            }
+        }
         DraftStore { dir }
     }
 
@@ -84,7 +92,11 @@ mod tests {
     #[test]
     fn drafts_round_trip_and_go_away() {
         let dir = tempfile::tempdir().unwrap();
+        fs::create_dir_all(dir.path().join("buffers")).unwrap();
+        let leftover = dir.path().join("buffers/.tote-tmp-deadbeef");
+        fs::write(&leftover, "half").unwrap();
         let store = DraftStore::new(dir.path().join("buffers"));
+        assert!(!leftover.exists());
         let path = Path::new("/Users/me/스크립트/배포.sh");
         assert_eq!(store.get(path).unwrap(), None);
         store
