@@ -53,10 +53,10 @@ fn run(args: &[String]) -> i32 {
         }
         return 1;
     };
-    let settings = Settings::load(&app_paths.settings_file()).unwrap_or_else(|err| {
-        eprintln!("tote: 설정 파일을 읽지 못해 기본 워크스페이스 루트를 씁니다: {err}");
-        Settings::default()
-    });
+    let (settings, warning) = settings_for_cli(&app_paths.settings_file());
+    if let Some(warning) = warning {
+        eprintln!("{warning}");
+    }
     let root = settings.workspace_root(&app_paths);
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
@@ -92,6 +92,25 @@ fn run(args: &[String]) -> i32 {
         return 1;
     }
     i32::from(!resolved.rejected.is_empty())
+}
+
+/// Reads `settings.json` without touching it. `Settings::load` sets a broken file aside, which a
+/// short-lived command must not do to the person's settings; the app does that when it loads.
+/// The second value is the warning to print when the file could not be used.
+fn settings_for_cli(path: &Path) -> (Settings, Option<String>) {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
+        Err(err) => return (Settings::default(), Some(warning(&err))),
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(settings) => (settings, None),
+        Err(err) => (Settings::default(), Some(warning(&err))),
+    }
+}
+
+fn warning(err: &dyn std::fmt::Display) -> String {
+    format!("tote: 설정 파일을 읽지 못해 기본 워크스페이스 루트를 씁니다: {err}")
 }
 
 fn park_stdin(dir: &Path) -> io::Result<PathBuf> {
@@ -162,5 +181,21 @@ mod tests {
             app_bundle(Path::new("/repo/src-tauri/target/debug/tote")),
             None
         );
+    }
+
+    #[test]
+    fn the_cli_reads_broken_settings_without_moving_them() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        std::fs::write(&file, b"{\"workspaceRoot\": ").unwrap();
+        let (settings, warning) = settings_for_cli(&file);
+        assert_eq!(settings, Settings::default());
+        assert!(warning.unwrap().starts_with("tote: 설정 파일을 읽지 못해"));
+        assert!(file.exists());
+        let names: Vec<_> = std::fs::read_dir(dir.path())
+            .unwrap()
+            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        assert_eq!(names, vec!["settings.json"]);
     }
 }

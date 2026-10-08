@@ -41,7 +41,7 @@ fn link(script: &Path, at: &Path) -> io::Result<()> {
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("{} 가 이미 있고 링크가 아닙니다", at.display()),
+                format!("{} 가 이미 있고 tote 가 만든 것이 아닙니다", at.display()),
             ))
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
