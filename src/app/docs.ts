@@ -246,9 +246,7 @@ export class MemoDoc extends Doc {
       // The file went away under us (renamed or deleted in Finder). Typed text must survive, so
       // it becomes a new memo instead of failing every save from here on.
       try {
-        // One call, under the old name: a create-then-write pair would leave an empty memo
-        // behind whenever the write fails, and would turn `deploy.sh` into `untitled.md`.
-        this.setInfo(await this.host.backend.importMemo(this.info.file, this.encode(text)));
+        this.setInfo(await this.recover(this.encode(text)));
       } catch (again) {
         return this.fail(again);
       }
@@ -258,6 +256,23 @@ export class MemoDoc extends Doc {
     this.savedText = text;
     this.error = null;
     this.host.changed(this, "saved");
+  }
+
+  /** One call per name, under the old name first: a create-then-write pair would leave an empty
+   * memo behind whenever the write fails, and would turn `deploy.sh` into `untitled.md`. The
+   * name is checked before anything is made, so an `invalid-name` try leaves nothing behind. The
+   * fallbacks are for files tote cannot name itself (a `할 일?.md` made in Finder). */
+  private async recover(bytes: Uint8Array): Promise<MemoInfo> {
+    const { ext } = splitName(this.info.file);
+    const names = [this.info.file, ext ? `untitled.${ext}` : "untitled", "untitled.md"];
+    for (const [i, name] of names.entries()) {
+      try {
+        return await this.host.backend.importMemo(name, bytes);
+      } catch (error) {
+        if (errorCode(error) !== "invalid-name" || i === names.length - 1) throw error;
+      }
+    }
+    throw new Error("unreachable");
   }
 
   saveNow(): Promise<void> {

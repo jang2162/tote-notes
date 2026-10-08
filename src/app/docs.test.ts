@@ -127,6 +127,18 @@ describe("MemoDoc", () => {
     await vi.runAllTimersAsync();
     expect(other.info.file).toBe("deploy.sh");
     expect(script.backend.memoText(other.info.id)).toBe("#!/bin/bash\necho hi");
+
+    // A name tote cannot create (made in Finder) falls back to untitled.
+    const odd = setup({ memos: { q: fakeMemo("할 일?.md", "원래") } });
+    const third = new MemoDoc(odd.host, (await odd.backend.listMemos())[0]);
+    await third.ensureLoaded();
+    delete odd.backend.data.memos.q;
+    type(third, " 추가");
+    await vi.runAllTimersAsync();
+    expect(third.info.file).toBe("untitled.md");
+    expect(odd.backend.memoText(third.info.id)).toBe("원래 추가");
+    expect(third.notice).toBe(RECOVERED_NOTICE);
+    expect(Object.keys(odd.backend.data.memos)).toEqual([third.info.id]);
   });
 
   it("loads once, lazily, and keeps CRLF and the BOM", async () => {
