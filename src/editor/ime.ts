@@ -8,11 +8,11 @@ export function compositionSelection(selection: EditorSelection): EditorSelectio
   return selection.ranges.length > 1 ? EditorSelection.create([selection.main]) : null;
 }
 
-export const collapseSelectionOnComposition = EditorView.domEventHandlers({
+/** An observer, not a handler: observers all run before any handler, and CodeMirror's own
+ * `compositionstart` observer deletes every non-empty selection when the main one spans lines. */
+export const collapseSelectionOnComposition = EditorView.domEventObservers({
   compositionstart(_event, view) {
     const next = compositionSelection(view.state.selection);
     if (next) view.dispatch({ selection: next, userEvent: "select" });
-    // CodeMirror still runs its own composition handling.
-    return false;
   },
 });

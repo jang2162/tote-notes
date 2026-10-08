@@ -64,6 +64,37 @@ test("a composition starting with several cursors keeps only the main one", asyn
     view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
   });
   expect(await ranges(page)).toEqual([[2, 2]]);
+
+  // A multi-line main selection must not cost the others their text: CodeMirror's own
+  // compositionstart handling deletes every non-empty selection unless ours runs first. The main
+  // selection itself is replaced by the composition, as usual; "four" has to survive.
+  await open(page, "one\ntwo\nthree four");
+  await page.evaluate(() => {
+    const { view, EditorSelection } = window;
+    view.dispatch({
+      selection: EditorSelection.create(
+        [EditorSelection.range(0, 5), EditorSelection.range(14, 18)],
+        0,
+      ),
+    });
+    view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
+  });
+  expect(await text(page)).toBe("wo\nthree four");
+  expect(await ranges(page)).toEqual([[0, 0]]);
+
+  // Typing that is not a composition keeps every cursor.
+  await open(page, "aa\nbb\ncc");
+  await page.evaluate(() => {
+    const { view, EditorSelection } = window;
+    view.dispatch({
+      selection: EditorSelection.create(
+        [EditorSelection.cursor(2), EditorSelection.cursor(5), EditorSelection.cursor(8)],
+        0,
+      ),
+    });
+  });
+  await page.keyboard.type("xy");
+  expect(await text(page)).toBe("aaxy\nbbxy\nccxy");
 });
 
 test("⌘D adds the next occurrence of the selected word", async ({ page }) => {
