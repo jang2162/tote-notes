@@ -1,0 +1,6 @@
+#!/bin/sh
+# The `tote` shell command, installed as a symlink to this file inside tote.app. It runs the app
+# binary in command-line mode (src-tauri/src/cli/front.rs), which checks the arguments and hands
+# them to the app.
+self="$(readlink -f "$0")"
+exec env TOTE_CLI=1 "$(dirname "$self")/../../MacOS/tote" "$@"

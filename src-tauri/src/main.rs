@@ -2,5 +2,10 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 fn main() {
+    // The `tote` script runs this binary with TOTE_CLI=1: check the arguments, hand them to the
+    // app and exit, instead of starting a second app.
+    if let Some(code) = tote_lib::cli::front::run_if_cli() {
+        std::process::exit(code);
+    }
     tote_lib::run()
 }

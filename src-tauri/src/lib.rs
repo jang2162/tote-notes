@@ -1,4 +1,5 @@
 pub mod appdata;
+pub mod cli;
 pub mod persist;
 pub mod session;
 pub mod workspace;
