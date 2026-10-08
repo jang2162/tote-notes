@@ -98,6 +98,7 @@ impl Workspace {
         };
         let root = fs::canonicalize(path)?;
         remove_temp_files(&root);
+        remove_temp_files(&root.join(TOTE_DIR));
         let index = MemoIndex::load(&root)?;
         Ok(Workspace {
             root,
@@ -241,7 +242,10 @@ mod tests {
         Workspace::create(root.path(), "w").unwrap();
         let leftover = root.path().join("w/.tote-tmp-deadbeef");
         fs::write(&leftover, "half").unwrap();
+        let in_tote = root.path().join("w/.tote/.tote-tmp-deadbeef");
+        fs::write(&in_tote, "half").unwrap();
         Workspace::open(&root.path().join("w")).unwrap();
         assert!(!leftover.exists());
+        assert!(!in_tote.exists());
     }
 }

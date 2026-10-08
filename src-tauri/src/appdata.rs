@@ -142,7 +142,12 @@ impl Settings {
     /// path is taken from home: the app's working folder is usually `/`, so `Notes` would
     /// otherwise become `/Notes`. Without a known home the path is returned as it is.
     pub fn workspace_root_with_home(&self, paths: &AppPaths, home: Option<&Path>) -> PathBuf {
-        let Some(root) = &self.workspace_root else {
+        // An empty path would make `home.join("")` the home folder itself the workspace root.
+        let Some(root) = self
+            .workspace_root
+            .as_ref()
+            .filter(|r| !r.as_os_str().is_empty())
+        else {
             return paths.default_workspace_root.clone();
         };
         match (root.strip_prefix("~"), home) {
@@ -307,6 +312,13 @@ mod tests {
         assert_eq!(
             settings.workspace_root_with_home(&paths, None),
             PathBuf::from("Notes")
+        );
+        let empty = Settings {
+            workspace_root: Some("".into()),
+        };
+        assert_eq!(
+            empty.workspace_root_with_home(&paths, Some(Path::new("/home"))),
+            paths.default_workspace_root
         );
     }
 
