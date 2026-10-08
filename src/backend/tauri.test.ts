@@ -1,0 +1,82 @@
+import { beforeEach, describe, expect, it, vi } from "vitest";
+
+import { TauriBackend } from "./tauri";
+import { BackendError } from "./types";
+
+// Only invoke is under test; the window, webview and dialog modules reach the native side, so
+// they are stubbed.
+const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
+vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({}) }));
+vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({}) }));
+vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
+
+// The command table of src-tauri/src/app/commands.rs. A renamed command or argument key fails
+// only at runtime inside the app, so the names are pinned here.
+describe("TauriBackend", () => {
+  const backend = new TauriBackend();
+
+  beforeEach(() => {
+    invoke.mockReset();
+    invoke.mockResolvedValue(new ArrayBuffer(0));
+  });
+
+  it("calls each command with the argument names commands.rs takes", async () => {
+    const calls: [() => Promise<unknown>, string, Record<string, unknown> | undefined][] = [
+      [() => backend.workspaceInfo(), "workspace_info", undefined],
+      [() => backend.listMemos(), "list_memos", undefined],
+      [() => backend.createMemo(), "create_memo", undefined],
+      [() => backend.readMemo("m"), "read_memo", { id: "m" }],
+      [() => backend.retitleMemo("m", "제목"), "retitle_memo", { id: "m", stem: "제목" }],
+      [() => backend.renameMemo("m", "a.md"), "rename_memo", { id: "m", file: "a.md" }],
+      [() => backend.deleteMemo("m"), "delete_memo", { id: "m" }],
+      [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],
+      [() => backend.readSession(), "read_session", undefined],
+      [() => backend.writeSession("{}"), "write_session", { json: "{}" }],
+      [() => backend.takePendingOpens(), "take_pending_opens", undefined],
+      [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
+      [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
+      [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],
+      [() => backend.discardExternalDraft("/a.sh"), "discard_external_draft", { path: "/a.sh" }],
+      [() => backend.listWorkspaces(), "list_workspaces", undefined],
+      [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
+      [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
+      [() => backend.flushDone(3), "flush_done", { id: 3 }],
+      [() => backend.closeWindow(), "close_window", undefined],
+    ];
+    for (const [run, command, args] of calls) {
+      invoke.mockClear();
+      await run();
+      expect(invoke).toHaveBeenCalledWith(command, args, undefined);
+    }
+  });
+
+  it("sends contents as raw bytes and names in percent-encoded headers", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    await backend.writeMemo("id 1", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("write_memo", bytes, {
+      headers: { "x-memo-id": "id%201" },
+    });
+    await backend.importMemo("회의.md", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("import_memo", bytes, {
+      headers: { "x-file-name": "%ED%9A%8C%EC%9D%98.md" },
+    });
+    await backend.keepExternalDraft("/a b/c.sh", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("keep_external_draft", bytes, {
+      headers: { "x-path": "%2Fa%20b%2Fc.sh" },
+    });
+    await backend.saveExternal("/a b/c.sh", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("save_external", bytes, {
+      headers: { "x-path": "%2Fa%20b%2Fc.sh" },
+    });
+  });
+
+  it("turns a rejection into a BackendError that keeps the code", async () => {
+    invoke.mockRejectedValueOnce({ code: "unknown-memo", message: "no memo with id m" });
+    const error = await backend.readMemo("m").catch((err: unknown) => err);
+    expect(error).toBeInstanceOf(BackendError);
+    expect(error).toMatchObject({ code: "unknown-memo", message: "no memo with id m" });
+    invoke.mockRejectedValueOnce("the window is gone");
+    await expect(backend.listMemos()).rejects.toMatchObject({ code: "app" });
+  });
+});
