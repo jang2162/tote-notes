@@ -5,6 +5,7 @@
 pub mod index;
 pub mod memo;
 pub mod names;
+mod ops;
 
 use std::fs;
 use std::io;

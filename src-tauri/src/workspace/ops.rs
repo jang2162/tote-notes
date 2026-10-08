@@ -1,0 +1,329 @@
+//! Creating, saving, renaming and removing memo files. Every operation goes through the memo ID,
+//! so a save that lands right after a title rename still finds the file.
+
+use std::fs;
+use std::io;
+use std::path::Path;
+
+use super::index::MemoEntry;
+use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
+use super::{MemoInfo, Workspace, WorkspaceError};
+use crate::persist::atomic_write;
+
+impl Workspace {
+    pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
+        let file = self.free_name("untitled", ext, None);
+        self.add_memo(file, true, contents)
+    }
+
+    pub fn read_memo(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
+        let file = &self.entry(id)?.file;
+        Ok(fs::read(self.root.join(file))?)
+    }
+
+    /// Writes by ID. A file deleted under us is written again: the editor's text is the newest
+    /// copy there is.
+    pub fn write_memo(&mut self, id: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
+        let file = self.entry(id)?.file.clone();
+        atomic_write(&self.root.join(file), contents)?;
+        self.memo_info(id)
+    }
+
+    /// Renames an automatically titled memo to `<stem>.<its extension>`; memos the person named
+    /// are left alone. `stem` comes from the frontend's title rule and is checked again here
+    /// because a file name is the one thing that must never leave the workspace folder.
+    pub fn retitle_memo(&mut self, id: &str, stem: &str) -> Result<MemoInfo, WorkspaceError> {
+        let entry = self.entry(id)?.clone();
+        if !entry.auto_title {
+            return self.memo_info(id);
+        }
+        let ext = split_name(&entry.file).1.to_string();
+        if !is_valid_file_name(&join_name(stem, &ext)) {
+            return Err(WorkspaceError::InvalidName(stem.to_string()));
+        }
+        let file = self.free_name(stem, &ext, Some(&entry.file));
+        self.move_memo(id, &entry.file, file, true)
+    }
+
+    /// A name the person chose: used as is, and the memo stops getting automatic titles.
+    pub fn rename_memo(&mut self, id: &str, file: &str) -> Result<MemoInfo, WorkspaceError> {
+        let entry = self.entry(id)?.clone();
+        let file = file.trim();
+        if !is_valid_file_name(file) {
+            return Err(WorkspaceError::InvalidName(file.to_string()));
+        }
+        let to = self.root.join(file);
+        if to.symlink_metadata().is_ok() && !same_file(&self.root.join(&entry.file), &to) {
+            return Err(WorkspaceError::AlreadyExists(to));
+        }
+        self.move_memo(id, &entry.file, file.to_string(), false)
+    }
+
+    pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
+        let file = self.entry(id)?.file.clone();
+        match fs::remove_file(self.root.join(file)) {
+            Ok(()) => {}
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {}
+            Err(err) => return Err(err.into()),
+        }
+        self.index.remove(id);
+        self.index.save()?;
+        Ok(())
+    }
+
+    /// Copies `contents` in as a new memo named `file_name` (`a.sh`, `a 2.sh`, …). The person
+    /// chose that name, so automatic titles stay off.
+    pub fn import_memo(
+        &mut self,
+        file_name: &str,
+        contents: &[u8],
+    ) -> Result<MemoInfo, WorkspaceError> {
+        if !is_valid_file_name(file_name) {
+            return Err(WorkspaceError::InvalidName(file_name.to_string()));
+        }
+        let (stem, ext) = split_name(file_name);
+        let file = self.free_name(stem, ext, None);
+        self.add_memo(file, false, contents)
+    }
+
+    /// `import_memo` with the bytes and the name of a file on disk; the file itself is not touched.
+    pub fn import_file(&mut self, path: &Path) -> Result<MemoInfo, WorkspaceError> {
+        let contents = fs::read(path)?;
+        let name = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| WorkspaceError::InvalidName(path.display().to_string()))?;
+        self.import_memo(name, &contents)
+    }
+
+    fn add_memo(
+        &mut self,
+        file: String,
+        auto_title: bool,
+        contents: &[u8],
+    ) -> Result<MemoInfo, WorkspaceError> {
+        atomic_write(&self.root.join(&file), contents)?;
+        let id = uuid::Uuid::new_v4().to_string();
+        self.index.insert(
+            id.clone(),
+            MemoEntry {
+                file,
+                auto_title,
+                language: None,
+            },
+        );
+        self.index.save()?;
+        self.memo_info(&id)
+    }
+
+    fn move_memo(
+        &mut self,
+        id: &str,
+        from: &str,
+        to: String,
+        auto_title: bool,
+    ) -> Result<MemoInfo, WorkspaceError> {
+        if from != to {
+            fs::rename(self.root.join(from), self.root.join(&to))?;
+        }
+        if let Some(entry) = self.index.get_mut(id) {
+            entry.file = to;
+            entry.auto_title = auto_title;
+        }
+        self.index.save()?;
+        self.memo_info(id)
+    }
+
+    /// `stem.ext`, then `stem 2.ext`, … — the first name no other file in the folder uses. The
+    /// file system decides what "uses" means: on APFS `Memo.md`, `memo.md` and a decomposed
+    /// Hangul spelling all collide. `own` (the memo's current file) never counts as taken, which
+    /// lets a memo change only the case of its name.
+    fn free_name(&self, stem: &str, ext: &str, own: Option<&str>) -> String {
+        let own = own.map(|file| self.root.join(file));
+        unique_file_name(stem, ext, |candidate| {
+            let path = self.root.join(candidate);
+            path.symlink_metadata().is_ok()
+                && own.as_deref().is_none_or(|own| !same_file(own, &path))
+        })
+    }
+}
+
+#[cfg(unix)]
+fn same_file(a: &Path, b: &Path) -> bool {
+    use std::os::unix::fs::MetadataExt;
+    match (fs::symlink_metadata(a), fs::symlink_metadata(b)) {
+        (Ok(x), Ok(y)) => x.dev() == y.dev() && x.ino() == y.ino(),
+        _ => false,
+    }
+}
+
+#[cfg(not(unix))]
+fn same_file(a: &Path, b: &Path) -> bool {
+    a == b
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::path::Path;
+
+    fn workspace() -> (tempfile::TempDir, Workspace) {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(root.path(), "w").unwrap();
+        (root, ws)
+    }
+
+    fn listed(ws: &Workspace) -> Vec<String> {
+        let mut names: Vec<String> = fs::read_dir(ws.root())
+            .unwrap()
+            .filter_map(|e| e.ok()?.file_name().into_string().ok())
+            .filter(|n| !n.starts_with('.'))
+            .collect();
+        names.sort();
+        names
+    }
+
+    #[test]
+    fn new_memos_start_untitled_and_count_up() {
+        let (_root, mut ws) = workspace();
+        let a = ws.create_memo("md", b"").unwrap();
+        let b = ws.create_memo("md", b"").unwrap();
+        assert_eq!(
+            (a.file.as_str(), b.file.as_str()),
+            ("untitled.md", "untitled 2.md")
+        );
+        assert!(a.auto_title);
+        assert_ne!(a.id, b.id);
+    }
+
+    #[test]
+    fn writes_follow_the_memo_through_a_rename() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.write_memo(&memo.id, "# 회의".as_bytes()).unwrap();
+        ws.retitle_memo(&memo.id, "회의").unwrap();
+        let info = ws.write_memo(&memo.id, "# 회의\n안건".as_bytes()).unwrap();
+        assert_eq!(info.file, "회의.md");
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), "# 회의\n안건".as_bytes());
+        assert_eq!(listed(&ws), vec!["회의.md"]);
+    }
+
+    #[test]
+    fn a_title_already_taken_gets_a_number() {
+        let (_root, mut ws) = workspace();
+        let a = ws.create_memo("md", b"").unwrap();
+        let b = ws.create_memo("md", b"").unwrap();
+        assert_eq!(ws.retitle_memo(&a.id, "회의").unwrap().file, "회의.md");
+        assert_eq!(ws.retitle_memo(&b.id, "회의").unwrap().file, "회의 2.md");
+        // Its own number is not a reason to rename again.
+        assert_eq!(ws.retitle_memo(&b.id, "회의").unwrap().file, "회의 2.md");
+    }
+
+    #[test]
+    fn a_case_only_title_change_renames_the_same_file() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.retitle_memo(&memo.id, "memo").unwrap();
+        assert_eq!(ws.retitle_memo(&memo.id, "Memo").unwrap().file, "Memo.md");
+        assert_eq!(listed(&ws), vec!["Memo.md"]);
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn a_title_that_differs_only_in_unicode_normalisation_counts_as_taken() {
+        // Finder may write Korean names decomposed (NFD) while typed titles are composed (NFC);
+        // APFS treats them as one name, so the memo must not take it.
+        let (_root, mut ws) = workspace();
+        let nfd = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}.md"; // 한글.md, decomposed
+        fs::write(ws.root().join(nfd), "").unwrap();
+        let memo = ws.create_memo("md", b"").unwrap();
+        assert_eq!(ws.retitle_memo(&memo.id, "한글").unwrap().file, "한글 2.md");
+    }
+
+    #[test]
+    fn titles_leave_manually_named_memos_alone() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.rename_memo(&memo.id, "내 이름.md").unwrap();
+        let info = ws.retitle_memo(&memo.id, "다른 제목").unwrap();
+        assert_eq!(info.file, "내 이름.md");
+        assert!(!info.auto_title);
+    }
+
+    #[test]
+    fn titles_that_would_escape_the_folder_are_refused() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        for bad in ["../밖", "a/b", "", ".숨김"] {
+            assert!(matches!(
+                ws.retitle_memo(&memo.id, bad),
+                Err(WorkspaceError::InvalidName(_))
+            ));
+        }
+        assert_eq!(listed(&ws), vec!["untitled.md"]);
+    }
+
+    #[test]
+    fn rename_refuses_a_name_another_file_has() {
+        let (_root, mut ws) = workspace();
+        let a = ws.create_memo("md", b"").unwrap();
+        ws.import_memo("deploy.sh", b"echo").unwrap();
+        assert!(matches!(
+            ws.rename_memo(&a.id, "deploy.sh"),
+            Err(WorkspaceError::AlreadyExists(_))
+        ));
+        assert!(matches!(
+            ws.rename_memo(&a.id, "a/b.md"),
+            Err(WorkspaceError::InvalidName(_))
+        ));
+    }
+
+    #[test]
+    fn delete_removes_file_and_entry_even_if_the_file_is_gone() {
+        let (_root, mut ws) = workspace();
+        let a = ws.create_memo("md", b"").unwrap();
+        let b = ws.create_memo("md", b"").unwrap();
+        ws.delete_memo(&a.id).unwrap();
+        fs::remove_file(ws.root().join(&b.file)).unwrap();
+        ws.delete_memo(&b.id).unwrap();
+        assert!(listed(&ws).is_empty());
+        assert!(matches!(
+            ws.memo_info(&a.id),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+    }
+
+    #[test]
+    fn imports_keep_the_name_and_never_auto_title() {
+        let (root, mut ws) = workspace();
+        let outside = root.path().join("deploy.sh");
+        fs::write(&outside, "echo hi\n").unwrap();
+        let first = ws.import_file(&outside).unwrap();
+        let second = ws.import_memo("deploy.sh", b"echo edited\n").unwrap();
+        assert_eq!(
+            (first.file.as_str(), second.file.as_str()),
+            ("deploy.sh", "deploy 2.sh")
+        );
+        assert!(!first.auto_title && !second.auto_title);
+        assert_eq!(fs::read_to_string(&outside).unwrap(), "echo hi\n");
+        assert_eq!(ws.read_memo(&second.id).unwrap(), b"echo edited\n");
+    }
+
+    #[test]
+    fn unknown_ids_are_reported() {
+        let (_root, mut ws) = workspace();
+        assert!(matches!(
+            ws.read_memo("x"),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        assert!(matches!(
+            ws.write_memo("x", b""),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        assert!(matches!(
+            ws.import_file(Path::new("/nonexistent/a.txt")),
+            Err(WorkspaceError::Io(_))
+        ));
+    }
+}
