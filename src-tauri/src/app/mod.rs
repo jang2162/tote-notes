@@ -2,7 +2,12 @@
 //! opens for windows still loading, and the close/quit bookkeeping. No Tauri types in here, so it
 //! is tested with plain values; src/app/windows.rs and friends connect it to Tauri.
 
+pub mod commands;
 pub mod flush;
+pub mod lifecycle;
+pub mod menu;
+pub mod requests;
+pub mod windows;
 
 use std::collections::HashMap;
 use std::fs;
