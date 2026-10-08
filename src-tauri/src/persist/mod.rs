@@ -1,6 +1,8 @@
 //! Writing files so that a crash never leaves one half-written, and the JSON files built on
 //! that: reading one (setting a broken file aside instead of failing) and writing one.
 
+pub mod external;
+
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
