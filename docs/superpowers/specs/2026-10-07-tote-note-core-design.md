@@ -71,7 +71,7 @@ tote-note 는 서브프로젝트 셋으로 나뉜다. 이 문서는 **코어**�
     회의 준비.md                 메모는 루트에 평평하게
     deploy.sh                    가져온 외부 파일도 여기로 복사
     .tote/
-      workspace.json             워크스페이스 ID·이름·설정
+      workspace.json             워크스페이스 ID·설정 (이름은 폴더 이름이라 두지 않는다)
       index.json                 메모 ID → 파일 이름, 자동 제목 여부, 언어 지정
       sessions/<기기 ID>.json    그 기기의 창·탭·커서·스크롤
 
