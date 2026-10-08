@@ -1,3 +1,4 @@
+pub mod appdata;
 pub mod persist;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

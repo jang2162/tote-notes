@@ -3,7 +3,10 @@
 use std::fs::{self, File};
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
+use serde::de::DeserializeOwned;
+use serde::Serialize;
 use sha2::{Digest, Sha256};
 
 const TEMP_PREFIX: &str = ".tote-tmp-";
@@ -15,8 +18,21 @@ const TEMP_PREFIX: &str = ".tote-tmp-";
 /// The replaced file's permissions carry over (a script stays executable), and a symlink is
 /// followed so the file it points to changes while the link stays a link. Extended attributes
 /// such as Finder tags do not carry over.
+///
+/// A read-only file is refused with `PermissionDenied`: someone locked it on purpose, and the
+/// rename would replace it anyway, so the caller shows a save failure instead. A symlink whose
+/// target is missing fails with `NotFound` rather than turning the link into a plain file.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     let target = follow_link(path)?;
+    // Not `?`: a missing target is a new file, which is fine.
+    if let Ok(meta) = fs::metadata(&target) {
+        if meta.permissions().readonly() {
+            return Err(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "file is read-only",
+            ));
+        }
+    }
     let dir = target
         .parent()
         .filter(|dir| !dir.as_os_str().is_empty())
@@ -61,6 +77,46 @@ pub fn content_hash(bytes: &[u8]) -> String {
         .iter()
         .map(|b| format!("{b:02x}"))
         .collect()
+}
+
+/// Reads JSON from `path`. Missing is `Ok(None)`. A file that does not parse as `T` is moved aside
+/// to `<name>.corrupt-<unix ms>` and also reads as `Ok(None)`: the caller starts over without
+/// destroying what was there (spec 「오류 처리」).
+pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) => return Err(err),
+    };
+    match serde_json::from_slice(&bytes) {
+        Ok(value) => Ok(Some(value)),
+        Err(_) => {
+            set_aside(path)?;
+            Ok(None)
+        }
+    }
+}
+
+/// Renames `path` to `<name>.corrupt-<unix ms>` next to it and returns the new path.
+pub fn set_aside(path: &Path) -> io::Result<PathBuf> {
+    let millis = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis());
+    let mut name = path.file_name().unwrap_or_default().to_os_string();
+    name.push(format!(".corrupt-{millis}"));
+    let aside = path.with_file_name(name);
+    fs::rename(path, &aside)?;
+    Ok(aside)
+}
+
+/// Writes `value` as pretty JSON through `atomic_write`, creating the folder when needed.
+pub fn write_json<T: Serialize>(path: &Path, value: &T) -> io::Result<()> {
+    if let Some(dir) = path.parent() {
+        fs::create_dir_all(dir)?;
+    }
+    let mut bytes = serde_json::to_vec_pretty(value)?;
+    bytes.push(b'\n');
+    atomic_write(path, &bytes)
 }
 
 #[cfg(test)]
@@ -141,6 +197,29 @@ mod tests {
     }
 
     #[test]
+    fn a_failed_rename_leaves_no_temp_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let target = dir.path().join("memo.md");
+        fs::create_dir(&target).unwrap(); // a file cannot be renamed over a folder
+        assert!(atomic_write(&target, b"new").is_err());
+        assert_eq!(names(dir.path()), vec!["memo.md"]);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_read_only_file_is_not_replaced() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("locked.md");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o444)).unwrap();
+        let err = atomic_write(&path, b"new").unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::PermissionDenied);
+        assert_eq!(fs::read_to_string(&path).unwrap(), "old");
+        assert_eq!(names(dir.path()), vec!["locked.md"]);
+    }
+
+    #[test]
     fn temp_files_are_recognised() {
         assert!(is_temp_file(".tote-tmp-0123abcd"));
         assert!(!is_temp_file("tote-tmp.md"));
@@ -151,6 +230,55 @@ mod tests {
         assert_eq!(
             content_hash(b"abc"),
             "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+        );
+    }
+
+    #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
+    struct Sample {
+        name: String,
+    }
+
+    #[test]
+    fn json_round_trips_and_creates_the_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("sub/폴더/a.json");
+        write_json(
+            &path,
+            &Sample {
+                name: "메모".into(),
+            },
+        )
+        .unwrap();
+        assert!(fs::read_to_string(&path).unwrap().ends_with("}\n"));
+        assert_eq!(
+            read_json::<Sample>(&path).unwrap(),
+            Some(Sample {
+                name: "메모".into()
+            })
+        );
+    }
+
+    #[test]
+    fn missing_json_reads_as_none() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read_json::<Sample>(&dir.path().join("none.json")).unwrap(),
+            None
+        );
+    }
+
+    #[test]
+    fn unreadable_json_is_set_aside_with_its_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("index.json");
+        fs::write(&path, "{ broken").unwrap();
+        assert_eq!(read_json::<Sample>(&path).unwrap(), None);
+        let names = names(dir.path());
+        assert_eq!(names.len(), 1);
+        assert!(names[0].starts_with("index.json.corrupt-"));
+        assert_eq!(
+            fs::read_to_string(dir.path().join(&names[0])).unwrap(),
+            "{ broken"
         );
     }
 }

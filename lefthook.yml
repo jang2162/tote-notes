@@ -8,6 +8,8 @@ pre-commit:
       glob: "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,vue,svelte,astro}"
       run: "pnpm exec oxlint --fix {staged_files}"
       stage_fixed: true
+    # rustfmt 는 넘겨받은 파일이 선언한 하위 모듈(mod x;) 파일까지 포맷하므로, stage 하지 않은
+    # 그 파일도 작업 트리에서 바뀔 수 있다 — stable 에는 막는 옵션(skip_children)이 없다.
     - name: rustfmt
       glob: "*.rs"
       run: "rustfmt --edition 2021 {staged_files}"
