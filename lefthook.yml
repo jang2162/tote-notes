@@ -22,6 +22,8 @@ pre-push:
 post-checkout:
   jobs:
     - name: runtime
-      run: "if command -v mise >/dev/null; then mise install; else echo 'mise 가 없어 런타임 버전을 맞추지 못했다'; fi"
+      # 새 워크트리는 새 경로라 mise.toml 신뢰가 이어지지 않는다. trust 없이 install 이 실패하면
+      # git worktree add 와 그것을 감싼 도구(Orca 등)가 워크트리를 만들고도 실패로 끝난다.
+      run: "if command -v mise >/dev/null; then mise trust --quiet && mise install; else echo 'mise 가 없어 런타임 버전을 맞추지 못했다'; fi"
     - name: deps
       run: "pnpm install"
