@@ -25,7 +25,19 @@ export function decodeText(bytes: Uint8Array): DecodedText | null {
   } catch {
     return null;
   }
-  return { text, eol: text.includes("\r\n") ? "\r\n" : "\n", bom };
+  return { text, eol: lineEnding(text), bom };
+}
+
+/** CRLF only when it outnumbers bare LF: one stray CRLF in a shell script must not turn every
+ * line into CRLF on the next save (`#!/bin/sh\r` breaks). */
+function lineEnding(text: string): Eol {
+  let crlf = 0;
+  let lf = 0;
+  for (let i = text.indexOf("\n"); i !== -1; i = text.indexOf("\n", i + 1)) {
+    if (i > 0 && text.charCodeAt(i - 1) === 13) crlf++;
+    else lf++;
+  }
+  return crlf > lf ? "\r\n" : "\n";
 }
 
 /** `text` must already use the file's line ending (`Text.sliceString(0, length, eol)`). */

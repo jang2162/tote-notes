@@ -6,6 +6,7 @@ import { open } from "@tauri-apps/plugin-dialog";
 import {
   BackendError,
   type Backend,
+  type BackendErrorCode,
   type ExternalInfo,
   type MemoInfo,
   type PendingOpen,
@@ -24,7 +25,11 @@ async function call<T>(
   } catch (err) {
     const e = err as { code?: unknown; message?: unknown } | null;
     if (e && typeof e === "object" && typeof e.code === "string") {
-      throw new BackendError(e.code, typeof e.message === "string" ? e.message : e.code);
+      // The IPC boundary is untyped; Rust only sends the codes `BackendErrorCode` lists.
+      throw new BackendError(
+        e.code as BackendErrorCode,
+        typeof e.message === "string" ? e.message : e.code,
+      );
     }
     throw new BackendError("app", String(err));
   }

@@ -17,7 +17,7 @@ describe("titleFromLine", () => {
     expect(titleFromLine("# .env 설정")).toBe("env 설정");
   });
 
-  it("cuts at 60 characters without splitting an emoji", () => {
+  it("keeps surrogate pairs whole when cutting at 60 characters", () => {
     const title = titleFromLine("가".repeat(59) + "😀😀");
     expect(Array.from(title)).toHaveLength(60);
     expect(title.endsWith("😀")).toBe(true);

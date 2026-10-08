@@ -23,6 +23,8 @@ export function titleFromLine(line: string): string {
     .replace(/\s+/g, " ")
     .replace(/^[.\s]+/, "")
     .trim();
+  // Code points, not grapheme clusters: 60 clusters of emoji could pass the 255-byte file name
+  // limit (60 code points are at most 240 bytes). Flags and ZWJ sequences may be split.
   const cut = Array.from(stem).slice(0, TITLE_MAX_CHARS).join("").trim();
   return cut || UNTITLED;
 }

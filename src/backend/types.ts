@@ -45,18 +45,30 @@ export interface WindowFrame {
   height: number;
 }
 
+/** The codes `CommandError` can carry (src-tauri/src/app/commands.rs). */
+export type BackendErrorCode =
+  | "not-a-workspace"
+  | "already-exists"
+  | "invalid-name"
+  | "unknown-memo"
+  | "not-found"
+  | "bad-request"
+  | "io"
+  | "app"
+  | "no-workspace";
+
 /** A rejected call. `code` comes from `CommandError` on the Rust side. */
 export class BackendError extends Error {
-  readonly code: string;
+  readonly code: BackendErrorCode;
 
-  constructor(code: string, message: string) {
+  constructor(code: BackendErrorCode, message: string) {
     super(message);
     this.name = "BackendError";
     this.code = code;
   }
 }
 
-export function errorCode(err: unknown): string | null {
+export function errorCode(err: unknown): BackendErrorCode | null {
   return err instanceof BackendError ? err.code : null;
 }
 

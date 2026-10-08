@@ -7,11 +7,13 @@ const utf8 = (text: string) => new TextEncoder().encode(text);
 describe("decodeText", () => {
   it("reads UTF-8 and notes LF line endings", () => {
     expect(decodeText(utf8("가나\n다"))).toEqual({ text: "가나\n다", eol: "\n", bom: false });
+    expect(decodeText(utf8("#!/bin/sh\necho a\r\necho b\n"))?.eol).toBe("\n");
   });
 
   it("keeps CRLF and the BOM so a save writes them back", () => {
     const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8("a\r\nb")]);
     expect(decodeText(bytes)).toEqual({ text: "a\r\nb", eol: "\r\n", bom: true });
+    expect(decodeText(utf8("a\r\nb\r\nc\n"))?.eol).toBe("\r\n");
   });
 
   it("refuses bytes that are not UTF-8", () => {
