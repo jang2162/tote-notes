@@ -286,16 +286,20 @@ mod tests {
         for i in 0..25 {
             launch.touch(Path::new(&format!("/w/{i}")));
         }
-        launch.touch(Path::new("/w/3"));
+        launch.touch(Path::new("/w/10"));
         assert_eq!(launch.recent.len(), 20);
-        assert_eq!(launch.recent[0], PathBuf::from("/w/3"));
+        assert_eq!(launch.recent[0], PathBuf::from("/w/10"));
         assert_eq!(
             launch
                 .recent
                 .iter()
-                .filter(|p| **p == Path::new("/w/3"))
+                .filter(|p| **p == Path::new("/w/10"))
                 .count(),
             1
+        );
+        assert_eq!(
+            launch.recent.last().map(PathBuf::as_path),
+            Some(Path::new("/w/5"))
         );
     }
 
