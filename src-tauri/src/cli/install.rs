@@ -31,10 +31,13 @@ pub fn install(script: &Path, preferred: &Path, fallback: &Path) -> io::Result<I
     Ok(Installed::Fallback(target))
 }
 
-/// Replaces an earlier `tote` link (the app moved) but never a file someone else put there.
+/// Replaces an earlier `tote` link (the app moved) but never anything else someone put there —
+/// a file, or a link to another program (Homebrew, pipx, a hand-made one).
 fn link(script: &Path, at: &Path) -> io::Result<()> {
     match fs::symlink_metadata(at) {
-        Ok(meta) if meta.file_type().is_symlink() => fs::remove_file(at)?,
+        Ok(meta) if meta.file_type().is_symlink() && is_tote_link(script, at) => {
+            fs::remove_file(at)?
+        }
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
@@ -56,6 +59,12 @@ fn link(script: &Path, at: &Path) -> io::Result<()> {
             "macOS only for now",
         ))
     }
+}
+
+/// A link we made: it points at this script, or at the script of a tote.app in its old place.
+fn is_tote_link(script: &Path, at: &Path) -> bool {
+    fs::read_link(at)
+        .is_ok_and(|target| target == script || target.ends_with("Contents/Resources/bin/tote"))
 }
 
 #[cfg(all(test, unix))]
@@ -105,9 +114,19 @@ mod tests {
         let script = script(dir.path());
         let bin = dir.path().join("bin");
         fs::create_dir(&bin).unwrap();
-        std::os::unix::fs::symlink("/old/place", bin.join("tote")).unwrap();
+        std::os::unix::fs::symlink(
+            "/Old/tote.app/Contents/Resources/bin/tote",
+            bin.join("tote"),
+        )
+        .unwrap();
         install(&script, &bin, &dir.path().join("fb")).unwrap();
         assert_eq!(fs::read_link(bin.join("tote")).unwrap(), script);
+        fs::remove_file(bin.join("tote")).unwrap();
+        let brew = Path::new("/opt/homebrew/Cellar/tote/1.0/bin/tote");
+        std::os::unix::fs::symlink(brew, bin.join("tote")).unwrap();
+        let err = install(&script, &bin, &dir.path().join("fb")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_link(bin.join("tote")).unwrap(), brew);
         fs::remove_file(bin.join("tote")).unwrap();
         fs::write(bin.join("tote"), "someone else's").unwrap();
         let err = install(&script, &bin, &dir.path().join("fb")).unwrap_err();

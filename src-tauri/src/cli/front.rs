@@ -15,7 +15,14 @@ pub fn run_if_cli() -> Option<i32> {
     if std::env::var_os("TOTE_CLI").as_deref() != Some(OsStr::new("1")) {
         return None;
     }
-    let args: Vec<String> = std::env::args().skip(1).collect();
+    let args: Option<Vec<String>> = std::env::args_os()
+        .skip(1)
+        .map(|a| a.into_string().ok())
+        .collect();
+    let Some(args) = args else {
+        eprintln!("tote: UTF-8 이 아닌 인자는 쓸 수 없습니다\n{USAGE}");
+        return Some(2);
+    };
     Some(run(&args))
 }
 
@@ -37,12 +44,20 @@ fn run(args: &[String]) -> i32 {
         }
     };
     let Some(app_paths) = AppPaths::resolve() else {
-        eprintln!("tote: 앱 데이터 폴더를 찾지 못했습니다");
+        match std::env::var_os("TOTE_DATA_DIR") {
+            Some(value) => eprintln!(
+                "tote: TOTE_DATA_DIR 은 절대 경로여야 합니다: {}",
+                value.to_string_lossy()
+            ),
+            None => eprintln!("tote: 앱 데이터 폴더를 찾지 못했습니다"),
+        }
         return 1;
     };
-    let root = Settings::load(&app_paths.settings_file())
-        .unwrap_or_default()
-        .workspace_root(&app_paths);
+    let settings = Settings::load(&app_paths.settings_file()).unwrap_or_else(|err| {
+        eprintln!("tote: 설정 파일을 읽지 못해 기본 워크스페이스 루트를 씁니다: {err}");
+        Settings::default()
+    });
+    let root = settings.workspace_root(&app_paths);
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(err) => {
@@ -71,6 +86,9 @@ fn run(args: &[String]) -> i32 {
     }
     if let Err(err) = launch(&resolved.request) {
         eprintln!("tote: 앱을 실행하지 못했습니다: {err}");
+        if let Some(file) = &resolved.request.stdin_file {
+            let _ = std::fs::remove_file(file);
+        }
         return 1;
     }
     i32::from(!resolved.rejected.is_empty())

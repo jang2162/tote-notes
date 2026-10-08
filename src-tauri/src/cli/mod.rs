@@ -52,7 +52,15 @@ impl CliRequest {
     {
         args.into_iter().find_map(|arg| {
             let json = arg.as_ref().strip_prefix(REQUEST_FLAG)?;
-            serde_json::from_str(json).ok()
+            match serde_json::from_str(json) {
+                Ok(request) => Some(request),
+                Err(err) => {
+                    // Nothing else records a CLI/app version mismatch: the app would just come
+                    // to the front and open nothing.
+                    eprintln!("tote: 요청을 읽지 못했습니다: {err}");
+                    None
+                }
+            }
         })
     }
 }
@@ -110,6 +118,8 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, UsageError> {
 
 /// `cwd.join(path)` with `.` and `..` folded away without touching the disk: the path may not
 /// exist yet (`tote new.txt` creates it on ⌘S), and links stay as the person typed them.
+/// `link/..` is walked as text, not through the link, so it can name a different file than the
+/// shell's `cat link/../f` does.
 pub fn absolute(cwd: &Path, path: &str) -> PathBuf {
     let mut out = PathBuf::new();
     for component in cwd.join(path).components() {
@@ -258,6 +268,36 @@ mod tests {
         assert!(resolve(Some("업무".into()), &[], false, root.path(), root.path()).is_ok());
         assert!(resolve(Some("없는곳".into()), &[], false, root.path(), root.path()).is_err());
         assert!(resolve(Some("../업무".into()), &[], false, root.path(), root.path()).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_launcher_script_runs_the_bundled_binary() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        // `=` in the app path is what `env` used to misread as a variable assignment.
+        let dir = tempfile::tempdir().unwrap();
+        let contents = dir.path().join("a=b/tote.app/Contents");
+        fs::create_dir_all(contents.join("Resources/bin")).unwrap();
+        fs::create_dir_all(contents.join("MacOS")).unwrap();
+        let launcher = contents.join("Resources/bin/tote");
+        let source = Path::new(env!("CARGO_MANIFEST_DIR")).join("resources/tote");
+        fs::copy(source, &launcher).unwrap();
+        fs::set_permissions(&launcher, fs::Permissions::from_mode(0o755)).unwrap();
+        let fake = contents.join("MacOS/tote");
+        fs::write(&fake, "#!/bin/sh\nprintf '%s\\n' \"$TOTE_CLI\" \"$@\"\n").unwrap();
+        fs::set_permissions(&fake, fs::Permissions::from_mode(0o755)).unwrap();
+        let shell_command = dir.path().join("tote");
+        symlink(&launcher, &shell_command).unwrap();
+
+        let output = std::process::Command::new(&shell_command)
+            .args(["a b", "한글", "-x"])
+            .output()
+            .unwrap();
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "1\na b\n한글\n-x\n"
+        );
     }
 
     #[test]
