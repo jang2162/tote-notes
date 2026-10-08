@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "What a workspace window may call besides tote's own commands",
+  "windows": ["ws-*"],
+  "permissions": ["core:default"]
+}

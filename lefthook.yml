@@ -8,6 +8,10 @@ pre-commit:
       glob: "*.{js,jsx,mjs,cjs,ts,tsx,mts,cts,vue,svelte,astro}"
       run: "pnpm exec oxlint --fix {staged_files}"
       stage_fixed: true
+    - name: rustfmt
+      glob: "*.rs"
+      run: "rustfmt --edition 2021 {staged_files}"
+      stage_fixed: true
 
 # pre-commit 은 staged 파일만 보므로 드리프트는 여기서 저장소 전체로 잡는다.
 pre-push:
@@ -17,6 +21,12 @@ pre-push:
       run: "pnpm exec oxfmt --check ."
     - name: lint
       run: "pnpm exec oxlint --no-error-on-unmatched-pattern"
+    - name: rustfmt-check
+      run: "cargo fmt --manifest-path src-tauri/Cargo.toml --check"
+    - name: clippy
+      run: "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
+    - name: typecheck
+      run: "pnpm exec tsc --noEmit"
 
 # 순차 실행이다 — 런타임이 맞은 뒤에 설치가 돌아야 한다.
 post-checkout:

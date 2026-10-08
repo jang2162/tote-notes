@@ -1,0 +1,31 @@
+[package]
+name = "tote"
+version = "0.1.0"
+description = "tote-note: a light notes app that keeps everything as you left it"
+edition = "2021"
+
+[lib]
+# The `_lib` suffix keeps the library apart from the `tote` binary (cargo#8519 on Windows).
+name = "tote_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2", features = [] }
+
+[dependencies]
+tauri = { version = "2", features = [] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+uuid = { version = "1", features = ["v4"] }
+
+[dev-dependencies]
+tempfile = "3"
+
+# No `panic = "abort"`: with unwinding a panicking command fails alone, while abort would take the
+# whole app — and every unsaved edit in it — down with it.
+[profile.release]
+codegen-units = 1
+lto = true
+opt-level = 3
+strip = true
