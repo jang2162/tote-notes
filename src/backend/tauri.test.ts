@@ -76,6 +76,8 @@ describe("TauriBackend", () => {
     const error = await backend.readMemo("m").catch((err: unknown) => err);
     expect(error).toBeInstanceOf(BackendError);
     expect(error).toMatchObject({ code: "unknown-memo", message: "no memo with id m" });
+    invoke.mockRejectedValueOnce({ code: "from-a-newer-rust", message: "boom" });
+    await expect(backend.listMemos()).rejects.toMatchObject({ code: "app", message: "boom" });
     invoke.mockRejectedValueOnce("the window is gone");
     await expect(backend.listMemos()).rejects.toMatchObject({ code: "app" });
   });

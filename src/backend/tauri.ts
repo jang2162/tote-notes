@@ -4,6 +4,7 @@ import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 
 import {
+  BACKEND_ERROR_CODES,
   BackendError,
   type Backend,
   type BackendErrorCode,
@@ -15,6 +16,9 @@ import {
   type WorkspaceListItem,
 } from "./types";
 
+const errorCodeOf = (code: string): BackendErrorCode =>
+  BACKEND_ERROR_CODES.find((known) => known === code) ?? "app";
+
 async function call<T>(
   cmd: string,
   args?: InvokeArgs,
@@ -25,11 +29,10 @@ async function call<T>(
   } catch (err) {
     const e = err as { code?: unknown; message?: unknown } | null;
     if (e && typeof e === "object" && typeof e.code === "string") {
-      // The IPC boundary is untyped; Rust only sends the codes `BackendErrorCode` lists.
-      throw new BackendError(
-        e.code as BackendErrorCode,
-        typeof e.message === "string" ? e.message : e.code,
-      );
+      // The IPC boundary is untyped, and nothing ties Rust's codes to the list: one it adds
+      // before the list follows folds into "app" instead of passing as a code the UI never handles.
+      const code = errorCodeOf(e.code);
+      throw new BackendError(code, typeof e.message === "string" ? e.message : e.code);
     }
     throw new BackendError("app", String(err));
   }

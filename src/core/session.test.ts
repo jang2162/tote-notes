@@ -28,6 +28,10 @@ describe("parseSession", () => {
       }),
     );
     expect(session.activeTab).toBe(1);
+    // An active tab that was dropped, or none given, falls back to the first tab that is left.
+    const dropped = '{"activeTab":1,"tabs":[{"kind":"memo","memoId":"a"},{"kind":"mystery"}]}';
+    expect(parseSession(dropped).activeTab).toBe(0);
+    expect(parseSession('{"tabs":[{"kind":"memo","memoId":"a"}]}').activeTab).toBe(0);
     expect(session.tabs).toEqual([
       {
         kind: "memo",
@@ -37,6 +41,38 @@ describe("parseSession", () => {
       },
       { kind: "external", deviceId: "d", path: "/x.sh" },
     ]);
+
+    // A selection keeps its main range past ranges that are dropped, and rejects fractional positions.
+    const tab = (selection: unknown) =>
+      parseSession(JSON.stringify({ tabs: [{ kind: "memo", memoId: "a", selection }] })).tabs[0];
+    expect(
+      tab({
+        ranges: [
+          { anchor: 1.5, head: 2 },
+          { anchor: 3, head: 3 },
+          { anchor: 7, head: 8 },
+        ],
+        main: 2,
+      }),
+    ).toMatchObject({
+      selection: {
+        ranges: [
+          { anchor: 3, head: 3 },
+          { anchor: 7, head: 8 },
+        ],
+        main: 1,
+      },
+    });
+    // The main range itself was dropped.
+    expect(
+      tab({
+        ranges: [
+          { anchor: 1, head: 1 },
+          { anchor: "x", head: 2 },
+        ],
+        main: 1,
+      }),
+    ).toMatchObject({ selection: { main: 0 } });
   });
 
   it("reads the window frame when it is complete", () => {

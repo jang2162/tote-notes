@@ -1,12 +1,14 @@
 import { EditorSelection, type Text } from "@codemirror/state";
 
+import type { WindowFrame } from "../backend/types";
+
 /** One workspace window on one device, `.tote/sessions/<device ID>.json` (spec 「세션」). The
  * backend only checks that it is a JSON object and reads `window` before the window exists. */
 export interface SessionFile {
   version: 1;
   /** Outer position and inner size in logical pixels. */
-  window?: { x: number; y: number; width: number; height: number };
-  /** Index into `tabs`; -1 when there are none. */
+  window?: WindowFrame;
+  /** Index into `tabs`; 0 when the active tab was dropped or unset, -1 only when no tab is left. */
   activeTab: number;
   tabs: SessionTab[];
 }
@@ -33,6 +35,8 @@ const isObject = (value: unknown): value is Json =>
 const isNumber = (value: unknown): value is number =>
   typeof value === "number" && Number.isFinite(value);
 
+const isPosition = (value: unknown): value is number => Number.isInteger(value);
+
 /** Reads a session leniently: a tab that does not parse is dropped, not the whole session. */
 export function parseSession(text: string | null): SessionFile {
   const session: SessionFile = { version: 1, activeTab: -1, tabs: [] };
@@ -50,6 +54,7 @@ export function parseSession(text: string | null): SessionFile {
     if (index === active) session.activeTab = session.tabs.length;
     session.tabs.push(tab);
   });
+  if (session.activeTab < 0 && session.tabs.length > 0) session.activeTab = 0;
   const frame = parseFrame(raw.window);
   if (frame) session.window = frame;
   return session;
@@ -76,17 +81,18 @@ function parseTab(value: unknown): SessionTab | null {
 
 function parseSelection(value: unknown): SelectionJSON | undefined {
   if (!isObject(value) || !Array.isArray(value.ranges)) return undefined;
-  const ranges = value.ranges
-    .filter(
-      (r: unknown): r is { anchor: number; head: number } =>
-        isObject(r) && isNumber(r.anchor) && isNumber(r.head),
-    )
-    .map(({ anchor, head }) => ({ anchor, head }));
-  if (ranges.length === 0) return undefined;
-  return { ranges, main: Number.isInteger(value.main) ? (value.main as number) : 0 };
+  const ranges: SelectionJSON["ranges"] = [];
+  let main = 0;
+  value.ranges.forEach((r: unknown, index: number) => {
+    if (!isObject(r) || !isPosition(r.anchor) || !isPosition(r.head)) return;
+    // `main` indexes the original array; follow it through the ranges that were dropped.
+    if (index === value.main) main = ranges.length;
+    ranges.push({ anchor: r.anchor, head: r.head });
+  });
+  return ranges.length === 0 ? undefined : { ranges, main };
 }
 
-function parseFrame(value: unknown): SessionFile["window"] {
+function parseFrame(value: unknown): WindowFrame | undefined {
   if (!isObject(value)) return undefined;
   const { x, y, width, height } = value;
   return isNumber(x) && isNumber(y) && isNumber(width) && isNumber(height)

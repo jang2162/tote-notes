@@ -14,6 +14,7 @@ describe("decodeText", () => {
     const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8("a\r\nb")]);
     expect(decodeText(bytes)).toEqual({ text: "a\r\nb", eol: "\r\n", bom: true });
     expect(decodeText(utf8("a\r\nb\r\nc\n"))?.eol).toBe("\r\n");
+    expect(decodeText(utf8("a\r\nb\n"))?.eol).toBe("\n");
   });
 
   it("refuses bytes that are not UTF-8", () => {

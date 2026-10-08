@@ -38,7 +38,12 @@ export class WriteScheduler {
       if (!write) return;
       slot.next = null;
       slot.running = write()
-        .catch((error: unknown) => this.onError(key, error))
+        .catch((error: unknown) => {
+          // A throwing handler must not reject the flush: ⌘Q waits on every key at once.
+          try {
+            this.onError(key, error);
+          } catch {}
+        })
         .finally(() => {
           slot.running = null;
         });

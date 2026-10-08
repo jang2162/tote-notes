@@ -46,16 +46,18 @@ export interface WindowFrame {
 }
 
 /** The codes `CommandError` can carry (src-tauri/src/app/commands.rs). */
-export type BackendErrorCode =
-  | "not-a-workspace"
-  | "already-exists"
-  | "invalid-name"
-  | "unknown-memo"
-  | "not-found"
-  | "bad-request"
-  | "io"
-  | "app"
-  | "no-workspace";
+export const BACKEND_ERROR_CODES = [
+  "not-a-workspace",
+  "already-exists",
+  "invalid-name",
+  "unknown-memo",
+  "not-found",
+  "bad-request",
+  "io",
+  "app",
+  "no-workspace",
+] as const;
+export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 
 /** A rejected call. `code` comes from `CommandError` on the Rust side. */
 export class BackendError extends Error {

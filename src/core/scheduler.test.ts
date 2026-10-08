@@ -31,12 +31,14 @@ describe("WriteScheduler", () => {
   it("never runs two writes of one key at once", async () => {
     let running = 0;
     let most = 0;
+    let finished = 0;
     const slow = () =>
       new Promise<void>((resolve) => {
         running++;
         most = Math.max(most, running);
         setTimeout(() => {
           running--;
+          finished++;
           resolve();
         }, 100);
       });
@@ -46,6 +48,8 @@ describe("WriteScheduler", () => {
     s.schedule("a", 0, slow);
     await vi.advanceTimersByTimeAsync(500);
     expect(most).toBe(1);
+    // The write scheduled while the first ran is not dropped; it runs after it.
+    expect(finished).toBe(2);
   });
 
   it("flush waits for a write that is already running", async () => {
@@ -58,7 +62,11 @@ describe("WriteScheduler", () => {
     );
     await vi.advanceTimersByTimeAsync(1);
     const flushed = s.flush("a");
-    await vi.advanceTimersByTimeAsync(100);
+    let settled = false;
+    void flushed.then(() => (settled = true));
+    await vi.advanceTimersByTimeAsync(50);
+    expect(settled).toBe(false);
+    await vi.advanceTimersByTimeAsync(50);
     await flushed;
     expect(done).toBe(true);
   });
@@ -87,12 +95,22 @@ describe("WriteScheduler", () => {
     expect(writes).toEqual(["retry"]);
   });
 
-  it("flushAll covers every key", async () => {
+  it("flushAll covers every key, even when onError throws", async () => {
     const writes: string[] = [];
-    const s = new WriteScheduler(() => {});
+    const s = new WriteScheduler(() => {
+      throw new Error("ui bug");
+    });
+    s.schedule("bad", 9999, async () => {
+      throw new Error("disk full");
+    });
     s.schedule("a", 9999, async () => void writes.push("a"));
-    s.schedule("b", 9999, async () => void writes.push("b"));
-    await s.flushAll();
+    s.schedule("b", 9999, async () => {
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      writes.push("b");
+    });
+    const flushed = s.flushAll();
+    await vi.advanceTimersByTimeAsync(50);
+    await flushed;
     expect(writes.sort()).toEqual(["a", "b"]);
   });
 });
