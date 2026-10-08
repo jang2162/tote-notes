@@ -33,6 +33,8 @@ test("Enter that finishes a composition does not submit", async ({ page }) => {
   await expect(page.locator(".modal")).toHaveCount(1);
   await input.dispatchEvent("keydown", { key: "Escape", isComposing: false, keyCode: 229 });
   await expect(page.locator(".modal")).toHaveCount(1);
+  await input.dispatchEvent("keydown", { key: "Escape", isComposing: true });
+  await expect(page.locator(".modal")).toHaveCount(1);
   await input.press("Enter");
   await expect.poll(() => page.evaluate(() => window.result)).toBe("회의록.md");
 });

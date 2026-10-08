@@ -115,6 +115,18 @@ describe("MemoDoc", () => {
     expect(doc.info.id).not.toBe("a");
     expect(backend.memoText(doc.info.id)).toBe("원래 추가");
     expect(doc.notice).toBe(RECOVERED_NOTICE);
+    expect(doc.info.file).toBe("a.md");
+    expect(doc.info.autoTitle).toBe(false);
+
+    // A script keeps its own name and extension instead of becoming untitled.md.
+    const script = setup({ memos: { s: fakeMemo("deploy.sh", "#!/bin/bash") } });
+    const other = new MemoDoc(script.host, (await script.backend.listMemos())[0]);
+    await other.ensureLoaded();
+    delete script.backend.data.memos.s;
+    type(other, "\necho hi");
+    await vi.runAllTimersAsync();
+    expect(other.info.file).toBe("deploy.sh");
+    expect(script.backend.memoText(other.info.id)).toBe("#!/bin/bash\necho hi");
   });
 
   it("loads once, lazily, and keeps CRLF and the BOM", async () => {
@@ -198,6 +210,30 @@ describe("ExternalDoc", () => {
     expect(doc.dirty).toBe(false);
     expect(doc.notice).toBeNull();
     expect(backend.data.drafts["/x/a.sh"]).toBeUndefined();
+
+    // The base was re-anchored on the disk: editing again and restarting is not "disk changed".
+    type(doc, "!");
+    await vi.advanceTimersByTimeAsync(1000);
+    const restarted = setup({ ...backend.data });
+    const again = new ExternalDoc(restarted.host, "/x/a.sh");
+    await again.ensureLoaded();
+    expect(again.state!.doc.toString()).toBe("saved!");
+    expect(again.notice).toBeNull();
+  });
+
+  it("a_failing_draft_cleanup_still_opens_the_draft", async () => {
+    const { backend, host } = setup({
+      files: { "/x/a.sh": fakeFile("saved") },
+      drafts: { "/x/a.sh": { base: fakeFile("old"), data: fakeFile("saved") } },
+    });
+    backend.discardExternalDraft = async () => {
+      throw new Error("disk is read-only");
+    };
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    expect(doc.problem).toBeNull();
+    expect(doc.state!.doc.toString()).toBe("saved");
+    expect(doc.dirty).toBe(true);
   });
 
   it("⌘S writes the file, drops the draft and clears the mark", async () => {

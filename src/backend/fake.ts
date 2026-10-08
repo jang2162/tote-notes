@@ -134,8 +134,13 @@ const kindOf = (name: string): FileKind => KINDS[splitName(name).ext.toLowerCase
 /** APFS treats names equal after composition and case folding as one name. */
 const sameName = (a: string, b: string) =>
   a.normalize("NFC").toLowerCase() === b.normalize("NFC").toLowerCase();
+/** Mirrors `is_valid_file_name` in src-tauri/src/workspace/names.rs. */
 const validName = (name: string) =>
-  name !== "" && name.trim() === name && !name.startsWith(".") && !/[/\\:*?"<>|]/.test(name);
+  name !== "" &&
+  new TextEncoder().encode(name).length <= 255 &&
+  name.trim() === name &&
+  !name.startsWith(".") &&
+  !/[/\\:*?"<>|]|\p{Cc}/u.test(name);
 const decode = (data: string) => new TextDecoder().decode(fromBase64(data));
 
 export class FakeBackend implements Backend {
@@ -232,8 +237,9 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
-  async renameMemo(id: string, file: string) {
+  async renameMemo(id: string, name: string) {
     const memo = this.memo(id);
+    const file = name.trim();
     if (!validName(file)) throw new BackendError("invalid-name", file);
     if (
       Object.entries(this.data.memos).some(([other, m]) => other !== id && sameName(m.file, file))

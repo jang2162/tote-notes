@@ -246,8 +246,9 @@ export class MemoDoc extends Doc {
       // The file went away under us (renamed or deleted in Finder). Typed text must survive, so
       // it becomes a new memo instead of failing every save from here on.
       try {
-        const created = await this.host.backend.createMemo();
-        this.setInfo(await this.host.backend.writeMemo(created.id, this.encode(text)));
+        // One call, under the old name: a create-then-write pair would leave an empty memo
+        // behind whenever the write fails, and would turn `deploy.sh` into `untitled.md`.
+        this.setInfo(await this.host.backend.importMemo(this.info.file, this.encode(text)));
       } catch (again) {
         return this.fail(again);
       }
@@ -367,10 +368,9 @@ export class ExternalDoc extends Doc {
         info.draft.diskChanged &&
         info.exists &&
         info.kind === "text" &&
-        info.size <= MAX_EDITOR_BYTES &&
-        sameBytes(draft, await this.host.backend.readExternal(this.path))
+        info.size === draft.length &&
+        (await this.dropDraftEqualToDisk(draft))
       ) {
-        await this.host.backend.discardExternalDraft(this.path);
         return draft;
       }
       this.modified = true;
@@ -380,6 +380,20 @@ export class ExternalDoc extends Doc {
     if (info.kind !== "text") return "binary";
     if (info.size > MAX_EDITOR_BYTES) return "too-large";
     return info.exists ? this.host.backend.readExternal(this.path) : new Uint8Array();
+  }
+
+  /** Best effort: on any failure the draft stays and opens as a draft. Drops it only when it is
+   * byte-for-byte the disk's, then asks to open again so the backend's base is the disk's hash
+   * rather than the dead draft's (a later edit would otherwise look like "disk changed"). */
+  private async dropDraftEqualToDisk(draft: Uint8Array): Promise<boolean> {
+    try {
+      if (!sameBytes(draft, await this.host.backend.readExternal(this.path))) return false;
+      await this.host.backend.discardExternalDraft(this.path);
+      await this.host.backend.openExternal(this.path);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   protected edited(): void {
