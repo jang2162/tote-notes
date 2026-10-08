@@ -101,15 +101,15 @@ fn settings_for_cli(path: &Path) -> (Settings, Option<String>) {
     let bytes = match std::fs::read(path) {
         Ok(bytes) => bytes,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return (Settings::default(), None),
-        Err(err) => return (Settings::default(), Some(warning(&err))),
+        Err(err) => return (Settings::default(), Some(settings_warning(&err))),
     };
     match serde_json::from_slice(&bytes) {
         Ok(settings) => (settings, None),
-        Err(err) => (Settings::default(), Some(warning(&err))),
+        Err(err) => (Settings::default(), Some(settings_warning(&err))),
     }
 }
 
-fn warning(err: &dyn std::fmt::Display) -> String {
+fn settings_warning(err: &dyn std::fmt::Display) -> String {
     format!("tote: 설정 파일을 읽지 못해 기본 워크스페이스 루트를 씁니다: {err}")
 }
 
@@ -187,6 +187,11 @@ mod tests {
     fn the_cli_reads_broken_settings_without_moving_them() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
+        assert_eq!(settings_for_cli(&file), (Settings::default(), None));
+        std::fs::write(&file, b"{\"workspaceRoot\": \"/w\"}").unwrap();
+        let (settings, warning) = settings_for_cli(&file);
+        assert_eq!(settings.workspace_root, Some("/w".into()));
+        assert_eq!(warning, None);
         std::fs::write(&file, b"{\"workspaceRoot\": ").unwrap();
         let (settings, warning) = settings_for_cli(&file);
         assert_eq!(settings, Settings::default());

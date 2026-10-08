@@ -160,4 +160,20 @@ mod tests {
         assert_eq!(f.ack(id, "a"), None);
         assert_eq!(f.window_gone("b"), vec![FlushGoal::Quit]);
     }
+
+    #[test]
+    fn quitting_during_a_close_round_finishes_both() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id: close, .. } =
+            f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"]))
+        else {
+            panic!("expected a close round")
+        };
+        let Begin::Started { id: quit, .. } = f.begin(FlushGoal::Quit, labels(&["a", "b"])) else {
+            panic!("expected a quit round")
+        };
+        assert_eq!(f.ack(close, "a"), Some(FlushGoal::CloseWindow("a".into())));
+        assert_eq!(f.window_gone("a"), vec![]);
+        assert_eq!(f.ack(quit, "b"), Some(FlushGoal::Quit));
+    }
 }

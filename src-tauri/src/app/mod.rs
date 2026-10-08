@@ -213,6 +213,9 @@ impl AppCore {
     pub fn begin_flush(&self, goal: FlushGoal) -> Begin {
         let mut inner = lock(&self.inner);
         let windows = match &goal {
+            // A window that is not registered answers nothing, so a round for it would only end
+            // at the timeout.
+            FlushGoal::CloseWindow(label) if !inner.windows.contains_key(label) => vec![],
             FlushGoal::CloseWindow(label) => vec![label.clone()],
             FlushGoal::Quit => inner.windows.keys().cloned().collect(),
         };
@@ -383,5 +386,10 @@ mod tests {
         assert_eq!(windows, vec![a.clone()]);
         assert_eq!(core.closed(&a), vec![FlushGoal::Quit]);
         assert_eq!(core.ack_flush(id, &a), None);
+        // A window that is not registered has nothing to write: closing it needs no round.
+        assert_eq!(
+            core.begin_flush(FlushGoal::CloseWindow("gone".into())),
+            Begin::Done(FlushGoal::CloseWindow("gone".into()))
+        );
     }
 }
