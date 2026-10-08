@@ -18,7 +18,9 @@ pub struct AppPaths {
 impl AppPaths {
     /// `TOTE_DATA_DIR` moves everything for one run — workspaces included — so tests and smoke
     /// checks never touch real notes. Debug builds use `tote-dev` and `~/Tote-dev` so a development
-    /// run never touches the notes of an installed tote.
+    /// run never touches the notes of an installed tote. A `TOTE_DATA_DIR` that is empty or
+    /// relative gives `None` instead of falling back: it would land in the working folder, or in
+    /// the development folder the override exists to avoid.
     pub fn resolve() -> Option<AppPaths> {
         AppPaths::from_parts(
             std::env::var_os("TOTE_DATA_DIR").map(PathBuf::from),
@@ -35,6 +37,9 @@ impl AppPaths {
         debug: bool,
     ) -> Option<AppPaths> {
         if let Some(dir) = override_dir {
+            if !dir.is_absolute() {
+                return None;
+            }
             return Some(AppPaths {
                 default_workspace_root: dir.join("workspaces"),
                 data_dir: dir,
@@ -133,13 +138,16 @@ impl Settings {
         self.workspace_root_with_home(paths, dirs::home_dir().as_deref())
     }
 
-    /// The configured root with a leading `~` expanded (people edit this file by hand).
+    /// The configured root with a leading `~` expanded (people edit this file by hand). A relative
+    /// path is taken from home: the app's working folder is usually `/`, so `Notes` would
+    /// otherwise become `/Notes`. Without a known home the path is returned as it is.
     pub fn workspace_root_with_home(&self, paths: &AppPaths, home: Option<&Path>) -> PathBuf {
         let Some(root) = &self.workspace_root else {
             return paths.default_workspace_root.clone();
         };
         match (root.strip_prefix("~"), home) {
             (Ok(rest), Some(home)) => home.join(rest),
+            (Err(_), Some(home)) if root.is_relative() => home.join(root),
             _ => root.clone(),
         }
     }
@@ -205,6 +213,23 @@ mod tests {
             PathBuf::from("/tmp/t/workspaces")
         );
         assert_eq!(paths.launch_file(), PathBuf::from("/tmp/t/state.json"));
+        assert_eq!(paths.machine_file(), PathBuf::from("/tmp/t/machine.json"));
+        assert_eq!(paths.settings_file(), PathBuf::from("/tmp/t/settings.json"));
+        assert_eq!(paths.buffers_dir(), PathBuf::from("/tmp/t/buffers"));
+        assert_eq!(paths.inbox_dir(), PathBuf::from("/tmp/t/inbox"));
+    }
+
+    #[test]
+    fn an_override_dir_must_be_absolute() {
+        for bad in ["", "rel/dir"] {
+            let paths = AppPaths::from_parts(
+                Some(bad.into()),
+                Some("/os".into()),
+                Some("/home".into()),
+                false,
+            );
+            assert_eq!(paths, None, "{bad:?} should be refused");
+        }
     }
 
     #[test]
@@ -266,6 +291,22 @@ mod tests {
         assert_eq!(
             settings.workspace_root_with_home(&paths, home),
             PathBuf::from("/home/노트")
+        );
+    }
+
+    #[test]
+    fn a_relative_workspace_root_is_under_home() {
+        let paths = AppPaths::from_parts(Some("/data".into()), None, None, false).unwrap();
+        let settings = Settings {
+            workspace_root: Some("Notes".into()),
+        };
+        assert_eq!(
+            settings.workspace_root_with_home(&paths, Some(Path::new("/home"))),
+            PathBuf::from("/home/Notes")
+        );
+        assert_eq!(
+            settings.workspace_root_with_home(&paths, None),
+            PathBuf::from("Notes")
         );
     }
 
