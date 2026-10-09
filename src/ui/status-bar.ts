@@ -16,6 +16,10 @@ export class StatusBar {
   private readonly language = h("span", { class: "status-language" });
   readonly el = h("footer", { class: "statusbar" }, this.message, this.position, this.language);
 
+  get showsError(): boolean {
+    return this.message.classList.contains("error");
+  }
+
   setMessage(text: string, tone: "normal" | "error" = "normal"): void {
     this.message.textContent = text;
     this.message.classList.toggle("error", tone === "error");

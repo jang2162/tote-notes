@@ -109,6 +109,14 @@ export class AppController implements DocHost {
     if (doc === this.active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
     if (doc === this.active && change === "saved" && doc instanceof ExternalDoc)
       this.statusBar.setMessage("저장됨");
+    // A memo that saved after a failed save no longer has the error to show.
+    if (
+      doc === this.active &&
+      change === "saved" &&
+      doc instanceof MemoDoc &&
+      this.statusBar.showsError
+    )
+      this.statusBar.setMessage("");
     if (change === "error") this.report(doc.error);
     this.renderTabs();
   }

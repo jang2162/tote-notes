@@ -141,6 +141,53 @@ describe("MemoDoc", () => {
     expect(Object.keys(odd.backend.data.memos)).toEqual([third.info.id]);
   });
 
+  it("closing writes the text typed after a failed save once the disk is back", async () => {
+    const { backend, host } = setup({ memos: { a: fakeMemo("장보기.md", "# 장보기\n우유") } });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    const write = backend.writeMemo.bind(backend);
+    let broken = true;
+    vi.spyOn(backend, "writeMemo").mockImplementation((id, bytes) =>
+      broken ? Promise.reject(new Error("locked")) : write(id, bytes),
+    );
+    type(doc, "\n계란");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(doc.error).toBeInstanceOf(Error);
+    expect(backend.memoText("a")).toBe("# 장보기\n우유");
+    broken = false;
+    expect(await doc.close()).toBe(true);
+    expect(backend.memoText("a")).toBe("# 장보기\n우유\n계란");
+    expect(doc.error).toBeNull();
+  });
+
+  it("closing keeps the tab while the save keeps failing", async () => {
+    const { backend, host } = setup({ memos: { a: fakeMemo("장보기.md", "우유") } });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    vi.spyOn(backend, "writeMemo").mockRejectedValue(new Error("locked"));
+    type(doc, "\n계란");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(await doc.close()).toBe(false);
+    expect(doc.error).toBeInstanceOf(Error);
+    expect(backend.memoText("a")).toBe("우유");
+  });
+
+  it("a window close or quit writes the text typed after a failed save", async () => {
+    const { backend, host } = setup({ memos: { a: fakeMemo("장보기.md", "우유") } });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    const write = backend.writeMemo.bind(backend);
+    let broken = true;
+    vi.spyOn(backend, "writeMemo").mockImplementation((id, bytes) =>
+      broken ? Promise.reject(new Error("locked")) : write(id, bytes),
+    );
+    type(doc, "\n계란");
+    await vi.advanceTimersByTimeAsync(500);
+    broken = false;
+    await doc.flush();
+    expect(backend.memoText("a")).toBe("우유\n계란");
+  });
+
   it("loads once, lazily, and keeps CRLF and the BOM", async () => {
     const bytes = new Uint8Array([0xef, 0xbb, 0xbf, ...utf8("a\r\nb")]);
     const { backend, host } = setup({
@@ -246,6 +293,23 @@ describe("ExternalDoc", () => {
     expect(doc.problem).toBeNull();
     expect(doc.state!.doc.toString()).toBe("saved");
     expect(doc.dirty).toBe(true);
+  });
+
+  it("a draft that failed to be kept is kept again when the window closes", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("echo hi\n") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    const keep = backend.keepExternalDraft.bind(backend);
+    let broken = true;
+    vi.spyOn(backend, "keepExternalDraft").mockImplementation((path, bytes) =>
+      broken ? Promise.reject(new Error("no space")) : keep(path, bytes),
+    );
+    type(doc, "# 수정");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(backend.data.drafts["/x/a.sh"]).toBeUndefined();
+    broken = false;
+    await doc.leave();
+    expect(backend.data.drafts["/x/a.sh"]).toBeDefined();
   });
 
   it("⌘S writes the file, drops the draft and clears the mark", async () => {

@@ -1,18 +1,22 @@
 //! What a `tote` command asks of the running app (spec 「`tote` CLI」).
 
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
 use super::{lock, windows, AppCore, PendingOpen};
 use crate::cli::CliRequest;
+use crate::workspace::names::is_valid_file_name;
 use crate::workspace::WorkspaceError;
 
 pub fn handle(app: &AppHandle, request: CliRequest) {
     let core = app.state::<AppCore>();
     let label = match &request.workspace {
-        Some(name) => windows::show(app, &core.workspace_root.join(name)).map_err(|e| e.message),
+        Some(name) => match workspace_dir(&core.workspace_root, name) {
+            Some(dir) => windows::show(app, &dir).map_err(|e| e.message),
+            None => Err(format!("workspace name is not usable: {name}")),
+        },
         None => match core.latest_window() {
             Some(label) => {
                 windows::focus(app, &label);
@@ -72,6 +76,13 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
     );
 }
 
+/// The folder of workspace `name` under `root`. `--tote-request` can be given by any process, so
+/// the name is checked here as the `tote` front end checks it: an absolute path or `..` would
+/// otherwise open a workspace outside the root.
+fn workspace_dir(root: &Path, name: &str) -> Option<PathBuf> {
+    is_valid_file_name(name).then(|| root.join(name))
+}
+
 /// A regular file directly inside `inbox` (not a symlink, not reached through `..`).
 fn is_inbox_file(inbox: &Path, path: &Path) -> bool {
     let Some(parent) = path.parent().and_then(|p| fs::canonicalize(p).ok()) else {
@@ -86,6 +97,18 @@ fn is_inbox_file(inbox: &Path, path: &Path) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_workspace_name_cannot_leave_the_root() {
+        let root = Path::new("/root/Tote");
+        assert_eq!(
+            workspace_dir(root, "업무"),
+            Some(PathBuf::from("/root/Tote/업무"))
+        );
+        for name in ["..", "../other", "/etc", "a/b", ".hidden", "", " 업무"] {
+            assert_eq!(workspace_dir(root, name), None, "{name:?}");
+        }
+    }
 
     #[test]
     fn only_files_inside_the_inbox_are_taken() {

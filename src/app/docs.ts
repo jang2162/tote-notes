@@ -275,8 +275,15 @@ export class MemoDoc extends Doc {
     throw new Error("unreachable");
   }
 
-  saveNow(): Promise<void> {
-    return this.host.writes.flush(this.saveKey);
+  /** A save that failed has left the scheduler's slot empty, so `flush` alone would write nothing
+   * and the text typed since would be lost on close; one more try costs nothing when it is saved. */
+  async saveNow(): Promise<void> {
+    await this.host.writes.flush(this.saveKey);
+    if (this.unsaved) await this.save();
+  }
+
+  private get unsaved(): boolean {
+    return this.state !== null && this.state.doc !== this.savedText;
   }
 
   /** Applies the automatic title (spec 「제목 자동 생성」). Cheap to call often: the backend is
@@ -314,6 +321,8 @@ export class MemoDoc extends Doc {
 
   async close(): Promise<boolean> {
     await this.saveNow();
+    // Still unsaved: keep the tab, and the text in it, rather than lose what the error was about.
+    if (this.unsaved) return false;
     // An empty new memo leaves no file behind (spec 「세션」); "new" means tote still names it.
     if (this.info.autoTitle && this.state && isBlank(this.state.doc)) {
       try {
@@ -340,6 +349,7 @@ export class ExternalDoc extends Doc {
   /** Edited since the last ⌘S (or restored from a draft). */
   modified = false;
   exists = false;
+  private draftFailed = false;
 
   constructor(
     host: DocHost,
@@ -421,7 +431,13 @@ export class ExternalDoc extends Doc {
 
   private async keepDraft(): Promise<void> {
     if (this.modified && this.state) {
-      await this.host.backend.keepExternalDraft(this.path, this.encode(this.state.doc));
+      try {
+        await this.host.backend.keepExternalDraft(this.path, this.encode(this.state.doc));
+        this.draftFailed = false;
+      } catch (error) {
+        this.draftFailed = true;
+        throw error;
+      }
     }
   }
 
@@ -454,8 +470,16 @@ export class ExternalDoc extends Doc {
     this.host.changed(this, "dirty");
   }
 
-  leave(): Promise<void> {
-    return this.host.writes.flush(this.draftKey);
+  /** A failed `keepDraft` leaves the scheduler's slot empty, so a second try is made here: this
+   * is what the window close and quit run, and the draft is all that survives them. */
+  async leave(): Promise<void> {
+    await this.host.writes.flush(this.draftKey);
+    if (!this.draftFailed) return;
+    try {
+      await this.keepDraft();
+    } catch (error) {
+      this.fail(error);
+    }
   }
 
   flush(): Promise<void> {
