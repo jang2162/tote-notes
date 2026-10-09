@@ -279,7 +279,10 @@ export class MemoDoc extends Doc {
    * and the text typed since would be lost on close; one more try costs nothing when it is saved. */
   async saveNow(): Promise<void> {
     await this.host.writes.flush(this.saveKey);
-    if (this.unsaved) await this.save();
+    if (this.unsaved) {
+      this.host.writes.schedule(this.saveKey, 0, () => this.save());
+      await this.host.writes.flush(this.saveKey);
+    }
   }
 
   private get unsaved(): boolean {
@@ -475,11 +478,8 @@ export class ExternalDoc extends Doc {
   async leave(): Promise<void> {
     await this.host.writes.flush(this.draftKey);
     if (!this.draftFailed) return;
-    try {
-      await this.keepDraft();
-    } catch (error) {
-      this.fail(error);
-    }
+    this.host.writes.schedule(this.draftKey, 0, () => this.keepDraft());
+    await this.host.writes.flush(this.draftKey);
   }
 
   flush(): Promise<void> {
