@@ -63,9 +63,11 @@ function write(from: number, to: number, text: string) {
 let composed: { from: number; to: number } | null = null;
 
 const ime = {
-  /** Direct path: a committed insert at the caret (over the selection), no composition events. */
+  /** Direct path: a committed insert at the caret (over the selection), no composition events.
+   * While a composition is open it replaces the composed text, as WebKit does for a dead key. */
   async insertText(text: string) {
-    const { from, to } = view.state.selection.main;
+    const { from, to } = composed ?? view.state.selection.main;
+    composed = null;
     fire("beforeinput", "insertText", text);
     write(from, to, text);
     fire("input", "insertText", text);

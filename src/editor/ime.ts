@@ -7,7 +7,7 @@ import {
   type SelectionRange,
   type TransactionSpec,
 } from "@codemirror/state";
-import { EditorView } from "@codemirror/view";
+import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
 
 // Every cursor and selection gets the text the input method produces, as with Latin typing
 // (spec 「편집기」). WKWebView's Korean input method was recorded feeding text through two paths,
@@ -24,11 +24,12 @@ import { EditorView } from "@codemirror/view";
 //
 // Which path a keystroke takes is the input method's choice and changes from run to run.
 
-/** With several ranges, the main one is the first. The input method locates its caret by its
- * offset from the start of the editable root, so text mirrored to a range *before* the caret moves
- * that offset and the next keystroke starts a fresh syllable (recorded: `ㄱ` then `ㅏ` instead of
- * `가`). Keeping the main range first puts every mirror after the caret. `null` when nothing has
- * to change. */
+/** With several ranges, the main one is the first. The input method appears to locate its caret
+ * by its offset from the start of the editable root — inferred from two observations, not shown
+ * by the recordings themselves: text mirrored to a range *before* the caret made the next
+ * keystroke start a fresh syllable (`ㄱ` then `ㅏ` instead of `가`), text mirrored after it did
+ * not. Keeping the main range first puts every mirror after the caret. `null` when nothing has to
+ * change. */
 export function mainFirst(selection: EditorSelection): EditorSelection | null {
   return selection.ranges.length > 1 && selection.mainIndex !== 0
     ? EditorSelection.create(selection.ranges, 0)
@@ -88,9 +89,9 @@ const mirrorDirectInput = EditorView.inputHandler.of((view, from, to, text, inse
 export interface Composition {
   /** Where the composed text starts. Moves down if the composition takes text before the caret. */
   from: number;
-  /** Where the main range started; `anchor - from` is how much text before it the composition
-   * took, which the other ranges then give up too. */
-  anchor: number;
+  /** The text before the caret that the composition took over (`""` normally). At the end, a
+   * waiting range gives up the same text before it — and only that text. */
+  taken: string;
   /** The ranges the composed text goes to at the end, in document order after the main range. */
   others: readonly SelectionRange[];
 }
@@ -110,31 +111,41 @@ const composition = StateField.define<Composition | null>({
     if (tr.isUserEvent("select.pointer") || (tr.docChanged && !tr.isUserEvent("input")))
       return null;
     if (!tr.docChanged) return value;
-    let from = tr.changes.mapPos(value.from, -1);
-    tr.changes.iterChangedRanges((fromA) => {
-      from = Math.min(from, fromA);
-    });
+    let { from, taken } = value;
+    if (tr.isUserEvent("input.type.compose")) {
+      // A composition change reaching back before the composed text took that text over.
+      tr.changes.iterChangedRanges((fromA, toA) => {
+        if (fromA < from && toA >= from) {
+          taken = tr.startState.sliceDoc(fromA, from) + taken;
+          from = fromA;
+        }
+      });
+    }
     return {
-      from,
-      anchor: tr.changes.mapPos(value.anchor, -1),
+      from: tr.changes.mapPos(from, -1),
+      taken,
       others: value.others.map((range) => range.map(tr.changes)),
     };
   },
 });
 
 /** The end of a composition: what the main range composed goes to every waiting range, and the
- * ranges come back. A cancelled composition composed nothing, so the others get nothing too. */
+ * ranges come back. A composition that composed nothing gives the others nothing too. A waiting
+ * range whose text before it is not what the composition took over is left as it is. */
 export function compositionCommit(state: EditorState, current: Composition): TransactionSpec {
   const main = state.selection.main;
   const to = Math.max(main.to, current.from);
   const text = state.sliceDoc(current.from, to);
-  const taken = current.anchor - current.from;
+  const { taken } = current;
   const changes: ChangeSpec[] = [];
   const ranges = [main];
   let shift = 0;
   for (const range of current.others) {
-    const from = range.from - taken;
-    if (from < to) continue;
+    const from = range.from - taken.length;
+    if (from < to || state.sliceDoc(from, range.from) !== taken) {
+      ranges.push(EditorSelection.range(range.anchor + shift, range.head + shift));
+      continue;
+    }
     changes.push({ from, to: range.to, insert: text });
     ranges.push(EditorSelection.cursor(from + shift + text.length));
     shift += text.length - (range.to - from);
@@ -162,7 +173,7 @@ const compositionEvents = EditorView.domEventObservers({
       selection: EditorSelection.create([main]),
       effects: startComposition.of({
         from: main.from,
-        anchor: main.from,
+        taken: "",
         others: ranges.filter((range) => range !== main),
       }),
       userEvent: "select",
@@ -174,5 +185,48 @@ const compositionEvents = EditorView.domEventObservers({
   },
 });
 
+/** CodeMirror ends a composition without a DOM compositionend when Safari forgets to send one:
+ * an `insertText` during composition makes it call its own compositionend observer 20 ms later,
+ * which our DOM observer never sees. A field left behind that way would copy whatever is typed
+ * later at the main range to the waiting ranges. So the field is also settled from here: whenever
+ * the composition field is set but CodeMirror is no longer composing, the commit runs. The check
+ * waits a turn (dispatching inside an update is not allowed) and, after a document change while
+ * composing, long enough for that 20 ms fallback. The start transaction itself is skipped —
+ * CodeMirror only enters composing after our observer has run. */
+const settleWithoutEvent = ViewPlugin.fromClass(
+  class {
+    private timer = -1;
+
+    constructor(private readonly view: EditorView) {}
+
+    update(update: ViewUpdate) {
+      if (!update.state.field(composition)) return;
+      if (update.transactions.some((tr) => tr.effects.some((e) => e.is(startComposition)))) return;
+      if (!update.view.compositionStarted) this.settle(0);
+      else if (update.docChanged) this.settle(50);
+    }
+
+    private settle(delay: number) {
+      clearTimeout(this.timer);
+      this.timer = window.setTimeout(() => {
+        const current = this.view.state.field(composition, false);
+        if (current && !this.view.compositionStarted) {
+          this.view.dispatch(compositionCommit(this.view.state, current));
+        }
+      }, delay);
+    }
+
+    destroy() {
+      clearTimeout(this.timer);
+    }
+  },
+);
+
 /** Gives every cursor and selection the input method's text. */
-export const multiRangeIme = [keepMainFirst, mirrorDirectInput, composition, compositionEvents];
+export const multiRangeIme = [
+  keepMainFirst,
+  mirrorDirectInput,
+  composition,
+  compositionEvents,
+  settleWithoutEvent,
+];

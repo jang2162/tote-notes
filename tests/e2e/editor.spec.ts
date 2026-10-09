@@ -155,14 +155,12 @@ test("recording 1 — a direct jamo, then compositions: every cursor ends the sa
 test("recording 2 — two ⌘D selections and a composition: both become the syllable", async ({
   page,
 }) => {
+  // The recorded order: the first word selected, ⌘D adds the second, then the composition —
+  // with a second compositionstart inside it and a bare compositionend with empty data.
   await open(page, "test test");
-  await page.evaluate(() => window.view.dispatch({ selection: { anchor: 0, head: 3 } }));
+  await page.evaluate(() => window.view.dispatch({ selection: { anchor: 0, head: 4 } }));
   await page.keyboard.press("Meta+d");
   expect(await ranges(page)).toEqual([
-    [0, 3],
-    [5, 8],
-  ]);
-  await select(page, [
     [0, 4],
     [5, 9],
   ]);
@@ -170,7 +168,9 @@ test("recording 2 — two ⌘D selections and a composition: both become the syl
   await page.evaluate(() => window.ime.update("ㄱ"));
   await page.evaluate(() => window.ime.restart());
   await page.evaluate(() => window.ime.update("가"));
+  // Until the end, nothing is copied to the other selection.
   expect(await text(page)).toBe("가 test");
+  expect(await ranges(page)).toEqual([[1, 1]]);
   await page.evaluate(() => window.ime.end("bare"));
   expect(await text(page)).toBe("가 가");
   expect(await ranges(page)).toEqual([
@@ -196,6 +196,9 @@ test("direct-path Hangul over two selections replaces both", async ({ page }) =>
 });
 
 test("a cancelled composition leaves nothing at any cursor", async ({ page }) => {
+  // A synthetic shape, not in the recordings: the input method removes the composed text before
+  // compositionend. The person's real check saw Esc commit the syllable instead (every cursor
+  // got the same `ㄱ`); this pins what happens if a cancel ever does arrive.
   await open(page, "사과\n배\n귤");
   await select(page, THREE, 1);
   await page.evaluate(() => window.ime.start());
@@ -204,6 +207,32 @@ test("a cancelled composition leaves nothing at any cursor", async ({ page }) =>
   await page.evaluate(() => window.ime.end("cancel"));
   expect(await text(page)).toBe("사과\n배\n귤");
   expect(await ranges(page)).toEqual(THREE);
+});
+
+test("a composition CodeMirror ends without a compositionend still settles every cursor", async ({
+  page,
+}) => {
+  // Safari sometimes forgets compositionend; CodeMirror then ends the composition itself 20 ms
+  // after an insertText that arrives while composing, and no DOM event reaches us. The waiting
+  // cursors must still get the text, and later typing at one cursor must stay at that cursor.
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("´"));
+  await page.evaluate(() => window.ime.insertText("é"));
+  await expect.poll(() => text(page)).toBe("사과é\n배é\n귤é");
+  expect(await ranges(page)).toEqual([
+    [3, 3],
+    [6, 6],
+    [9, 9],
+  ]);
+  await select(page, [[3, 3]]);
+  await page.keyboard.type(" hi ");
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("가"));
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("사과é hi 가\n배é\n귤é");
+  expect(await ranges(page)).toEqual([[8, 8]]);
 });
 
 test("a multi-line main selection does not cost the other selection its text", async ({ page }) => {

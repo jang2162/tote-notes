@@ -77,7 +77,7 @@ describe("compositionCommit", () => {
     // Cursors at 4 and 6 before the composition, mapped through the 가 inserted at 2.
     const current: Composition = {
       from: 2,
-      anchor: 2,
+      taken: "",
       others: [EditorSelection.cursor(5), EditorSelection.cursor(7)],
     };
     const s = waiting("사과가\n배\n귤", [3, 3]);
@@ -94,7 +94,7 @@ describe("compositionCommit", () => {
   it("replaces a waiting selection the way the main one was replaced (recording 2)", () => {
     // `test test`, both selected; the composition replaced the first with 가, so the other,
     // mapped through that change, is at 2..6.
-    const current: Composition = { from: 0, anchor: 0, others: [EditorSelection.range(2, 6)] };
+    const current: Composition = { from: 0, taken: "", others: [EditorSelection.range(2, 6)] };
     const s = waiting("가 test", [1, 1]);
     const tr = s.update(compositionCommit(s, current));
     expect(tr.newDoc.toString()).toBe("가 가");
@@ -104,11 +104,11 @@ describe("compositionCommit", () => {
     ]);
   });
 
-  it("takes from the others what the composition took before the caret", () => {
+  it("takes from the others the same text the composition took before the caret", () => {
     // A direct-path ㄱ at every cursor, then a composition that rewrote the main one's ㄱ to 가.
     const current: Composition = {
       from: 2,
-      anchor: 3,
+      taken: "ㄱ",
       others: [EditorSelection.cursor(6), EditorSelection.cursor(9)],
     };
     const s = waiting("사과가\n배ㄱ\n귤ㄱ", [3, 3]);
@@ -121,10 +121,26 @@ describe("compositionCommit", () => {
     ]);
   });
 
+  it("leaves a waiting cursor alone when the text before it is not what was taken", () => {
+    const current: Composition = {
+      from: 2,
+      taken: "ㄱ",
+      others: [EditorSelection.cursor(6), EditorSelection.cursor(9)],
+    };
+    const s = waiting("사과가\n배ㄴ\n귤ㄱ", [3, 3]);
+    const tr = s.update(compositionCommit(s, current));
+    expect(tr.newDoc.toString()).toBe("사과가\n배ㄴ\n귤가");
+    expect(rangesOf(tr)).toEqual([
+      [3, 3],
+      [6, 6],
+      [9, 9],
+    ]);
+  });
+
   it("leaves nothing anywhere after a cancelled composition", () => {
     const current: Composition = {
       from: 2,
-      anchor: 2,
+      taken: "",
       others: [EditorSelection.cursor(4), EditorSelection.cursor(6)],
     };
     const s = waiting("사과\n배\n귤", [2, 2]);
