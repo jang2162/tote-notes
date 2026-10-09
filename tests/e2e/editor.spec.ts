@@ -51,48 +51,189 @@ test("⌥drag selects a rectangle that replaces the selection", async ({ page })
   ]);
 });
 
-test("a composition starting with several cursors keeps only the main one", async ({ page }) => {
-  await open(page, "하나\n둘\n셋");
-  await page.evaluate(() => {
-    const { view, EditorSelection } = window;
-    view.dispatch({
-      selection: EditorSelection.create(
-        [EditorSelection.cursor(2), EditorSelection.cursor(4), EditorSelection.cursor(6)],
-        0,
-      ),
-    });
-    view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
-  });
-  expect(await ranges(page)).toEqual([[2, 2]]);
+/** Sets several ranges; `main` is the index CodeMirror would have given the last ⌥click. */
+async function select(page: Page, ranges: [number, number][], main = 0) {
+  await page.evaluate(
+    ([rs, m]) => {
+      const { view, EditorSelection } = window;
+      view.dispatch({
+        selection: EditorSelection.create(
+          rs.map(([anchor, head]) => EditorSelection.range(anchor, head)),
+          m,
+        ),
+      });
+    },
+    [ranges, main] as const,
+  );
+}
 
-  // A multi-line main selection must not cost the others their text: CodeMirror's own
-  // compositionstart handling deletes every non-empty selection unless ours runs first. The main
-  // selection itself is replaced by the composition, as usual; "four" has to survive.
+// The Hangul specs replay the input method's recorded event shapes (tests/e2e/pages/editor.ts).
+// Three cursors at the ends of 사과 / 배 / 귤, the last ⌥click on the middle line, as recorded.
+const THREE: [number, number][] = [
+  [2, 2],
+  [4, 4],
+  [6, 6],
+];
+
+test("with several ranges the first one is the main range", async ({ page }) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  expect(await page.evaluate(() => window.view.state.selection.mainIndex)).toBe(0);
+  expect(await ranges(page)).toEqual(THREE);
+});
+
+test("direct-path Hangul at three cursors lands at every cursor", async ({ page }) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.insertText("ㄱ"));
+  expect(await text(page)).toBe("사과ㄱ\n배ㄱ\n귤ㄱ");
+  await page.evaluate(() => window.ime.replaceBefore(1, "가"));
+  expect(await text(page)).toBe("사과가\n배가\n귤가");
+  await page.evaluate(() => window.ime.replaceBefore(1, "간"));
+  await page.evaluate(() => window.ime.replaceBefore(1, "가"));
+  await page.evaluate(() => window.ime.insertText("나"));
+  expect(await text(page)).toBe("사과가나\n배가나\n귤가나");
+  expect(await ranges(page)).toEqual([
+    [4, 4],
+    [8, 8],
+    [12, 12],
+  ]);
+});
+
+test("composition-path Hangul at three cursors lands at every cursor", async ({ page }) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄱ"));
+  await page.evaluate(() => window.ime.update("가"));
+  // While composing, the preview is at the main range only.
+  expect(await text(page)).toBe("사과가\n배\n귤");
+  expect(await ranges(page)).toEqual([[3, 3]]);
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("사과가\n배가\n귤가");
+  expect(await ranges(page)).toEqual([
+    [3, 3],
+    [6, 6],
+    [9, 9],
+  ]);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄴ"));
+  await page.evaluate(() => window.ime.update("나"));
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("사과가나\n배가나\n귤가나");
+  expect(await ranges(page)).toEqual([
+    [4, 4],
+    [8, 8],
+    [12, 12],
+  ]);
+});
+
+test("recording 1 — a direct jamo, then compositions: every cursor ends the same", async ({
+  page,
+}) => {
+  // The recording: ㄱ arrived as a plain insertText, then the input method opened a fresh
+  // composition for ㅏ and another for 나. Each cursor must end with the same text, whatever
+  // syllables the input method made of it.
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.insertText("ㄱ"));
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㅏ"));
+  await page.evaluate(() => window.ime.end("replace"));
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄴ"));
+  await page.evaluate(() => window.ime.update("나"));
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("사과ㄱㅏ나\n배ㄱㅏ나\n귤ㄱㅏ나");
+  expect(await ranges(page)).toEqual([
+    [5, 5],
+    [10, 10],
+    [15, 15],
+  ]);
+});
+
+test("recording 2 — two ⌘D selections and a composition: both become the syllable", async ({
+  page,
+}) => {
+  await open(page, "test test");
+  await page.evaluate(() => window.view.dispatch({ selection: { anchor: 0, head: 3 } }));
+  await page.keyboard.press("Meta+d");
+  expect(await ranges(page)).toEqual([
+    [0, 3],
+    [5, 8],
+  ]);
+  await select(page, [
+    [0, 4],
+    [5, 9],
+  ]);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄱ"));
+  await page.evaluate(() => window.ime.restart());
+  await page.evaluate(() => window.ime.update("가"));
+  expect(await text(page)).toBe("가 test");
+  await page.evaluate(() => window.ime.end("bare"));
+  expect(await text(page)).toBe("가 가");
+  expect(await ranges(page)).toEqual([
+    [1, 1],
+    [3, 3],
+  ]);
+});
+
+test("direct-path Hangul over two selections replaces both", async ({ page }) => {
+  await open(page, "test test");
+  await select(page, [
+    [0, 4],
+    [5, 9],
+  ]);
+  await page.evaluate(() => window.ime.insertText("ㄱ"));
+  expect(await text(page)).toBe("ㄱ ㄱ");
+  await page.evaluate(() => window.ime.replaceBefore(1, "가"));
+  expect(await text(page)).toBe("가 가");
+  expect(await ranges(page)).toEqual([
+    [1, 1],
+    [3, 3],
+  ]);
+});
+
+test("a cancelled composition leaves nothing at any cursor", async ({ page }) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄱ"));
+  expect(await text(page)).toBe("사과ㄱ\n배\n귤");
+  await page.evaluate(() => window.ime.end("cancel"));
+  expect(await text(page)).toBe("사과\n배\n귤");
+  expect(await ranges(page)).toEqual(THREE);
+});
+
+test("a multi-line main selection does not cost the other selection its text", async ({ page }) => {
+  // CodeMirror's own compositionstart handling deletes every non-empty selection when the main
+  // one spans lines; ours runs first and keeps the others out of its way until the end, when the
+  // composed text replaces them too.
   await open(page, "one\ntwo\nthree four");
-  await page.evaluate(() => {
-    const { view, EditorSelection } = window;
-    view.dispatch({
-      selection: EditorSelection.create(
-        [EditorSelection.range(0, 5), EditorSelection.range(14, 18)],
-        0,
-      ),
-    });
-    view.contentDOM.dispatchEvent(new CompositionEvent("compositionstart", { data: "" }));
-  });
+  await select(page, [
+    [0, 5],
+    [14, 18],
+  ]);
+  await page.evaluate(() => window.ime.start());
   expect(await text(page)).toBe("wo\nthree four");
   expect(await ranges(page)).toEqual([[0, 0]]);
+  await page.evaluate(() => window.ime.update("가"));
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("가wo\nthree 가");
+  expect(await ranges(page)).toEqual([
+    [1, 1],
+    [11, 11],
+  ]);
+});
 
-  // Typing that is not a composition keeps every cursor.
+test("typing that is not a composition keeps every cursor", async ({ page }) => {
   await open(page, "aa\nbb\ncc");
-  await page.evaluate(() => {
-    const { view, EditorSelection } = window;
-    view.dispatch({
-      selection: EditorSelection.create(
-        [EditorSelection.cursor(2), EditorSelection.cursor(5), EditorSelection.cursor(8)],
-        0,
-      ),
-    });
-  });
+  await select(page, [
+    [2, 2],
+    [5, 5],
+    [8, 8],
+  ]);
   await page.keyboard.type("xy");
   expect(await text(page)).toBe("aaxy\nbbxy\nccxy");
 });

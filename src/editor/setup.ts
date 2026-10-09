@@ -27,7 +27,7 @@ import {
 
 import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
-import { collapseSelectionOnComposition } from "./ime";
+import { multiRangeIme } from "./ime";
 
 /** Tab: an indent unit at every cursor; with text selected, indents the selected lines. */
 export const insertIndent: Command = (view) => {
@@ -103,7 +103,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     highlightSelectionMatches(),
     closeBrackets(),
     search({ top: true }),
-    collapseSelectionOnComposition,
+    multiRangeIme,
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName)),
     keymap.of([
