@@ -106,7 +106,8 @@ test("composition-path Hangul at three cursors lands at every cursor", async ({ 
   await page.evaluate(() => window.ime.start());
   await page.evaluate(() => window.ime.update("ㄱ"));
   await page.evaluate(() => window.ime.update("가"));
-  // While composing, the preview is at the main range only.
+  // While composing, the preview is at the main range only, also past the settle plugin's 50 ms.
+  await page.waitForTimeout(100);
   expect(await text(page)).toBe("사과가\n배\n귤");
   expect(await ranges(page)).toEqual([[3, 3]]);
   await page.evaluate(() => window.ime.end("replace"));
@@ -168,7 +169,9 @@ test("recording 2 — two ⌘D selections and a composition: both become the syl
   await page.evaluate(() => window.ime.update("ㄱ"));
   await page.evaluate(() => window.ime.restart());
   await page.evaluate(() => window.ime.update("가"));
-  // Until the end, nothing is copied to the other selection.
+  // Until the end, nothing is copied to the other selection — not even after the settle plugin's
+  // 50 ms look, since CodeMirror is still composing.
+  await page.waitForTimeout(100);
   expect(await text(page)).toBe("가 test");
   expect(await ranges(page)).toEqual([[1, 1]]);
   await page.evaluate(() => window.ime.end("bare"));
