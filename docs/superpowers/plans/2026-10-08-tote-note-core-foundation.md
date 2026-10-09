@@ -2266,7 +2266,7 @@ git commit -m "feat(workspace): create, save, retitle, rename, delete and import
 
 - [ ] **Step 1: 실패하는 테스트 작성**
 
-`lib.rs` 에 `pub mod session;` 을, `persist/mod.rs` 맨 위에 `pub mod external;` 을 넣는다. 세 파일을 테스트만 담아 만든다(`session/mod.rs` 는 `pub mod drafts;` 선언도 둔다).
+`lib.rs` 에 `pub mod session;` 을, `persist/mod.rs` 의 `//!` 모듈 문서 바로 아래에 `pub mod external;` 을 넣는다(`//!` 보다 앞에 두면 E0753 으로 컴파일되지 않는다). 세 파일을 테스트만 담아 만든다(`session/mod.rs` 는 `pub mod drafts;` 선언도 둔다).
 
 `src-tauri/src/session/mod.rs`:
 
@@ -2468,7 +2468,7 @@ Expected: `cannot find function read_session`, `cannot find type DraftStore` 등
 
 - [ ] **Step 3: 구현**
 
-`src-tauri/src/session/mod.rs` 의 `pub mod drafts;` 아래, 테스트 위:
+`src-tauri/src/session/mod.rs` 의 맨 위, 즉 `pub mod …;` 선언보다 앞(`//!` 모듈 문서가 선언 뒤에 오면 E0753 으로 컴파일되지 않는다). 선언은 아래 `use` 들 뒤에 둔다. 테스트 위:
 
 ```rust
 //! Per-device session files, `.tote/sessions/<device ID>.json` (spec 「세션」). The frontend owns
@@ -3694,7 +3694,7 @@ impl FlushCoordinator {
 }
 ```
 
-`src-tauri/src/app/mod.rs` 의 `pub mod flush;` 아래, 테스트 위:
+`src-tauri/src/app/mod.rs` 의 맨 위, 즉 `pub mod …;` 선언보다 앞(`//!` 모듈 문서가 선언 뒤에 오면 E0753 으로 컴파일되지 않는다). 선언은 아래 `use` 들 뒤에 둔다. 테스트 위:
 
 ```rust
 //! The app's shared state: which window shows which workspace, focus order for routing, pending
