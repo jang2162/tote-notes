@@ -168,6 +168,7 @@ export abstract class Doc {
   }
 
   async openAsText(): Promise<void> {
+    this.mode = "edit";
     this.forceText = true;
     this.problem = null;
     this.state = null;
@@ -643,6 +644,7 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
   await ext.discard();
   const memo = new MemoDoc(host, info);
   memo.scrollAnchor = ext.scrollAnchor;
+  memo.mode = ext.mode;
   if (ext.state) memo.adopt(ext.state, ext.lineFormat);
   // A language picked for the file stays with the text; as a memo it is kept the memo way. The
   // import has happened by then, so a failure here leaves it standing: `memo.error` says why,

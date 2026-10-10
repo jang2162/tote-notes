@@ -103,10 +103,11 @@ export function manifestFor(
   };
 }
 
-/** Fills `__INLINE:<name>__` with the vendor file's text and `__SCRIPT_HASHES__` with the
+/** Fills the comment placeholder `__INLINE:<name>__` (slash-star … star-slash, which the
+ * formatter leaves alone) with the vendor file's text and `__SCRIPT_HASHES__` with the
  * sha256 CSP sources of every inline script — the page then runs exactly those scripts. */
 export function inlineViewer(template: string, vendor: Record<string, string>): string {
-  let html = template.replace(/__INLINE:([\w-]+)__/g, (_m, name: string) => {
+  let html = template.replace(/\/\*__INLINE:([\w-]+)__\*\//g, (_m, name: string) => {
     const text = vendor[name];
     if (text === undefined)
       throw new Error(`viewer template asks for a vendor file it was not given: ${name}`);
@@ -291,7 +292,7 @@ async function syncThemes() {
   writeFileSync(join(dir, "LICENSES.md"), licensesMarkdown("tote.themes — 테마 라이선스", rows));
 }
 
-/** Vendor files a viewer template may inline, by the name used in `__INLINE:<name>__`. */
+/** Vendor files a viewer template may inline, by the name used in the `__INLINE:<name>__` comment. */
 function vendorFiles(): Record<string, string> {
   const marked = join(dirname(require.resolve("marked/package.json")), "lib/marked.umd.js");
   return { marked: readFileSync(marked, "utf8") };

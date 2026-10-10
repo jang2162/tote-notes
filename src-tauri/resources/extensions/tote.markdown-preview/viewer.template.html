@@ -1,0 +1,156 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src __SCRIPT_HASHES__"
+    />
+    <title>미리보기</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      body {
+        margin: 0;
+        padding: 16px 24px;
+        background: var(--bg, #fff);
+        color: var(--fg, #000);
+        font:
+          15px/1.6 -apple-system,
+          "Apple SD Gothic Neo",
+          sans-serif;
+      }
+      main {
+        max-width: 760px;
+        margin: 0 auto;
+      }
+      pre,
+      code {
+        font-family: ui-monospace, "SF Mono", Menlo, monospace;
+        font-size: 0.92em;
+      }
+      pre {
+        padding: 12px;
+        overflow: auto;
+        background: color-mix(in srgb, var(--fg, #000) 6%, transparent);
+        border-radius: 6px;
+      }
+      img {
+        max-width: 100%;
+      }
+      a {
+        color: var(--accent, #06c);
+      }
+      blockquote {
+        margin: 0;
+        padding-left: 12px;
+        border-left: 3px solid var(--border, #ddd);
+        color: var(--muted, #666);
+      }
+      table {
+        border-collapse: collapse;
+      }
+      th,
+      td {
+        padding: 4px 8px;
+        border: 1px solid var(--border, #ddd);
+      }
+      .blocked-image {
+        display: inline-block;
+        padding: 2px 6px;
+        border: 1px dashed var(--border, #999);
+        color: var(--muted, #666);
+        font-size: 0.85em;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="main"></main>
+    <script>
+      /*__INLINE:marked__*/
+    </script>
+    <script>
+      // Spec 「마크다운 미리보기」: the text arrives by message, relative images come back as token
+      // URLs from the host, remote images are not shown. Markdown may carry raw HTML; the CSP has
+      // no 'unsafe-inline' for scripts and the sandbox has no navigation, so what remains is kept
+      // from running by stripping the elements that could still act (script, meta refresh, frames,
+      // forms) before the HTML enters the document.
+      const DROP =
+        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style";
+      const main = document.getElementById("main");
+      let nextId = 1;
+      const waiting = new Map();
+
+      function applyTheme(theme) {
+        for (const [name, value] of Object.entries(theme || {}))
+          document.documentElement.style.setProperty(name, value);
+      }
+
+      function resolve(path) {
+        return new Promise((resolve) => {
+          const id = nextId++;
+          waiting.set(id, resolve);
+          parent.postMessage({ type: "resolveRelative", id, path }, "*");
+        });
+      }
+
+      function blocked(img, label) {
+        const span = document.createElement("span");
+        span.className = "blocked-image";
+        span.textContent = `${label}: ${img.getAttribute("alt") || img.getAttribute("src") || ""}`;
+        img.replaceWith(span);
+      }
+
+      async function placeImage(img) {
+        const src = img.getAttribute("src") || "";
+        if (/^data:/i.test(src)) return;
+        if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("/") || src.startsWith("//"))
+          return blocked(img, "원격 이미지");
+        const url = await resolve(src);
+        if (url) img.src = url;
+        else blocked(img, "찾을 수 없음");
+      }
+
+      function render(text) {
+        const html = marked.parse(text, { async: false, gfm: true });
+        const template = document.createElement("template");
+        template.innerHTML = html;
+        for (const el of template.content.querySelectorAll(DROP)) el.remove();
+        for (const el of template.content.querySelectorAll("*")) {
+          for (const attr of [...el.attributes]) {
+            if (/^on/i.test(attr.name) || /^\s*javascript:/i.test(attr.value))
+              el.removeAttribute(attr.name);
+          }
+        }
+        main.replaceChildren(template.content);
+        for (const img of main.querySelectorAll("img")) placeImage(img);
+      }
+
+      addEventListener("click", (event) => {
+        const link = event.target instanceof Element ? event.target.closest("a") : null;
+        if (link) event.preventDefault();
+      });
+
+      addEventListener("message", (event) => {
+        const data = event.data;
+        if (!data || typeof data !== "object") return;
+        if (data.type === "init") {
+          applyTheme(data.theme);
+          try {
+            render(data.text || "");
+          } catch (error) {
+            parent.postMessage({ type: "error", message: String(error) }, "*");
+          }
+        }
+        if (data.type === "theme") applyTheme(data.theme);
+        if (data.type === "resolved") {
+          const resolve = waiting.get(data.id);
+          waiting.delete(data.id);
+          if (resolve) resolve(data.url);
+        }
+      });
+      parent.postMessage({ type: "ready" }, "*");
+    </script>
+  </body>
+</html>

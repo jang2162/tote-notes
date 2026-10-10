@@ -1,0 +1,16 @@
+{
+  "name": "markdown-preview",
+  "publisher": "tote",
+  "version": "1.0.0",
+  "displayName": "tote 마크다운 미리보기",
+  "tote": {
+    "viewers": [
+      {
+        "id": "markdown",
+        "kind": "preview",
+        "extensions": ["md", "markdown"],
+        "entry": "viewer.html"
+      }
+    ]
+  }
+}

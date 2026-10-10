@@ -345,6 +345,14 @@ export class AppController implements DocHost {
     this.showLanguage(doc);
     this.statusBar.setMessage(doc.notice ?? "");
     if (state) {
+      const preview =
+        doc.mode === "preview" ? this.registry.viewerFor(doc.fileName, "preview") : undefined;
+      if (preview) {
+        this.openViewer(doc, preview, state.doc.toString());
+        this.statusBar.setPosition(null);
+        this.statusBar.setMessage("미리보기 · ⇧⌘V 로 편집");
+        return;
+      }
       this.surface.showEditor(state, doc.scrollAnchor);
       this.statusBar.setPosition(this.view.state);
       return;
@@ -373,15 +381,23 @@ export class AppController implements DocHost {
     if (doc === this.tabs.active) this.show(doc);
   }
 
-  /** A primary viewer for a file the editor cannot show (spec 「뷰어」). The token lives as long
-   * as this view: leaving the tab, closing it or a viewer failure revokes it. */
-  private openViewer(doc: Doc, viewer: ViewerInfo): void {
+  /** A viewer for `doc` (spec 「뷰어」): a primary viewer for a file the editor cannot show gets a
+   * token URL, a preview viewer gets `text` — the text as it is now. The token lives as long as
+   * this view: leaving the tab, closing it or a viewer failure revokes it. */
+  private openViewer(doc: Doc, viewer: ViewerInfo, text?: string): void {
     const owner = `${doc.tabId}:${viewer.id}:${++this.views}`;
     const fallBack = () => {
       // Another view took over meanwhile; this one is already gone.
       if (this.panel !== panel) return;
       this.closePanel();
-      if (doc === this.tabs.active) this.showProblem(doc);
+      if (doc !== this.tabs.active) return;
+      if (text === undefined) return this.showProblem(doc);
+      // A preview that fails leaves the text readable and editable (「텍스트로 열기」 is for a file
+      // whose kind is not text), so go back to the editor.
+      doc.mode = "edit";
+      this.show(doc);
+      this.statusBar.setMessage("미리보기를 열 수 없어 편집으로 돌아왔습니다", "error");
+      this.saveSessionSoon();
     };
     const host = new ViewerHost({
       url: this.backend.viewerUrl(viewer.extension, viewer.entry),
@@ -401,16 +417,23 @@ export class AppController implements DocHost {
     const panel: TokenPanel = { doc, owner, host };
     this.panel = panel;
     this.surface.showPanel(host.el);
+    const base = {
+      fileName: doc.fileName,
+      extension: splitName(doc.fileName).ext.toLowerCase(),
+      theme: this.theme.active.variables,
+    };
+    if (text !== undefined) {
+      host.start({ ...base, size: text.length, text });
+      return;
+    }
     void this.backend
       .issueFileToken(doc.source, owner)
       .then((url) => {
         if (this.panel !== panel) return;
         host.start({
-          fileName: doc.fileName,
-          extension: splitName(doc.fileName).ext.toLowerCase(),
+          ...base,
           size: doc instanceof MemoDoc ? doc.info.size : (doc as ExternalDoc).size,
           url,
-          theme: this.theme.active.variables,
         });
       })
       .catch((error: unknown) => {
@@ -519,6 +542,8 @@ export class AppController implements DocHost {
           return await this.cycleTab(1);
         case "prev-tab":
           return await this.cycleTab(-1);
+        case "toggle-preview":
+          return await this.togglePreview();
         case "open-workspace":
         case "new-workspace":
           return await this.showPicker();
@@ -526,6 +551,22 @@ export class AppController implements DocHost {
     } catch (error) {
       this.report(error);
     }
+  }
+
+  /** ⇧⌘V (spec 「마크다운 미리보기」): per tab, with the text as it is right now. */
+  async togglePreview(): Promise<void> {
+    const doc = this.tabs.active;
+    if (!doc || !this.registry.viewerFor(doc.fileName, "preview")) return;
+    // A tab just picked may still be reading its file: its `show` comes first, then this switch.
+    await doc.ensureLoaded();
+    if (this.tabs.active !== doc || !doc.state || doc.problem) return;
+    // `capture` reads the scroll only while the editor shows, so a preview keeps the anchor.
+    this.capture(doc);
+    await doc.leave();
+    if (this.tabs.active !== doc) return;
+    doc.mode = doc.mode === "preview" ? "edit" : "preview";
+    this.show(doc);
+    this.saveSessionSoon();
   }
 
   private async saveActive(): Promise<void> {

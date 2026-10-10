@@ -94,6 +94,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             Some("CmdOrCtrl+Shift+["),
         )?)
         .separator()
+        .item(&item(
+            app,
+            "toggle-preview",
+            "미리보기 전환",
+            Some("CmdOrCtrl+Shift+V"),
+        )?)
+        .separator()
         .fullscreen()
         .build()?;
     let window = SubmenuBuilder::new(app, "윈도우")

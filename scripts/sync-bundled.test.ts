@@ -152,7 +152,7 @@ describe("languageConfiguration and manifestFor", () => {
 
 describe("inlineViewer", () => {
   it("inlines vendor scripts and locks the CSP to the hashes of every inline script", () => {
-    const template = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __SCRIPT_HASHES__"><script>__INLINE:lib__</script><script>main()</script>`;
+    const template = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __SCRIPT_HASHES__"><script>/*__INLINE:lib__*/</script><script>main()</script>`;
     const html = inlineViewer(template, { lib: "var lib = 1;" });
     expect(html).toContain("<script>var lib = 1;</script>");
     expect(html).not.toContain("__INLINE");
@@ -166,13 +166,13 @@ describe("inlineViewer", () => {
   });
 
   it("refuses a vendor file that would end the inline script", () => {
-    expect(() => inlineViewer("<script>__INLINE:lib__</script>", { lib: "a</script>b" })).toThrow(
-      /<\/script/,
-    );
+    expect(() =>
+      inlineViewer("<script>/*__INLINE:lib__*/</script>", { lib: "a</script>b" }),
+    ).toThrow(/<\/script/);
   });
 
   it("refuses a template that names a vendor it was not given", () => {
-    expect(() => inlineViewer("<script>__INLINE:nope__</script>", {})).toThrow(/nope/);
+    expect(() => inlineViewer("<script>/*__INLINE:nope__*/</script>", {})).toThrow(/nope/);
   });
 });
 
