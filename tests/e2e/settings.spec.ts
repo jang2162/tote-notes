@@ -214,3 +214,42 @@ test("a folder dialog that fails says so instead of vanishing", async ({ page })
   await page.locator(".modal.settings button", { hasText: "폴더 선택…" }).click();
   await expect(page.locator(".modal.settings .modal-error")).not.toHaveText("");
 });
+
+// Replacing an extension with the same version installs a new folder; what was read from the
+// old one is as stale as after any other change.
+test("replacing an extension with the same version makes the next file read again", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("a.sh", "echo a"), b: fakeMemo("b.sh", "echo b") },
+    packages: { "/pkg/night.vsix": PKG },
+    picks: ["/pkg/night.vsix", "/pkg/night.vsix"],
+  });
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const read = backend.readExtensionFile.bind(backend);
+    (window as unknown as { configReads: string[] }).configReads = [];
+    backend.readExtensionFile = (extensionId: string, path: string) => {
+      if (path.startsWith("language-configuration/"))
+        (window as unknown as { configReads: string[] }).configReads.push(path);
+      return read(extensionId, path);
+    };
+  });
+  const reads = () =>
+    page.evaluate(() => (window as unknown as { configReads: string[] }).configReads.length);
+  await menu(page, "settings");
+  const panel = page.locator(".modal.settings");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator(".memo-row", { hasText: "a" }).first().click();
+  await expect.poll(reads).toBeGreaterThan(0);
+  const before = await reads();
+  await menu(page, "settings");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  await page.locator(".modal.confirm button", { hasText: "교체" }).click();
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  await page.keyboard.press("Escape");
+  await page.locator(".memo-row", { hasText: "b" }).first().click();
+  await expect.poll(reads).toBeGreaterThan(before);
+});

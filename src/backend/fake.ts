@@ -64,6 +64,8 @@ export interface FakeData {
   extensionFiles: Record<string, string>;
   /** Problems the fake registry reports besides the bundled ones' (none). Absent in old seeds. */
   problems?: ExtensionProblem[];
+  /** Installs so far: each stamps its extension's `modified`, as a new folder would. */
+  installs?: number;
   /** Viewers added to the bundled ones, each with the page that stands in for it — the UI tests
    * open file types through them that no bundled viewer opens yet. */
   extraViewers: { info: ViewerInfo; url: string }[];
@@ -484,6 +486,7 @@ export class FakeBackend implements Backend {
       source: "user",
       enabled: true,
       path: `/fake/extensions/${id}@${pkg.version}`,
+      modified: (this.data.installs = (this.data.installs ?? 0) + 1),
     };
     this.data.userExtensions.push(summary);
     this.commit();

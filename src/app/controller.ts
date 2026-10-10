@@ -52,7 +52,7 @@ export { describeError, ERROR_TEXT } from "./errors";
 function extensionSignature(registry: Registry): string {
   const { extensions, grammars } = registry.data;
   return JSON.stringify([
-    extensions.map((e) => `${e.id}@${e.version}:${e.enabled}`),
+    extensions.map((e) => `${e.id}@${e.version}:${e.enabled}:${e.modified ?? 0}`),
     grammars.map((g) => `${g.extension}/${g.path}`),
   ]);
 }
@@ -135,6 +135,7 @@ export class AppController implements DocHost {
     this.deviceId = info.deviceId;
     document.title = info.name;
     await this.loadRegistry();
+    this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
     this.theme.onChange((active) => {
       if (active.theme) void this.highlight.setTheme(tokenTheme(active.theme));

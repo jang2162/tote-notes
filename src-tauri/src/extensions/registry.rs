@@ -43,6 +43,10 @@ pub struct ExtensionSummary {
     pub source: Source,
     pub enabled: bool,
     pub path: PathBuf,
+    /// When the extension's folder was made, in ms since the epoch (0 when unknown). A replace
+    /// installs a new folder, so this tells the frontend that files it read are stale even when
+    /// the version stayed the same.
+    pub modified: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -86,6 +90,14 @@ pub struct ViewerInfo {
     pub entry: String,
 }
 
+fn folder_modified(path: &std::path::Path) -> u64 {
+    std::fs::metadata(path)
+        .and_then(|m| m.modified())
+        .ok()
+        .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
 pub fn build(scan: &Scan, settings: &ExtensionSettings) -> Registry {
     let enabled = |e: &super::Installed| {
         e.source == Source::Bundled || !settings.disabled.contains(&e.manifest.id())
@@ -100,6 +112,7 @@ pub fn build(scan: &Scan, settings: &ExtensionSettings) -> Registry {
             source: e.source,
             enabled: enabled(e),
             path: e.path.clone(),
+            modified: folder_modified(&e.path),
         })
         .collect();
     let first = match settings.precedence {
@@ -268,6 +281,29 @@ mod tests {
             summary,
             vec![("tote.languages", true), ("someone.better-md", false)]
         );
+    }
+
+    #[test]
+    fn a_summary_carries_when_the_folder_was_made_so_a_same_version_replace_shows() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut one = installed(Source::User, USER);
+        one.path = dir.path().to_path_buf();
+        let scan = Scan {
+            extensions: vec![one, installed(Source::Bundled, BUNDLED)],
+            problems: vec![],
+        };
+        let registry = build(&scan, &ExtensionSettings::default());
+        let expected = std::fs::metadata(dir.path())
+            .unwrap()
+            .modified()
+            .unwrap()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        assert!(expected > 0);
+        assert_eq!(registry.extensions[0].modified, expected);
+        // A folder that cannot be read says 0 rather than failing the registry.
+        assert_eq!(registry.extensions[1].modified, 0);
     }
 
     #[test]

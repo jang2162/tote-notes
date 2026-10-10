@@ -70,6 +70,9 @@ export interface ExtensionSummary {
   source: "bundled" | "user";
   enabled: boolean;
   path: string;
+  /** When the folder was made (ms). A same-version replace changes it. Absent in the fake's
+   * bundled list. */
+  modified?: number;
 }
 
 export interface GrammarInfo {
