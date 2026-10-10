@@ -2,10 +2,11 @@
 
 아래 작업을 할 때는 **시작하기 전에** 그 파일을 읽는다.
 
-| 언제                                                                                              | 읽을 파일                                                        |
-| ------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
-| tote-note 코어를 구현하거나 설계를 바꿀 때                                                        | `docs/superpowers/specs/2026-10-07-tote-note-core-design.md`     |
-| 스파이크 결과로 tote-note 스펙을 고치거나, 뷰어 파일 전달·편집기 하이라이트·한글 입력을 구현할 때 | `docs/superpowers/reports/2026-10-07-tote-note-spikes.md`        |
-| `spikes/lab` 을 고치거나 스파이크를 다시 잴 때                                                    | `spikes/lab/README.md`                                           |
-| tote-note 코어 기반 계획을 실행하거나, 그 계획의 다음 계획(확장과 화면·안전망)을 쓸 때            | `docs/superpowers/plans/2026-10-08-tote-note-core-foundation.md` |
-| 테스트를 쓰거나 돌릴 때, 새 워크트리에서 훅·툴체인이 실패할 때                                    | `docs/development.md`                                            |
+| 언제                                                                                              | 읽을 파일                                                               |
+| ------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------- |
+| tote-note 코어를 구현하거나 설계를 바꿀 때                                                        | `docs/superpowers/specs/2026-10-07-tote-note-core-design.md`            |
+| 스파이크 결과로 tote-note 스펙을 고치거나, 뷰어 파일 전달·편집기 하이라이트·한글 입력을 구현할 때 | `docs/superpowers/reports/2026-10-07-tote-note-spikes.md`               |
+| `spikes/lab` 을 고치거나 스파이크를 다시 잴 때                                                    | `spikes/lab/README.md`                                                  |
+| tote-note 코어 기반 계획을 실행하거나, 그 계획의 다음 계획(확장과 화면·안전망)을 쓸 때            | `docs/superpowers/plans/2026-10-08-tote-note-core-foundation.md`        |
+| tote-note 확장과 화면 계획을 실행하거나, 그 다음 계획(안전망)을 쓸 때                             | `docs/superpowers/plans/2026-10-10-tote-note-extensions-and-screens.md` |
+| 테스트를 쓰거나 돌릴 때, 새 워크트리에서 훅·툴체인이 실패할 때                                    | `docs/development.md`                                                   |
