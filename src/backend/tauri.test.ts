@@ -62,6 +62,17 @@ describe("TauriBackend", () => {
       ],
       [() => backend.settings(), "get_settings", undefined],
       [
+        () => backend.issueFileToken({ kind: "memo", id: "m" }, "o"),
+        "issue_file_token",
+        { source: { kind: "memo", id: "m" }, owner: "o" },
+      ],
+      [() => backend.revokeFileTokens("o"), "revoke_file_tokens", { owner: "o" }],
+      [
+        () => backend.resolveRelative({ kind: "external", path: "/x/a.md" }, "p.png", "o"),
+        "resolve_relative",
+        { source: { kind: "external", path: "/x/a.md" }, relative: "p.png", owner: "o" },
+      ],
+      [
         () =>
           backend.updateSettings({
             workspaceRoot: null,

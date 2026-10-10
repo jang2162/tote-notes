@@ -7,9 +7,11 @@ import {
   type ExtensionSummary,
   type ExternalInfo,
   type FileKind,
+  type FileSource,
   type MemoInfo,
   type PendingOpen,
   type Settings,
+  type ViewerInfo,
   type WindowFrame,
   type WorkspaceInfo,
   type WorkspaceListItem,
@@ -56,6 +58,11 @@ export interface FakeData {
   >;
   /** `"<extension id>/<path>"` → file text. Missing entries are fetched from the dev server. */
   extensionFiles: Record<string, string>;
+  /** Viewers added to the bundled ones, each with the page that stands in for it — the UI tests
+   * open file types through them that no bundled viewer opens yet. */
+  extraViewers: { info: ViewerInfo; url: string }[];
+  /** Owner → the file URLs issued to it and not yet revoked; tests check the revocation. */
+  tokens: Record<string, string[]>;
 }
 
 export interface FakeStorage {
@@ -95,6 +102,8 @@ export function defaultFakeData(): FakeData {
     userExtensions: [],
     packages: {},
     extensionFiles: {},
+    extraViewers: [],
+    tokens: {},
   };
 }
 
@@ -164,6 +173,25 @@ const validName = (name: string) =>
   name.trim() === name &&
   !name.startsWith(".") &&
   !/[/\\:*?"<>|]|\p{Cc}/u.test(name);
+// What the tote-file scheme sends as Content-Type (`content_type` in src-tauri/src/files/range.rs,
+// the part the media viewer plays); the fake hands the bytes over as data: URLs.
+const MIME: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  gif: "image/gif",
+  webp: "image/webp",
+  svg: "image/svg+xml",
+  mp4: "video/mp4",
+  mov: "video/quicktime",
+  webm: "video/webm",
+  mp3: "audio/mpeg",
+  m4a: "audio/mp4",
+  wav: "audio/wav",
+};
+const dataUrl = (name: string, data: string) =>
+  `data:${MIME[splitName(name).ext.toLowerCase()] ?? "application/octet-stream"};base64,${data}`;
+
 const decode = (data: string) => new TextDecoder().decode(fromBase64(data));
 
 export class FakeBackend implements Backend {
@@ -415,7 +443,11 @@ export class FakeBackend implements Backend {
       ...e,
       enabled: !this.data.settings.extensions.disabled.includes(e.id),
     }));
-    return { ...bundled, extensions: [...bundled.extensions, ...user] };
+    return {
+      ...bundled,
+      extensions: [...bundled.extensions, ...user],
+      viewers: [...bundled.viewers, ...this.data.extraViewers.map((v) => v.info)],
+    };
   }
 
   async readExtensionFile(extensionId: string, path: string) {
@@ -479,7 +511,55 @@ export class FakeBackend implements Backend {
   }
 
   viewerUrl(extensionId: string, entry: string) {
-    return `/extensions/${encodeURIComponent(extensionId)}/${entry}`;
+    const extra = this.data.extraViewers.find(
+      (v) => v.info.extension === extensionId && v.info.entry === entry,
+    );
+    return extra?.url ?? `/extensions/${encodeURIComponent(extensionId)}/${entry}`;
+  }
+
+  private sourceBytes(source: FileSource): {
+    name: string;
+    data: string;
+    folder: Record<string, string>;
+    dirKey: (name: string) => string;
+  } | null {
+    if (source.kind === "memo") {
+      const memo = this.data.memos[source.id];
+      if (!memo) return null;
+      const folder: Record<string, string> = {};
+      for (const m of Object.values(this.data.memos)) folder[m.file] = m.data;
+      return { name: memo.file, data: memo.data, folder, dirKey: (n) => n };
+    }
+    const data = this.data.files[source.path];
+    if (data === undefined) return null;
+    const dir = source.path.slice(0, source.path.lastIndexOf("/") + 1);
+    return { name: basename(source.path), data, folder: this.data.files, dirKey: (n) => dir + n };
+  }
+
+  async issueFileToken(source: FileSource, owner: string) {
+    const found = this.sourceBytes(source);
+    if (!found) throw new BackendError("not-found", JSON.stringify(source));
+    return this.issue(owner, dataUrl(found.name, found.data));
+  }
+
+  async revokeFileTokens(owner: string) {
+    delete this.data.tokens[owner];
+    this.commit();
+  }
+
+  async resolveRelative(source: FileSource, relative: string, owner: string) {
+    const name = relative.startsWith("./") ? relative.slice(2) : relative;
+    if (!name || name.includes("/") || name === "..") return null;
+    const found = this.sourceBytes(source);
+    const data = found?.folder[found.dirKey(name)];
+    if (data === undefined) return null;
+    return this.issue(owner, dataUrl(name, data));
+  }
+
+  private issue(owner: string, url: string): string {
+    (this.data.tokens[owner] ??= []).push(url);
+    this.commit();
+    return url;
   }
 
   async pickExtensionPackage() {

@@ -1,0 +1,43 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: tote-file:; connect-src tote-file:"
+    />
+  </head>
+  <body>
+    <script>
+      const probes = { origin: String(self.origin), tauri: typeof window.__TAURI_INTERNALS__ };
+      try {
+        probes.parent = typeof window.parent.document;
+      } catch (e) {
+        probes.parent = "blocked: " + e.name;
+      }
+      addEventListener("securitypolicyviolation", (e) => {
+        parent.postMessage({ type: "error", message: "csp:" + e.blockedURI }, "*");
+      });
+      addEventListener("message", async (e) => {
+        if (e.data?.type === "init") {
+          document.body.dataset.file = e.data.fileName;
+          document.body.style.background = e.data.theme["--bg"];
+          parent.postMessage(
+            {
+              type: "resolveRelative",
+              id: 1,
+              path: new URLSearchParams(location.search).get("rel") ?? "pic.png",
+            },
+            "*",
+          );
+          fetch("https://example.com/", { mode: "no-cors" }).catch(() => {});
+          // Echo back what a test reads: the init and the probes.
+          document.body.dataset.echo = JSON.stringify({ init: e.data, probes });
+        }
+        if (e.data?.type === "resolved") document.body.dataset.resolved = JSON.stringify(e.data);
+        if (e.data?.type === "theme") document.body.style.background = e.data.theme["--bg"];
+      });
+      parent.postMessage({ type: "ready" }, "*");
+    </script>
+  </body>
+</html>

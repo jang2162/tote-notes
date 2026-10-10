@@ -1,6 +1,12 @@
 import { EditorState, type EditorSelection, type Extension, type Text } from "@codemirror/state";
 
-import { errorCode, type Backend, type LanguageInfo, type MemoInfo } from "../backend/types";
+import {
+  errorCode,
+  type Backend,
+  type FileSource,
+  type LanguageInfo,
+  type MemoInfo,
+} from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
 import { detectLanguage } from "../core/language";
 import { basename, splitName } from "../core/names";
@@ -105,6 +111,8 @@ export abstract class Doc {
   languageData: LanguageData = {};
   /** The session's selection, applied when the text first loads. */
   restoreSelection: SelectionJSON | undefined;
+  /** 「텍스트로 열기」: read the bytes as text no matter what the kind says. */
+  forceText = false;
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;
@@ -114,6 +122,7 @@ export abstract class Doc {
   constructor(protected readonly host: DocHost) {}
 
   abstract get fileName(): string;
+  abstract get source(): FileSource;
   abstract get title(): string;
   abstract get hint(): string;
   abstract get dirty(): boolean;
@@ -154,6 +163,13 @@ export abstract class Doc {
     if (request !== this.languageRequest) return;
     this.languageData = data;
     this.host.changed(this, "language");
+  }
+
+  async openAsText(): Promise<void> {
+    this.forceText = true;
+    this.problem = null;
+    this.state = null;
+    await this.ensureLoaded();
   }
 
   /** The language picked in the status bar. */
@@ -229,6 +245,9 @@ export class MemoDoc extends Doc {
   get fileName() {
     return this.info.file;
   }
+  get source(): FileSource {
+    return { kind: "memo", id: this.info.id };
+  }
   get title() {
     return displayName(this.info.file);
   }
@@ -265,7 +284,7 @@ export class MemoDoc extends Doc {
   }
 
   protected async read(): Promise<Uint8Array | Problem> {
-    if (this.info.kind !== "text") return "binary";
+    if (!this.forceText && this.info.kind !== "text") return "binary";
     if (this.info.size > MAX_EDITOR_BYTES) return "too-large";
     return this.host.backend.readMemo(this.info.id);
   }
@@ -445,6 +464,8 @@ export class ExternalDoc extends Doc {
   /** Edited since the last ⌘S (or restored from a draft). */
   modified = false;
   exists = false;
+  /** Bytes on disk when the file was read; a viewer is told it. */
+  size = 0;
   private draftFailed = false;
 
   constructor(
@@ -456,6 +477,9 @@ export class ExternalDoc extends Doc {
 
   get fileName() {
     return basename(this.path);
+  }
+  get source(): FileSource {
+    return { kind: "external", path: this.path };
   }
   get title() {
     return basename(this.path);
@@ -481,6 +505,7 @@ export class ExternalDoc extends Doc {
   protected async read(): Promise<Uint8Array | Problem> {
     const info = await this.host.backend.openExternal(this.path);
     this.exists = info.exists;
+    this.size = info.size;
     if (info.draft) {
       const draft = await this.host.backend.readExternalDraft(this.path);
       // ⌘S writes the file before it drops the draft, so a draft that failed to go leaves one
@@ -498,7 +523,7 @@ export class ExternalDoc extends Doc {
       if (info.draft.diskChanged) this.notice = DRAFT_RESTORED_NOTICE;
       return draft;
     }
-    if (info.kind !== "text") return "binary";
+    if (!this.forceText && info.kind !== "text") return "binary";
     if (info.size > MAX_EDITOR_BYTES) return "too-large";
     return info.exists ? this.host.backend.readExternal(this.path) : new Uint8Array();
   }

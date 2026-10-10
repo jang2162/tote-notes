@@ -1,0 +1,8 @@
+<!doctype html>
+<meta charset="utf-8" />
+<script>
+  addEventListener("message", (e) => {
+    if (e.data?.type === "init") document.body.dataset.file = e.data.fileName;
+  });
+  parent.postMessage({ type: "ready" }, "*");
+</script>

@@ -209,6 +209,11 @@ export interface Backend {
   updateSettings(settings: Settings): Promise<void>;
   /** Where a bundled viewer page loads from. */
   viewerUrl(extensionId: string, entry: string): string;
+  /** A URL only this view may use for the file; revoked with `revokeFileTokens(owner)`. */
+  issueFileToken(source: FileSource, owner: string): Promise<string>;
+  revokeFileTokens(owner: string): Promise<void>;
+  /** A token URL for a file in the same folder as `source`, or null (spec 「뷰어 API」). */
+  resolveRelative(source: FileSource, relative: string, owner: string): Promise<string | null>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
   pickExtensionPackage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;

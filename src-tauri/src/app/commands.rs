@@ -16,6 +16,7 @@ use crate::appdata::Settings;
 use crate::extensions::file_inside;
 use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
+use crate::files::{self, FileSource};
 use crate::persist::external::ExternalInfo;
 use crate::session;
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
@@ -478,4 +479,52 @@ pub async fn update_settings(
     core.update_settings(settings)?;
     broadcast_config(&app);
     Ok(())
+}
+
+/// The path a source names, for this window's workspace.
+fn source_path(core: &AppCore, window: &WebviewWindow, source: &FileSource) -> CmdResult<PathBuf> {
+    match source {
+        FileSource::Memo { id } => {
+            let workspace = workspace_of(core, window)?;
+            let path = lock(&workspace).memo_path(id)?;
+            Ok(path)
+        }
+        FileSource::External { path } => absolute_path(&path.to_string_lossy()),
+    }
+}
+
+#[tauri::command]
+pub fn issue_file_token(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    source: FileSource,
+    owner: String,
+) -> CmdResult<String> {
+    let path = source_path(&core, &window, &source)?;
+    Ok(files::token_url(&core.files.issue(
+        window.label(),
+        &owner,
+        path,
+    )))
+}
+
+#[tauri::command]
+pub fn revoke_file_tokens(core: State<'_, AppCore>, window: WebviewWindow, owner: String) {
+    core.files.revoke(window.label(), &owner);
+}
+
+#[tauri::command]
+pub fn resolve_relative(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    source: FileSource,
+    relative: String,
+    owner: String,
+) -> CmdResult<Option<String>> {
+    let path = source_path(&core, &window, &source)?;
+    let Some(dir) = path.parent() else {
+        return Ok(None);
+    };
+    Ok(files::resolve_relative(dir, &relative)
+        .map(|file| files::token_url(&core.files.issue(window.label(), &owner, file))))
 }

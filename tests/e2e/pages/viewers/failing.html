@@ -1,0 +1,5 @@
+<!doctype html>
+<script>
+  parent.postMessage({ type: "ready" }, "*");
+  addEventListener("message", () => parent.postMessage({ type: "error", message: "boom" }, "*"));
+</script>

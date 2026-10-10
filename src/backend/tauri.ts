@@ -11,6 +11,7 @@ import {
   type ExtensionRegistry,
   type ExtensionSummary,
   type ExternalInfo,
+  type FileSource,
   type MemoInfo,
   type PendingOpen,
   type Settings,
@@ -162,6 +163,15 @@ export class TauriBackend implements Backend {
   }
   viewerUrl(extensionId: string, entry: string) {
     return `tote-ext://localhost/${encodeURIComponent(extensionId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;
+  }
+  issueFileToken(source: FileSource, owner: string) {
+    return call<string>("issue_file_token", { source, owner });
+  }
+  revokeFileTokens(owner: string) {
+    return call<void>("revoke_file_tokens", { owner });
+  }
+  resolveRelative(source: FileSource, relative: string, owner: string) {
+    return call<string | null>("resolve_relative", { source, relative, owner });
   }
   async pickExtensionPackage() {
     const picked = await open({

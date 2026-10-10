@@ -3,7 +3,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use super::index::MemoEntry;
 use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
@@ -14,6 +14,10 @@ impl Workspace {
     pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
         let file = self.free_name("untitled", ext, None);
         self.add_memo(file, true, contents)
+    }
+
+    pub fn memo_path(&self, id: &str) -> Result<PathBuf, WorkspaceError> {
+        Ok(self.root.join(&self.entry(id)?.file))
     }
 
     pub fn read_memo(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
@@ -439,6 +443,20 @@ mod tests {
         assert!(matches!(
             ws.import_file(Path::new("/nonexistent/a.txt")),
             Err(WorkspaceError::Io(_))
+        ));
+    }
+
+    #[test]
+    fn memo_path_is_the_file_under_the_root() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        assert_eq!(
+            ws.memo_path(&memo.id).unwrap(),
+            ws.root().join("untitled.md")
+        );
+        assert!(matches!(
+            ws.memo_path("nope"),
+            Err(WorkspaceError::UnknownMemo(_))
         ));
     }
 }

@@ -2,6 +2,7 @@ pub mod app;
 pub mod appdata;
 pub mod cli;
 pub mod extensions;
+pub mod files;
 pub mod persist;
 pub mod session;
 pub mod workspace;
@@ -25,6 +26,24 @@ pub fn run() {
             requests::handle(app, CliRequest::find_in(&argv).unwrap_or_default());
         }))
         .plugin(tauri_plugin_dialog::init())
+        .register_asynchronous_uri_scheme_protocol("tote-file", |ctx, request, responder| {
+            let app = ctx.app_handle().clone();
+            let path = request.uri().path().to_string();
+            let range = request
+                .headers()
+                .get(tauri::http::header::RANGE)
+                .and_then(|v| v.to_str().ok())
+                .map(str::to_string);
+            // Off the main thread: a 206 for a video seek reads from disk.
+            std::thread::spawn(move || {
+                let core = app.state::<AppCore>();
+                responder.respond(files::range::respond(&core.files, &path, range.as_deref()));
+            });
+        })
+        .register_uri_scheme_protocol("tote-ext", |ctx, request| {
+            let registry = ctx.app_handle().state::<AppCore>().registry();
+            extensions::serve::respond(&registry, request.uri().path())
+        })
         .menu(menu::build)
         .on_menu_event(menu::on_event)
         .on_window_event(windows::on_event)
@@ -68,6 +87,9 @@ pub fn run() {
             commands::set_extension_enabled,
             commands::get_settings,
             commands::update_settings,
+            commands::issue_file_token,
+            commands::revoke_file_tokens,
+            commands::resolve_relative,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");

@@ -1,7 +1,8 @@
 import type { Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
-import type { Backend, LanguageInfo, MemoInfo } from "../backend/types";
+import type { Backend, LanguageInfo, MemoInfo, ViewerInfo } from "../backend/types";
+import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
   languageData,
@@ -28,6 +29,7 @@ import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
+import { ViewerHost } from "../viewer/host";
 import {
   ExternalDoc,
   importExternal,
@@ -46,12 +48,22 @@ export { describeError, ERROR_TEXT } from "./errors";
 
 const SESSION_DELAY_MS = 1000;
 
+export const NOT_OPENABLE = "열 수 없음";
+export const OPEN_AS_TEXT = "텍스트로 열기";
+
 const PROBLEM_TEXT: Record<Problem, string> = {
   binary: "텍스트로 열 수 없음",
   "too-large": "100MB 가 넘는 파일은 아직 열 수 없습니다",
   missing: "파일을 찾을 수 없습니다",
   unreadable: "파일을 읽지 못했습니다",
 };
+
+/** A panel on show that reads its file through tokens issued to `owner`; closing it revokes them. */
+interface TokenPanel {
+  doc: Doc;
+  owner: string;
+  host: { destroy(): void; setTheme?(theme: Record<string, string>): void };
+}
 
 /** One workspace window: menu actions, opening and closing, and what the status bar says. Tabs,
  * the session and the editor area live in `Tabs`, `SessionSync` and `Surface`. */
@@ -80,6 +92,7 @@ export class AppController implements DocHost {
     close: (id) => void this.closeTab(id),
   });
   private readonly statusBar = new StatusBar();
+  private panel: TokenPanel | null = null;
 
   constructor(
     root: HTMLElement,
@@ -102,6 +115,7 @@ export class AppController implements DocHost {
     this.backend.onConfigChanged(() => void this.onConfigChanged());
     this.theme.onChange((active) => {
       if (active.theme) void this.highlight.setTheme(tokenTheme(active.theme));
+      this.panel?.host.setTheme?.(active.variables);
     });
     await this.theme.start();
     this.session = new SessionSync(
@@ -265,6 +279,7 @@ export class AppController implements DocHost {
       return;
     }
     const wasActive = doc === this.tabs.active;
+    if (this.panel?.doc === doc) this.closePanel();
     const next = this.tabs.remove(doc);
     this.dropHighlight(doc);
     if (wasActive) {
@@ -321,20 +336,90 @@ export class AppController implements DocHost {
   }
 
   private show(doc: Doc): void {
+    this.closePanel();
     const state = doc.problem ? null : doc.state;
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
     this.showLanguage(doc);
     this.statusBar.setMessage(doc.notice ?? "");
-    if (!state) {
-      this.surface.showPlaceholder(PROBLEM_TEXT[doc.problem ?? "unreadable"]);
-      this.statusBar.setPosition(null);
+    if (state) {
+      this.surface.showEditor(state, doc.scrollAnchor);
+      this.statusBar.setPosition(this.view.state);
       return;
     }
-    this.surface.showEditor(state, doc.scrollAnchor);
-    this.statusBar.setPosition(this.view.state);
+    this.statusBar.setPosition(null);
+    const viewer =
+      doc.problem === "binary" && !doc.forceText
+        ? this.registry.viewerFor(doc.fileName, "primary")
+        : undefined;
+    if (viewer) this.openViewer(doc, viewer);
+    else this.showProblem(doc);
+  }
+
+  private showProblem(doc: Doc): void {
+    const text =
+      doc.forceText || doc.problem !== "binary"
+        ? PROBLEM_TEXT[doc.problem ?? "unreadable"]
+        : NOT_OPENABLE;
+    const fallback = !doc.forceText
+      ? { label: OPEN_AS_TEXT, run: () => void this.openAsText(doc) }
+      : undefined;
+    this.surface.showPlaceholder(text, fallback);
+  }
+
+  private async openAsText(doc: Doc): Promise<void> {
+    await doc.openAsText();
+    if (doc === this.tabs.active) this.show(doc);
+  }
+
+  /** A primary viewer for a file the editor cannot show (spec 「뷰어」). The token lives as long
+   * as this view: leaving the tab, closing it or a viewer failure revokes it. */
+  private openViewer(doc: Doc, viewer: ViewerInfo): void {
+    const owner = `${doc.tabId}:${viewer.id}`;
+    const fallBack = () => {
+      // Another view took over meanwhile; this one is already gone.
+      if (this.panel !== panel) return;
+      this.closePanel();
+      if (doc === this.tabs.active) this.showProblem(doc);
+    };
+    const host = new ViewerHost({
+      url: this.backend.viewerUrl(viewer.extension, viewer.entry),
+      resolveRelative: (path) => this.backend.resolveRelative(doc.source, path, owner),
+      onError: (message) => {
+        console.warn(`viewer ${viewer.id}: ${message}`);
+        fallBack();
+      },
+    });
+    const panel: TokenPanel = { doc, owner, host };
+    this.panel = panel;
+    this.surface.showPanel(host.el);
+    void this.backend
+      .issueFileToken(doc.source, owner)
+      .then((url) => {
+        if (this.panel !== panel) return;
+        host.start({
+          fileName: doc.fileName,
+          extension: splitName(doc.fileName).ext.toLowerCase(),
+          size: doc instanceof MemoDoc ? doc.info.size : (doc as ExternalDoc).size,
+          url,
+          theme: this.theme.active.variables,
+        });
+      })
+      .catch((error: unknown) => {
+        this.report(error);
+        fallBack();
+      });
+  }
+
+  private closePanel(): void {
+    const open = this.panel;
+    if (!open) return;
+    this.panel = null;
+    open.host.destroy();
+    void this.backend.revokeFileTokens(open.owner).catch((error: unknown) => console.warn(error));
   }
 
   private showEmpty(): void {
+    this.closePanel();
     this.surface.showEmpty();
     this.memoList.setActive(null);
     this.statusBar.setPosition(null);

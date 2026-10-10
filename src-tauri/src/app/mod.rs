@@ -20,6 +20,7 @@ use serde::Serialize;
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings};
 use crate::extensions::registry::{self, Registry};
 use crate::extensions::ExtensionStore;
+use crate::files::TokenStore;
 use crate::persist::content_hash;
 use crate::persist::external::ExternalFiles;
 use crate::session::drafts::DraftStore;
@@ -47,6 +48,7 @@ pub struct AppCore {
     pub machine: Machine,
     pub external: ExternalFiles,
     pub extensions: ExtensionStore,
+    pub files: TokenStore,
     workspace_root: Mutex<PathBuf>,
     settings: Mutex<Settings>,
     registry: Mutex<Registry>,
@@ -100,6 +102,7 @@ impl AppCore {
             machine,
             external,
             extensions,
+            files: TokenStore::default(),
             workspace_root: Mutex::new(workspace_root),
             settings: Mutex::new(settings),
             registry: Mutex::new(registry),
@@ -243,6 +246,7 @@ impl AppCore {
 
     /// A window is gone. Returns the flush rounds it was the last one to wait for.
     pub fn closed(&self, label: &str) -> Vec<FlushGoal> {
+        self.files.revoke_window(label);
         let mut inner = lock(&self.inner);
         let removed = inner.windows.remove(label);
         inner.focus.retain(|l| l != label);
@@ -552,5 +556,15 @@ mod tests {
             core.begin_flush(FlushGoal::CloseWindow("gone".into())),
             Begin::Done(FlushGoal::CloseWindow("gone".into()))
         );
+    }
+
+    #[test]
+    fn closing_a_window_revokes_its_file_tokens() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let token = core.files.issue(&a, "tab:primary", "/x.png".into());
+        core.closed(&a);
+        assert_eq!(core.files.resolve(&token), None);
     }
 }

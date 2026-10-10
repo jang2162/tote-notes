@@ -4,6 +4,7 @@ import { join, normalize, resolve } from "node:path";
 import { defineConfig, type Plugin } from "vitest/config";
 
 const EXTENSIONS_DIR = resolve(__dirname, "src-tauri/resources/extensions");
+// As the app types them (`content_type` in src-tauri/src/extensions/serve.rs).
 const MIME: Record<string, string> = {
   ".html": "text/html; charset=utf-8",
   ".js": "text/javascript; charset=utf-8",

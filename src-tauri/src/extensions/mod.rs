@@ -6,6 +6,7 @@ pub mod install;
 pub mod jsonc;
 pub mod manifest;
 pub mod registry;
+pub mod serve;
 
 use std::fs;
 use std::path::{Path, PathBuf};

@@ -70,7 +70,8 @@ test("a file that is not text shows a placeholder", async ({ page }) => {
     picks: ["/x/data.bin"],
   });
   await menu(page, "open-file");
-  await expect(page.locator(".editor-placeholder")).toHaveText("텍스트로 열 수 없음");
+  await expect(page.locator(".editor-placeholder p")).toHaveText("열 수 없음");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toBeVisible();
 });
 
 test("files sent by a tote command open in tabs", async ({ page }) => {
@@ -81,4 +82,52 @@ test("files sent by a tote command open in tabs", async ({ page }) => {
     backend.poke();
   });
   await expect(page.locator(".tab.active .tab-title")).toHaveText("a.sh");
+});
+
+test("a non-text file with a viewer opens it; 텍스트로 열기 falls back to the editor path", async ({
+  page,
+}) => {
+  // No bundled viewer opens PNG yet (the media viewer comes later), so a test viewer stands in.
+  await start(page, {
+    files: {
+      "/x/사진.png": fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47])),
+      // The NUL keeps it binary when read as text.
+      "/x/doc.pdf": fakeFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00])),
+    },
+    picks: ["/x/사진.png"],
+    extraViewers: [
+      {
+        info: {
+          extension: "test.ok",
+          id: "ok",
+          kind: "primary",
+          extensions: ["png"],
+          entry: "ok.html",
+        },
+        url: "/tests/e2e/pages/viewers/ok.html",
+      },
+    ],
+  });
+  await menu(page, "open-file");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  await expect(page.frameLocator("iframe.viewer-frame").locator("body")).toHaveAttribute(
+    "data-file",
+    "사진.png",
+  );
+  await expect(page.locator(".editor-placeholder")).toBeHidden();
+  // `pickFiles` hands over every pick at once, so the second file is picked on its own.
+  await page.evaluate(() => {
+    window.__tote.backend.data.picks = ["/x/doc.pdf"];
+  });
+  await menu(page, "open-file");
+  // PDF has no bundled viewer: the placeholder stays, with the text fallback.
+  await expect(page.locator(".editor-placeholder p")).toHaveText("열 수 없음");
+  await page.getByRole("button", { name: "텍스트로 열기" }).click();
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  // Leaving the image tab takes its viewer down with its token; coming back brings a new one.
+  await page.locator(".tab", { hasText: "사진.png" }).click();
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  await page.locator(".tab", { hasText: "doc.pdf" }).click();
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  expect(await page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
 });

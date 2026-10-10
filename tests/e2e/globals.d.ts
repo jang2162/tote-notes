@@ -5,6 +5,7 @@ import type { IRawTheme } from "@shikijs/vscode-textmate";
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
 import type { askUnsaved, pickLanguage, promptText, workspacePicker } from "../../src/ui/dialogs";
+import type { ViewerHost } from "../../src/viewer/host";
 
 declare global {
   interface Window {
@@ -32,6 +33,8 @@ declare global {
     workspacePicker: typeof workspacePicker;
     pickLanguage: typeof pickLanguage;
     result: unknown;
+    /** Set by tests/e2e/pages/viewer.ts. */
+    viewerHost: ViewerHost;
     /** Set by src/main.ts when it runs on the fake backend. */
     __tote: { app: AppController; backend: FakeBackend; ready: boolean };
   }

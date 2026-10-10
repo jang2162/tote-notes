@@ -12,7 +12,22 @@
   "app": {
     "withGlobalTauri": false,
     "windows": [],
-    "security": { "csp": null }
+    "security": {
+      "csp": {
+        "default-src": "'self'",
+        "script-src": "'self' 'wasm-unsafe-eval'",
+        "style-src": "'self' 'unsafe-inline'",
+        "img-src": "'self' data:",
+        "media-src": "'none'",
+        "font-src": "'self'",
+        "connect-src": "ipc: http://ipc.localhost tote-file:",
+        "frame-src": "tote-ext:",
+        "worker-src": "'self' blob:",
+        "object-src": "'none'",
+        "base-uri": "'none'",
+        "form-action": "'none'"
+      }
+    }
   },
   "bundle": {
     "active": true,
