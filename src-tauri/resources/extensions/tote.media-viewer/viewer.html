@@ -29,6 +29,9 @@
       .stage {
         overflow: auto;
         display: grid;
+        /* An explicit track, or the implicit auto row takes the media's own height and
+           max-height: 100% shrinks nothing. */
+        grid-template: minmax(0, 1fr) / minmax(0, 1fr);
         place-items: center;
       }
       body.fit img.media {
