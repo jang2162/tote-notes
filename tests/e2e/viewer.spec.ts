@@ -58,3 +58,12 @@ test("the host passes a null resolveRelative answer through", async ({ page }) =
     JSON.stringify({ type: "resolved", id: 1, url: null }),
   );
 });
+
+test("messages from any other window are ignored", async ({ page }) => {
+  await page.goto(
+    "/tests/e2e/pages/viewer.html?viewer=/tests/e2e/pages/viewers/ok.html&intruder=1",
+  );
+  await expect(frame(page).locator("body")).toHaveAttribute("data-file", "사진.png");
+  await expect(page.locator("body")).toHaveAttribute("data-intruder", "seen");
+  await expect(page.locator("#log")).toHaveText("");
+});

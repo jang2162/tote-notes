@@ -52,7 +52,8 @@ export const NOT_OPENABLE = "열 수 없음";
 export const OPEN_AS_TEXT = "텍스트로 열기";
 
 const PROBLEM_TEXT: Record<Problem, string> = {
-  binary: "텍스트로 열 수 없음",
+  binary: NOT_OPENABLE,
+  "not-utf8": "텍스트로 열 수 없음",
   "too-large": "100MB 가 넘는 파일은 아직 열 수 없습니다",
   missing: "파일을 찾을 수 없습니다",
   unreadable: "파일을 읽지 못했습니다",
@@ -93,6 +94,8 @@ export class AppController implements DocHost {
   });
   private readonly statusBar = new StatusBar();
   private panel: TokenPanel | null = null;
+  /** Numbers the views, so each owns its tokens alone: a tab left and come back to is a new one. */
+  private views = 0;
 
   constructor(
     root: HTMLElement,
@@ -356,14 +359,13 @@ export class AppController implements DocHost {
   }
 
   private showProblem(doc: Doc): void {
-    const text =
-      doc.forceText || doc.problem !== "binary"
-        ? PROBLEM_TEXT[doc.problem ?? "unreadable"]
-        : NOT_OPENABLE;
-    const fallback = !doc.forceText
-      ? { label: OPEN_AS_TEXT, run: () => void this.openAsText(doc) }
-      : undefined;
-    this.surface.showPlaceholder(text, fallback);
+    // Only a file whose kind is not text may still be text (spec 「뷰어」); a missing, too large
+    // or unreadable file, or bytes already read as text, would come back the same.
+    const fallback =
+      doc.problem === "binary"
+        ? { label: OPEN_AS_TEXT, run: () => void this.openAsText(doc) }
+        : undefined;
+    this.surface.showPlaceholder(PROBLEM_TEXT[doc.problem ?? "unreadable"], fallback);
   }
 
   private async openAsText(doc: Doc): Promise<void> {
@@ -374,7 +376,7 @@ export class AppController implements DocHost {
   /** A primary viewer for a file the editor cannot show (spec 「뷰어」). The token lives as long
    * as this view: leaving the tab, closing it or a viewer failure revokes it. */
   private openViewer(doc: Doc, viewer: ViewerInfo): void {
-    const owner = `${doc.tabId}:${viewer.id}`;
+    const owner = `${doc.tabId}:${viewer.id}:${++this.views}`;
     const fallBack = () => {
       // Another view took over meanwhile; this one is already gone.
       if (this.panel !== panel) return;
@@ -383,7 +385,14 @@ export class AppController implements DocHost {
     };
     const host = new ViewerHost({
       url: this.backend.viewerUrl(viewer.extension, viewer.entry),
-      resolveRelative: (path) => this.backend.resolveRelative(doc.source, path, owner),
+      resolveRelative: async (path) => {
+        if (this.panel !== panel) return null;
+        const url = await this.backend.resolveRelative(doc.source, path, owner);
+        if (this.panel === panel) return url;
+        // The view closed while this was on its way: its tokens were revoked before this one.
+        this.revoke(owner);
+        return null;
+      },
       onError: (message) => {
         console.warn(`viewer ${viewer.id}: ${message}`);
         fallBack();
@@ -415,7 +424,11 @@ export class AppController implements DocHost {
     if (!open) return;
     this.panel = null;
     open.host.destroy();
-    void this.backend.revokeFileTokens(open.owner).catch((error: unknown) => console.warn(error));
+    this.revoke(open.owner);
+  }
+
+  private revoke(owner: string): void {
+    void this.backend.revokeFileTokens(owner).catch((error: unknown) => console.warn(error));
   }
 
   private showEmpty(): void {

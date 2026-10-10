@@ -70,15 +70,15 @@ pub fn token_url(token: &str) -> String {
 }
 
 /// `relative` as a file directly inside `dir` — one plain name, no folders, no `..`, and it
-/// must exist as a regular file (spec 「뷰어 API」: `resolveRelative` answers for the open
-/// file's own folder only).
+/// must exist as a regular file, not a symbolic link (spec 「뷰어 API」: `resolveRelative`
+/// answers for the open file's own folder only, and a link could point anywhere).
 pub fn resolve_relative(dir: &Path, relative: &str) -> Option<PathBuf> {
     let name = relative.strip_prefix("./").unwrap_or(relative);
     if name.is_empty() || name.contains('/') || name.contains('\\') || name == "." || name == ".." {
         return None;
     }
     let path = dir.join(name);
-    fs::metadata(&path).ok()?.is_file().then_some(path)
+    fs::symlink_metadata(&path).ok()?.is_file().then_some(path)
 }
 
 #[cfg(test)]
@@ -132,6 +132,16 @@ mod tests {
             "..",
         ] {
             assert_eq!(resolve_relative(dir.path(), bad), None, "{bad:?}");
+        }
+        // A link in the folder is refused wherever it points: `img.png -> ~/.ssh/id_rsa` would
+        // otherwise hand out a file outside it.
+        #[cfg(unix)]
+        {
+            std::os::unix::fs::symlink(&outside, dir.path().join("link.png")).unwrap();
+            std::os::unix::fs::symlink(dir.path().join("그림.png"), dir.path().join("inner.png"))
+                .unwrap();
+            assert_eq!(resolve_relative(dir.path(), "link.png"), None);
+            assert_eq!(resolve_relative(dir.path(), "inner.png"), None);
         }
         fs::remove_file(outside).unwrap();
     }

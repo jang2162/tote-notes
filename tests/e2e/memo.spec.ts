@@ -107,3 +107,25 @@ test("a memo the person renamed keeps that name", async ({ page }) => {
   );
   expect(files).toEqual(["목록.txt"]);
 });
+
+test("a memo gone from disk says so, without 텍스트로 열기", async ({ page }) => {
+  const session = {
+    version: 1,
+    activeTab: 0,
+    tabs: [
+      { kind: "memo", memoId: "a" },
+      { kind: "memo", memoId: "b" },
+    ],
+  };
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(session),
+  });
+  // Deleted in Finder while its tab waited to be read.
+  await page.evaluate(() => {
+    delete window.__tote.backend.data.memos.b;
+  });
+  await page.locator(".tab", { hasText: "나" }).click();
+  await expect(page.locator(".editor-placeholder p")).toHaveText("파일을 찾을 수 없습니다");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
+});

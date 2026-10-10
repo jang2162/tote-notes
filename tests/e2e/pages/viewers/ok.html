@@ -1,8 +1,12 @@
 <!doctype html>
 <meta charset="utf-8" />
 <script>
+  // `?rel=<name>`: asks the host for that file once the init has arrived.
+  const rel = new URLSearchParams(location.search).get("rel");
   addEventListener("message", (e) => {
-    if (e.data?.type === "init") document.body.dataset.file = e.data.fileName;
+    if (e.data?.type !== "init") return;
+    document.body.dataset.file = e.data.fileName;
+    if (rel) parent.postMessage({ type: "resolveRelative", id: 1, path: rel }, "*");
   });
   parent.postMessage({ type: "ready" }, "*");
 </script>

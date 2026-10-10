@@ -70,8 +70,19 @@ test("a file that is not text shows a placeholder", async ({ page }) => {
     picks: ["/x/data.bin"],
   });
   await menu(page, "open-file");
-  await expect(page.locator(".editor-placeholder p")).toHaveText("열 수 없음");
-  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toBeVisible();
+  // A text file whose bytes are not text: reading it again would fail the same way.
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
+});
+
+test("a .txt that is not UTF-8 says so at once, without 텍스트로 열기", async ({ page }) => {
+  await start(page, {
+    files: { "/x/latin1.txt": fakeFile(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) },
+    picks: ["/x/latin1.txt"],
+  });
+  await menu(page, "open-file");
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
 });
 
 test("files sent by a tote command open in tabs", async ({ page }) => {
@@ -130,4 +141,81 @@ test("a non-text file with a viewer opens it; 텍스트로 열기 falls back to 
   await page.locator(".tab", { hasText: "doc.pdf" }).click();
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   expect(await page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
+});
+
+const PNG = fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+const testViewer = (url: string) => ({
+  info: {
+    extension: "test",
+    id: "test",
+    kind: "primary" as const,
+    extensions: ["png"],
+    entry: "viewer.html",
+  },
+  url,
+});
+
+test("a viewer that fails in the app leaves 열 수 없음 and 텍스트로 열기, and its token goes", async ({
+  page,
+}) => {
+  await start(page, {
+    files: { "/x/사진.png": PNG },
+    picks: ["/x/사진.png"],
+    extraViewers: [testViewer("/tests/e2e/pages/viewers/failing.html")],
+  });
+  await menu(page, "open-file");
+  await expect(page.locator(".editor-placeholder p")).toHaveText("열 수 없음");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toBeVisible();
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
+});
+
+test("a resolveRelative answered after its view closed leaves no token, even for the tab's next view", async ({
+  page,
+}) => {
+  await start(page, {
+    files: { "/x/사진.png": PNG, "/x/pic.png": PNG, "/x/a.txt": fakeFile("text") },
+    picks: ["/x/a.txt"],
+    extraViewers: [testViewer("/tests/e2e/pages/viewers/ok.html?rel=pic.png")],
+  });
+  await menu(page, "open-file");
+  // Every resolveRelative answers a second late.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const resolve = backend.resolveRelative.bind(backend);
+    const counter = window as unknown as { resolveCalls: number; resolveDone: number };
+    counter.resolveCalls = 0;
+    counter.resolveDone = 0;
+    backend.resolveRelative = async (...args) => {
+      counter.resolveCalls++;
+      await new Promise((done) => setTimeout(done, 1000));
+      try {
+        return await resolve(...args);
+      } finally {
+        counter.resolveDone++;
+      }
+    };
+    backend.data.picks = ["/x/사진.png"];
+  });
+  const calls = () =>
+    page.evaluate(() => (window as unknown as { resolveCalls: number }).resolveCalls);
+  await menu(page, "open-file");
+  await expect.poll(calls).toBe(1);
+  // Away and back while the first view's answer is still on its way.
+  await page.locator(".tab", { hasText: "a.txt" }).click();
+  await page.locator(".tab", { hasText: "사진.png" }).click();
+  await expect.poll(calls).toBe(2);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { resolveDone: number }).resolveDone))
+    .toBe(2);
+  // Both answers are in, and the controller has had its turn after the later one.
+  await page.evaluate(() => new Promise((done) => setTimeout(done, 50)));
+  // Only the open view holds tokens: its file and its pic.png.
+  expect(
+    await page.evaluate(() =>
+      Object.values(window.__tote.backend.data.tokens).map((urls) => urls.length),
+    ),
+  ).toEqual([2]);
+  await page.locator(".tab", { hasText: "a.txt" }).click();
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
 });

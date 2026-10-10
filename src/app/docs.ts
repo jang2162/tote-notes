@@ -33,7 +33,9 @@ export const RECOVERED_NOTICE = "원래 파일을 찾지 못해 새 메모로 �
 export const DRAFT_RESTORED_NOTICE =
   "보관한 수정분을 복원했습니다 — 그사이 디스크의 파일이 바뀌었습니다";
 
-export type Problem = "binary" | "too-large" | "missing" | "unreadable";
+/** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
+ * were read as text and are not UTF-8 (or hold a NUL). */
+export type Problem = "binary" | "not-utf8" | "too-large" | "missing" | "unreadable";
 export type Change = "info" | "language" | "dirty" | "saved" | "deleted" | "notice" | "error";
 export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 
@@ -217,7 +219,7 @@ export abstract class Doc {
     }
     const decoded = decodeText(bytes);
     if (!decoded) {
-      this.problem = "binary";
+      this.problem = "not-utf8";
       return;
     }
     this.eol = decoded.eol;
