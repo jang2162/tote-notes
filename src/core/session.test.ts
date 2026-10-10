@@ -4,6 +4,30 @@ import { describe, expect, it } from "vitest";
 import { parseSession, restoreSelection } from "./session";
 
 describe("parseSession", () => {
+  it("reads mode and language and drops values it does not know", () => {
+    const session = parseSession(
+      JSON.stringify({
+        version: 1,
+        activeTab: 0,
+        tabs: [
+          { kind: "memo", memoId: "a", mode: "preview" },
+          { kind: "memo", memoId: "b", mode: "split" },
+          { kind: "external", deviceId: "d", path: "/x", language: "python" },
+          { kind: "external", deviceId: "d", path: "/y", language: 3 },
+        ],
+      }),
+    );
+    expect(session.tabs[0]).toEqual({ kind: "memo", memoId: "a", mode: "preview" });
+    expect(session.tabs[1]).toEqual({ kind: "memo", memoId: "b" });
+    expect(session.tabs[2]).toEqual({
+      kind: "external",
+      deviceId: "d",
+      path: "/x",
+      language: "python",
+    });
+    expect(session.tabs[3]).toEqual({ kind: "external", deviceId: "d", path: "/y" });
+  });
+
   it("starts empty without a file or with a broken one", () => {
     for (const text of [null, "", "{ broken", "[1]", '{"tabs":"x"}']) {
       expect(parseSession(text)).toEqual({ version: 1, activeTab: -1, tabs: [] });

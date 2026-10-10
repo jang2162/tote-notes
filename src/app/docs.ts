@@ -4,7 +4,7 @@ import { errorCode, type Backend, type MemoInfo } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
 import { basename, splitName } from "../core/names";
 import type { WriteScheduler } from "../core/scheduler";
-import { restoreSelection, type SelectionJSON } from "../core/session";
+import { restoreSelection, type SelectionJSON, type ViewMode } from "../core/session";
 import { memoTitle, titleLine } from "../core/title";
 
 // Spec 「저장」·「크기별 단계」.
@@ -81,6 +81,11 @@ export abstract class Doc {
   notice: string | null = null;
   /** Document position at the top of the viewport, kept in the session. */
   scrollAnchor = 0;
+  /** Edit or preview; only Markdown tabs ever leave "edit" (Task 12). */
+  mode: ViewMode = "edit";
+  /** The language the person picked in the status bar (`null`: decided by the file name). A memo
+   * mirrors `info.language`; an external file keeps it in the session. */
+  language: string | null = null;
   /** The session's selection, applied when the text first loads. */
   restoreSelection: SelectionJSON | undefined;
   protected eol: Eol = "\n";
@@ -178,6 +183,7 @@ export class MemoDoc extends Doc {
     public info: MemoInfo,
   ) {
     super(host);
+    this.language = info.language ?? null;
   }
 
   get fileName() {
@@ -343,6 +349,7 @@ export class MemoDoc extends Doc {
   private setInfo(info: MemoInfo): void {
     const extensionChanged = splitName(info.file).ext !== splitName(this.info.file).ext;
     this.info = info;
+    this.language = info.language ?? null;
     this.host.changed(this, extensionChanged ? "language" : "info");
   }
 }

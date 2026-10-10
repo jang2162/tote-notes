@@ -52,6 +52,20 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("MemoDoc", () => {
+  it("recovers under untitled.md when neither its own name nor untitled.<ext> can be made", async () => {
+    // A file Finder named `a.b?` has the extension `b?`, which tote cannot write; the third
+    // candidate is the only one left.
+    const { backend, host } = setup({ memos: { a: fakeMemo("a.b?", "원래") } });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    delete backend.data.memos.a;
+    type(doc, " 추가");
+    await vi.runAllTimersAsync();
+    expect(doc.info.file).toBe("untitled.md");
+    expect(backend.memoText(doc.info.id)).toBe("원래 추가");
+    expect(doc.notice).toBe(RECOVERED_NOTICE);
+  });
+
   it("saves half a second after typing stops", async () => {
     const { backend, host } = setup();
     const doc = new MemoDoc(host, await backend.createMemo());

@@ -19,15 +19,20 @@ export interface SelectionJSON {
   main: number;
 }
 
+export type ViewMode = "edit" | "preview";
+
 interface TabPlace {
   selection?: SelectionJSON;
   /** Document position at the top of the viewport. */
   scrollAnchor?: number;
+  /** Edit or preview (spec 「세션」); left out when editing. */
+  mode?: ViewMode;
 }
 
 export type SessionTab =
   | ({ kind: "memo"; memoId: string } & TabPlace)
-  | ({ kind: "external"; deviceId: string; path: string } & TabPlace);
+  /** `language`: the language chosen in the status bar; a memo keeps it in index.json instead. */
+  | ({ kind: "external"; deviceId: string; path: string; language?: string } & TabPlace);
 
 type Json = Record<string, unknown>;
 const isObject = (value: unknown): value is Json =>
@@ -66,6 +71,7 @@ function parseTab(value: unknown): SessionTab | null {
   const selection = parseSelection(value.selection);
   if (selection) place.selection = selection;
   if (isNumber(value.scrollAnchor)) place.scrollAnchor = value.scrollAnchor;
+  if (value.mode === "preview") place.mode = "preview";
   if (value.kind === "memo" && typeof value.memoId === "string") {
     return { kind: "memo", memoId: value.memoId, ...place };
   }
@@ -74,7 +80,14 @@ function parseTab(value: unknown): SessionTab | null {
     typeof value.deviceId === "string" &&
     typeof value.path === "string"
   ) {
-    return { kind: "external", deviceId: value.deviceId, path: value.path, ...place };
+    const tab: SessionTab = {
+      kind: "external",
+      deviceId: value.deviceId,
+      path: value.path,
+      ...place,
+    };
+    if (typeof value.language === "string") tab.language = value.language;
+    return tab;
   }
   return null;
 }

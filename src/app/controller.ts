@@ -1,8 +1,7 @@
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
-import { errorCode, type Backend } from "../backend/types";
+import type { Backend, MemoInfo } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
-import { parseSession, type SessionFile, type SessionTab } from "../core/session";
 import { editorExtensions, languageEffect } from "../editor/setup";
 import { askUnsaved, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
@@ -18,6 +17,12 @@ import {
   type DocHost,
   type Problem,
 } from "./docs";
+import { describeError } from "./errors";
+import { SessionSync } from "./session-sync";
+import { Surface } from "./surface";
+import { Tabs } from "./tabs";
+
+export { describeError, ERROR_TEXT } from "./errors";
 
 const SESSION_DELAY_MS = 1000;
 
@@ -28,24 +33,14 @@ const PROBLEM_TEXT: Record<Problem, string> = {
   unreadable: "파일을 읽지 못했습니다",
 };
 
-const ERROR_TEXT: Record<string, string> = {
-  "already-exists": "같은 이름이 이미 있습니다",
-  "invalid-name": "쓸 수 없는 이름입니다",
-  "not-found": "파일을 찾을 수 없습니다",
-};
-
-export function describeError(err: unknown): string {
-  const code = errorCode(err);
-  if (code && ERROR_TEXT[code]) return ERROR_TEXT[code];
-  return `오류: ${err instanceof Error ? err.message : String(err)}`;
-}
-
-/** One workspace window: its tabs, the editor, the sidebar, the session and the menu actions. */
+/** One workspace window: menu actions, opening and closing, and what the status bar says. Tabs,
+ * the session and the editor area live in `Tabs`, `SessionSync` and `Surface`. */
 export class AppController implements DocHost {
   readonly writes = new WriteScheduler((_key, error) => this.report(error));
   readonly view = new EditorView();
-  private tabs: Doc[] = [];
-  private active: Doc | null = null;
+  readonly tabs = new Tabs();
+  readonly surface = new Surface(this.view);
+  private session!: SessionSync;
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
   private restoring = true;
@@ -55,40 +50,45 @@ export class AppController implements DocHost {
     close: (id) => void this.closeTab(id),
   });
   private readonly statusBar = new StatusBar();
-  // CodeMirror's own CSS sets `display` on .cm-editor with !important, so its host is what hides.
-  private readonly editorHost = h("div", { class: "editor-host" }, this.view.dom);
-  private readonly placeholder = h("div", { class: "editor-placeholder" });
 
   constructor(
     root: HTMLElement,
     readonly backend: Backend,
   ) {
-    const editorArea = h("div", { class: "editor-area" }, this.editorHost, this.placeholder);
     root.replaceChildren(
       this.memoList.el,
-      h("main", { class: "main" }, this.tabBar.el, editorArea, this.statusBar.el),
+      h("main", { class: "main" }, this.tabBar.el, this.surface.el, this.statusBar.el),
     );
     this.view.scrollDOM.addEventListener("scroll", () => this.saveSessionSoon(), { passive: true });
-    this.showEmpty();
   }
 
   async start(): Promise<void> {
     const info = await this.backend.workspaceInfo();
     this.deviceId = info.deviceId;
     document.title = info.name;
+    this.session = new SessionSync(
+      this.backend,
+      this.tabs,
+      this.deviceId,
+      (id) => this.memoList.get(id),
+      (memo) => new MemoDoc(this, memo),
+      (path) => new ExternalDoc(this, path),
+    );
     this.backend.onMenu((id) => void this.onMenu(id));
     this.backend.onFlush((id) => void this.onFlush(id));
     this.backend.onPending(() => void this.drainPending());
     this.backend.onFileDrop((paths) => void this.openExternals(paths));
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
-    window.addEventListener("blur", () => void this.active?.leave());
+    window.addEventListener("blur", () => void this.tabs.active?.leave());
     window.addEventListener("focus", () => void this.refreshMemos());
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll();
     });
     await this.refreshMemos();
-    await this.restoreSession();
+    const first = await this.session.restore();
+    if (first) await this.activate(first);
+    else this.renderTabs();
     this.restoring = false;
     await this.drainPending();
   }
@@ -102,64 +102,60 @@ export class AppController implements DocHost {
   }
 
   changed(doc: Doc, change: Change): void {
+    const active = doc === this.tabs.active;
     if (doc instanceof MemoDoc && (change === "info" || change === "language"))
       this.memoList.upsert(doc.info);
     if (doc instanceof MemoDoc && change === "deleted") this.memoList.remove(doc.info.id);
     if (change === "language") this.reconfigureLanguage(doc);
-    if (doc === this.active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
-    if (doc === this.active && change === "saved" && doc instanceof ExternalDoc)
+    if (active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
+    if (active && change === "saved" && doc instanceof ExternalDoc)
       this.statusBar.setMessage("저장됨");
     // A memo that saved after a failed save no longer has the error to show.
-    if (
-      doc === this.active &&
-      change === "saved" &&
-      doc instanceof MemoDoc &&
-      this.statusBar.showsError
-    )
+    if (active && change === "saved" && doc instanceof MemoDoc && this.statusBar.showsError)
       this.statusBar.setMessage("");
     if (change === "error") this.report(doc.error);
     this.renderTabs();
   }
 
   async openMemo(id: string): Promise<void> {
-    let doc: Doc | undefined = this.findMemo(id);
+    let doc: Doc | undefined = this.tabs.memo(id);
     if (!doc) {
-      let info = this.memoList.get(id);
+      let info: MemoInfo | undefined = this.memoList.get(id);
       if (!info) {
         await this.refreshMemos();
         info = this.memoList.get(id);
       }
       if (!info) return this.report(new Error("메모를 찾을 수 없습니다"));
-      doc = this.insertTab(new MemoDoc(this, info));
+      doc = this.tabs.insertAfterActive(new MemoDoc(this, info));
     }
     await this.activate(doc);
   }
 
   async openExternal(path: string): Promise<void> {
-    await this.activate(this.findExternal(path) ?? this.insertTab(new ExternalDoc(this, path)));
+    await this.activate(
+      this.tabs.external(path) ?? this.tabs.insertAfterActive(new ExternalDoc(this, path)),
+    );
   }
 
   async newMemo(): Promise<void> {
     const info = await this.backend.createMemo();
     this.memoList.upsert(info);
-    const doc = this.insertTab(new MemoDoc(this, info));
+    const doc = this.tabs.insertAfterActive(new MemoDoc(this, info));
     doc.startEmpty();
     await this.activate(doc);
   }
 
   async closeTab(tabId: string): Promise<void> {
-    const doc = this.tabs.find((d) => d.tabId === tabId);
+    const doc = this.tabs.byId(tabId);
     if (!doc) return;
     this.capture(doc);
     if (!(await doc.close(() => askUnsaved(doc.title)))) {
-      if (doc === this.active) this.view.focus();
+      if (doc === this.tabs.active) this.view.focus();
       return;
     }
-    const index = this.tabs.indexOf(doc);
-    this.tabs.splice(index, 1);
-    if (doc === this.active) {
-      this.active = null;
-      const next = this.tabs[index] ?? this.tabs[index - 1];
+    const wasActive = doc === this.tabs.active;
+    const next = this.tabs.remove(doc);
+    if (wasActive) {
       if (next) await this.activate(next);
       else this.showEmpty();
     }
@@ -170,7 +166,7 @@ export class AppController implements DocHost {
   /** Everything written now — tab edits, titles and the session (window close, quit, hiding). */
   async flushAll(): Promise<void> {
     await Promise.all(
-      this.tabs.map((doc) => doc.flush().catch((error: unknown) => this.report(error))),
+      this.tabs.list.map((doc) => doc.flush().catch((error: unknown) => this.report(error))),
     );
     if (!this.restoring) await this.saveSessionNow();
   }
@@ -185,100 +181,49 @@ export class AppController implements DocHost {
 
   private onUpdate(doc: Doc, update: ViewUpdate): void {
     doc.update(update);
-    if (doc !== this.active || !(update.docChanged || update.selectionSet)) return;
+    if (doc !== this.tabs.active || !(update.docChanged || update.selectionSet)) return;
     this.statusBar.setPosition(update.state);
     this.saveSessionSoon();
   }
 
-  private async restoreSession(): Promise<void> {
-    const session = parseSession(await this.backend.readSession());
-    let active: Doc | null = null;
-    for (const [index, tab] of session.tabs.entries()) {
-      const doc = this.docFor(tab);
-      if (!doc) continue;
-      doc.restoreSelection = tab.selection;
-      doc.scrollAnchor = tab.scrollAnchor ?? 0;
-      this.tabs.push(doc);
-      if (index === session.activeTab) active = doc;
-    }
-    const first = active ?? this.tabs.at(-1);
-    if (first) await this.activate(first);
-    else this.renderTabs();
-  }
-
-  private docFor(tab: SessionTab): Doc | null {
-    if (tab.kind === "memo") {
-      const info = this.memoList.get(tab.memoId);
-      return info && !this.findMemo(info.id) ? new MemoDoc(this, info) : null;
-    }
-    // Another device's external file has no contents here; how to show it is the sync spec's call.
-    if (tab.deviceId !== this.deviceId || this.findExternal(tab.path)) return null;
-    return new ExternalDoc(this, tab.path);
-  }
-
-  private findMemo(id: string): MemoDoc | undefined {
-    return this.tabs.find((doc): doc is MemoDoc => doc instanceof MemoDoc && doc.info.id === id);
-  }
-
-  private findExternal(path: string): ExternalDoc | undefined {
-    return this.tabs.find(
-      (doc): doc is ExternalDoc => doc instanceof ExternalDoc && doc.path === path,
-    );
-  }
-
-  /** New tabs open right after the active one. */
-  private insertTab<D extends Doc>(doc: D): D {
-    const at = this.active ? this.tabs.indexOf(this.active) + 1 : this.tabs.length;
-    this.tabs.splice(at, 0, doc);
-    return doc;
-  }
-
   private activateTab(tabId: string): Promise<void> {
-    const doc = this.tabs.find((d) => d.tabId === tabId);
+    const doc = this.tabs.byId(tabId);
     return doc ? this.activate(doc) : Promise.resolve();
   }
 
   private async activate(doc: Doc): Promise<void> {
-    const previous = this.active;
+    const previous = this.tabs.active;
     if (previous === doc) return;
     if (previous) {
       this.capture(previous);
       void previous.leave();
     }
-    this.active = doc;
+    this.tabs.active = doc;
     this.renderTabs();
     await doc.ensureLoaded();
     // Loading can mark the tab dirty (a restored draft), which the render above could not know.
     this.renderTabs();
-    if (this.active !== doc) return; // another tab was picked while this one loaded
+    if (this.tabs.active !== doc) return; // another tab was picked while this one loaded
     this.show(doc);
     this.saveSessionSoon();
   }
 
   private show(doc: Doc): void {
     const state = doc.problem ? null : doc.state;
-    this.editorHost.hidden = !state;
-    this.placeholder.hidden = Boolean(state);
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
     this.statusBar.setLanguage(languageLabel(doc.fileName));
     this.statusBar.setMessage(doc.notice ?? "");
     if (!state) {
-      this.placeholder.textContent = PROBLEM_TEXT[doc.problem ?? "unreadable"];
+      this.surface.showPlaceholder(PROBLEM_TEXT[doc.problem ?? "unreadable"]);
       this.statusBar.setPosition(null);
       return;
     }
-    this.view.setState(state);
-    const anchor = Math.min(doc.scrollAnchor, state.doc.length);
-    this.view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: "start" }) });
-    this.view.requestMeasure();
+    this.surface.showEditor(state, doc.scrollAnchor);
     this.statusBar.setPosition(this.view.state);
-    this.view.focus();
   }
 
   private showEmpty(): void {
-    this.editorHost.hidden = true;
-    this.placeholder.hidden = false;
-    this.placeholder.textContent = "⌘N 으로 새 메모를 만드세요";
+    this.surface.showEmpty();
     this.memoList.setActive(null);
     this.statusBar.setPosition(null);
     this.statusBar.setLanguage("");
@@ -287,19 +232,20 @@ export class AppController implements DocHost {
 
   /** The view holds the live state of the active tab; keep where it is scrolled to. */
   private capture(doc: Doc): void {
-    if (doc !== this.active || !doc.state || this.view.state !== doc.state) return;
+    if (doc !== this.tabs.active || !doc.state || this.view.state !== doc.state) return;
+    if (!this.surface.showsEditor) return;
     doc.scrollAnchor = this.view.lineBlockAtHeight(this.view.scrollDOM.scrollTop).from;
   }
 
   private renderTabs(): void {
     this.tabBar.render(
-      this.tabs.map((doc) => ({
+      this.tabs.list.map((doc) => ({
         id: doc.tabId,
         title: doc.title,
         hint: doc.hint,
         dirty: doc.dirty,
         external: doc.kind === "external",
-        active: doc === this.active,
+        active: doc === this.tabs.active,
       })),
     );
   }
@@ -309,9 +255,8 @@ export class AppController implements DocHost {
   }
 
   private async cycleTab(step: number): Promise<void> {
-    if (!this.active || this.tabs.length < 2) return;
-    const index = this.tabs.indexOf(this.active);
-    await this.activate(this.tabs[(index + step + this.tabs.length) % this.tabs.length]);
+    const next = this.tabs.cycle(step);
+    if (next) await this.activate(next);
   }
 
   private saveSessionSoon(): void {
@@ -325,22 +270,10 @@ export class AppController implements DocHost {
   }
 
   private async writeSession(): Promise<void> {
-    if (this.active) this.capture(this.active);
-    const session: SessionFile = {
-      version: 1,
-      activeTab: this.active ? this.tabs.indexOf(this.active) : -1,
-      tabs: this.tabs.map((doc) => this.sessionTab(doc)),
-    };
-    const frame = await this.backend.windowFrame();
-    if (frame) session.window = frame;
+    const session = await this.session.build(() => {
+      if (this.tabs.active) this.capture(this.tabs.active);
+    });
     await this.backend.writeSession(JSON.stringify(session));
-  }
-
-  private sessionTab(doc: Doc): SessionTab {
-    const place = { selection: doc.selectionJSON, scrollAnchor: doc.scrollAnchor };
-    if (doc instanceof MemoDoc) return { kind: "memo", memoId: doc.info.id, ...place };
-    // Spec 「동기화 대비」: external entries always carry the device they belong to.
-    return { kind: "external", deviceId: this.deviceId, path: (doc as ExternalDoc).path, ...place };
   }
 
   private async drainPending(): Promise<void> {
@@ -369,8 +302,8 @@ export class AppController implements DocHost {
         case "rename":
           return await this.renameActive();
         case "close-tab":
-          return this.active
-            ? await this.closeTab(this.active.tabId)
+          return this.tabs.active
+            ? await this.closeTab(this.tabs.active.tabId)
             : await this.backend.closeWindow();
         case "next-tab":
           return await this.cycleTab(1);
@@ -386,25 +319,25 @@ export class AppController implements DocHost {
   }
 
   private async saveActive(): Promise<void> {
-    const doc = this.active;
+    const doc = this.tabs.active;
     if (doc instanceof ExternalDoc) await doc.save();
     else if (doc instanceof MemoDoc) await doc.saveNow();
   }
 
   private async importActive(): Promise<void> {
-    const doc = this.active;
+    const doc = this.tabs.active;
     if (!(doc instanceof ExternalDoc)) return;
     this.capture(doc);
     const memo = await importExternal(doc, this);
-    this.tabs[this.tabs.indexOf(doc)] = memo;
+    this.tabs.list[this.tabs.indexOf(doc)] = memo;
     this.memoList.upsert(memo.info);
-    this.active = null;
+    this.tabs.active = null;
     await this.activate(memo);
     this.statusBar.setMessage("워크스페이스로 가져왔습니다");
   }
 
   private async renameActive(): Promise<void> {
-    const doc = this.active;
+    const doc = this.tabs.active;
     if (!(doc instanceof MemoDoc)) return;
     const name = await promptText("새 파일 이름", doc.info.file);
     this.view.focus();
@@ -427,15 +360,15 @@ export class AppController implements DocHost {
         }
       },
     });
-    if (this.active) this.view.focus();
+    if (this.tabs.active) this.view.focus();
   }
 
   private reconfigureLanguage(doc: Doc): void {
     if (!doc.state) return;
     const effects = languageEffect(doc.fileName);
-    if (doc === this.active && this.view.state === doc.state) this.view.dispatch({ effects });
+    if (doc === this.tabs.active && this.view.state === doc.state) this.view.dispatch({ effects });
     else doc.state = doc.state.update({ effects }).state;
-    if (doc === this.active) this.statusBar.setLanguage(languageLabel(doc.fileName));
+    if (doc === this.tabs.active) this.statusBar.setLanguage(languageLabel(doc.fileName));
   }
 
   private async refreshMemos(): Promise<void> {

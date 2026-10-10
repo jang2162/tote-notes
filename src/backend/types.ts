@@ -56,6 +56,8 @@ export const BACKEND_ERROR_CODES = [
   "io",
   "app",
   "no-workspace",
+  "already-installed",
+  "invalid-extension",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 

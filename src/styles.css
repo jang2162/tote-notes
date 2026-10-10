@@ -325,3 +325,13 @@ button.danger {
   display: flex;
   gap: 8px;
 }
+
+.panel-host {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+
+.editor-placeholder p {
+  margin: 0 0 12px;
+}

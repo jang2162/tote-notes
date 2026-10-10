@@ -1,0 +1,48 @@
+import { ExternalDoc, MemoDoc, type Doc } from "./docs";
+
+/** The ordered tabs of one window and which one is active. No DOM, no backend: the controller
+ * asks it where things go and renders the answer. */
+export class Tabs {
+  readonly list: Doc[] = [];
+  active: Doc | null = null;
+
+  /** New tabs open right after the active one. */
+  insertAfterActive<D extends Doc>(doc: D): D {
+    const at = this.active ? this.list.indexOf(this.active) + 1 : this.list.length;
+    this.list.splice(at, 0, doc);
+    return doc;
+  }
+
+  /** Takes `doc` out. When it was active, `active` becomes null and the tab that should take its
+   * place is returned: the next one, else the previous one, else null. */
+  remove(doc: Doc): Doc | null {
+    const index = this.list.indexOf(doc);
+    if (index < 0) return null;
+    this.list.splice(index, 1);
+    if (doc !== this.active) return null;
+    this.active = null;
+    return this.list[index] ?? this.list[index - 1] ?? null;
+  }
+
+  cycle(step: number): Doc | null {
+    if (!this.active || this.list.length < 2) return null;
+    const index = this.list.indexOf(this.active);
+    return this.list[(index + step + this.list.length) % this.list.length];
+  }
+
+  indexOf(doc: Doc): number {
+    return this.list.indexOf(doc);
+  }
+
+  byId(tabId: string): Doc | undefined {
+    return this.list.find((d) => d.tabId === tabId);
+  }
+
+  memo(id: string): MemoDoc | undefined {
+    return this.list.find((d): d is MemoDoc => d instanceof MemoDoc && d.info.id === id);
+  }
+
+  external(path: string): ExternalDoc | undefined {
+    return this.list.find((d): d is ExternalDoc => d instanceof ExternalDoc && d.path === path);
+  }
+}
