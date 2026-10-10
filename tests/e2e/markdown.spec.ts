@@ -137,7 +137,44 @@ test("a preview that cannot start goes back to the editor with the text intact",
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(0, { timeout: 9000 });
   await expect(page.locator(".cm-content")).toContainText("# 본문");
-  await expect(page.locator(".status-message")).not.toBeEmpty();
+  await expect(page.locator(".status-message")).toHaveText(
+    "미리보기를 열 수 없어 편집으로 돌아왔습니다",
+  );
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
+    .not.toContain('"mode"');
+});
+
+test("an area in an image map does not take the frame anywhere", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo(
+        "a.md",
+        '# 지도\n\n<map name="m"><area shape="rect" coords="0,0,9,9" href="https://example.com"></map>\n\n[링크](https://example.com)',
+      ),
+    },
+  });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await menu(page, "toggle-preview");
+  const body = frame(page).locator("body");
+  await expect(body.locator("h1")).toHaveText("지도");
+  // The sanitiser drops the map; the click guard also covers an area that gets past it.
+  await expect(body.locator("area")).toHaveCount(0);
+  await body.locator("a", { hasText: "링크" }).click();
+  await page.waitForTimeout(300);
+  await expect(body.locator("h1")).toHaveText("지도");
+});
+
+test("a Markdown memo that detection turns into JSON on leaving ends in the editor, not in preview", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: { ...fakeMemo("a.md", '{"a": 1}'), autoTitle: true } } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await menu(page, "toggle-preview");
+  await expect(page.locator(".status-language")).toHaveText("JSON");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toBeFocused();
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.session))
     .not.toContain('"mode"');

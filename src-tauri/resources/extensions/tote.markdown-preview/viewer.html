@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-qXW2LmePxJS9IjyU3u76JvyiaGYRwyl+dFzCPfDK5GE='"
+      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-ZTtXdje0pgzbVjd9JCdemtOZdhK/2RvtkWrxvkFbFpY='"
     />
     <title>미리보기</title>
     <style>
@@ -159,7 +159,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       // from running by stripping the elements that could still act (script, meta refresh, frames,
       // forms) before the HTML enters the document.
       const DROP =
-        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style";
+        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style, map, area";
       const main = document.getElementById("main");
       let nextId = 1;
       const waiting = new Map();
@@ -210,7 +210,7 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       }
 
       addEventListener("click", (event) => {
-        const link = event.target instanceof Element ? event.target.closest("a") : null;
+        const link = event.target instanceof Element ? event.target.closest("a, area") : null;
         if (link) event.preventDefault();
       });
 

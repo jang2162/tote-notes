@@ -77,7 +77,7 @@
       // from running by stripping the elements that could still act (script, meta refresh, frames,
       // forms) before the HTML enters the document.
       const DROP =
-        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style";
+        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style, map, area";
       const main = document.getElementById("main");
       let nextId = 1;
       const waiting = new Map();
@@ -128,7 +128,7 @@
       }
 
       addEventListener("click", (event) => {
-        const link = event.target instanceof Element ? event.target.closest("a") : null;
+        const link = event.target instanceof Element ? event.target.closest("a, area") : null;
         if (link) event.preventDefault();
       });
 

@@ -350,9 +350,12 @@ export class AppController implements DocHost {
       if (preview) {
         this.openViewer(doc, preview, state.doc.toString());
         this.statusBar.setPosition(null);
-        this.statusBar.setMessage("미리보기 · ⇧⌘V 로 편집");
+        // A notice of the document (a restored draft) is not to be hidden by the mode's hint.
+        if (!doc.notice) this.statusBar.setMessage("미리보기 · ⇧⌘V 로 편집");
         return;
       }
+      // The language may have changed under a preview (detection on leaving), taking its viewer.
+      doc.mode = "edit";
       this.surface.showEditor(state, doc.scrollAnchor);
       this.statusBar.setPosition(this.view.state);
       return;

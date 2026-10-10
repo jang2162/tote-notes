@@ -293,7 +293,7 @@ async function syncThemes() {
 }
 
 /** Vendor files a viewer template may inline, by the name used in the `__INLINE:<name>__` comment. */
-function vendorFiles(): Record<string, string> {
+export function vendorFiles(): Record<string, string> {
   const marked = join(dirname(require.resolve("marked/package.json")), "lib/marked.umd.js");
   return { marked: readFileSync(marked, "utf8") };
 }

@@ -9,6 +9,7 @@ import {
   checkLicense,
   fakeRegistry,
   inlineViewer,
+  vendorFiles,
   languageConfiguration,
   manifestFor,
 } from "./sync-bundled.ts";
@@ -173,6 +174,17 @@ describe("inlineViewer", () => {
 
   it("refuses a template that names a vendor it was not given", () => {
     expect(() => inlineViewer("<script>/*__INLINE:nope__*/</script>", {})).toThrow(/nope/);
+  });
+});
+
+describe("the generated viewers", () => {
+  it("are what inlineViewer makes of their templates now (run pnpm sync:bundled when this fails)", () => {
+    for (const id of ["tote.markdown-preview", "tote.media-viewer"]) {
+      const dir = `src-tauri/resources/extensions/${id}`;
+      expect(read(`${dir}/viewer.html`)).toBe(
+        inlineViewer(read(`${dir}/viewer.template.html`), vendorFiles()),
+      );
+    }
   });
 });
 
