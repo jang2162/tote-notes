@@ -1,22 +1,30 @@
 import type { LanguageInfo, WorkspaceListItem } from "../backend/types";
 import { h } from "./dom";
 
+/** The backdrops of the modals open now, the last one on top: Escape closes only that one. */
+const openModals: HTMLElement[] = [];
+
 /** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape. */
-function modal<T>(build: (close: (value: T | null) => void) => HTMLElement): Promise<T | null> {
+export function modal<T>(
+  build: (close: (value: T | null) => void) => HTMLElement,
+): Promise<T | null> {
   return new Promise((resolve) => {
     const backdrop = h("div", { class: "modal-backdrop" });
     const close = (value: T | null) => {
       document.removeEventListener("keydown", onKey, true);
+      openModals.splice(openModals.indexOf(backdrop), 1);
       backdrop.remove();
       resolve(value);
     };
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || isCompositionKey(event)) return;
+      if (openModals[openModals.length - 1] !== backdrop) return;
       event.preventDefault();
       event.stopPropagation();
       close(null);
     };
     backdrop.append(build(close));
+    openModals.push(backdrop);
     document.addEventListener("keydown", onKey, true);
     document.body.append(backdrop);
     backdrop.querySelector<HTMLElement>("input, button.primary")?.focus();
@@ -38,6 +46,24 @@ function button(label: string, onClick: () => void, className = ""): HTMLButtonE
   const b = h("button", { textContent: label, class: className });
   b.addEventListener("click", onClick);
   return b;
+}
+
+/** A yes/no question; Escape and 「취소」 answer false. */
+export async function confirm(message: string, okLabel: string): Promise<boolean> {
+  const answer = await modal<boolean>((close) =>
+    h(
+      "div",
+      { class: "modal confirm", role: "dialog" },
+      h("p", { textContent: message }),
+      h(
+        "div",
+        { class: "modal-buttons" },
+        button("취소", () => close(false)),
+        button(okLabel, () => close(true), "primary"),
+      ),
+    ),
+  );
+  return answer ?? false;
 }
 
 export type UnsavedChoice = "save" | "discard" | "cancel";

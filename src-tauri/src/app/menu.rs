@@ -31,6 +31,8 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let tote = SubmenuBuilder::new(app, "tote")
         .about(None)
         .separator()
+        .item(&item(app, "settings", "설정…", Some("CmdOrCtrl+,"))?)
+        .separator()
         .item(&item(app, "install-cli", "셸 명령 설치…", None)?)
         .separator()
         .services()

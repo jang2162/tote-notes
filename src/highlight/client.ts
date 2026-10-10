@@ -70,6 +70,14 @@ export class HighlightClient {
     return () => this.themeListeners.delete(listener);
   }
 
+  /** Forgets which grammars the worker was given: an extension was installed, replaced or removed,
+   * so the next open of a language reads and sends its files again. Documents already open keep
+   * the grammar they were opened with. */
+  forgetGrammars(): void {
+    this.sent.clear();
+    this.loading.clear();
+  }
+
   /** Sends the language's grammars (once per language) and opens the document. False when the
    * grammar is missing or broken (the text then stays plain), or when the document was closed
    * before its grammars were in.

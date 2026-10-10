@@ -442,6 +442,7 @@ export class FakeBackend implements Backend {
   }
 
   async extensionRegistry(): Promise<ExtensionRegistry> {
+    // Bundled extensions cannot be switched off, as in the real registry.
     const bundled = fakeRegistry as ExtensionRegistry;
     const user = this.data.userExtensions.map((e) => ({
       ...e,
@@ -505,11 +506,11 @@ export class FakeBackend implements Backend {
   }
 
   async settings() {
-    return this.data.settings;
+    return structuredClone(this.data.settings);
   }
 
   async updateSettings(settings: Settings) {
-    this.data.settings = settings;
+    this.data.settings = structuredClone(settings);
     this.commit();
     this.config();
   }

@@ -418,3 +418,83 @@ button.danger {
 .large-text-line.current {
   background: var(--active-bg);
 }
+
+.modal.settings {
+  width: min(720px, 90vw);
+  max-width: none;
+  max-height: 85vh;
+  overflow: auto;
+}
+
+.modal.settings h1 {
+  margin: 0 0 12px;
+  font-size: 16px;
+}
+
+.modal.settings h2 {
+  margin: 16px 0 8px;
+  font-size: 13px;
+  color: var(--muted);
+}
+
+.settings-row {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.settings-row input[name="workspaceRoot"] {
+  flex: 1;
+  width: auto;
+}
+
+.settings-note {
+  margin: 4px 0;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.extension-list {
+  margin: 8px 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+.extension-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.extension-row:last-child {
+  border-bottom: 0;
+}
+
+.extension-name {
+  flex: 1;
+}
+
+.extension-id,
+.extension-source {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.extension-problems {
+  margin: 4px 0;
+  padding-left: 18px;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+select {
+  padding: 3px 6px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+}

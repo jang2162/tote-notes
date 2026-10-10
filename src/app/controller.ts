@@ -27,6 +27,7 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
+import { openSettings } from "../ui/settings";
 import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
 import { ViewerHost } from "../viewer/host";
@@ -82,6 +83,8 @@ export class AppController implements DocHost {
     () => this.registry,
     (ext, path) => this.backend.readExtensionFile(ext, path),
   );
+  /** Open settings screens listen here: the backend takes one config handler per window. */
+  private readonly configListeners = new Set<() => void>();
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
   private readonly highlights = new Map<Doc, { key: string; highlighting: WorkerHighlighting }>();
@@ -163,8 +166,13 @@ export class AppController implements DocHost {
 
   /** Settings or extensions changed (this window's settings screen or another's). */
   private async onConfigChanged(): Promise<void> {
+    // An extension may have been reinstalled, replaced or removed: what was read from its files
+    // is stale. Open documents keep what they have; the next language open reads again.
+    this.languageConfigs.clear();
+    this.highlight.forgetGrammars();
     await this.loadRegistry();
     await this.theme.refresh();
+    for (const listener of this.configListeners) listener();
   }
 
   extensions(doc: Doc, options: { wrap: boolean; text: string }) {
@@ -596,6 +604,8 @@ export class AppController implements DocHost {
         case "open-workspace":
         case "new-workspace":
           return await this.showPicker();
+        case "settings":
+          return await this.showSettings();
       }
     } catch (error) {
       this.report(error);
@@ -662,6 +672,25 @@ export class AppController implements DocHost {
         }
       },
     });
+    if (this.tabs.active) this.view.focus();
+  }
+
+  private async showSettings(): Promise<void> {
+    const subscribers = new Set<() => void>();
+    await openSettings({
+      backend: this.backend,
+      registry: () => this.registry,
+      onConfigChanged: (handler) => {
+        subscribers.add(handler);
+        this.configListeners.add(handler);
+        return () => {
+          subscribers.delete(handler);
+          this.configListeners.delete(handler);
+        };
+      },
+    });
+    // Escape closes the screen without its unsubscribe.
+    for (const handler of subscribers) this.configListeners.delete(handler);
     if (this.tabs.active) this.view.focus();
   }
 
