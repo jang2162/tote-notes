@@ -1,0 +1,135 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="utf-8" />
+    <meta
+      http-equiv="Content-Security-Policy"
+      content="default-src 'none'; img-src tote-file: data:; media-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-/ZO4TKyVAezp4sJADaKitqIZ12rw0wTT21yuGZ5KNKY='"
+    />
+    <title>미디어</title>
+    <style>
+      :root {
+        color-scheme: light dark;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+      }
+      body {
+        display: grid;
+        grid-template-rows: minmax(0, 1fr) auto;
+        background: var(--bg, #fff);
+        color: var(--fg, #000);
+        font:
+          13px -apple-system,
+          "Apple SD Gothic Neo",
+          sans-serif;
+      }
+      .stage {
+        overflow: auto;
+        display: grid;
+        place-items: center;
+      }
+      body.fit img.media {
+        max-width: 100%;
+        max-height: 100%;
+        object-fit: contain;
+        cursor: zoom-in;
+      }
+      body.actual .stage {
+        place-items: start;
+      }
+      body.actual img.media {
+        max-width: none;
+        cursor: zoom-out;
+      }
+      video.media {
+        max-width: 100%;
+        max-height: 100%;
+      }
+      audio.media {
+        width: min(480px, 90%);
+      }
+      .media-caption {
+        padding: 4px 12px;
+        color: var(--muted, #777);
+        border-top: 1px solid var(--border, #ddd);
+      }
+      .media-error {
+        color: var(--danger, #c00);
+      }
+    </style>
+  </head>
+  <body class="fit">
+    <div class="stage" id="stage"></div>
+    <div class="media-caption" id="caption"></div>
+    <script>
+      // Spec 「번들 확장」 4: images fit the window or show at their real size, nothing more;
+      // video and audio use the WebView's own controls; what it cannot play is said so.
+      const IMAGE = new Set([
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "heic",
+        "bmp",
+        "tif",
+        "tiff",
+        "avif",
+        "svg",
+      ]);
+      const VIDEO = new Set(["mp4", "mov", "m4v", "webm"]);
+      const stage = document.getElementById("stage");
+      const caption = document.getElementById("caption");
+
+      function applyTheme(theme) {
+        for (const [name, value] of Object.entries(theme || {}))
+          document.documentElement.style.setProperty(name, value);
+      }
+
+      function unsupported() {
+        stage.replaceChildren();
+        const p = document.createElement("p");
+        p.className = "media-error";
+        p.textContent = "지원하지 않는 포맷";
+        stage.append(p);
+      }
+
+      function show(init) {
+        applyTheme(init.theme);
+        caption.textContent = init.fileName;
+        const ext = (init.extension || "").toLowerCase();
+        let el;
+        if (IMAGE.has(ext)) {
+          el = document.createElement("img");
+          el.alt = init.fileName;
+          el.addEventListener("load", () => {
+            caption.textContent = `${init.fileName} · ${el.naturalWidth}×${el.naturalHeight}`;
+          });
+          el.addEventListener("click", () => {
+            document.body.classList.toggle("fit");
+            document.body.classList.toggle("actual");
+          });
+        } else {
+          el = document.createElement(VIDEO.has(ext) ? "video" : "audio");
+          el.controls = true;
+          el.preload = "metadata";
+        }
+        el.className = "media";
+        el.addEventListener("error", unsupported);
+        el.src = init.url;
+        stage.replaceChildren(el);
+      }
+
+      addEventListener("message", (event) => {
+        const data = event.data;
+        if (!data || typeof data !== "object") return;
+        if (data.type === "init") show(data);
+        if (data.type === "theme") applyTheme(data.theme);
+      });
+      parent.postMessage({ type: "ready" }, "*");
+    </script>
+  </body>
+</html>

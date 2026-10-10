@@ -1,0 +1,39 @@
+{
+  "name": "media-viewer",
+  "publisher": "tote",
+  "version": "1.0.0",
+  "displayName": "tote 미디어 뷰어",
+  "tote": {
+    "viewers": [
+      {
+        "id": "media",
+        "kind": "primary",
+        "extensions": [
+          "png",
+          "jpg",
+          "jpeg",
+          "gif",
+          "webp",
+          "heic",
+          "bmp",
+          "tif",
+          "tiff",
+          "avif",
+          "svg",
+          "mp4",
+          "mov",
+          "m4v",
+          "webm",
+          "mp3",
+          "m4a",
+          "wav",
+          "aac",
+          "flac",
+          "ogg",
+          "aiff"
+        ],
+        "entry": "viewer.html"
+      }
+    ]
+  }
+}

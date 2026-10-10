@@ -9,6 +9,14 @@
       "path": "/bundled/tote.languages"
     },
     {
+      "id": "tote.media-viewer",
+      "version": "1.0.0",
+      "displayName": "tote 미디어 뷰어",
+      "source": "bundled",
+      "enabled": true,
+      "path": "/bundled/tote.media-viewer"
+    },
+    {
       "id": "tote.themes",
       "version": "1.0.0",
       "displayName": "tote 기본 테마",
@@ -683,6 +691,37 @@
       "path": "themes/dark-plus.json"
     }
   ],
-  "viewers": [],
+  "viewers": [
+    {
+      "extension": "tote.media-viewer",
+      "id": "media",
+      "kind": "primary",
+      "extensions": [
+        "png",
+        "jpg",
+        "jpeg",
+        "gif",
+        "webp",
+        "heic",
+        "bmp",
+        "tif",
+        "tiff",
+        "avif",
+        "svg",
+        "mp4",
+        "mov",
+        "m4v",
+        "webm",
+        "mp3",
+        "m4a",
+        "wav",
+        "aac",
+        "flac",
+        "ogg",
+        "aiff"
+      ],
+      "entry": "viewer.html"
+    }
+  ],
   "problems": []
 }

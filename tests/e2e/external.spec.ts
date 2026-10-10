@@ -98,7 +98,6 @@ test("files sent by a tote command open in tabs", async ({ page }) => {
 test("a non-text file with a viewer opens it; 텍스트로 열기 falls back to the editor path", async ({
   page,
 }) => {
-  // No bundled viewer opens PNG yet (the media viewer comes later), so a test viewer stands in.
   await start(page, {
     files: {
       "/x/사진.png": fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47])),
@@ -106,23 +105,11 @@ test("a non-text file with a viewer opens it; 텍스트로 열기 falls back to 
       "/x/doc.pdf": fakeFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00])),
     },
     picks: ["/x/사진.png"],
-    extraViewers: [
-      {
-        info: {
-          extension: "test.ok",
-          id: "ok",
-          kind: "primary",
-          extensions: ["png"],
-          entry: "ok.html",
-        },
-        url: "/tests/e2e/pages/viewers/ok.html",
-      },
-    ],
   });
   await menu(page, "open-file");
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
-  await expect(page.frameLocator("iframe.viewer-frame").locator("body")).toHaveAttribute(
-    "data-file",
+  // The bundled media viewer opens it and captions it with the file name.
+  await expect(page.frameLocator("iframe.viewer-frame").locator(".media-caption")).toContainText(
     "사진.png",
   );
   await expect(page.locator(".editor-placeholder")).toBeHidden();
@@ -143,13 +130,13 @@ test("a non-text file with a viewer opens it; 텍스트로 열기 falls back to 
   expect(await page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
 });
 
-const PNG = fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
+const FILE = fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47]));
 const testViewer = (url: string) => ({
   info: {
     extension: "test",
     id: "test",
     kind: "primary" as const,
-    extensions: ["png"],
+    extensions: ["pdf"],
     entry: "viewer.html",
   },
   url,
@@ -159,8 +146,8 @@ test("a viewer that fails in the app leaves 열 수 없음 and 텍스트로 열�
   page,
 }) => {
   await start(page, {
-    files: { "/x/사진.png": PNG },
-    picks: ["/x/사진.png"],
+    files: { "/x/사진.pdf": FILE },
+    picks: ["/x/사진.pdf"],
     extraViewers: [testViewer("/tests/e2e/pages/viewers/failing.html")],
   });
   await menu(page, "open-file");
@@ -174,9 +161,9 @@ test("a resolveRelative answered after its view closed leaves no token, even for
   page,
 }) => {
   await start(page, {
-    files: { "/x/사진.png": PNG, "/x/pic.png": PNG, "/x/a.txt": fakeFile("text") },
+    files: { "/x/사진.pdf": FILE, "/x/pic.pdf": FILE, "/x/a.txt": fakeFile("text") },
     picks: ["/x/a.txt"],
-    extraViewers: [testViewer("/tests/e2e/pages/viewers/ok.html?rel=pic.png")],
+    extraViewers: [testViewer("/tests/e2e/pages/viewers/ok.html?rel=pic.pdf")],
   });
   await menu(page, "open-file");
   // Every resolveRelative answers a second late.
@@ -195,7 +182,7 @@ test("a resolveRelative answered after its view closed leaves no token, even for
         counter.resolveDone++;
       }
     };
-    backend.data.picks = ["/x/사진.png"];
+    backend.data.picks = ["/x/사진.pdf"];
   });
   const calls = () =>
     page.evaluate(() => (window as unknown as { resolveCalls: number }).resolveCalls);
@@ -203,14 +190,14 @@ test("a resolveRelative answered after its view closed leaves no token, even for
   await expect.poll(calls).toBe(1);
   // Away and back while the first view's answer is still on its way.
   await page.locator(".tab", { hasText: "a.txt" }).click();
-  await page.locator(".tab", { hasText: "사진.png" }).click();
+  await page.locator(".tab", { hasText: "사진.pdf" }).click();
   await expect.poll(calls).toBe(2);
   await expect
     .poll(() => page.evaluate(() => (window as unknown as { resolveDone: number }).resolveDone))
     .toBe(2);
   // Both answers are in, and the controller has had its turn after the later one.
   await page.evaluate(() => new Promise((done) => setTimeout(done, 50)));
-  // Only the open view holds tokens: its file and its pic.png.
+  // Only the open view holds tokens: its file and its pic.pdf.
   expect(
     await page.evaluate(() =>
       Object.values(window.__tote.backend.data.tokens).map((urls) => urls.length),
