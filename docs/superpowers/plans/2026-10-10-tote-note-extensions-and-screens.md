@@ -6747,6 +6747,48 @@ git commit -m "feat(highlight): TextMate tokenization in a worker with Oniguruma
 - Produces (`src/editor/setup.ts`): `highlightEffect(extension: Extension): StateEffect<unknown>`.
 - Produces (`src/ui/status-bar.ts`): `setLanguage(label: string, onPick?: () => void)`; (`src/ui/dialogs.ts`): `pickLanguage(languages: LanguageInfo[], currentId: string | null): Promise<LanguageInfo | null>`.
 
+- [ ] **Step 0: 제목 규칙 — 첫 줄의 shebang 은 건너뛴다**
+
+스펙 「제목 자동 생성」 이 이 계획을 쓴 뒤에 바뀌었다(사람의 결정, 2026-10-10): **문서의 첫 줄이 `#!` 로 시작하면 그 줄은 건너뛰고 다음 줄부터 첫 번째 비어 있지 않은 줄을 찾는다.** 건너뛴 뒤 비어 있지 않은 줄이 없으면 `untitled` 다. `#!` 가 둘째 줄 이후에 있으면 건너뛰지 않는다.
+
+`src/core/title.test.ts` 에 더한다:
+
+```ts
+describe("titleLine skips a shebang on the first line", () => {
+  const doc = (s: string) => Text.of(s.split("\n"));
+  it("takes the next non-blank line", () => {
+    expect(titleLine(doc("#!/bin/sh\n\necho hi"))).toEqual({ text: "echo hi", number: 3 });
+    expect(memoTitle(doc("#!/bin/sh\n\necho hi"))).toBe("echo hi");
+  });
+  it("is untitled when only the shebang is there", () => {
+    expect(memoTitle(doc("#!/usr/bin/env python3"))).toBe("untitled");
+    expect(titleLine(doc("#!/usr/bin/env python3")).number).toBe(1);
+  });
+  it("does not skip a #! further down or a Markdown heading", () => {
+    expect(memoTitle(doc("\n#!/bin/sh"))).toBe("! bin sh");
+    expect(memoTitle(doc("# 제목"))).toBe("제목");
+  });
+});
+```
+
+(`Text` 는 `@codemirror/state` 에서, `titleLine`·`memoTitle` 은 `./title` 에서 import 한다 — 파일에 이미 있으면 그대로 쓴다.) 실패를 본 뒤 `src/core/title.ts` 의 `titleLine` 을 바꾼다:
+
+```ts
+/** The first non-blank line and its number (line 1 for a blank memo). A shebang on line 1 is
+ * skipped so a script memo is not titled "! bin sh". */
+export function titleLine(doc: Text): { text: string; number: number } {
+  const last = Math.min(doc.lines, TITLE_SCAN_LINES);
+  const first = doc.line(1).text.startsWith("#!") ? 2 : 1;
+  for (let n = first; n <= last; n++) {
+    const line = doc.line(n);
+    if (line.text.trim() !== "") return { text: line.text, number: n };
+  }
+  return { text: "", number: 1 };
+}
+```
+
+**이 태스크의 나머지 테스트 기대값을 이 규칙에 맞춘다.** 아래 Step 1 에 적힌 `"! bin sh.sh"`·`"! bin bash.sh"` 는 옛 규칙의 값이다. 새 규칙으로 실제 값(예: `#!/bin/bash` 한 줄 뒤 Enter 는 `untitled.sh`, `#!/bin/sh` + `echo hi` 는 커서가 첫 줄을 떠난 시점의 내용으로 정해진 이름)을 따져 고치고, 고친 기대값과 그 이유를 보고서에 적는다. 언어 자동 인식은 그대로 첫 줄의 shebang 을 본다(제목과 언어 인식은 다른 규칙이다).
+
 - [ ] **Step 1: 실패하는 테스트**
 
 `src-tauri/src/workspace/ops.rs` 의 테스트에 더한다:
