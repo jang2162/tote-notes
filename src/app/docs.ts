@@ -25,9 +25,11 @@ export const DRAFT_DELAY_MS = 1000;
 /** Bigger files open in the large text viewer instead of loading into the editor.
  * Same value as `MAX_EDITOR_BYTES` in src-tauri/src/persist/external.rs. */
 export const MAX_EDITOR_BYTES = 100 * 1024 * 1024;
-/** A line longer than this sends the file to the large text viewer (spec 「크기별 단계」). This
- * value is provisional; Task 14 of the extensions-and-screens plan measures the boundary. */
-export const LONG_LINE_LIMIT = 1_000_000;
+/** A line longer than this sends the file to the large text viewer (spec 「크기별 단계」).
+ * Measured with `pnpm measure:long-line` (keydown → next frame, p95 against a 253-line
+ * baseline, headless WebKit): the largest ladder step within one frame of the baseline in two
+ * runs. Re-measure after changing the editor's extensions. */
+export const LONG_LINE_LIMIT = 5_000_000;
 /** Soft wrap stays off above this line length (the same limit highlighting uses): wrapping one
  * huge line costs seconds. */
 export const WRAP_LIMIT = 20_000;

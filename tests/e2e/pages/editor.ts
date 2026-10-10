@@ -2,8 +2,10 @@ import { EditorSelection, EditorState, type Extension } from "@codemirror/state"
 import { EditorView } from "@codemirror/view";
 import type { IRawTheme } from "@shikijs/vscode-textmate";
 
+import { WRAP_LIMIT } from "../../../src/app/docs";
 import fakeRegistry from "../../../src/backend/fake-registry.json";
 import type { ExtensionRegistry } from "../../../src/backend/types";
+import { longestLine } from "../../../src/core/codec";
 import { languageData, parseLanguageConfiguration } from "../../../src/editor/language-config";
 import { editorExtensions } from "../../../src/editor/setup";
 import { Registry } from "../../../src/extensions/registry";
@@ -71,13 +73,24 @@ if (params.get("highlight")) {
   }
 }
 
+// `?longline=<n>` is one line of n characters and `?lines=<n>` n lines of code: a URL cannot carry
+// megabytes, so the long documents of the boundary measurement (tests/measure) are built here.
+const longLine = Number(params.get("longline") ?? 0);
+const lines = Number(params.get("lines") ?? 0);
+const doc = longLine
+  ? "x".repeat(longLine)
+  : lines
+    ? Array.from({ length: lines }, (_, i) => `const v${i} = f(${i}) + "text";`).join("\n")
+    : (params.get("doc") ?? new URLSearchParams(location.hash.slice(1)).get("doc") ?? "");
+
 const view = new EditorView({
   parent: document.getElementById("editor")!,
   state: EditorState.create({
-    doc: params.get("doc") ?? new URLSearchParams(location.hash.slice(1)).get("doc") ?? "",
+    doc,
     extensions: editorExtensions({
       fileName,
-      wrap: !params.get("nowrap"),
+      // As the app decides it (`setText` in src/app/docs.ts), so the measurement sees its setting.
+      wrap: !params.get("nowrap") && longestLine(doc) <= WRAP_LIMIT,
       onUpdate: () => {},
       languageData: languageData(config),
       highlight,
