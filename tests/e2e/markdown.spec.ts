@@ -90,8 +90,12 @@ test("the preview shows the text as it is when it opens, and the mode comes back
 }) => {
   await start(page, { memos: { a: fakeMemo("a.md", "# 처음") } });
   await page.locator(".memo-row", { hasText: "a" }).click();
+  // Keys sent before the memo is in the editor are lost.
+  await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Meta+ArrowDown");
-  await page.keyboard.type("\n둘째");
+  await page.keyboard.press("Enter");
+  // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
+  await page.keyboard.insertText("둘째");
   await menu(page, "toggle-preview");
   await expect(frame(page).locator("body p")).toHaveText("둘째");
   await expect
