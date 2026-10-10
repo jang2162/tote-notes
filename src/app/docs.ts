@@ -1,11 +1,12 @@
 import { EditorState, type EditorSelection, type Extension, type Text } from "@codemirror/state";
 
-import { errorCode, type Backend, type MemoInfo } from "../backend/types";
+import { errorCode, type Backend, type LanguageInfo, type MemoInfo } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
 import { basename, splitName } from "../core/names";
 import type { WriteScheduler } from "../core/scheduler";
 import { restoreSelection, type SelectionJSON, type ViewMode } from "../core/session";
 import { memoTitle, titleLine } from "../core/title";
+import type { LanguageData } from "../editor/language-config";
 
 // Spec 「저장」·「크기별 단계」.
 export const MEMO_SAVE_DELAY_MS = 500;
@@ -33,8 +34,12 @@ export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 export interface DocHost {
   backend: Backend;
   writes: WriteScheduler;
-  /** Editor extensions for a state of `doc`, including the listener that calls `doc.update`. */
-  extensions(doc: Doc, options: { wrap: boolean }): Extension[];
+  /** Editor extensions for a state of `doc` holding `text`, including the listener that calls
+   * `doc.update`. */
+  extensions(doc: Doc, options: { wrap: boolean; text: string }): Extension[];
+  /** The language-configuration data of `doc`'s language (`{}` when it has none). */
+  languageConfig(lang: LanguageInfo | undefined): Promise<LanguageData>;
+  languageOf(doc: Doc): LanguageInfo | undefined;
   /** Something the tab bar, memo list or status bar shows about `doc` changed. */
   changed(doc: Doc, change: Change): void;
 }
@@ -86,6 +91,8 @@ export abstract class Doc {
   /** The language the person picked in the status bar (`null`: decided by the file name). A memo
    * mirrors `info.language`; an external file keeps it in the session. */
   language: string | null = null;
+  /** Comment tokens, brackets and word characters of the language (its configuration file). */
+  languageData: LanguageData = {};
   /** The session's selection, applied when the text first loads. */
   restoreSelection: SelectionJSON | undefined;
   protected eol: Eol = "\n";
@@ -135,11 +142,19 @@ export abstract class Doc {
     this.host.changed(this, "error");
   }
 
+  /** For text set without a read: the state is built at once and the language data follows. */
+  protected fetchLanguageData(): void {
+    void this.host.languageConfig(this.host.languageOf(this)).then((data) => {
+      this.languageData = data;
+      this.host.changed(this, "language");
+    });
+  }
+
   /** Builds the editor state for `text`, with `selection` or else the session's. */
   protected setText(text: string, selection?: EditorSelection): void {
     let state = EditorState.create({
       doc: text,
-      extensions: this.host.extensions(this, { wrap: longestLine(text) <= WRAP_LIMIT }),
+      extensions: this.host.extensions(this, { wrap: longestLine(text) <= WRAP_LIMIT, text }),
     });
     const wanted =
       selection ?? (this.restoreSelection && restoreSelection(this.restoreSelection, state.doc));
@@ -168,6 +183,7 @@ export abstract class Doc {
     }
     this.eol = decoded.eol;
     this.bom = decoded.bom;
+    this.languageData = await this.host.languageConfig(this.host.languageOf(this));
     this.setText(decoded.text);
     this.loaded();
   }
@@ -205,6 +221,7 @@ export class MemoDoc extends Doc {
 
   /** A memo created empty skips the read. */
   startEmpty(): void {
+    this.fetchLanguageData();
     this.setText("");
     this.loaded();
   }
@@ -214,6 +231,7 @@ export class MemoDoc extends Doc {
   adopt(from: EditorState, format: { eol: Eol; bom: boolean }): void {
     this.eol = format.eol;
     this.bom = format.bom;
+    this.fetchLanguageData();
     this.setText(from.doc.toString(), from.selection);
     this.loaded();
   }

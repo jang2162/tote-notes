@@ -22,21 +22,44 @@ export interface LanguageData {
 
 export const DEFAULT_LANGUAGE_DATA: LanguageData = {};
 
+/** The file is an extension's, so anything that is not a JSON object reads as the plain
+ * configuration rather than failing the file it belongs to (spec 「오류 처리」). */
 export function parseLanguageConfiguration(text: string): LanguageConfiguration {
-  const raw = parseJsonc<unknown>(text);
-  return raw && typeof raw === "object" ? (raw as LanguageConfiguration) : {};
+  let raw: unknown;
+  try {
+    raw = parseJsonc<unknown>(text);
+  } catch {
+    return {};
+  }
+  return raw && typeof raw === "object" && !Array.isArray(raw)
+    ? (raw as LanguageConfiguration)
+    : {};
 }
 
+/** The types say what a well-formed file holds; every value is checked anyway, since the file
+ * may hold anything. */
 export function languageData(config: LanguageConfiguration): LanguageData {
   const data: LanguageData = {};
   const comments: CommentTokens = {};
   if (typeof config.comments?.lineComment === "string") comments.line = config.comments.lineComment;
   const block = config.comments?.blockComment;
-  if (Array.isArray(block) && block.length === 2)
+  if (
+    Array.isArray(block) &&
+    block.length === 2 &&
+    typeof block[0] === "string" &&
+    typeof block[1] === "string"
+  )
     comments.block = { open: block[0], close: block[1] };
   if (comments.line || comments.block) data.commentTokens = comments;
-  const pairs = (config.autoClosingPairs ?? config.brackets ?? [])
-    .map((pair) => (Array.isArray(pair) ? pair[0] : pair.open))
+  const pairList = config.autoClosingPairs ?? config.brackets;
+  const pairs = (Array.isArray(pairList) ? pairList : [])
+    .map((pair: unknown) =>
+      Array.isArray(pair)
+        ? pair[0]
+        : pair && typeof pair === "object"
+          ? (pair as { open?: unknown }).open
+          : null,
+    )
     .filter((open): open is string => typeof open === "string" && open.length > 0);
   if (pairs.length) data.closeBrackets = { brackets: [...new Set(pairs)] };
   const pattern = wordPattern(config.wordPattern);

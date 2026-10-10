@@ -1,14 +1,22 @@
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
-import type { Backend, MemoInfo } from "../backend/types";
+import type { Backend, LanguageInfo, MemoInfo } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
-import { editorExtensions, languageEffect } from "../editor/setup";
-import { EMPTY_REGISTRY, Registry } from "../extensions/registry";
+import {
+  languageData,
+  parseLanguageConfiguration,
+  type LanguageData,
+} from "../editor/language-config";
+import { editorExtensions, languageDataEffect, languageEffect } from "../editor/setup";
+import { EMPTY_REGISTRY, languageLabelFor, Registry } from "../extensions/registry";
+import { HighlightClient } from "../highlight/client";
+import { HIGHLIGHT_LIMIT_CHARS, workerHighlighting } from "../highlight/extension";
 import { ThemeManager } from "../theme/manager";
+import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
-import { languageLabel, StatusBar } from "../ui/status-bar";
+import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
 import {
   ExternalDoc,
@@ -44,6 +52,12 @@ export class AppController implements DocHost {
   readonly surface = new Surface(this.view);
   registry = new Registry(EMPTY_REGISTRY);
   readonly theme: ThemeManager;
+  readonly highlight = new HighlightClient(
+    new Worker(new URL("../highlight/worker.ts", import.meta.url), { type: "module" }),
+    () => this.registry,
+    (ext, path) => this.backend.readExtensionFile(ext, path),
+  );
+  private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   private session!: SessionSync;
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
@@ -74,6 +88,9 @@ export class AppController implements DocHost {
     document.title = info.name;
     await this.loadRegistry();
     this.backend.onConfigChanged(() => void this.onConfigChanged());
+    this.theme.onChange((active) => {
+      if (active.theme) void this.highlight.setTheme(tokenTheme(active.theme));
+    });
     await this.theme.start();
     this.session = new SessionSync(
       this.backend,
@@ -116,12 +133,45 @@ export class AppController implements DocHost {
     await this.theme.refresh();
   }
 
-  extensions(doc: Doc, options: { wrap: boolean }) {
+  extensions(doc: Doc, options: { wrap: boolean; text: string }) {
+    const lang = this.languageOf(doc);
+    const highlight =
+      lang?.grammar && options.text.length <= HIGHLIGHT_LIMIT_CHARS
+        ? workerHighlighting(this.highlight, lang)
+        : undefined;
     return editorExtensions({
       fileName: doc.fileName,
       wrap: options.wrap,
+      languageData: doc.languageData,
+      highlight,
       onUpdate: (update) => this.onUpdate(doc, update),
     });
+  }
+
+  /** The language of a tab: the chosen one, else the file name's (spec 「편집기」). */
+  languageOf(doc: Doc): LanguageInfo | undefined {
+    return (
+      (doc.language && this.registry.language(doc.language)) ||
+      this.registry.languageForFile(doc.fileName)
+    );
+  }
+
+  /** language-configuration.json of `lang`, read once per language. */
+  languageConfig(lang: LanguageInfo | undefined): Promise<LanguageData> {
+    if (!lang?.configuration) return Promise.resolve({});
+    const key = `${lang.extension}/${lang.configuration}`;
+    let pending = this.languageConfigs.get(key);
+    if (!pending) {
+      pending = this.backend
+        .readExtensionFile(lang.extension, lang.configuration)
+        .then((bytes) => languageData(parseLanguageConfiguration(new TextDecoder().decode(bytes))))
+        .catch((error: unknown) => {
+          console.warn(`language configuration of ${lang.id} could not be read`, error);
+          return {};
+        });
+      this.languageConfigs.set(key, pending);
+    }
+    return pending;
   }
 
   changed(doc: Doc, change: Change): void {
@@ -234,7 +284,7 @@ export class AppController implements DocHost {
   private show(doc: Doc): void {
     const state = doc.problem ? null : doc.state;
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
-    this.statusBar.setLanguage(languageLabel(doc.fileName));
+    this.statusBar.setLanguage(languageLabelFor(this.languageOf(doc), doc.fileName));
     this.statusBar.setMessage(doc.notice ?? "");
     if (!state) {
       this.surface.showPlaceholder(PROBLEM_TEXT[doc.problem ?? "unreadable"]);
@@ -388,10 +438,11 @@ export class AppController implements DocHost {
 
   private reconfigureLanguage(doc: Doc): void {
     if (!doc.state) return;
-    const effects = languageEffect(doc.fileName);
+    const effects = [languageEffect(doc.fileName), languageDataEffect(doc.languageData)];
     if (doc === this.tabs.active && this.view.state === doc.state) this.view.dispatch({ effects });
     else doc.state = doc.state.update({ effects }).state;
-    if (doc === this.tabs.active) this.statusBar.setLanguage(languageLabel(doc.fileName));
+    if (doc === this.tabs.active)
+      this.statusBar.setLanguage(languageLabelFor(this.languageOf(doc), doc.fileName));
   }
 
   private async refreshMemos(): Promise<void> {

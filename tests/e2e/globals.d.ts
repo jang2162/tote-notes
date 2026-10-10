@@ -1,5 +1,6 @@
 import type { EditorSelection } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
+import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
@@ -18,6 +19,9 @@ declare global {
       restart(): Promise<void>;
       end(how: "replace" | "bare" | "cancel"): Promise<void>;
     };
+    /** Editor page with `?highlight=1`: hands the worker a bundled theme file (by path) or a
+     * theme as the tokenizer takes it. */
+    highlightTheme(theme: string | IRawTheme): Promise<void>;
     askUnsaved: typeof askUnsaved;
     promptText: typeof promptText;
     workspacePicker: typeof workspacePicker;

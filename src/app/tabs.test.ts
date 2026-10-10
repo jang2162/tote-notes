@@ -7,7 +7,14 @@ import { Tabs } from "./tabs";
 
 function host(): DocHost {
   const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
-  return { backend, writes: new WriteScheduler(() => {}), extensions: () => [], changed: () => {} };
+  return {
+    backend,
+    writes: new WriteScheduler(() => {}),
+    extensions: () => [],
+    languageConfig: async () => ({}),
+    languageOf: () => undefined,
+    changed: () => {},
+  };
 }
 
 const memo = (h: DocHost, id: string) =>

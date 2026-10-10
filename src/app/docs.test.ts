@@ -30,6 +30,8 @@ function setup(seed: Partial<FakeData> = {}) {
       throw error;
     }),
     extensions: () => [],
+    languageConfig: async () => ({}),
+    languageOf: () => undefined,
     changed: (_doc, change) => void changes.push(change),
   };
   return { backend, host, changes };

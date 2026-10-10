@@ -1,11 +1,15 @@
-import { EditorSelection, EditorState } from "@codemirror/state";
+import { EditorSelection, EditorState, type Extension } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
+import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import fakeRegistry from "../../../src/backend/fake-registry.json";
 import type { ExtensionRegistry } from "../../../src/backend/types";
 import { languageData, parseLanguageConfiguration } from "../../../src/editor/language-config";
 import { editorExtensions } from "../../../src/editor/setup";
 import { Registry } from "../../../src/extensions/registry";
+import { HighlightClient } from "../../../src/highlight/client";
+import { workerHighlighting } from "../../../src/highlight/extension";
+import { loadTheme, tokenTheme } from "../../../src/theme/vscode-theme";
 
 const params = new URLSearchParams(location.search);
 const fileName = params.get("file") ?? "note.md";
@@ -15,15 +19,51 @@ const configResponse = lang?.configuration
   ? await fetch(`/extensions/${lang.extension}/${lang.configuration}`)
   : null;
 const config = configResponse?.ok ? parseLanguageConfiguration(await configResponse.text()) : {};
+
+// `?highlight=1` runs the real worker on the registry's grammars and the bundled Dark+ theme.
+// `badgrammar` breaks the grammar files only, `badtheme` gives a theme the tokenizer refuses.
+const registry = new Registry(fakeRegistry as ExtensionRegistry);
+const readFile = async (ext: string, path: string) => {
+  if (params.get("badgrammar") && path.startsWith("grammars/"))
+    return new TextEncoder().encode("{ not a grammar");
+  if (params.get("badtheme") && path.startsWith("themes/"))
+    return new TextEncoder().encode(
+      JSON.stringify({ tokenColors: [{ scope: [1], settings: { foreground: "#ff0000" } }] }),
+    );
+  const response = await fetch(`/extensions/${ext}/${path}`);
+  if (!response.ok) throw new Error(`${ext}/${path}: ${response.status}`);
+  return new Uint8Array(await response.arrayBuffer());
+};
+let highlight: Extension | undefined;
+let highlightTheme = async (_theme: string | IRawTheme) => {};
+if (params.get("highlight")) {
+  const client = new HighlightClient(
+    new Worker(new URL("../../../src/highlight/worker.ts", import.meta.url), { type: "module" }),
+    () => registry,
+    readFile,
+  );
+  highlightTheme = async (theme: string | IRawTheme) => {
+    if (typeof theme !== "string") return client.setTheme(theme);
+    const loaded = await loadTheme(
+      async (p) => new TextDecoder().decode(await readFile("tote.themes", p)),
+      theme,
+    );
+    await client.setTheme(tokenTheme(loaded));
+  };
+  await highlightTheme("themes/dark-plus.json");
+  if (lang?.grammar) highlight = workerHighlighting(client, lang);
+}
+
 const view = new EditorView({
   parent: document.getElementById("editor")!,
   state: EditorState.create({
-    doc: params.get("doc") ?? "",
+    doc: params.get("doc") ?? new URLSearchParams(location.hash.slice(1)).get("doc") ?? "",
     extensions: editorExtensions({
       fileName,
-      wrap: true,
+      wrap: !params.get("nowrap"),
       onUpdate: () => {},
       languageData: languageData(config),
+      highlight,
     }),
   }),
 });
@@ -142,4 +182,4 @@ const ime = {
 };
 
 // The specs drive and inspect the editor through these.
-Object.assign(window, { view, EditorSelection, ime });
+Object.assign(window, { view, EditorSelection, ime, highlightTheme });

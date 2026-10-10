@@ -21,6 +21,8 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
     backend,
     writes: new WriteScheduler(() => {}),
     extensions: () => [],
+    languageConfig: async () => ({}),
+    languageOf: () => undefined,
     changed: () => {},
   };
   const infos = new Map<string, MemoInfo>();
@@ -119,6 +121,8 @@ describe("SessionSync.build and sessionTab", () => {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
           extensions: () => [],
+          languageConfig: async () => ({}),
+          languageOf: () => undefined,
           changed: () => {},
         },
         { id: "a", file: "가.md", autoTitle: false, modifiedMs: 0, size: 0, kind: "text" },
@@ -131,6 +135,8 @@ describe("SessionSync.build and sessionTab", () => {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
           extensions: () => [],
+          languageConfig: async () => ({}),
+          languageOf: () => undefined,
           changed: () => {},
         },
         "/x/a.sh",

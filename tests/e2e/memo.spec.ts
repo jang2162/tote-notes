@@ -52,6 +52,7 @@ test("restoring a session reads only the active tab", async ({ page }) => {
 test("tabs, the active tab and the cursor come back after a restart", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("가.md", "첫째 줄\n둘째 줄") } });
   await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".cm-content")).toContainText("둘째 줄");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 6 } }));
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.session))

@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 
-import { languageData, parseLanguageConfiguration, wordCharsFor } from "./language-config";
+import {
+  languageData,
+  parseLanguageConfiguration,
+  wordCharsFor,
+  type LanguageConfiguration,
+} from "./language-config";
 
 describe("parseLanguageConfiguration", () => {
   it("reads VS Code's JSONC shape with both pair notations", () => {
@@ -28,6 +33,36 @@ describe("parseLanguageConfiguration", () => {
 
   it("ignores a wordPattern that is not a valid expression", () => {
     expect(languageData(parseLanguageConfiguration(`{ "wordPattern": "[" }`))).toEqual({});
+  });
+});
+
+describe("a malformed language configuration", () => {
+  // An installed extension's file is anybody's JSON; it must never stop a file from opening.
+  it("parses to the plain configuration when it is not a JSON object", () => {
+    expect(parseLanguageConfiguration("{ not json")).toEqual({});
+    expect(parseLanguageConfiguration('[["(", ")"]]')).toEqual({});
+    expect(parseLanguageConfiguration('"#"')).toEqual({});
+  });
+
+  it("gives no language data for values of the wrong shape, without throwing", () => {
+    const odd: unknown[] = [
+      { comments: "#" },
+      { comments: { lineComment: 1, blockComment: [1, 2] } },
+      { brackets: "()" },
+      { autoClosingPairs: { open: "(", close: ")" } },
+      { autoClosingPairs: [null, 3, "(", { open: 1 }, [2, 3], {}] },
+      { wordPattern: 5 },
+      { wordPattern: { pattern: "\\w+", flags: 5 } },
+    ];
+    for (const config of odd)
+      expect(languageData(config as LanguageConfiguration), JSON.stringify(config)).toEqual({});
+  });
+
+  it("keeps the well-formed entries next to malformed ones", () => {
+    const config = { autoClosingPairs: [null, ["(", ")"], { open: "[", close: "]" }] };
+    expect(languageData(config as LanguageConfiguration)).toEqual({
+      closeBrackets: { brackets: ["(", "["] },
+    });
   });
 });
 

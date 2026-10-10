@@ -103,6 +103,8 @@ export interface EditorOptions {
   onUpdate: (update: ViewUpdate) => void;
   /** From the language's configuration file: comment tokens, bracket pairs, word characters. */
   languageData?: LanguageData;
+  /** TextMate colours (`workerHighlighting`); absent for plain text and over the size limit. */
+  highlight?: Extension;
 }
 
 export function editorExtensions(options: EditorOptions): Extension[] {
@@ -129,6 +131,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
       ...searchKeymap,
       ...historyKeymap,
     ]),
+    options.highlight ?? [],
     appTheme,
     EditorView.updateListener.of(options.onUpdate),
   ];
