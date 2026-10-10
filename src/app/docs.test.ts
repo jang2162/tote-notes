@@ -321,6 +321,36 @@ describe("MemoDoc", () => {
     expect(doc.languageData).toEqual({ wordChars: "shellscript" });
   });
 
+  it("does not move a memo the person named, even one named .md", async () => {
+    const { backend, host } = setup();
+    const doc = new MemoDoc(host, await backend.createMemo());
+    doc.startEmpty();
+    type(doc, "#!/bin/sh");
+    await doc.rename("notes.md");
+    type(doc, "\necho hi");
+    await doc.leave();
+    expect(doc.info).toMatchObject({ file: "notes.md", autoTitle: false });
+    expect(doc.info.language).toBeUndefined();
+  });
+
+  it("keeps the language data of the latest change when the answers cross", async () => {
+    const { host } = setup({ files: { "/x/a.txt": fakeFile("x") } });
+    const answers: (() => void)[] = [];
+    host.languageOf = (doc) => fakeLanguages.find((l) => l.id === doc.language);
+    host.languageConfig = (lang) =>
+      lang
+        ? new Promise((resolve) => answers.push(() => resolve({ wordChars: lang.id })))
+        : Promise.resolve({});
+    const doc = new ExternalDoc(host, "/x/a.txt");
+    await doc.ensureLoaded();
+    const first = doc.changeLanguage(fakeLanguages.find((l) => l.id === "python")!);
+    const second = doc.changeLanguage(fakeLanguages.find((l) => l.id === "sql")!);
+    answers[1]();
+    answers[0]();
+    await Promise.all([first, second]);
+    expect(doc.languageData).toEqual({ wordChars: "sql" });
+  });
+
   it("changeLanguage renames a memo and records the language; an external file only remembers it", async () => {
     const { backend, host, changes } = setup({ files: { "/x/a.txt": fakeFile("x") } });
     const memo = new MemoDoc(host, await backend.createMemo());

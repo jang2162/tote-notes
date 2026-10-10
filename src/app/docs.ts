@@ -108,6 +108,8 @@ export abstract class Doc {
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;
+  /** Counts `refreshLanguage` calls: only the latest one's answer is applied. */
+  private languageRequest = 0;
 
   constructor(protected readonly host: DocHost) {}
 
@@ -146,7 +148,11 @@ export abstract class Doc {
   /** Reloads the language-configuration data for the current language and tells the host, which
    * reconfigures the editor (comment tokens, brackets, highlighting). */
   async refreshLanguage(): Promise<void> {
-    this.languageData = await this.host.languageConfig(this.host.languageOf(this));
+    const request = ++this.languageRequest;
+    const data = await this.host.languageConfig(this.host.languageOf(this));
+    // Overtaken by a later change, whose answer may already be in: this one is for an old language.
+    if (request !== this.languageRequest) return;
+    this.languageData = data;
     this.host.changed(this, "language");
   }
 
@@ -164,10 +170,7 @@ export abstract class Doc {
 
   /** For text set without a read: the state is built at once and the language data follows. */
   protected fetchLanguageData(): void {
-    void this.host.languageConfig(this.host.languageOf(this)).then((data) => {
-      this.languageData = data;
-      this.host.changed(this, "language");
-    });
+    void this.refreshLanguage();
   }
 
   /** Builds the editor state for `text`, with `selection` or else the session's. */
@@ -370,8 +373,9 @@ export class MemoDoc extends Doc {
     await this.refreshLanguage();
   }
 
-  /** Automatic detection (spec 「편집기」): only a `.md` memo without a language, only up and
-   * away from Markdown, when the cursor leaves line 1 and when the tab is left. */
+  /** Automatic detection (spec 「편집기」): only a `.md` memo without a language whose name tote
+   * still gives (a name the person chose is not undone), only up and away from Markdown, when the
+   * cursor leaves line 1 and when the tab is left. */
   private detect(): Promise<void> {
     this.detecting ??= this.runDetect().finally(() => {
       this.detecting = null;
@@ -382,7 +386,12 @@ export class MemoDoc extends Doc {
   private async runDetect(): Promise<void> {
     // A title rename in flight goes first: both move the file, and the later answer wins.
     await this.retitling;
-    if (this.info.language || splitName(this.info.file).ext.toLowerCase() !== "md" || !this.state)
+    if (
+      this.info.language ||
+      !this.info.autoTitle ||
+      splitName(this.info.file).ext.toLowerCase() !== "md" ||
+      !this.state
+    )
       return;
     const found = detectLanguage(this.state.doc, this.host.languages());
     if (!found || found.id === "markdown") return;
