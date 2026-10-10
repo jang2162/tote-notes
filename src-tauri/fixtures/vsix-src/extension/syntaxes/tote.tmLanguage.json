@@ -1,0 +1,15 @@
+{
+  "name": "Tote Lang",
+  "scopeName": "source.tote",
+  "patterns": [{ "include": "#comment" }, { "include": "#keyword" }, { "include": "#string" }],
+  "repository": {
+    "comment": { "match": "#.*$", "name": "comment.line.number-sign.tote" },
+    "keyword": { "match": "\\b(let|fn|return)\\b", "name": "keyword.control.tote" },
+    "string": {
+      "begin": "\"",
+      "end": "\"",
+      "name": "string.quoted.double.tote",
+      "patterns": [{ "match": "\\\\.", "name": "constant.character.escape.tote" }]
+    }
+  }
+}

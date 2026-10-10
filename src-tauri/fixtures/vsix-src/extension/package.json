@@ -1,0 +1,61 @@
+{
+  "name": "test-theme",
+  "displayName": "Tote Test Theme",
+  "version": "0.0.1",
+  "publisher": "tote-test",
+  "main": "./out/extension.js",
+  "contributes": {
+    "themes": [
+      {
+        "label": "Tote Night",
+        "uiTheme": "vs-dark",
+        "path": "./themes/night-color-theme.json"
+      }
+    ],
+    "languages": [
+      {
+        "id": "totelang",
+        "aliases": [
+          "Tote Lang"
+        ],
+        "extensions": [
+          ".tote",
+          ".TOTE"
+        ],
+        "filenames": [
+          "Totefile"
+        ],
+        "firstLine": "^#!.*\\btote\\b",
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "totelang",
+        "scopeName": "source.tote",
+        "path": "./syntaxes/tote.tmLanguage.json",
+        "embeddedLanguages": {
+          "meta.embedded.block.json": "json"
+        }
+      }
+    ]
+  },
+  "activationEvents": [
+    "*"
+  ],
+  "engines": {
+    "vscode": "^1.80.0"
+  },
+  "tote": {
+    "viewers": [
+      {
+        "id": "tote-view",
+        "kind": "primary",
+        "extensions": [
+          "tote"
+        ],
+        "entry": "viewer.html"
+      }
+    ]
+  }
+}

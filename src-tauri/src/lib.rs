@@ -1,6 +1,7 @@
 pub mod app;
 pub mod appdata;
 pub mod cli;
+pub mod extensions;
 pub mod persist;
 pub mod session;
 pub mod workspace;

@@ -120,18 +120,59 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
     (out.status.success() && !text.is_empty()).then_some(text)
 }
 
-/// `settings.json`. Later plans add the theme and extension switches; unknown fields are ignored
-/// on read and this plan never writes the file.
+/// `settings.json`. Unknown fields are ignored on read, so a newer build's file still opens.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<PathBuf>,
+    #[serde(default)]
+    pub theme: ThemeSettings,
+    #[serde(default)]
+    pub extensions: ExtensionSettings,
+}
+
+/// Which theme to use under each OS appearance (spec 「테마」). `None` means the bundled default.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct ThemeSettings {
+    #[serde(default)]
+    pub light: Option<ThemeRef>,
+    #[serde(default)]
+    pub dark: Option<ThemeRef>,
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+pub struct ThemeRef {
+    pub extension: String,
+    pub label: String,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExtensionSettings {
+    /// IDs of user-installed extensions switched off; bundled ones cannot be.
+    #[serde(default)]
+    pub disabled: Vec<String>,
+    /// Which side wins when two extensions claim one file extension (spec 「설치와 로딩」).
+    #[serde(default)]
+    pub precedence: Precedence,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Precedence {
+    #[default]
+    User,
+    Bundled,
 }
 
 impl Settings {
     pub fn load(path: &Path) -> io::Result<Settings> {
         Ok(read_json(path)?.unwrap_or_default())
+    }
+
+    pub fn save(&self, path: &Path) -> io::Result<()> {
+        write_json(path, self)
     }
 
     pub fn workspace_root(&self, paths: &AppPaths) -> PathBuf {
@@ -292,6 +333,7 @@ mod tests {
         );
         let settings = Settings {
             workspace_root: Some("~/노트".into()),
+            ..Default::default()
         };
         assert_eq!(
             settings.workspace_root_with_home(&paths, home),
@@ -304,6 +346,7 @@ mod tests {
         let paths = AppPaths::from_parts(Some("/data".into()), None, None, false).unwrap();
         let settings = Settings {
             workspace_root: Some("Notes".into()),
+            ..Default::default()
         };
         assert_eq!(
             settings.workspace_root_with_home(&paths, Some(Path::new("/home"))),
@@ -315,6 +358,7 @@ mod tests {
         );
         let empty = Settings {
             workspace_root: Some("".into()),
+            ..Default::default()
         };
         assert_eq!(
             empty.workspace_root_with_home(&paths, Some(Path::new("/home"))),
@@ -326,11 +370,42 @@ mod tests {
     fn settings_are_read_from_camel_case_json() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
-        fs::write(&file, r#"{ "workspaceRoot": "/x", "theme": "later" }"#).unwrap();
+        fs::write(&file, r#"{ "workspaceRoot": "/x", "unknown": "later" }"#).unwrap();
         assert_eq!(
             Settings::load(&file).unwrap().workspace_root,
             Some(PathBuf::from("/x"))
         );
+    }
+
+    #[test]
+    fn settings_round_trip_theme_and_extension_fields() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let settings = Settings {
+            workspace_root: None,
+            theme: ThemeSettings {
+                light: Some(ThemeRef {
+                    extension: "tote.themes".into(),
+                    label: "Light+".into(),
+                }),
+                dark: None,
+            },
+            extensions: ExtensionSettings {
+                disabled: vec!["someone.ext".into()],
+                precedence: Precedence::Bundled,
+            },
+        };
+        settings.save(&file).unwrap();
+        let text = fs::read_to_string(&file).unwrap();
+        assert!(text.contains("\"precedence\": \"bundled\""));
+        assert!(text.contains("\"dark\": null"));
+        assert!(!text.contains("workspaceRoot"));
+        assert_eq!(Settings::load(&file).unwrap(), settings);
+        assert_eq!(
+            Settings::load(&dir.path().join("none.json")).unwrap(),
+            Settings::default()
+        );
+        assert_eq!(Settings::default().extensions.precedence, Precedence::User);
     }
 
     #[test]

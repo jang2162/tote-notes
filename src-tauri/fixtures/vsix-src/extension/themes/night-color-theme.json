@@ -1,0 +1,14 @@
+{
+  // A tiny theme for the tests. Comments and trailing commas are what real themes carry.
+  "name": "Tote Night",
+  "type": "dark",
+  "colors": {
+    "editor.background": "#101010",
+    "editor.foreground": "#f0f0f0",
+    "sideBar.background": "#181818"
+  },
+  "tokenColors": [
+    { "scope": "comment", "settings": { "foreground": "#808080", "fontStyle": "italic" } },
+    { "scope": ["keyword", "storage"], "settings": { "foreground": "#ff9966" } }
+  ]
+}
