@@ -85,14 +85,14 @@ const appTheme = EditorView.theme({
     fontSize: "var(--editor-size)",
     lineHeight: "1.55",
   },
-  ".cm-content": { caretColor: "var(--fg)", padding: "8px 0" },
+  ".cm-content": { caretColor: "var(--cursor)", padding: "8px 0" },
   ".cm-line": { padding: "0 16px" },
-  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--fg)" },
+  ".cm-cursor, .cm-dropCursor": { borderLeftColor: "var(--cursor)" },
   "&.cm-focused > .cm-scroller > .cm-selectionLayer .cm-selectionBackground, .cm-selectionBackground, .cm-content ::selection":
     { backgroundColor: "var(--selection)" },
   ".cm-activeLine": { backgroundColor: "var(--active-line)" },
   ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },
-  ".cm-panels": { backgroundColor: "var(--sidebar-bg)", color: "var(--fg)" },
+  ".cm-panels": { backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
 });
 

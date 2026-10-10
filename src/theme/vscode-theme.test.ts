@@ -1,0 +1,100 @@
+import { describe, expect, it } from "vitest";
+
+import { DEFAULT_VARIABLES, loadTheme, themeVariables, tokenTheme } from "./vscode-theme";
+
+describe("themeVariables", () => {
+  it("maps the colour keys tote uses and falls back per key to the appearance's default", () => {
+    const vars = themeVariables(
+      {
+        colors: {
+          "editor.background": "#1E1E1E",
+          "editor.foreground": "#D4D4D4",
+          "sideBar.background": "#252526",
+          "editor.selectionBackground": "#264F78",
+          focusBorder: "#007FD4",
+          "editor.lineHighlightBackground": "#ffffff0A",
+        },
+      },
+      "dark",
+    );
+    expect(vars["--bg"]).toBe("#1E1E1E");
+    expect(vars["--fg"]).toBe("#D4D4D4");
+    expect(vars["--sidebar-bg"]).toBe("#252526");
+    expect(vars["--selection"]).toBe("#264F78");
+    expect(vars["--accent"]).toBe("#007FD4");
+    expect(vars["--active-line"]).toBe("#ffffff0A");
+    // Not in the theme: the dark default, not the light one and not undefined.
+    expect(vars["--danger"]).toBe(DEFAULT_VARIABLES.dark["--danger"]);
+    expect(vars["--cursor"]).toBe("#D4D4D4"); // falls through editorCursor.foreground to the foreground
+    expect(Object.keys(vars).sort()).toEqual(Object.keys(DEFAULT_VARIABLES.light).sort());
+  });
+
+  it("takes the first key present in a key list", () => {
+    const vars = themeVariables(
+      { colors: { "textLink.foreground": "#3794FF", "button.background": "#0E639C" } },
+      "light",
+    );
+    expect(vars["--accent"]).toBe("#0E639C");
+  });
+});
+
+describe("loadTheme", () => {
+  it("resolves an include and reads JSONC", async () => {
+    const files: Record<string, string> = {
+      "themes/dark.json": `{
+        // the real Dark Modern does exactly this
+        "include": "./dark_vs.json",
+        "colors": { "editor.background": "#1F1F1F", },
+        "tokenColors": [{ "scope": "keyword", "settings": { "foreground": "#569CD6" } },],
+      }`,
+      "themes/dark_vs.json": `{
+        "colors": { "editor.background": "#1E1E1E", "editor.foreground": "#D4D4D4" },
+        "tokenColors": [{ "scope": "comment", "settings": { "foreground": "#6A9955" } }]
+      }`,
+    };
+    const theme = await loadTheme(
+      async (path) => files[path] ?? Promise.reject(new Error(path)),
+      "themes/dark.json",
+    );
+    expect(theme.colors).toEqual({
+      "editor.background": "#1F1F1F",
+      "editor.foreground": "#D4D4D4",
+    });
+    expect(theme.tokenColors.map((t) => t.scope)).toEqual(["comment", "keyword"]);
+  });
+
+  it("stops following includes that loop", async () => {
+    const files: Record<string, string> = {
+      "a.json": `{ "include": "./b.json" }`,
+      "b.json": `{ "include": "./a.json", "colors": {} }`,
+    };
+    const theme = await loadTheme(async (path) => files[path], "a.json");
+    expect(theme.colors).toEqual({});
+  });
+
+  it("tolerates a theme without colors or tokenColors", async () => {
+    const theme = await loadTheme(async () => `{ "name": "bare" }`, "bare.json");
+    expect(theme).toEqual({ name: "bare", colors: {}, tokenColors: [] });
+  });
+});
+
+describe("tokenTheme", () => {
+  it("puts the editor colours first and keeps the token rules in order", () => {
+    const raw = tokenTheme({
+      name: "t",
+      colors: { "editor.foreground": "#ccc", "editor.background": "#111" },
+      tokenColors: [
+        { scope: "comment", settings: { foreground: "#888", fontStyle: "italic" } },
+        { settings: { foreground: "#eee" } }, // a global rule without scope: VS Code themes start with these
+        { scope: ["keyword", "storage"], settings: {} },
+      ],
+    });
+    expect(raw.name).toBe("t");
+    expect(raw.settings[0]).toEqual({ settings: { foreground: "#ccc", background: "#111" } });
+    expect(raw.settings.slice(1)).toEqual([
+      { scope: "comment", settings: { foreground: "#888", fontStyle: "italic" } },
+      { settings: { foreground: "#eee" } },
+      { scope: ["keyword", "storage"], settings: {} },
+    ]);
+  });
+});

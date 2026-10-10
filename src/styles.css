@@ -12,6 +12,8 @@
   --active-line: rgb(0 0 0 / 3%);
   --selection: #b6d6fd;
   --selection-match: rgb(255 200 0 / 25%);
+  --cursor: #1f2328;
+  --panel-bg: #f6f8fa;
   --editor-font: ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace;
   --editor-size: 14px;
   font:
@@ -34,6 +36,8 @@
     --active-line: rgb(255 255 255 / 4%);
     --selection: #2f4f7a;
     --selection-match: rgb(255 200 0 / 18%);
+    --cursor: #dcdee3;
+    --panel-bg: #191a1d;
   }
 }
 

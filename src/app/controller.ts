@@ -3,6 +3,8 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 import type { Backend, MemoInfo } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
 import { editorExtensions, languageEffect } from "../editor/setup";
+import { EMPTY_REGISTRY, Registry } from "../extensions/registry";
+import { ThemeManager } from "../theme/manager";
 import { askUnsaved, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
@@ -40,6 +42,8 @@ export class AppController implements DocHost {
   readonly view = new EditorView();
   readonly tabs = new Tabs();
   readonly surface = new Surface(this.view);
+  registry = new Registry(EMPTY_REGISTRY);
+  readonly theme: ThemeManager;
   private session!: SessionSync;
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
@@ -55,6 +59,8 @@ export class AppController implements DocHost {
     root: HTMLElement,
     readonly backend: Backend,
   ) {
+    // Not a field initializer: those run before the `backend` parameter property is assigned.
+    this.theme = new ThemeManager(backend, () => this.registry);
     root.replaceChildren(
       this.memoList.el,
       h("main", { class: "main" }, this.tabBar.el, this.surface.el, this.statusBar.el),
@@ -66,6 +72,9 @@ export class AppController implements DocHost {
     const info = await this.backend.workspaceInfo();
     this.deviceId = info.deviceId;
     document.title = info.name;
+    await this.loadRegistry();
+    this.backend.onConfigChanged(() => void this.onConfigChanged());
+    await this.theme.start();
     this.session = new SessionSync(
       this.backend,
       this.tabs,
@@ -91,6 +100,20 @@ export class AppController implements DocHost {
     else this.renderTabs();
     this.restoring = false;
     await this.drainPending();
+  }
+
+  private async loadRegistry(): Promise<void> {
+    try {
+      this.registry = new Registry(await this.backend.extensionRegistry());
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  /** Settings or extensions changed (this window's settings screen or another's). */
+  private async onConfigChanged(): Promise<void> {
+    await this.loadRegistry();
+    await this.theme.refresh();
   }
 
   extensions(doc: Doc, options: { wrap: boolean }) {
