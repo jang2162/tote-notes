@@ -13,6 +13,15 @@ export class Tabs {
     return doc;
   }
 
+  /** Puts `next` in `doc`'s place; when `doc` is no longer open (closed meanwhile), `next` opens
+   * after the active tab instead of being lost. */
+  replace<D extends Doc>(doc: Doc, next: D): D {
+    const index = this.list.indexOf(doc);
+    if (index < 0) return this.insertAfterActive(next);
+    this.list[index] = next;
+    return next;
+  }
+
   /** Takes `doc` out. When it was active, `active` becomes null and the tab that should take its
    * place is returned: the next one, else the previous one, else null. */
   remove(doc: Doc): Doc | null {

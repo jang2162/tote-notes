@@ -20,6 +20,10 @@ describe("parseJsonc", () => {
     expect(parseJsonc('{"이름": "메모" /* 주석 */}')).toEqual({ 이름: "메모" });
   });
 
+  it("parses plain JSON as it is", () => {
+    expect(parseJsonc('{"a": "// kept", "b": [1, 2]}')).toEqual({ a: "// kept", b: [1, 2] });
+  });
+
   it("leaves plain JSON untouched", () => {
     expect(stripJsonc('{"a": [1, 2], "b": "x/y"}')).toBe('{"a": [1, 2], "b": "x/y"}');
   });

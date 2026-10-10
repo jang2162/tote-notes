@@ -50,5 +50,10 @@ export function stripJsonc(text: string): string {
 }
 
 export function parseJsonc<T = unknown>(text: string): T {
-  return JSON.parse(stripJsonc(text)) as T;
+  // Plain JSON (every bundled grammar) skips the comment-stripping loop.
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return JSON.parse(stripJsonc(text)) as T;
+  }
 }

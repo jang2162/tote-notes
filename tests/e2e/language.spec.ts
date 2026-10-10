@@ -124,3 +124,20 @@ test("an import stands when the picked language cannot be carried over", async (
     await page.evaluate(() => Object.values(window.__tote.backend.data.memos).map((m) => m.file)),
   ).toEqual(["notes"]);
 });
+
+test("Enter in the language picker without a filter keeps the current language", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("script.sh", "echo hi") } });
+  await page.locator(".memo-row", { hasText: "script" }).click();
+  await page.locator(".status-language").click();
+  await page.locator(".modal.picker input").press("Enter");
+  await expect(page.locator(".modal.picker")).toHaveCount(0);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("script.sh");
+  expect(await page.evaluate(() => window.__tote.backend.data.memos.a.file)).toBe("script.sh");
+
+  await page.locator(".status-language").click();
+  await page.locator(".modal.picker input").fill("zzzz");
+  await page.locator(".modal.picker input").press("Enter");
+  await expect(page.locator(".modal.picker")).toHaveCount(1);
+});

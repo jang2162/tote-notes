@@ -660,7 +660,7 @@ export class AppController implements DocHost {
     if (!(doc instanceof ExternalDoc)) return;
     this.capture(doc);
     const memo = await importExternal(doc, this);
-    this.tabs.list[this.tabs.indexOf(doc)] = memo;
+    this.tabs.replace(doc, memo);
     this.dropHighlight(doc);
     this.memoList.upsert(memo.info);
     this.tabs.active = null;

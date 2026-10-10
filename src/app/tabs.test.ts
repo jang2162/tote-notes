@@ -36,6 +36,21 @@ describe("Tabs", () => {
     expect(tabs.external("/none")).toBeUndefined();
   });
 
+  it("replace swaps in place, or opens after the active tab when the old one is gone", () => {
+    const h = host();
+    const tabs = new Tabs();
+    const a = tabs.insertAfterActive(memo(h, "a"));
+    const x = tabs.insertAfterActive(new ExternalDoc(h, "/x/x.sh"));
+    const b = tabs.insertAfterActive(memo(h, "b"));
+    const m1 = memo(h, "m1");
+    expect(tabs.replace(x, m1)).toBe(m1);
+    expect(tabs.list).toEqual([a, m1, b]);
+    tabs.active = a;
+    const m2 = memo(h, "m2");
+    tabs.replace(x, m2);
+    expect(tabs.list).toEqual([a, m2, m1, b]);
+  });
+
   it("removing the active tab names the neighbour to show", () => {
     const h = host();
     const tabs = new Tabs();

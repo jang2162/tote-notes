@@ -182,7 +182,8 @@ export async function workspacePicker(
 }
 
 /** The status bar's language picker: a filter over ids and display names, the current language
- * in bold. Enter takes the first language shown. */
+ * in bold. Enter takes the first language shown; with no filter it takes the current language,
+ * or nothing (the first of the full list is not a choice the user made). */
 export function pickLanguage(
   languages: LanguageInfo[],
   currentId: string | null,
@@ -212,7 +213,10 @@ export function pickLanguage(
     input.addEventListener("keydown", (event) => {
       if (!isSubmitEnter(event)) return;
       event.preventDefault();
-      if (shown[0]) close(shown[0]);
+      if (!input.value.trim()) {
+        const current = languages.find((l) => l.id === currentId);
+        if (current) close(current);
+      } else if (shown[0]) close(shown[0]);
     });
     render();
     return h(
