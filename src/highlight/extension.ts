@@ -60,7 +60,7 @@ export function workerHighlighting(client: HighlightClient, lang: LanguageInfo):
       private readonly unsubscribe: () => void;
 
       constructor(private readonly view: EditorView) {
-        this.open = client.open(this.doc, lang, view.state.doc.toString());
+        this.open = client.open(this.doc, lang, () => view.state.doc.toString());
         void this.open.then((ok) => ok && this.schedule());
         // The decorations carry the old theme's colour ids until they are asked for again.
         this.unsubscribe = client.onThemeChange(() => this.schedule());

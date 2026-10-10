@@ -9,6 +9,7 @@ import { editorExtensions } from "../../../src/editor/setup";
 import { Registry } from "../../../src/extensions/registry";
 import { HighlightClient } from "../../../src/highlight/client";
 import { workerHighlighting } from "../../../src/highlight/extension";
+import type { WorkerRequest } from "../../../src/highlight/protocol";
 import { loadTheme, tokenTheme } from "../../../src/theme/vscode-theme";
 
 const params = new URLSearchParams(location.search);
@@ -21,9 +22,14 @@ const configResponse = lang?.configuration
 const config = configResponse?.ok ? parseLanguageConfiguration(await configResponse.text()) : {};
 
 // `?highlight=1` runs the real worker on the registry's grammars and the bundled Dark+ theme.
-// `badgrammar` breaks the grammar files only, `badtheme` gives a theme the tokenizer refuses.
+// `badgrammar` breaks the grammar files only, `badtheme` gives a theme the tokenizer refuses,
+// `slowgrammar=<ms>` holds every grammar read back that long (the first file of a language in
+// the app reads its grammar and every include over IPC before the worker can open it).
 const registry = new Registry(fakeRegistry as ExtensionRegistry);
+const slowGrammar = Number(params.get("slowgrammar") ?? 0);
 const readFile = async (ext: string, path: string) => {
+  if (slowGrammar && path.startsWith("grammars/"))
+    await new Promise((resolve) => setTimeout(resolve, slowGrammar));
   if (params.get("badgrammar") && path.startsWith("grammars/"))
     return new TextEncoder().encode("{ not a grammar");
   if (params.get("badtheme") && path.startsWith("themes/"))
@@ -36,12 +42,18 @@ const readFile = async (ext: string, path: string) => {
 };
 let highlight: Extension | undefined;
 let highlightTheme = async (_theme: string | IRawTheme) => {};
+/** Every request the page sent the worker, without its payload. */
+const workerLog: { type: string; doc?: number }[] = [];
 if (params.get("highlight")) {
-  const client = new HighlightClient(
-    new Worker(new URL("../../../src/highlight/worker.ts", import.meta.url), { type: "module" }),
-    () => registry,
-    readFile,
-  );
+  const worker = new Worker(new URL("../../../src/highlight/worker.ts", import.meta.url), {
+    type: "module",
+  });
+  const post = worker.postMessage.bind(worker);
+  worker.postMessage = (message: WorkerRequest) => {
+    workerLog.push({ type: message.type, doc: "doc" in message ? message.doc : undefined });
+    post(message);
+  };
+  const client = new HighlightClient(worker, () => registry, readFile);
   highlightTheme = async (theme: string | IRawTheme) => {
     if (typeof theme !== "string") return client.setTheme(theme);
     const loaded = await loadTheme(
@@ -182,4 +194,4 @@ const ime = {
 };
 
 // The specs drive and inspect the editor through these.
-Object.assign(window, { view, EditorSelection, ime, highlightTheme });
+Object.assign(window, { view, EditorSelection, ime, highlightTheme, workerLog });

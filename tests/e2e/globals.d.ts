@@ -22,6 +22,8 @@ declare global {
     /** Editor page with `?highlight=1`: hands the worker a bundled theme file (by path) or a
      * theme as the tokenizer takes it. */
     highlightTheme(theme: string | IRawTheme): Promise<void>;
+    /** Editor page with `?highlight=1`: the requests sent to the worker, without payloads. */
+    workerLog: { type: string; doc?: number }[];
     askUnsaved: typeof askUnsaved;
     promptText: typeof promptText;
     workspacePicker: typeof workspacePicker;

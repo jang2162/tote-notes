@@ -32,6 +32,8 @@ export class HighlightClient {
   private nextReq = 1;
   private readonly waiting = new Map<number, (lines: Uint32Array[] | null) => void>();
   private readonly opening = new Map<number, (ok: boolean) => void>();
+  /** Documents whose `open` waits for their grammars; `close` takes a document out. */
+  private readonly pendingOpens = new Set<number>();
   /** One per `theme` request in flight; the worker answers them in order. */
   private readonly themeReady: (() => void)[] = [];
   private readonly themeListeners = new Set<() => void>();
@@ -69,12 +71,22 @@ export class HighlightClient {
   }
 
   /** Sends the language's grammars (once per language) and opens the document. False when the
-   * grammar is missing or broken: the text then stays plain. */
-  async open(doc: number, lang: LanguageInfo, text: string): Promise<boolean> {
-    if (!lang.grammar || !(await this.ensureGrammar(lang))) return false;
+   * grammar is missing or broken (the text then stays plain), or when the document was closed
+   * before its grammars were in.
+   *
+   * `text` is read only when the open is sent: reading the grammars can take many round trips,
+   * and the worker drops the edits made meanwhile (it has no such document yet), so the text it
+   * opens must already hold them. Edits after this point reach the worker after the open. */
+  async open(doc: number, lang: LanguageInfo, text: () => string): Promise<boolean> {
+    if (!lang.grammar) return false;
+    this.pendingOpens.add(doc);
+    const ready = await this.ensureGrammar(lang);
+    // Closed while waiting: an open now would leave the document in the worker for good, since
+    // its close has already gone.
+    if (!this.pendingOpens.delete(doc) || !ready) return false;
     return new Promise((resolve) => {
       this.opening.set(doc, resolve);
-      this.send({ type: "open", doc, scopeName: lang.grammar!.scopeName, text });
+      this.send({ type: "open", doc, scopeName: lang.grammar!.scopeName, text: text() });
     });
   }
 
@@ -92,6 +104,7 @@ export class HighlightClient {
   }
 
   close(doc: number): void {
+    this.pendingOpens.delete(doc);
     this.opening.delete(doc);
     this.send({ type: "close", doc });
   }

@@ -10,6 +10,8 @@ async function open(page: Page, doc: string, file: string, extra = "") {
 }
 
 const coloured = (page: Page) => page.locator(".cm-line span[class*='tm-c']");
+/** Dark+ comments, #6A9955. */
+const DARK_PLUS_COMMENT = "rgb(106, 153, 85)";
 
 test("a shell script gets TextMate colours from the worker", async ({ page }) => {
   await open(page, "# comment\necho hi", "run.sh");
@@ -33,7 +35,40 @@ test("typed text is coloured and an edit recolours from its line", async ({ page
   await page.keyboard.press("Enter");
   await page.keyboard.type("# a comment");
   const lastLine = page.locator(".cm-line").last();
-  await expect(lastLine.locator("span[class*='tm-c']").first()).toBeVisible();
+  // Every token gets a colour class, so the colour itself says the line became a comment.
+  await expect(lastLine.locator("span[class*='tm-c']").first()).toHaveCSS(
+    "color",
+    DARK_PLUS_COMMENT,
+  );
+});
+
+test("lines typed while the grammar is still loading are coloured once it arrives", async ({
+  page,
+}) => {
+  await open(page, "echo hi", "run.sh", "&slowgrammar=800");
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("echo two");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# late comment");
+  // Typed before any colour came: the worker must open the text as it stands then.
+  expect(await coloured(page).count()).toBe(0);
+  const lastLine = page.locator(".cm-line").last();
+  await expect(lastLine.locator("span[class*='tm-c']").first()).toHaveCSS(
+    "color",
+    DARK_PLUS_COMMENT,
+  );
+});
+
+test("a document closed while its grammar loads is never opened in the worker", async ({
+  page,
+}) => {
+  await open(page, "echo hi", "run.sh", "&slowgrammar=500");
+  await page.evaluate(() => window.view.destroy());
+  await page.waitForTimeout(1000);
+  const log = await page.evaluate(() => window.workerLog);
+  expect(log.filter((m) => m.type === "close")).toHaveLength(1);
+  expect(log.filter((m) => m.type === "open")).toEqual([]);
 });
 
 test("a line over 20,000 characters stays plain while the others are coloured", async ({
@@ -80,7 +115,7 @@ test("a theme the tokenizer cannot take leaves the text plain and editable", asy
 test("a theme change recolours the open document without an edit", async ({ page }) => {
   await open(page, "# comment\necho hi", "run.sh");
   const comment = page.locator(".cm-line").first().locator("span[class*='tm-c']").first();
-  await expect(comment).toHaveCSS("color", "rgb(106, 153, 85)"); // Dark+ comments: #6A9955
+  await expect(comment).toHaveCSS("color", DARK_PLUS_COMMENT);
   // Two rules sorting before "comment" move its colour id (Dark+ and Light+ give it the same
   // one), so colours stay right only if the tokens are asked for again.
   await page.evaluate(() =>
