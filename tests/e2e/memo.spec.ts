@@ -1,6 +1,6 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-import { fakeMemo } from "../../src/backend/fake";
+import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import { menu, ready, start } from "./helpers";
 
 test("a new memo is named after its first line once the cursor leaves it", async ({ page }) => {
@@ -131,4 +131,83 @@ test("a memo gone from disk says so, without 텍스트로 열기", async ({ page
   await page.locator(".tab", { hasText: "나" }).click();
   await expect(page.locator(".editor-placeholder p")).toHaveText("파일을 찾을 수 없습니다");
   await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
+});
+
+/** The app reads over IPC, the fake answers at once: without a delay nothing is ever loading. */
+async function slowReads(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const slow =
+      <A extends unknown[], R>(read: (...args: A) => Promise<R>) =>
+      async (...args: A) => {
+        await new Promise((resolve) => setTimeout(resolve, 150));
+        return read.apply(backend, args);
+      };
+    backend.readMemo = slow(backend.readMemo);
+    backend.openExternal = slow(backend.openExternal);
+  });
+}
+
+// A tab still reading its file is not yet in the editor; keys typed meanwhile must not land in
+// the tab left behind, which would save them into a document the person no longer sees.
+test("keys typed while a file opened with ⌘O loads do not reach the tab left, nor its memo", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("a.txt", "AAA") },
+    files: { "/x/n.md": fakeFile("# 새") },
+    picks: ["/x/n.md"],
+  });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+ArrowDown");
+  await slowReads(page);
+  await menu(page, "open-file");
+  await page.keyboard.type("xy");
+  await expect(page.locator(".cm-content")).toContainText("# 새");
+  await page.waitForTimeout(700); // past the memo's save delay
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("AAA");
+});
+
+test("keys typed while a memo picked in the list loads do not reach the tab left", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("a.txt", "AAA"), b: fakeMemo("b.md", "# 둘") } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+ArrowDown");
+  await slowReads(page);
+  await page.locator(".memo-row", { hasText: "b" }).click();
+  await page.keyboard.type("xy");
+  await expect(page.locator(".cm-content")).toContainText("# 둘");
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+});
+
+test("keys typed while a restored tab picked in the tab bar loads do not reach the tab left", async ({
+  page,
+}) => {
+  const session = {
+    version: 1,
+    activeTab: 0,
+    tabs: [
+      { kind: "memo", memoId: "a" },
+      { kind: "memo", memoId: "b" },
+    ],
+  };
+  await start(page, {
+    memos: { a: fakeMemo("a.txt", "AAA"), b: fakeMemo("b.md", "# 둘") },
+    session: JSON.stringify(session),
+  });
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+ArrowDown");
+  await slowReads(page);
+  // The title, not the tab: the middle of a short tab is its close button.
+  await page.locator(".tab-title", { hasText: "b" }).click();
+  await page.keyboard.type("xy");
+  await expect(page.locator(".cm-content")).toContainText("# 둘");
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
 });

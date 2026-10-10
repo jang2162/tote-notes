@@ -1,7 +1,9 @@
-import type { EditorState } from "@codemirror/state";
+import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
 import { h } from "../ui/dom";
+
+const LOADING = EditorState.create({ extensions: EditorView.editable.of(false) });
 
 /** The editor area: the editor, a placeholder sentence, or a panel (a viewer, the large text
  * viewer). One of them is visible at a time. */
@@ -45,6 +47,13 @@ export class Surface {
   showPanel(el: HTMLElement): void {
     this.only(this.panelHost);
     this.panelHost.replaceChildren(el);
+  }
+
+  /** A tab is reading its file. The view lets go of the tab left, which would save keys typed
+   * meanwhile; blurring alone does not stop WebKit typing into it. */
+  showLoading(): void {
+    this.view.setState(LOADING);
+    this.showPlaceholder("");
   }
 
   showEmpty(): void {

@@ -346,6 +346,23 @@ describe("MemoDoc", () => {
     expect(doc.info.language).toBeUndefined();
   });
 
+  it("loads without waiting for the language data, which follows when it comes", async () => {
+    const { host, changes } = setup({ files: { "/x/a.md": fakeFile("# 제목") } });
+    let answer = (_data: { wordChars: string }) => {};
+    host.languageConfig = () => new Promise((resolve) => (answer = resolve));
+    const doc = new ExternalDoc(host, "/x/a.md");
+    let loaded = false;
+    void doc.ensureLoaded().then(() => (loaded = true));
+    await vi.runAllTimersAsync();
+    expect(loaded).toBe(true);
+    expect(doc.state?.doc.toString()).toBe("# 제목");
+    expect(changes).not.toContain("language");
+    answer({ wordChars: "-" });
+    await vi.runAllTimersAsync();
+    expect(doc.languageData).toEqual({ wordChars: "-" });
+    expect(changes).toContain("language");
+  });
+
   it("keeps the language data of the latest change when the answers cross", async () => {
     const { host } = setup({ files: { "/x/a.txt": fakeFile("x") } });
     const answers: (() => void)[] = [];

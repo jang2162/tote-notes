@@ -9,7 +9,7 @@ test("an external file keeps a draft across a restart and is written only on ⌘
   await start(page, { files: { "/x/a.sh": fakeFile("echo hi\n") }, picks: ["/x/a.sh"] });
   await menu(page, "open-file");
   await expect(page.locator(".tab.active .tab-title")).toHaveText("a.sh");
-  // The tab shows before its text: loading waits for the language's configuration too.
+  // The tab shows before its text, which is still being read.
   await expect(page.locator(".cm-content")).toContainText("echo hi");
   await page.keyboard.press("Meta+ArrowDown");
   await page.keyboard.type("echo more");

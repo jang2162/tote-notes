@@ -192,7 +192,7 @@ export abstract class Doc {
     this.host.changed(this, "error");
   }
 
-  /** For text set without a read: the state is built at once and the language data follows. */
+  /** The state is built at once and the language data follows (the host swaps it in). */
   protected fetchLanguageData(): void {
     void this.refreshLanguage();
   }
@@ -239,7 +239,8 @@ export abstract class Doc {
     }
     this.eol = decoded.eol;
     this.bom = decoded.bom;
-    this.languageData = await this.host.languageConfig(this.host.languageOf(this));
+    // Not awaited: the configuration is a read of its own, and the tab would wait for it.
+    this.fetchLanguageData();
     this.setText(decoded.text, undefined, longest);
     this.loaded();
   }
