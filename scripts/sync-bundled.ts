@@ -110,6 +110,8 @@ export function inlineViewer(template: string, vendor: Record<string, string>): 
     const text = vendor[name];
     if (text === undefined)
       throw new Error(`viewer template asks for a vendor file it was not given: ${name}`);
+    if (/<\/script/i.test(text))
+      throw new Error(`vendor file ${name} contains </script, which would end the inline script`);
     return text;
   });
   if (html.includes("__INLINE"))
@@ -153,8 +155,9 @@ type Manifest = {
 
 const rel = (path: string) => path.replace(/^\.\//, "");
 
-/** The registry Rust builds for these manifests as bundled extensions (extensions/registry.rs):
- * the fake backend serves it so the browser preview sees the same languages and viewers. */
+/** The registry shaped like the one Rust builds (extensions/registry.rs), made from the committed
+ * manifests: the fake backend serves it so the browser preview sees the same languages and
+ * viewers. Nothing here runs the Rust scanner. */
 export function fakeRegistry(manifests: Manifest[]) {
   const id = (m: Manifest) => `${m.publisher}.${m.name}`;
   return {

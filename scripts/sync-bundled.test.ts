@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
@@ -12,6 +13,7 @@ import {
   manifestFor,
 } from "./sync-bundled.ts";
 
+const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
 
@@ -163,14 +165,43 @@ describe("inlineViewer", () => {
     expect(() => inlineViewer("<script>__INLINE: marked__;</script>", {})).toThrow(/__INLINE/);
   });
 
+  it("refuses a vendor file that would end the inline script", () => {
+    expect(() => inlineViewer("<script>__INLINE:lib__</script>", { lib: "a</script>b" })).toThrow(
+      /<\/script/,
+    );
+  });
+
   it("refuses a template that names a vendor it was not given", () => {
     expect(() => inlineViewer("<script>__INLINE:nope__</script>", {})).toThrow(/nope/);
   });
 });
 
 describe("the generated files", () => {
-  it("are what the generator makes now (run pnpm sync:bundled when this fails)", () => {
+  it("are what the generator makes now (run pnpm sync:bundled when this fails)", async () => {
+    const { grammars, injections } = await import("tm-grammars");
+    const scopes: Record<string, string> = {};
+    for (const g of [...grammars, ...injections]) scopes[g.name] = g.scopeName;
     const manifest = JSON.parse(read("src-tauri/resources/extensions/tote.languages/package.json"));
+    expect(manifest).toEqual(manifestFor(LANGUAGES, EXTRA_GRAMMARS, scopes));
+    for (const name of [
+      ...LANGUAGES.flatMap((l) => (l.grammar ? [l.grammar] : [])),
+      ...EXTRA_GRAMMARS,
+    ])
+      expect(read(`src-tauri/resources/extensions/tote.languages/grammars/${name}.json`)).toBe(
+        readFileSync(require.resolve(`tm-grammars/grammars/${name}.json`), "utf8"),
+      );
+    for (const lang of LANGUAGES)
+      expect(
+        JSON.parse(
+          read(
+            `src-tauri/resources/extensions/tote.languages/language-configuration/${lang.id}.json`,
+          ),
+        ),
+      ).toEqual(languageConfiguration(lang));
+    for (const theme of THEMES)
+      expect(read(`src-tauri/resources/extensions/tote.themes/themes/${theme.name}.json`)).toBe(
+        readFileSync(require.resolve(`tm-themes/themes/${theme.name}.json`), "utf8"),
+      );
     expect(manifest.contributes.languages).toHaveLength(LANGUAGES.length);
     expect(manifest.contributes.grammars).toHaveLength(
       LANGUAGES.filter((l) => l.grammar).length + EXTRA_GRAMMARS.length,
@@ -214,7 +245,7 @@ describe("the generated files", () => {
     expect(fake.problems).toEqual([]);
   });
 
-  it("match the fake registry a Rust scan of the same folders would make", () => {
+  it("match the fake registry built from the committed manifests", () => {
     const fake = JSON.parse(read("src/backend/fake-registry.json"));
     const manifests = fake.extensions.map((e: { id: string }) =>
       JSON.parse(read(`src-tauri/resources/extensions/${e.id}/package.json`)),

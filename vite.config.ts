@@ -22,7 +22,14 @@ function serveExtensions(): Plugin {
     name: "tote-serve-extensions",
     configureServer(server) {
       server.middlewares.use("/extensions", (req, res) => {
-        const relative = normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
+        let relative: string;
+        try {
+          relative = normalize(decodeURIComponent((req.url ?? "/").split("?")[0]));
+        } catch {
+          res.statusCode = 404;
+          res.end();
+          return;
+        }
         const file = join(EXTENSIONS_DIR, relative);
         if (
           !file.startsWith(EXTENSIONS_DIR + "/") ||
