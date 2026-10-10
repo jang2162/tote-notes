@@ -29,7 +29,7 @@ export const MAX_EDITOR_BYTES = 100 * 1024 * 1024;
  * Measured with `pnpm measure:long-line` (keydown → next frame, p95 against a 253-line
  * baseline, headless WebKit): the largest ladder step within one frame of the baseline in two
  * runs. Re-measure after changing the editor's extensions. */
-export const LONG_LINE_LIMIT = 5_000_000;
+export const LONG_LINE_LIMIT = 200_000;
 /** Soft wrap stays off above this line length (the same limit highlighting uses): wrapping one
  * huge line costs seconds. */
 export const WRAP_LIMIT = 20_000;
