@@ -426,9 +426,10 @@ pub async fn remove_extension(
     id: String,
 ) -> CmdResult<()> {
     install::remove(&core.extensions, &id)?;
-    let mut settings = core.settings();
-    settings.extensions.disabled.retain(|d| *d != id);
-    core.update_settings(settings)?;
+    // The folders are gone: the registry and the windows learn it even if saving fails.
+    core.rescan_extensions();
+    broadcast_config(&app);
+    core.modify_settings(|settings| settings.extensions.disabled.retain(|d| *d != id))?;
     broadcast_config(&app);
     Ok(())
 }
@@ -440,12 +441,12 @@ pub async fn set_extension_enabled(
     id: String,
     enabled: bool,
 ) -> CmdResult<()> {
-    let mut settings = core.settings();
-    settings.extensions.disabled.retain(|d| *d != id);
-    if !enabled {
-        settings.extensions.disabled.push(id);
-    }
-    core.update_settings(settings)?;
+    core.modify_settings(|settings| {
+        settings.extensions.disabled.retain(|d| *d != id);
+        if !enabled {
+            settings.extensions.disabled.push(id);
+        }
+    })?;
     broadcast_config(&app);
     Ok(())
 }

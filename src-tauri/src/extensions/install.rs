@@ -57,7 +57,8 @@ fn stage_and_place(
     staging: &Path,
 ) -> Result<Installed, InstallError> {
     if source.is_dir() {
-        copy_folder(source, staging)?;
+        check_folder(store, source)?;
+        copy_folder(source, staging, &mut 0)?;
     } else {
         unpack(source, staging)?;
     }
@@ -197,17 +198,37 @@ fn archive_prefix(names: &[String]) -> Result<String, InstallError> {
     Err(InstallError::Invalid("package.json 이 없습니다".into()))
 }
 
+/// What a picked folder must be before anything is copied: a folder with a usable manifest
+/// that is not the user extensions folder or one of its ancestors (copying such a folder would
+/// recurse into its own staging folder).
+fn check_folder(store: &ExtensionStore, source: &Path) -> Result<(), InstallError> {
+    let text = fs::read_to_string(source.join("package.json"))
+        .map_err(|_| InstallError::Invalid("package.json 이 없습니다".into()))?;
+    Manifest::parse(&text)?;
+    if fs::canonicalize(store.user_dir())?.starts_with(fs::canonicalize(source)?) {
+        return Err(InstallError::Invalid(
+            "확장 설치 폴더나 그 상위 폴더는 고를 수 없습니다".into(),
+        ));
+    }
+    Ok(())
+}
+
 /// Copies `from` into `to`, files and folders only; symlinks are skipped so a link to somewhere
-/// else never ends up served as part of the extension.
-fn copy_folder(from: &Path, to: &Path) -> io::Result<()> {
+/// else never ends up served as part of the extension. `total` counts the bytes copied so far
+/// across the whole tree, held to the same limit as an archive.
+fn copy_folder(from: &Path, to: &Path, total: &mut u64) -> Result<(), InstallError> {
     fs::create_dir_all(to)?;
     for entry in fs::read_dir(from)? {
         let entry = entry?;
         let kind = entry.file_type()?;
         let target = to.join(entry.file_name());
         if kind.is_dir() {
-            copy_folder(&entry.path(), &target)?;
+            copy_folder(&entry.path(), &target, total)?;
         } else if kind.is_file() {
+            *total += entry.metadata()?.len();
+            if *total > MAX_UNPACKED_BYTES {
+                return Err(InstallError::Invalid("폴더가 너무 큽니다".into()));
+            }
             fs::copy(entry.path(), target)?;
         }
     }
@@ -367,6 +388,80 @@ mod tests {
         assert!(fs::read_dir(dir.path().join("user"))
             .map(|d| d.count() == 0)
             .unwrap_or(true));
+    }
+
+    fn user_dir_is_empty(dir: &Path) -> bool {
+        fs::read_dir(dir.join("user"))
+            .map(|d| d.count() == 0)
+            .unwrap_or(true)
+    }
+
+    #[test]
+    fn a_folder_without_a_usable_manifest_is_refused_before_anything_is_copied() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let none = dir.path().join("picked");
+        fs::create_dir_all(none.join("deep")).unwrap();
+        fs::write(none.join("deep/file.txt"), "x").unwrap();
+        assert!(matches!(
+            install(&store, &none, false),
+            Err(InstallError::Invalid(_))
+        ));
+        let broken = write_extension(dir.path(), "broken", "{ nope");
+        assert!(matches!(
+            install(&store, &broken, false),
+            Err(InstallError::Invalid(_))
+        ));
+        assert!(user_dir_is_empty(dir.path()));
+    }
+
+    #[test]
+    fn the_user_folder_and_its_ancestors_cannot_be_installed_from() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        // The picked folder holds a valid manifest and the user folder sits inside it.
+        fs::write(
+            dir.path().join("package.json"),
+            r#"{"name": "up", "publisher": "p", "version": "1"}"#,
+        )
+        .unwrap();
+        fs::write(dir.path().join("note.txt"), "x").unwrap();
+        assert!(matches!(
+            install(&store, dir.path(), false),
+            Err(InstallError::Invalid(_))
+        ));
+        assert!(user_dir_is_empty(dir.path()));
+        fs::write(
+            dir.path().join("user/package.json"),
+            r#"{"name": "same", "publisher": "p", "version": "1"}"#,
+        )
+        .unwrap();
+        assert!(matches!(
+            install(&store, &dir.path().join("user"), false),
+            Err(InstallError::Invalid(_))
+        ));
+        assert!(!dir.path().join("user/p.same@1").exists());
+    }
+
+    #[test]
+    fn a_folder_over_the_size_limit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let big = write_extension(
+            dir.path(),
+            "big",
+            r#"{"name": "big", "publisher": "p", "version": "1"}"#,
+        );
+        // Sparse: the length counts against the limit but no disk is used.
+        fs::File::create(big.join("huge.bin"))
+            .unwrap()
+            .set_len(MAX_UNPACKED_BYTES + 1)
+            .unwrap();
+        assert!(matches!(
+            install(&store, &big, false),
+            Err(InstallError::Invalid(_))
+        ));
+        assert!(user_dir_is_empty(dir.path()));
     }
 
     #[test]

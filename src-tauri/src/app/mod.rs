@@ -125,9 +125,21 @@ impl AppCore {
     /// Saves and applies: the workspace root moves at once (open windows stay), the registry is
     /// rebuilt with the new switches.
     pub fn update_settings(&self, settings: Settings) -> io::Result<()> {
-        settings.save(&self.paths.settings_file())?;
-        *lock(&self.workspace_root) = settings.workspace_root(&self.paths);
-        *lock(&self.settings) = settings;
+        self.modify_settings(|current| *current = settings)
+    }
+
+    /// `change` runs on the current settings under the settings lock, and the result is saved and
+    /// applied before the lock is released: two commands changing settings at once cannot lose
+    /// each other's change. A failed save leaves memory as it was.
+    pub fn modify_settings(&self, change: impl FnOnce(&mut Settings)) -> io::Result<()> {
+        {
+            let mut current = lock(&self.settings);
+            let mut next = current.clone();
+            change(&mut next);
+            next.save(&self.paths.settings_file())?;
+            *lock(&self.workspace_root) = next.workspace_root(&self.paths);
+            *current = next;
+        }
         self.rescan_extensions();
         Ok(())
     }
@@ -441,6 +453,32 @@ mod tests {
             Some(core.paths.extensions_dir().join("someone.ext@1"))
         );
         assert_eq!(core.extension_path("nobody.ext"), None);
+    }
+
+    #[test]
+    fn concurrent_settings_changes_do_not_lose_each_other() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        std::thread::scope(|scope| {
+            for n in 0..16 {
+                let core = &core;
+                scope.spawn(move || {
+                    core.modify_settings(|s| s.extensions.disabled.push(format!("p.e{n}")))
+                        .unwrap();
+                });
+            }
+        });
+        let mut expected: Vec<String> = (0..16).map(|n| format!("p.e{n}")).collect();
+        expected.sort();
+        let mut in_memory = core.settings().extensions.disabled;
+        in_memory.sort();
+        assert_eq!(in_memory, expected);
+        let mut on_disk = Settings::load(&core.paths.settings_file())
+            .unwrap()
+            .extensions
+            .disabled;
+        on_disk.sort();
+        assert_eq!(on_disk, expected);
     }
 
     #[test]
