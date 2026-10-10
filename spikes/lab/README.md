@@ -1,6 +1,6 @@
 # tote lab
 
-tote-note 코어 스펙의 검증 스파이크를 재는 실험 앱이다. 제품 코드가 아니며, 제품 코드는 이 디렉터리를 import 하지 않는다.
+tote-notes 코어 스펙의 검증 스파이크를 재는 실험 앱이다. 제품 코드가 아니며, 제품 코드는 이 디렉터리를 import 하지 않는다.
 
 이 코드는 측정 하네스이지 제품 설계의 참고 구현이 아니다. 옮겨 쓰기 전에 보고서 「검증하지 않은 것」과 다음을 먼저 본다. 토큰은 회수·만료가 없고, 모든 응답이 `Access-Control-Allow-Origin: *` 다(`file_scheme.rs`). Range 없는 요청은 파일 전체를 메모리로 읽는다. 메인 창에 CSP 가 없다(`tauri.conf.json` 의 `csp: null`). 줄 상태 캐시가 Shiki 의 벽시계 줄당 시간 제한과 함께 돈다(`chunked-tokenizer.ts`, 보고서 「스펙에 반영할 것」 의 「성능」). 쓰지 않는 opener 플러그인·권한이 남아 있다(`capabilities/default.json`). 자동 모드의 창·App Nap 처리(`lib.rs`)는 측정용이다.
 
