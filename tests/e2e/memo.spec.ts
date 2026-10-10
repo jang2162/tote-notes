@@ -67,7 +67,8 @@ test("a flush request writes pending edits and the title before answering", asyn
   await start(page);
   await menu(page, "new-memo");
   await expect(page.locator(".cm-content")).toBeFocused();
-  await page.keyboard.type("급히 끈다");
+  // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
+  await page.keyboard.insertText("급히 끈다");
   await page.evaluate(() => window.__tote.backend.requestFlush(7));
   await expect.poll(() => page.evaluate(() => window.__tote.backend.data.flushed)).toEqual([7]);
   const files = await page.evaluate(() =>
@@ -90,7 +91,8 @@ test("a memo the person renamed keeps that name", async ({ page }) => {
   await start(page);
   await menu(page, "new-memo");
   await expect(page.locator(".cm-content")).toBeFocused();
-  await page.keyboard.type("첫 줄");
+  // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
+  await page.keyboard.insertText("첫 줄");
   await menu(page, "rename");
   const input = page.locator(".modal input");
   await input.fill("목록.txt");
@@ -98,7 +100,8 @@ test("a memo the person renamed keeps that name", async ({ page }) => {
   await expect(page.locator(".tab.active .tab-title")).toHaveText("목록.txt");
   // Leaving the title line is when an automatic title would apply.
   await page.keyboard.press("Enter");
-  await page.keyboard.type("둘째 줄");
+  // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
+  await page.keyboard.insertText("둘째 줄");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.memoTextByFile("목록.txt")))
     .toBe("첫 줄\n둘째 줄");
