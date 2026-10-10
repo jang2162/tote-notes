@@ -1,4 +1,5 @@
-import { describe, expect, it } from "vitest";
+import { Text } from "@codemirror/state";
+import { describe, expect, it, vi } from "vitest";
 
 import fake from "../backend/fake-registry.json";
 import type { ExtensionRegistry } from "../backend/types";
@@ -34,5 +35,16 @@ describe("detectLanguage", () => {
   it("firstLineOf stops at the first line break of either kind", () => {
     expect(firstLineOf("a\r\nb")).toBe("a");
     expect(firstLineOf("a")).toBe("a");
+  });
+
+  it("reads only the first line of a document that cannot be JSON", () => {
+    const doc = Text.of(["# 회의 준비", "- 안건"]);
+    const whole = vi.spyOn(doc, "toString");
+    const slice = vi.spyOn(doc, "sliceString");
+    expect(detectLanguage(doc, languages)).toBeNull();
+    expect(whole).not.toHaveBeenCalled();
+    expect(slice).not.toHaveBeenCalled();
+    expect(detectLanguage(Text.of(["#!/bin/sh", "echo"]), languages)?.id).toBe("shellscript");
+    expect(detectLanguage(Text.of(["", '  {"a": 1}']), languages)?.id).toBe("json");
   });
 });

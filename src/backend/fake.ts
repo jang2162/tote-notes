@@ -273,6 +273,8 @@ export class FakeBackend implements Backend {
     ) {
       throw new BackendError("already-exists", file);
     }
+    if (splitName(memo.file).ext.toLowerCase() !== splitName(file).ext.toLowerCase())
+      delete memo.language;
     memo.file = file;
     memo.autoTitle = false;
     this.commit();

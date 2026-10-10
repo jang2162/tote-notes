@@ -83,3 +83,44 @@ test("a new language brings its colours, its comment token and leaves Markdown's
   await page.keyboard.type("b");
   await expect(page.locator(".cm-line").nth(3)).toHaveText("b");
 });
+
+test("a rename to another extension brings that language's comment token", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "x = 1\ny = 2") } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  const rename = async (name: string) => {
+    await menu(page, "rename");
+    const input = page.locator(".modal input");
+    await input.fill(name);
+    await input.press("Enter");
+    await expect(page.locator(".tab.active .tab-title")).toHaveText(name === "a.md" ? "a" : name);
+  };
+  await rename("a.py");
+  await expect(page.locator(".status-language")).toHaveText("Python");
+  await page.locator(".cm-line").nth(0).click();
+  await page.keyboard.press("Meta+/");
+  await expect(page.locator(".cm-line").nth(0)).toHaveText("# x = 1");
+  await rename("a.md");
+  await expect(page.locator(".status-language")).toHaveText("Markdown");
+  await page.locator(".cm-line").nth(1).click();
+  await page.keyboard.press("Meta+/");
+  await expect(page.locator(".cm-line").nth(1)).toHaveText("<!-- y = 2 -->");
+});
+
+test("an import stands when the picked language cannot be carried over", async ({ page }) => {
+  await start(page, { files: { "/x/notes": fakeFile("select 1") }, picks: ["/x/notes"] });
+  await menu(page, "open-file");
+  await page.locator(".status-language").click();
+  await page.locator(".modal.picker li", { hasText: "SQL" }).click();
+  await expect(page.locator(".status-language")).toHaveText("SQL");
+  await page.evaluate(() => {
+    window.__tote.backend.setMemoLanguage = async () => {
+      throw new Error("disk full");
+    };
+  });
+  await menu(page, "import");
+  await expect(page.locator(".tab.active")).not.toHaveClass(/external/);
+  await expect(page.locator(".status-message.error")).not.toBeEmpty();
+  expect(
+    await page.evaluate(() => Object.values(window.__tote.backend.data.memos).map((m) => m.file)),
+  ).toEqual(["notes"]);
+});

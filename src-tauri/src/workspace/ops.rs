@@ -167,6 +167,10 @@ impl Workspace {
             fs::rename(self.root.join(from), self.root.join(&to))?;
         }
         if let Some(entry) = self.index.get_mut(id) {
+            // The extension decides the language (spec 「편집기」): a new one drops the picked one.
+            if !split_name(from).1.eq_ignore_ascii_case(split_name(&to).1) {
+                entry.language = None;
+            }
             entry.file = to;
             entry.auto_title = auto_title;
         }
@@ -349,6 +353,18 @@ mod tests {
             ));
         }
         assert_eq!(listed(&ws), vec!["untitled.md"]);
+    }
+
+    #[test]
+    fn renaming_to_another_extension_forgets_the_language() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.set_language(&memo.id, "python", "py").unwrap();
+        // The same extension in another case still names the same language.
+        let info = ws.rename_memo(&memo.id, "script.PY").unwrap();
+        assert_eq!(info.language.as_deref(), Some("python"));
+        let info = ws.rename_memo(&memo.id, "script.sh").unwrap();
+        assert_eq!((info.file.as_str(), info.language), ("script.sh", None));
     }
 
     #[test]

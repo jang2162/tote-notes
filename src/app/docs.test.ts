@@ -10,7 +10,8 @@ import {
   type FakeData,
 } from "../backend/fake";
 import fakeRegistry from "../backend/fake-registry.json";
-import type { ExtensionRegistry } from "../backend/types";
+import { BackendError, type ExtensionRegistry } from "../backend/types";
+import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
   DRAFT_RESTORED_NOTICE,
@@ -298,6 +299,28 @@ describe("MemoDoc", () => {
     expect(b.info.file).toBe("b.txt");
   });
 
+  it("a rename to another extension drops the picked language and reloads the language data", async () => {
+    const { backend, host } = setup();
+    // The controller's rule: the picked language, else the file name's. The data names its language.
+    host.languageOf = (doc) =>
+      fakeLanguages.find((l) =>
+        doc.language
+          ? l.id === doc.language
+          : l.extensions.includes(splitName(doc.fileName).ext.toLowerCase()),
+      );
+    host.languageConfig = async (lang) => ({ wordChars: lang?.id ?? "" });
+    const doc = new MemoDoc(host, await backend.createMemo());
+    doc.startEmpty();
+    await doc.changeLanguage(fakeLanguages.find((l) => l.id === "python")!);
+    await doc.rename("script.PY");
+    expect(doc.language).toBe("python");
+    await doc.rename("script.sh");
+    await vi.runAllTimersAsync();
+    expect(doc.language).toBeNull();
+    expect(backend.data.memos[doc.info.id].language).toBeUndefined();
+    expect(doc.languageData).toEqual({ wordChars: "shellscript" });
+  });
+
   it("changeLanguage renames a memo and records the language; an external file only remembers it", async () => {
     const { backend, host, changes } = setup({ files: { "/x/a.txt": fakeFile("x") } });
     const memo = new MemoDoc(host, await backend.createMemo());
@@ -464,5 +487,20 @@ describe("importExternal", () => {
     expect(memo.language).toBe("sql");
     expect(backend.data.memos[memo.info.id].language).toBe("sql");
     expect(backend.memoText(memo.info.id)).toBe("select 1");
+  });
+
+  it("stands when the language cannot be carried over, and says why", async () => {
+    const { backend, host } = setup({ files: { "/x/notes": fakeFile("select 1") } });
+    const ext = new ExternalDoc(host, "/x/notes");
+    await ext.ensureLoaded();
+    await ext.changeLanguage(fakeLanguages.find((l) => l.id === "sql")!);
+    backend.setMemoLanguage = async () => {
+      throw new BackendError("io", "disk full");
+    };
+    const memo = await importExternal(ext, host);
+    expect(memo.info.file).toBe("notes");
+    expect(memo.error).toBeInstanceOf(BackendError);
+    expect(backend.memoText(memo.info.id)).toBe("select 1");
+    expect(backend.data.drafts["/x/notes"]).toBeUndefined();
   });
 });

@@ -384,7 +384,7 @@ export class MemoDoc extends Doc {
     await this.retitling;
     if (this.info.language || splitName(this.info.file).ext.toLowerCase() !== "md" || !this.state)
       return;
-    const found = detectLanguage(this.state.doc.toString(), this.host.languages());
+    const found = detectLanguage(this.state.doc, this.host.languages());
     if (!found || found.id === "markdown") return;
     try {
       await this.changeLanguage(found);
@@ -425,7 +425,9 @@ export class MemoDoc extends Doc {
     const extensionChanged = splitName(info.file).ext !== splitName(this.info.file).ext;
     this.info = info;
     this.language = info.language ?? null;
-    this.host.changed(this, extensionChanged ? "language" : "info");
+    this.host.changed(this, "info");
+    // A new extension is a new language: its configuration is read, then the editor follows.
+    if (extensionChanged) void this.refreshLanguage();
   }
 }
 
@@ -606,8 +608,16 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
   const memo = new MemoDoc(host, info);
   memo.scrollAnchor = ext.scrollAnchor;
   if (ext.state) memo.adopt(ext.state, ext.lineFormat);
-  // A language picked for the file stays with the text; as a memo it is kept the memo way.
+  // A language picked for the file stays with the text; as a memo it is kept the memo way. The
+  // import has happened by then, so a failure here leaves it standing: `memo.error` says why,
+  // for the caller to show once the memo has the tab (another import would make a second memo).
   const lang = ext.language && host.languages().find((l) => l.id === ext.language);
-  if (lang) await memo.changeLanguage(lang);
+  if (lang) {
+    try {
+      await memo.changeLanguage(lang);
+    } catch (error) {
+      memo.error = error;
+    }
+  }
   return memo;
 }

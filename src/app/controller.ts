@@ -446,7 +446,8 @@ export class AppController implements DocHost {
     this.memoList.upsert(memo.info);
     this.tabs.active = null;
     await this.activate(memo);
-    this.statusBar.setMessage("워크스페이스로 가져왔습니다");
+    if (memo.error) this.report(memo.error);
+    else this.statusBar.setMessage("워크스페이스로 가져왔습니다");
   }
 
   private async renameActive(): Promise<void> {
