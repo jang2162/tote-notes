@@ -77,7 +77,7 @@ export function languageDataEffect(data: LanguageData) {
   return configuration.reconfigure(languageDataExtension(data));
 }
 
-/** Colours come from the CSS variables in styles.css, which a later plan fills from the theme. */
+/** Colours come from the CSS variables in styles.css, which the theme manager fills from the selected theme. */
 const appTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "var(--bg)" },
   ".cm-scroller": {

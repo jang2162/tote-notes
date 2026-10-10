@@ -58,20 +58,23 @@ export class ThemeManager {
   async refresh(): Promise<void> {
     const generation = ++this.generation;
     const appearance: Appearance = this.media.matches ? "dark" : "light";
-    const settings = await this.backend.settings();
-    const ref: ThemeRef | null = settings.theme[appearance];
-    const info = this.registry().themeFor(ref, appearance) ?? null;
+    let info: ThemeInfo | null = null;
     let theme: VsCodeTheme | null = null;
-    if (info) {
-      try {
+    // A theme that cannot be had never stops the app (spec 「오류 처리」): the defaults apply.
+    try {
+      const settings = await this.backend.settings();
+      const ref: ThemeRef | null = settings.theme[appearance];
+      info = this.registry().themeFor(ref, appearance) ?? null;
+      if (info) {
+        const found = info;
         theme = await loadTheme(
           async (path) =>
-            new TextDecoder().decode(await this.backend.readExtensionFile(info.extension, path)),
-          info.path,
+            new TextDecoder().decode(await this.backend.readExtensionFile(found.extension, path)),
+          found.path,
         );
-      } catch (error) {
-        console.error(`theme ${info.label} could not be read`, error);
       }
+    } catch (error) {
+      console.error("theme could not be read", error);
     }
     // A slower refresh must not land over a newer one.
     if (generation !== this.generation) return;

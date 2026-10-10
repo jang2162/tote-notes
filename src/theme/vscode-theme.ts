@@ -79,13 +79,20 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
   },
 };
 
+/** A colour literal and nothing else: a theme value ends up in CSS custom properties, where
+ * `url(...)` would reach the network (spec 「허용 범위」) and `;` would add declarations. */
+const COLOR =
+  /^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgb|hsl)a?\(\s*[\d.]+(%|deg)?(\s*[,\s/]\s*[\d.]+(%|deg)?){2,3}\s*\))$/i;
+
 export function themeVariables(
   theme: Pick<VsCodeTheme, "colors">,
   appearance: Appearance,
 ): Record<string, string> {
   const vars = { ...DEFAULT_VARIABLES[appearance] };
   for (const { variable, keys } of CSS_VARIABLES) {
-    const key = keys.find((k) => typeof theme.colors[k] === "string" && theme.colors[k] !== "");
+    const key = keys.find(
+      (k) => typeof theme.colors[k] === "string" && COLOR.test(theme.colors[k]),
+    );
     if (key) vars[variable] = theme.colors[key];
   }
   return vars;

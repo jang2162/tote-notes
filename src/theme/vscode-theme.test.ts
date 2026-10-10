@@ -38,6 +38,28 @@ describe("themeVariables", () => {
   });
 });
 
+describe("themeVariables colour check", () => {
+  it("drops values that are not colour literals", () => {
+    const vars = themeVariables(
+      {
+        colors: {
+          "editor.background": "url(https://x)",
+          "editor.foreground": "red;background:url(x)",
+          focusBorder: "rgb(10, 20, 30)",
+          "editorCursor.foreground": "hsla(120deg 50% 50% / 0.5)",
+          "editor.selectionBackground": "#12345678",
+        },
+      },
+      "light",
+    );
+    expect(vars["--bg"]).toBe(DEFAULT_VARIABLES.light["--bg"]);
+    expect(vars["--fg"]).toBe(DEFAULT_VARIABLES.light["--fg"]);
+    expect(vars["--accent"]).toBe("rgb(10, 20, 30)");
+    expect(vars["--cursor"]).toBe("hsla(120deg 50% 50% / 0.5)");
+    expect(vars["--selection"]).toBe("#12345678");
+  });
+});
+
 describe("loadTheme", () => {
   it("resolves an include and reads JSONC", async () => {
     const files: Record<string, string> = {

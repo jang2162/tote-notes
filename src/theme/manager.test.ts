@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { defaultFakeData, FakeBackend, memoryStorage } from "../backend/fake";
 import type { ExtensionRegistry } from "../backend/types";
@@ -91,5 +91,42 @@ describe("ThemeManager", () => {
     await manager.start();
     expect(manager.active.theme).toBeNull();
     expect(manager.active.variables["--bg"]).toBe("#1e1f22");
+  });
+});
+
+describe("ThemeManager failures and races", () => {
+  it("applies the defaults and does not throw when settings() rejects", async () => {
+    const { backend, manager, applied } = setup(true);
+    backend.settings = () => Promise.reject(new Error("no settings"));
+    const error = vi.spyOn(console, "error").mockImplementation(() => {});
+    await expect(manager.start()).resolves.toBeUndefined();
+    error.mockRestore();
+    expect(applied).toHaveLength(1);
+    expect(manager.active.theme).toBeNull();
+    expect(manager.active.variables["--bg"]).toBe("#1e1f22");
+  });
+
+  it("lets the newer refresh win when an older one finishes later", async () => {
+    const { backend, manager, applied } = setup(true);
+    await manager.start();
+    const gate: { release: () => void } = { release: () => {} };
+    const slow = new Promise<void>((r) => (gate.release = r));
+    const read = backend.readExtensionFile.bind(backend);
+    let first = true;
+    backend.readExtensionFile = async (ext, path) => {
+      if (first) {
+        first = false;
+        await slow;
+      }
+      return read(ext, path);
+    };
+    backend.data.settings.theme.dark = { extension: "tote.themes", label: "Dark+" };
+    const older = manager.refresh(); // blocks on the slow read
+    backend.data.settings.theme.dark = { extension: "someone.night", label: "Night" };
+    await manager.refresh(); // newer, reads Night at once
+    gate.release();
+    await older;
+    expect(manager.active.info?.label).toBe("Night");
+    expect(applied.map((a) => a.info?.label)).toEqual(["Dark+", "Night"]);
   });
 });
