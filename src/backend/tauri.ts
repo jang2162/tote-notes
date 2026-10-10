@@ -15,6 +15,9 @@ import {
   type MemoInfo,
   type PendingOpen,
   type Settings,
+  type TextQuery,
+  type TextScan,
+  type TextSearch,
   type WindowFrame,
   type WorkspaceInfo,
   type WorkspaceListItem,
@@ -172,6 +175,12 @@ export class TauriBackend implements Backend {
   }
   resolveRelative(source: FileSource, relative: string, owner: string) {
     return call<string | null>("resolve_relative", { source, relative, owner });
+  }
+  scanText(source: FileSource) {
+    return call<TextScan>("scan_text", { source });
+  }
+  searchText(source: FileSource, query: TextQuery, fromLine: number, requestId: number) {
+    return call<TextSearch>("search_text", { source, query, fromLine, requestId });
   }
   async pickExtensionPackage() {
     const picked = await open({

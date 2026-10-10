@@ -1,4 +1,5 @@
 import { basename, splitName } from "../core/names";
+import { scanBytes } from "../viewer/large-text";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   BackendError,
@@ -11,6 +12,8 @@ import {
   type MemoInfo,
   type PendingOpen,
   type Settings,
+  type TextMatch,
+  type TextQuery,
   type ViewerInfo,
   type WindowFrame,
   type WorkspaceInfo,
@@ -61,7 +64,8 @@ export interface FakeData {
   /** Viewers added to the bundled ones, each with the page that stands in for it — the UI tests
    * open file types through them that no bundled viewer opens yet. */
   extraViewers: { info: ViewerInfo; url: string }[];
-  /** Owner → the file URLs issued to it and not yet revoked; tests check the revocation. */
+  /** Owner → the names of the files issued to it and not yet revoked; tests check the
+   * revocation. Names, not the data: URLs — a big file's would overflow sessionStorage. */
   tokens: Record<string, string[]>;
 }
 
@@ -539,7 +543,7 @@ export class FakeBackend implements Backend {
   async issueFileToken(source: FileSource, owner: string) {
     const found = this.sourceBytes(source);
     if (!found) throw new BackendError("not-found", JSON.stringify(source));
-    return this.issue(owner, dataUrl(found.name, found.data));
+    return this.issue(owner, found.name, found.data);
   }
 
   async revokeFileTokens(owner: string) {
@@ -553,13 +557,47 @@ export class FakeBackend implements Backend {
     const found = this.sourceBytes(source);
     const data = found?.folder[found.dirKey(name)];
     if (data === undefined) return null;
-    return this.issue(owner, dataUrl(name, data));
+    return this.issue(owner, name, data);
   }
 
-  private issue(owner: string, url: string): string {
-    (this.data.tokens[owner] ??= []).push(url);
+  async scanText(source: FileSource) {
+    const found = this.sourceBytes(source);
+    if (!found) throw new BackendError("not-found", JSON.stringify(source));
+    return scanBytes(fromBase64(found.data));
+  }
+
+  async searchText(source: FileSource, query: TextQuery, fromLine: number, _requestId: number) {
+    const found = this.sourceBytes(source);
+    if (!found) throw new BackendError("not-found", JSON.stringify(source));
+    const lines = new TextDecoder().decode(fromBase64(found.data)).split("\n");
+    let pattern: RegExp;
+    try {
+      pattern = new RegExp(
+        query.regex ? query.query : query.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+        query.caseSensitive ? "g" : "gi",
+      );
+    } catch (error) {
+      throw new BackendError("bad-request", String(error));
+    }
+    const matches: TextMatch[] = [];
+    if (query.query) {
+      for (let line = fromLine; line < lines.length; line++) {
+        for (const m of lines[line].replace(/\r$/, "").matchAll(pattern)) {
+          matches.push({
+            line,
+            column: new TextEncoder().encode(lines[line].slice(0, m.index)).length,
+          });
+          if (matches.length >= 200) return { matches, done: false, cancelled: false };
+        }
+      }
+    }
+    return { matches, done: true, cancelled: false };
+  }
+
+  private issue(owner: string, name: string, data: string): string {
+    (this.data.tokens[owner] ??= []).push(name);
     this.commit();
-    return url;
+    return dataUrl(name, data);
   }
 
   async pickExtensionPackage() {

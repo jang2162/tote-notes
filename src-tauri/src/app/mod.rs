@@ -52,6 +52,8 @@ pub struct AppCore {
     workspace_root: Mutex<PathBuf>,
     settings: Mutex<Settings>,
     registry: Mutex<Registry>,
+    /// Window label → the number of its latest large-text search.
+    searches: Mutex<HashMap<String, u64>>,
     inner: Mutex<Inner>,
 }
 
@@ -106,6 +108,7 @@ impl AppCore {
             workspace_root: Mutex::new(workspace_root),
             settings: Mutex::new(settings),
             registry: Mutex::new(registry),
+            searches: Mutex::new(HashMap::new()),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
                 reserved: HashSet::new(),
@@ -244,9 +247,20 @@ impl AppCore {
         self.save_launch(&inner.launch);
     }
 
+    /// A new search from `window`: earlier ones of that window stop at their next check.
+    pub fn begin_search(&self, window: &str, request_id: u64) {
+        lock(&self.searches).insert(window.to_string(), request_id);
+    }
+
+    pub fn search_is_live(&self, window: &str, request_id: u64) -> bool {
+        lock(&self.searches).get(window) == Some(&request_id)
+    }
+
     /// A window is gone. Returns the flush rounds it was the last one to wait for.
     pub fn closed(&self, label: &str) -> Vec<FlushGoal> {
         self.files.revoke_window(label);
+        // A search still running for the window stops at its next check.
+        lock(&self.searches).remove(label);
         let mut inner = lock(&self.inner);
         let removed = inner.windows.remove(label);
         inner.focus.retain(|l| l != label);
@@ -566,5 +580,18 @@ mod tests {
         let token = core.files.issue(&a, "tab:primary", "/x.png".into());
         core.closed(&a);
         assert_eq!(core.files.resolve(&token), None);
+    }
+
+    #[test]
+    fn only_the_latest_search_of_a_window_is_live() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.begin_search("ws-1", 1);
+        assert!(core.search_is_live("ws-1", 1));
+        core.begin_search("ws-1", 2);
+        assert!(!core.search_is_live("ws-1", 1));
+        assert!(core.search_is_live("ws-1", 2));
+        core.begin_search("ws-2", 1);
+        assert!(core.search_is_live("ws-2", 1) && core.search_is_live("ws-1", 2));
     }
 }

@@ -16,6 +16,7 @@ use crate::appdata::Settings;
 use crate::extensions::file_inside;
 use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
+use crate::files::text::{self, SearchError, TextQuery, TextScan, TextSearch};
 use crate::files::{self, FileSource};
 use crate::persist::external::ExternalInfo;
 use crate::session;
@@ -527,4 +528,45 @@ pub fn resolve_relative(
     };
     Ok(files::resolve_relative(dir, &relative)
         .map(|file| files::token_url(&core.files.issue(window.label(), &owner, file))))
+}
+
+impl From<SearchError> for CommandError {
+    fn from(err: SearchError) -> CommandError {
+        match err {
+            SearchError::BadPattern(message) => CommandError::new("bad-request", message),
+            SearchError::Io(io) => io.into(),
+        }
+    }
+}
+
+#[tauri::command]
+pub async fn scan_text(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    source: FileSource,
+) -> CmdResult<TextScan> {
+    let path = source_path(&core, &window, &source)?;
+    Ok(text::scan(&path)?)
+}
+
+#[tauri::command]
+pub async fn search_text(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    source: FileSource,
+    query: TextQuery,
+    from_line: u64,
+    request_id: u64,
+) -> CmdResult<TextSearch> {
+    let path = source_path(&core, &window, &source)?;
+    let label = window.label().to_string();
+    core.begin_search(&label, request_id);
+    let live = || core.search_is_live(&label, request_id);
+    Ok(text::search(
+        &path,
+        &query,
+        from_line,
+        text::SEARCH_PAGE,
+        &|| !live(),
+    )?)
 }

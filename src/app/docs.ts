@@ -22,9 +22,12 @@ export const LARGE_MEMO_SAVE_DELAY_MS = 3000;
  * what the longer delay saves. */
 export const LARGE_MEMO_CHARS = 1_000_000;
 export const DRAFT_DELAY_MS = 1000;
-/** Bigger files wait for the large text viewer (a later plan) instead of loading into the editor.
+/** Bigger files open in the large text viewer instead of loading into the editor.
  * Same value as `MAX_EDITOR_BYTES` in src-tauri/src/persist/external.rs. */
 export const MAX_EDITOR_BYTES = 100 * 1024 * 1024;
+/** A line longer than this sends the file to the large text viewer (spec 「크기별 단계」). This
+ * value is provisional; Task 14 of the extensions-and-screens plan measures the boundary. */
+export const LONG_LINE_LIMIT = 1_000_000;
 /** Soft wrap stays off above this line length (the same limit highlighting uses): wrapping one
  * huge line costs seconds. */
 export const WRAP_LIMIT = 20_000;
@@ -35,7 +38,7 @@ export const DRAFT_RESTORED_NOTICE =
 
 /** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
  * were read as text and are not UTF-8 (or hold a NUL). */
-export type Problem = "binary" | "not-utf8" | "too-large" | "missing" | "unreadable";
+export type Problem = "binary" | "not-utf8" | "too-large" | "long-line" | "missing" | "unreadable";
 export type Change = "info" | "language" | "dirty" | "saved" | "deleted" | "notice" | "error";
 export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 
@@ -193,10 +196,14 @@ export abstract class Doc {
   }
 
   /** Builds the editor state for `text`, with `selection` or else the session's. */
-  protected setText(text: string, selection?: EditorSelection): void {
+  protected setText(
+    text: string,
+    selection?: EditorSelection,
+    longest: number = longestLine(text),
+  ): void {
     let state = EditorState.create({
       doc: text,
-      extensions: this.host.extensions(this, { wrap: longestLine(text) <= WRAP_LIMIT, text }),
+      extensions: this.host.extensions(this, { wrap: longest <= WRAP_LIMIT, text }),
     });
     const wanted =
       selection ?? (this.restoreSelection && restoreSelection(this.restoreSelection, state.doc));
@@ -223,10 +230,15 @@ export abstract class Doc {
       this.problem = "not-utf8";
       return;
     }
+    const longest = longestLine(decoded.text);
+    if (longest > LONG_LINE_LIMIT) {
+      this.problem = "long-line";
+      return;
+    }
     this.eol = decoded.eol;
     this.bom = decoded.bom;
     this.languageData = await this.host.languageConfig(this.host.languageOf(this));
-    this.setText(decoded.text);
+    this.setText(decoded.text, undefined, longest);
     this.loaded();
   }
 }

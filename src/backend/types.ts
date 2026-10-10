@@ -35,6 +35,32 @@ export type PendingOpen = { kind: "memo"; id: string } | { kind: "external"; pat
 /** A file a viewer or the large text viewer reads, named the way the tabs name them. */
 export type FileSource = { kind: "memo"; id: string } | { kind: "external"; path: string };
 
+// --- Large text viewer (src-tauri/src/files/text.rs) ----------------------------------------
+
+export interface TextScan {
+  size: number;
+  lineCount: number;
+  checkpoints: number[];
+  longestLine: number;
+}
+
+export interface TextQuery {
+  query: string;
+  caseSensitive: boolean;
+  regex: boolean;
+}
+
+export interface TextMatch {
+  line: number;
+  column: number;
+}
+
+export interface TextSearch {
+  matches: TextMatch[];
+  done: boolean;
+  cancelled: boolean;
+}
+
 // --- Extensions (src-tauri/src/extensions/registry.rs) ---------------------------------------
 
 export interface ExtensionSummary {
@@ -214,6 +240,16 @@ export interface Backend {
   revokeFileTokens(owner: string): Promise<void>;
   /** A token URL for a file in the same folder as `source`, or null (spec 「뷰어 API」). */
   resolveRelative(source: FileSource, relative: string, owner: string): Promise<string | null>;
+  /** Line count and page offsets of a file for the large text viewer. */
+  scanText(source: FileSource): Promise<TextScan>;
+  /** A page of matches from `fromLine`; a newer `requestId` from this window cancels older
+   * ones. `bad-request` when the pattern is not a valid regex. */
+  searchText(
+    source: FileSource,
+    query: TextQuery,
+    fromLine: number,
+    requestId: number,
+  ): Promise<TextSearch>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
   pickExtensionPackage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;

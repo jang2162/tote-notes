@@ -4,6 +4,7 @@
 //! owner so a closing view, or a closing window, revokes exactly its own.
 
 pub mod range;
+pub mod text;
 
 use std::collections::HashMap;
 use std::fs;

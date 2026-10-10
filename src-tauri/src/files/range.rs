@@ -5,9 +5,13 @@ use std::fs::File;
 use std::io::{self, Read, Seek, SeekFrom};
 use std::path::Path;
 
-use tauri::http::{header, Response, StatusCode};
+use tauri::http::{header, Method, Response, StatusCode};
 
 use super::TokenStore;
+
+/// The most an open-ended range (`bytes=N-`) gets in one answer. WebKit's media loader opens
+/// with `bytes=0-` even for a file of gigabytes; a shorter 206 is allowed and it asks on.
+pub const MAX_OPEN_RANGE: u64 = 8 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RangeSpec {
@@ -43,6 +47,7 @@ pub fn parse_range(value: Option<&str>, len: u64) -> RangeSpec {
         };
         let end = if b.is_empty() {
             len.saturating_sub(1)
+                .min(start.saturating_add(MAX_OPEN_RANGE - 1))
         } else {
             let Ok(end) = b.parse::<u64>() else {
                 return RangeSpec::Full;
@@ -65,7 +70,15 @@ fn read_slice(path: &Path, start: u64, end: u64) -> io::Result<Vec<u8>> {
     Ok(buf)
 }
 
-pub fn respond(store: &TokenStore, uri_path: &str, range: Option<&str>) -> Response<Vec<u8>> {
+pub fn respond(
+    store: &TokenStore,
+    method: &Method,
+    uri_path: &str,
+    range: Option<&str>,
+) -> Response<Vec<u8>> {
+    if method == Method::OPTIONS {
+        return preflight();
+    }
     let token = uri_path.trim_start_matches('/');
     let Some(path) = store.resolve(token) else {
         return status_only(StatusCode::NOT_FOUND);
@@ -106,6 +119,18 @@ pub fn respond(store: &TokenStore, uri_path: &str, range: Option<&str>) -> Respo
         Err(err) if err.kind() == io::ErrorKind::NotFound => status_only(StatusCode::NOT_FOUND),
         _ => status_only(StatusCode::INTERNAL_SERVER_ERROR),
     }
+}
+
+/// The answer to WebKit's CORS preflight for the large text viewer's `fetch` with a `Range`
+/// header: the page's origin is not `tote-file`'s, and without these the GET never goes out.
+fn preflight() -> Response<Vec<u8>> {
+    Response::builder()
+        .status(StatusCode::NO_CONTENT)
+        .header(header::ACCESS_CONTROL_ALLOW_ORIGIN, "*")
+        .header(header::ACCESS_CONTROL_ALLOW_METHODS, "GET")
+        .header(header::ACCESS_CONTROL_ALLOW_HEADERS, "Range")
+        .body(Vec::new())
+        .expect("static response is valid")
 }
 
 /// An empty answer. Readable across origins, so a viewer's fetch sees the status and not a
@@ -157,7 +182,7 @@ mod tests {
     use std::fs;
     use std::path::PathBuf;
 
-    use tauri::http::{header, StatusCode};
+    use tauri::http::{header, Method, StatusCode};
 
     #[test]
     fn no_header_means_full() {
@@ -169,6 +194,32 @@ mod tests {
         assert_eq!(
             parse_range(Some("bytes=0-"), 1000),
             RangeSpec::Partial { start: 0, end: 999 }
+        );
+    }
+
+    #[test]
+    fn an_open_ended_range_on_a_big_file_is_cut_to_a_bounded_slice() {
+        let len = 3 * MAX_OPEN_RANGE;
+        assert_eq!(
+            parse_range(Some("bytes=0-"), len),
+            RangeSpec::Partial {
+                start: 0,
+                end: MAX_OPEN_RANGE - 1
+            }
+        );
+        assert_eq!(
+            parse_range(Some("bytes=10-"), len),
+            RangeSpec::Partial {
+                start: 10,
+                end: 10 + MAX_OPEN_RANGE - 1
+            }
+        );
+        assert_eq!(
+            parse_range(Some(&format!("bytes={}-", len - 5)), len),
+            RangeSpec::Partial {
+                start: len - 5,
+                end: len - 1
+            }
         );
     }
 
@@ -243,15 +294,15 @@ mod tests {
         let store = TokenStore::default();
         let _token = store.issue("w", "o", path.clone());
         assert_eq!(
-            respond(&store, "/deadbeef", None).status(),
+            respond(&store, &Method::GET, "/deadbeef", None).status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            respond(&store, &format!("/{}", path.display()), None).status(),
+            respond(&store, &Method::GET, &format!("/{}", path.display()), None).status(),
             StatusCode::NOT_FOUND
         );
         assert_eq!(
-            respond(&store, "/../../etc/passwd", None).status(),
+            respond(&store, &Method::GET, "/../../etc/passwd", None).status(),
             StatusCode::NOT_FOUND
         );
     }
@@ -261,7 +312,12 @@ mod tests {
         let (_dir, path) = fixture("영상 테스트.bin", b"0123456789");
         let store = TokenStore::default();
         let token = store.issue("w", "o", path);
-        let res = respond(&store, &format!("/{token}"), Some("bytes=2-5"));
+        let res = respond(
+            &store,
+            &Method::GET,
+            &format!("/{token}"),
+            Some("bytes=2-5"),
+        );
         assert_eq!(res.status(), StatusCode::PARTIAL_CONTENT);
         assert_eq!(res.body(), b"2345");
         assert_eq!(res.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
@@ -276,11 +332,29 @@ mod tests {
     }
 
     #[test]
+    fn a_cors_preflight_allows_a_range_get_without_reading_the_file() {
+        // The large text viewer's fetch() with a Range header comes from another origin
+        // (tauri://localhost); WebKit may ask first with OPTIONS.
+        let store = TokenStore::default();
+        let res = respond(
+            &store,
+            &Method::OPTIONS,
+            "/no-such-token",
+            Some("bytes=0-1"),
+        );
+        assert_eq!(res.status(), StatusCode::NO_CONTENT);
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_METHODS], "GET");
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_HEADERS], "Range");
+        assert!(res.body().is_empty());
+    }
+
+    #[test]
     fn a_full_request_returns_the_whole_file_with_its_type() {
         let (_dir, path) = fixture("clip.mp4", b"abc");
         let store = TokenStore::default();
         let token = store.issue("w", "o", path);
-        let res = respond(&store, &format!("/{token}"), None);
+        let res = respond(&store, &Method::GET, &format!("/{token}"), None);
         assert_eq!(res.status(), StatusCode::OK);
         assert_eq!(res.body(), b"abc");
         assert_eq!(res.headers()[header::CONTENT_TYPE], "video/mp4");
@@ -292,12 +366,17 @@ mod tests {
         let (dir, path) = fixture("a.bin", b"abc");
         let store = TokenStore::default();
         let token = store.issue("w", "o", path.clone());
-        let res = respond(&store, &format!("/{token}"), Some("bytes=10-"));
+        let res = respond(
+            &store,
+            &Method::GET,
+            &format!("/{token}"),
+            Some("bytes=10-"),
+        );
         assert_eq!(res.status(), StatusCode::RANGE_NOT_SATISFIABLE);
         assert_eq!(res.headers()[header::CONTENT_RANGE], "bytes */3");
         fs::remove_file(&path).unwrap();
         assert_eq!(
-            respond(&store, &format!("/{token}"), None).status(),
+            respond(&store, &Method::GET, &format!("/{token}"), None).status(),
             StatusCode::NOT_FOUND
         );
         drop(dir);
@@ -310,7 +389,13 @@ mod tests {
         let token = store.issue("w", "o", path);
         store.revoke("w", "o");
         assert_eq!(
-            respond(&store, &format!("/{token}"), Some("bytes=0-1")).status(),
+            respond(
+                &store,
+                &Method::GET,
+                &format!("/{token}"),
+                Some("bytes=0-1")
+            )
+            .status(),
             StatusCode::NOT_FOUND
         );
     }

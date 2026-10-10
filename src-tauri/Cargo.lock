@@ -3892,7 +3892,9 @@ name = "tote"
 version = "0.1.0"
 dependencies = [
  "dirs",
+ "memchr",
  "percent-encoding",
+ "regex",
  "serde",
  "serde_json",
  "sha2",

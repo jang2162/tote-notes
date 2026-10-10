@@ -68,6 +68,27 @@ describe("TauriBackend", () => {
       ],
       [() => backend.revokeFileTokens("o"), "revoke_file_tokens", { owner: "o" }],
       [
+        () => backend.scanText({ kind: "memo", id: "m" }),
+        "scan_text",
+        { source: { kind: "memo", id: "m" } },
+      ],
+      [
+        () =>
+          backend.searchText(
+            { kind: "external", path: "/x" },
+            { query: "q", caseSensitive: false, regex: false },
+            10,
+            3,
+          ),
+        "search_text",
+        {
+          source: { kind: "external", path: "/x" },
+          query: { query: "q", caseSensitive: false, regex: false },
+          fromLine: 10,
+          requestId: 3,
+        },
+      ],
+      [
         () => backend.resolveRelative({ kind: "external", path: "/x/a.md" }, "p.png", "o"),
         "resolve_relative",
         { source: { kind: "external", path: "/x/a.md" }, relative: "p.png", owner: "o" },

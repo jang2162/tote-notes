@@ -17,6 +17,7 @@ import {
   DRAFT_RESTORED_NOTICE,
   ExternalDoc,
   importExternal,
+  LONG_LINE_LIMIT,
   MemoDoc,
   RECOVERED_NOTICE,
   type Change,
@@ -88,7 +89,9 @@ describe("MemoDoc", () => {
   });
 
   it("waits three seconds between saves of a large memo", async () => {
-    const { backend, host } = setup({ memos: { big: fakeMemo("big.md", "x".repeat(1_000_001)) } });
+    // Over a million characters in lines of 999: one line that long would be a long-line file.
+    const text = `${"x".repeat(999)}\n`.repeat(1001);
+    const { backend, host } = setup({ memos: { big: fakeMemo("big.md", text) } });
     const doc = new MemoDoc(host, (await backend.listMemos())[0]);
     await doc.ensureLoaded();
     type(doc, "!");
@@ -235,6 +238,16 @@ describe("MemoDoc", () => {
     await doc.ensureLoaded();
     expect(doc.problem).toBe("binary");
     expect(backend.data.reads).toEqual({});
+  });
+
+  it("a text file with a line over the long-line limit does not load into the editor", async () => {
+    const { backend, host } = setup({
+      memos: { a: fakeMemo("one-line.json", "x".repeat(LONG_LINE_LIMIT + 1)) },
+    });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    expect(doc.problem).toBe("long-line");
+    expect(doc.state).toBeNull();
   });
 
   it("restores the session's selection, pulled into the text", async () => {

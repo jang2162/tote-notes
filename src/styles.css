@@ -360,3 +360,61 @@ button.danger {
 .editor-placeholder p {
   margin: 0 0 12px;
 }
+
+.large-text {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
+}
+
+.large-text-bar {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg);
+  font-size: 12px;
+}
+
+.large-text-search {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 8px;
+}
+
+.large-text-search input[type="search"] {
+  flex: 1;
+  padding: 2px 8px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg);
+  color: inherit;
+  font: inherit;
+}
+
+.large-text-scroller {
+  position: relative;
+  overflow: auto;
+  font-family: var(--editor-font);
+  font-size: var(--editor-size);
+}
+
+.large-text-rows {
+  position: relative;
+}
+
+.large-text-line {
+  position: absolute;
+  left: 0;
+  right: 0;
+  height: 20px;
+  padding: 0 16px;
+  white-space: pre;
+  line-height: 20px;
+}
+
+.large-text-line.current {
+  background: var(--active-bg);
+}

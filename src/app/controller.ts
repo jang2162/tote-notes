@@ -30,6 +30,7 @@ import { MemoList } from "../ui/memo-list";
 import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
 import { ViewerHost } from "../viewer/host";
+import { LargeTextViewer } from "../viewer/large-text";
 import {
   ExternalDoc,
   importExternal,
@@ -54,7 +55,8 @@ export const OPEN_AS_TEXT = "텍스트로 열기";
 const PROBLEM_TEXT: Record<Problem, string> = {
   binary: NOT_OPENABLE,
   "not-utf8": "텍스트로 열 수 없음",
-  "too-large": "100MB 가 넘는 파일은 아직 열 수 없습니다",
+  "too-large": "100MB 가 넘어 편집기로 열 수 없습니다",
+  "long-line": "한 줄이 너무 길어 편집기로 열 수 없습니다",
   missing: "파일을 찾을 수 없습니다",
   unreadable: "파일을 읽지 못했습니다",
 };
@@ -96,6 +98,9 @@ export class AppController implements DocHost {
   private panel: TokenPanel | null = null;
   /** Numbers the views, so each owns its tokens alone: a tab left and come back to is a new one. */
   private views = 0;
+  /** Numbers the large text searches of this window: the backend keeps only the latest one
+   * running, so two viewers in one window must not reuse a number. */
+  private searches = 0;
 
   constructor(
     root: HTMLElement,
@@ -361,12 +366,23 @@ export class AppController implements DocHost {
       return;
     }
     this.statusBar.setPosition(null);
+    if (doc.problem === "too-large" || doc.problem === "long-line") {
+      void this.openLargeText(doc);
+      return;
+    }
     const viewer =
       doc.problem === "binary" && !doc.forceText
         ? this.registry.viewerFor(doc.fileName, "primary")
         : undefined;
     if (viewer) this.openViewer(doc, viewer);
     else this.showProblem(doc);
+  }
+
+  /** The large text viewer on show (public: the UI tests call `goToLine`). */
+  get largeText(): { doc: Doc; viewer: LargeTextViewer; owner: string } | null {
+    const open = this.panel;
+    if (!open || !(open.host instanceof LargeTextViewer)) return null;
+    return { doc: open.doc, viewer: open.host, owner: open.owner };
   }
 
   private showProblem(doc: Doc): void {
@@ -443,6 +459,36 @@ export class AppController implements DocHost {
         this.report(error);
         fallBack();
       });
+  }
+
+  /** The read-only large text viewer (spec 「크기별 단계」). Its token lives as long as the view. */
+  private async openLargeText(doc: Doc): Promise<void> {
+    const view = ++this.views;
+    const owner = `${doc.tabId}:large-text:${view}`;
+    // Another tab or view was shown while this one was on its way.
+    const stale = () => this.tabs.active !== doc || this.views !== view;
+    try {
+      const [url, scan] = await Promise.all([
+        this.backend.issueFileToken(doc.source, owner),
+        this.backend.scanText(doc.source),
+      ]);
+      if (stale()) return this.revoke(owner);
+      const viewer = new LargeTextViewer({
+        url,
+        scan,
+        fileName: doc.fileName,
+        search: (query, fromLine) =>
+          this.backend.searchText(doc.source, query, fromLine, ++this.searches),
+      });
+      this.panel = { doc, owner, host: viewer };
+      this.surface.showPanel(viewer.el);
+      this.statusBar.setMessage("읽기 전용 · 대용량 텍스트 뷰어");
+    } catch (error) {
+      this.revoke(owner);
+      if (stale()) return;
+      this.report(error);
+      this.showProblem(doc);
+    }
   }
 
   private closePanel(): void {

@@ -28,6 +28,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .register_asynchronous_uri_scheme_protocol("tote-file", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
+            let method = request.method().clone();
             let path = request.uri().path().to_string();
             let range = request
                 .headers()
@@ -37,7 +38,12 @@ pub fn run() {
             // Off the main thread: a 206 for a video seek reads from disk.
             std::thread::spawn(move || {
                 let core = app.state::<AppCore>();
-                responder.respond(files::range::respond(&core.files, &path, range.as_deref()));
+                responder.respond(files::range::respond(
+                    &core.files,
+                    &method,
+                    &path,
+                    range.as_deref(),
+                ));
             });
         })
         .register_uri_scheme_protocol("tote-ext", |ctx, request| {
@@ -90,6 +96,8 @@ pub fn run() {
             commands::issue_file_token,
             commands::revoke_file_tokens,
             commands::resolve_relative,
+            commands::scan_text,
+            commands::search_text,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");
