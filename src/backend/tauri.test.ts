@@ -43,6 +43,40 @@ describe("TauriBackend", () => {
       [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
       [() => backend.flushDone(3), "flush_done", { id: 3 }],
       [() => backend.closeWindow(), "close_window", undefined],
+      [() => backend.extensionRegistry(), "extension_registry", undefined],
+      [
+        () => backend.installExtension("/x.vsix", true),
+        "install_extension",
+        { path: "/x.vsix", replace: true },
+      ],
+      [() => backend.removeExtension("p.x"), "remove_extension", { id: "p.x" }],
+      [
+        () => backend.setExtensionEnabled("p.x", false),
+        "set_extension_enabled",
+        { id: "p.x", enabled: false },
+      ],
+      [() => backend.settings(), "get_settings", undefined],
+      [
+        () =>
+          backend.updateSettings({
+            workspaceRoot: null,
+            theme: { light: null, dark: null },
+            extensions: { disabled: [], precedence: "user" },
+          }),
+        "update_settings",
+        {
+          settings: {
+            workspaceRoot: null,
+            theme: { light: null, dark: null },
+            extensions: { disabled: [], precedence: "user" },
+          },
+        },
+      ],
+      [
+        () => backend.readExtensionFile("p.x", "t.json"),
+        "read_extension_file",
+        { extensionId: "p.x", path: "t.json" },
+      ],
     ];
     for (const [run, command, args] of calls) {
       invoke.mockClear();
@@ -80,5 +114,11 @@ describe("TauriBackend", () => {
     await expect(backend.listMemos()).rejects.toMatchObject({ code: "app", message: "boom" });
     invoke.mockRejectedValueOnce("the window is gone");
     await expect(backend.listMemos()).rejects.toMatchObject({ code: "app" });
+  });
+
+  it("names bundled viewer pages by the tote-ext scheme", () => {
+    expect(backend.viewerUrl("tote.markdown-preview", "viewer.html")).toBe(
+      "tote-ext://localhost/tote.markdown-preview/viewer.html",
+    );
   });
 });

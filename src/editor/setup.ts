@@ -28,6 +28,7 @@ import {
 import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
 import { multiRangeIme, undoWithCursors } from "./ime";
+import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
 
 /** Tab: an indent unit at every cursor; with text selected, indents the selected lines. */
 export const insertIndent: Command = (view) => {
@@ -65,6 +66,17 @@ export function languageEffect(fileName: string) {
   return language.reconfigure(languageFor(fileName));
 }
 
+const configuration = new Compartment();
+
+function languageDataExtension(data: LanguageData): Extension {
+  return EditorState.languageData.of(() => [data]);
+}
+
+/** Swaps the language-configuration data of a state built by `editorExtensions`. */
+export function languageDataEffect(data: LanguageData) {
+  return configuration.reconfigure(languageDataExtension(data));
+}
+
 /** Colours come from the CSS variables in styles.css, which a later plan fills from the theme. */
 const appTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "var(--bg)" },
@@ -89,6 +101,8 @@ export interface EditorOptions {
   /** Soft wrap; off when a line is too long to wrap cheaply (`WRAP_LIMIT` in src/app/docs.ts). */
   wrap: boolean;
   onUpdate: (update: ViewUpdate) => void;
+  /** From the language's configuration file: comment tokens, bracket pairs, word characters. */
+  languageData?: LanguageData;
 }
 
 export function editorExtensions(options: EditorOptions): Extension[] {
@@ -107,6 +121,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     multiRangeIme,
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName)),
+    configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
     keymap.of([
       ...zedKeymap,
       ...closeBracketsKeymap,

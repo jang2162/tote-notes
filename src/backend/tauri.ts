@@ -8,9 +8,12 @@ import {
   BackendError,
   type Backend,
   type BackendErrorCode,
+  type ExtensionRegistry,
+  type ExtensionSummary,
   type ExternalInfo,
   type MemoInfo,
   type PendingOpen,
+  type Settings,
   type WindowFrame,
   type WorkspaceInfo,
   type WorkspaceListItem,
@@ -133,6 +136,43 @@ export class TauriBackend implements Backend {
     return call<void>("close_window");
   }
 
+  extensionRegistry() {
+    return call<ExtensionRegistry>("extension_registry");
+  }
+  async readExtensionFile(extensionId: string, path: string) {
+    return bytesOf(await call<ArrayBuffer>("read_extension_file", { extensionId, path }));
+  }
+  installExtension(path: string, replace: boolean) {
+    return call<ExtensionSummary>("install_extension", { path, replace });
+  }
+  removeExtension(id: string) {
+    return call<void>("remove_extension", { id });
+  }
+  setExtensionEnabled(id: string, enabled: boolean) {
+    return call<void>("set_extension_enabled", { id, enabled });
+  }
+  settings() {
+    return call<Settings>("get_settings");
+  }
+  updateSettings(settings: Settings) {
+    return call<void>("update_settings", { settings });
+  }
+  viewerUrl(extensionId: string, entry: string) {
+    return `tote-ext://localhost/${encodeURIComponent(extensionId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;
+  }
+  async pickExtensionPackage() {
+    const picked = await open({
+      multiple: false,
+      directory: false,
+      filters: [{ name: "확장 패키지", extensions: ["vsix", "zip"] }],
+    });
+    return typeof picked === "string" ? picked : null;
+  }
+  async pickFolder() {
+    const picked = await open({ multiple: false, directory: true });
+    return typeof picked === "string" ? picked : null;
+  }
+
   onMenu(handler: (id: string) => void) {
     void this.window.listen<string>("tote://menu", (event) => handler(event.payload));
   }
@@ -141,6 +181,9 @@ export class TauriBackend implements Backend {
   }
   onPending(handler: () => void) {
     void this.window.listen("tote://pending", () => handler());
+  }
+  onConfigChanged(handler: () => void) {
+    void this.window.listen("tote://config", () => handler());
   }
   onFileDrop(handler: (paths: string[]) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {

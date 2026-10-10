@@ -32,6 +32,94 @@ export interface ExternalInfo {
 
 export type PendingOpen = { kind: "memo"; id: string } | { kind: "external"; path: string };
 
+/** A file a viewer or the large text viewer reads, named the way the tabs name them. */
+export type FileSource = { kind: "memo"; id: string } | { kind: "external"; path: string };
+
+// --- Extensions (src-tauri/src/extensions/registry.rs) ---------------------------------------
+
+export interface ExtensionSummary {
+  id: string;
+  version: string;
+  displayName: string;
+  source: "bundled" | "user";
+  enabled: boolean;
+  path: string;
+}
+
+export interface GrammarInfo {
+  scopeName: string;
+  path: string;
+  embeddedLanguages: Record<string, string>;
+}
+
+export interface LanguageInfo {
+  id: string;
+  /** The id of the extension contributing it. */
+  extension: string;
+  aliases: string[];
+  /** Lower-case, without the dot. */
+  extensions: string[];
+  filenames: string[];
+  firstLine: string | null;
+  configuration: string | null;
+  grammar: GrammarInfo | null;
+}
+
+export interface ThemeInfo {
+  extension: string;
+  label: string;
+  /** VS Code's `uiTheme`: `vs` (light), `vs-dark`, `hc-black`, `hc-light`. */
+  uiTheme: string;
+  path: string;
+}
+
+export type ViewerKind = "primary" | "preview";
+
+export interface ViewerInfo {
+  extension: string;
+  id: string;
+  kind: ViewerKind;
+  extensions: string[];
+  entry: string;
+}
+
+export interface ExtensionProblem {
+  path: string;
+  message: string;
+}
+
+export interface GrammarRef {
+  extension: string;
+  language: string | null;
+  scopeName: string;
+  path: string;
+  embeddedLanguages: Record<string, string>;
+}
+
+export interface ExtensionRegistry {
+  extensions: ExtensionSummary[];
+  /** In precedence order: the first language claiming a file wins. */
+  languages: LanguageInfo[];
+  /** Every grammar, for `include` lookups by scope name. */
+  grammars: GrammarRef[];
+  themes: ThemeInfo[];
+  viewers: ViewerInfo[];
+  problems: ExtensionProblem[];
+}
+
+export interface ThemeRef {
+  extension: string;
+  label: string;
+}
+
+/** `settings.json` (src-tauri/src/appdata.rs). The Rust side leaves `workspaceRoot` out of the
+ * JSON when it is unset, so it arrives as `undefined` rather than `null`. */
+export interface Settings {
+  workspaceRoot?: string | null;
+  theme: { light: ThemeRef | null; dark: ThemeRef | null };
+  extensions: { disabled: string[]; precedence: "user" | "bundled" };
+}
+
 export interface WorkspaceListItem {
   name: string;
   path: string;
@@ -109,6 +197,22 @@ export interface Backend {
   pickFiles(): Promise<string[]>;
   flushDone(id: number): Promise<void>;
   closeWindow(): Promise<void>;
+  extensionRegistry(): Promise<ExtensionRegistry>;
+  /** A file inside an installed extension, by the path its manifest uses. */
+  readExtensionFile(extensionId: string, path: string): Promise<Uint8Array>;
+  /** `already-installed` when the id exists and `replace` is false. */
+  installExtension(path: string, replace: boolean): Promise<ExtensionSummary>;
+  removeExtension(id: string): Promise<void>;
+  setExtensionEnabled(id: string, enabled: boolean): Promise<void>;
+  settings(): Promise<Settings>;
+  updateSettings(settings: Settings): Promise<void>;
+  /** Where a bundled viewer page loads from. */
+  viewerUrl(extensionId: string, entry: string): string;
+  /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
+  pickExtensionPackage(): Promise<string | null>;
+  pickFolder(): Promise<string | null>;
+  /** Settings or the extension set changed somewhere (this window included). */
+  onConfigChanged(handler: () => void): void;
 
   onMenu(handler: (id: string) => void): void;
   onFlush(handler: (id: number) => void): void;

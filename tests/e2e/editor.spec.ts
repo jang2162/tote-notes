@@ -329,3 +329,22 @@ test("⌘Z after two compositions walks back one syllable at a time with every c
   expect(await text(page)).toBe("사과\n배\n귤");
   expect(await ranges(page)).toEqual(THREE);
 });
+
+test("⌘/ toggles the line comment of the language and brackets close as configured", async ({
+  page,
+}) => {
+  await open(page, "echo hi", "run.sh");
+  await page.keyboard.press("Meta+/");
+  expect(await text(page)).toBe("# echo hi");
+  await page.keyboard.press("Meta+/");
+  expect(await text(page)).toBe("echo hi");
+  await page.keyboard.press("End");
+  await page.keyboard.type(" (");
+  expect(await text(page)).toBe("echo hi ()");
+});
+
+test("a language with only a block comment uses it for ⌘/", async ({ page }) => {
+  await open(page, "<p>hi</p>", "a.html");
+  await page.keyboard.press("Meta+/");
+  expect(await text(page)).toBe("<!-- <p>hi</p> -->");
+});

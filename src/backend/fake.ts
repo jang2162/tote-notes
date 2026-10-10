@@ -1,11 +1,15 @@
 import { basename, splitName } from "../core/names";
+import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   BackendError,
   type Backend,
+  type ExtensionRegistry,
+  type ExtensionSummary,
   type ExternalInfo,
   type FileKind,
   type MemoInfo,
   type PendingOpen,
+  type Settings,
   type WindowFrame,
   type WorkspaceInfo,
   type WorkspaceListItem,
@@ -41,6 +45,16 @@ export interface FakeData {
   reads: Record<string, number>;
   flushed: number[];
   windowClosed: boolean;
+  settings: Settings;
+  /** Extensions the fake "installed"; they contribute nothing but a row in the list. */
+  userExtensions: ExtensionSummary[];
+  /** What `installExtension(path)` finds at a path: the manifest identity of the package. */
+  packages: Record<
+    string,
+    { name: string; publisher: string; version: string; displayName?: string }
+  >;
+  /** `"<extension id>/<path>"` → file text. Missing entries are fetched from the dev server. */
+  extensionFiles: Record<string, string>;
 }
 
 export interface FakeStorage {
@@ -72,6 +86,14 @@ export function defaultFakeData(): FakeData {
     reads: {},
     flushed: [],
     windowClosed: false,
+    settings: {
+      workspaceRoot: null,
+      theme: { light: null, dark: null },
+      extensions: { disabled: [], precedence: "user" },
+    },
+    userExtensions: [],
+    packages: {},
+    extensionFiles: {},
   };
 }
 
@@ -152,6 +174,7 @@ export class FakeBackend implements Backend {
     flush: [] as ((id: number) => void)[],
     pending: [] as (() => void)[],
     drop: [] as ((paths: string[]) => void)[],
+    config: [] as (() => void)[],
   };
 
   constructor(private readonly storage: FakeStorage = memoryStorage()) {
@@ -170,6 +193,9 @@ export class FakeBackend implements Backend {
 
   menu(id: string): void {
     for (const handler of this.handlers.menu) handler(id);
+  }
+  config(): void {
+    for (const handler of this.handlers.config) handler();
   }
   requestFlush(id: number): void {
     for (const handler of this.handlers.flush) handler(id);
@@ -366,6 +392,95 @@ export class FakeBackend implements Backend {
   async closeWindow() {
     this.data.windowClosed = true;
     this.commit();
+  }
+
+  async extensionRegistry(): Promise<ExtensionRegistry> {
+    const bundled = fakeRegistry as ExtensionRegistry;
+    const user = this.data.userExtensions.map((e) => ({
+      ...e,
+      enabled: !this.data.settings.extensions.disabled.includes(e.id),
+    }));
+    return { ...bundled, extensions: [...bundled.extensions, ...user] };
+  }
+
+  async readExtensionFile(extensionId: string, path: string) {
+    const text = this.data.extensionFiles[`${extensionId}/${path}`];
+    if (text !== undefined) return new TextEncoder().encode(text);
+    if (typeof fetch !== "function" || typeof location === "undefined")
+      throw new BackendError("not-found", `${extensionId}/${path}`);
+    const response = await fetch(this.viewerUrl(extensionId, path));
+    if (!response.ok) throw new BackendError("not-found", `${extensionId}/${path}`);
+    return new Uint8Array(await response.arrayBuffer());
+  }
+
+  async installExtension(path: string, replace: boolean) {
+    const pkg = this.data.packages[path];
+    if (!pkg) throw new BackendError("invalid-extension", path);
+    const id = `${pkg.publisher}.${pkg.name}`;
+    const existing = this.data.userExtensions.find((e) => e.id === id);
+    if (existing && !replace)
+      throw new BackendError("already-installed", `${id} ${existing.version}`);
+    this.data.userExtensions = this.data.userExtensions.filter((e) => e.id !== id);
+    const summary: ExtensionSummary = {
+      id,
+      version: pkg.version,
+      displayName: pkg.displayName ?? pkg.name,
+      source: "user",
+      enabled: true,
+      path: `/fake/extensions/${id}@${pkg.version}`,
+    };
+    this.data.userExtensions.push(summary);
+    this.commit();
+    this.config();
+    return summary;
+  }
+
+  async removeExtension(id: string) {
+    if (!this.data.userExtensions.some((e) => e.id === id)) throw new BackendError("not-found", id);
+    this.data.userExtensions = this.data.userExtensions.filter((e) => e.id !== id);
+    this.data.settings.extensions.disabled = this.data.settings.extensions.disabled.filter(
+      (d) => d !== id,
+    );
+    this.commit();
+    this.config();
+  }
+
+  async setExtensionEnabled(id: string, enabled: boolean) {
+    const disabled = this.data.settings.extensions.disabled.filter((d) => d !== id);
+    if (!enabled) disabled.push(id);
+    this.data.settings.extensions.disabled = disabled;
+    this.commit();
+    this.config();
+  }
+
+  async settings() {
+    return this.data.settings;
+  }
+
+  async updateSettings(settings: Settings) {
+    this.data.settings = settings;
+    this.commit();
+    this.config();
+  }
+
+  viewerUrl(extensionId: string, entry: string) {
+    return `/extensions/${encodeURIComponent(extensionId)}/${entry}`;
+  }
+
+  async pickExtensionPackage() {
+    const picked = this.data.picks.shift() ?? null;
+    this.commit();
+    return picked;
+  }
+
+  async pickFolder() {
+    const picked = this.data.picks.shift() ?? null;
+    this.commit();
+    return picked;
+  }
+
+  onConfigChanged(handler: () => void) {
+    this.handlers.config.push(handler);
   }
 
   onMenu(handler: (id: string) => void) {

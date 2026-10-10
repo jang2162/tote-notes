@@ -1,17 +1,29 @@
 import { EditorSelection, EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import fakeRegistry from "../../../src/backend/fake-registry.json";
+import type { ExtensionRegistry } from "../../../src/backend/types";
+import { languageData, parseLanguageConfiguration } from "../../../src/editor/language-config";
 import { editorExtensions } from "../../../src/editor/setup";
+import { Registry } from "../../../src/extensions/registry";
 
 const params = new URLSearchParams(location.search);
+const fileName = params.get("file") ?? "note.md";
+// The dev server serves the bundled extensions under /extensions/, so no fake backend is needed.
+const lang = new Registry(fakeRegistry as ExtensionRegistry).languageForFile(fileName);
+const configResponse = lang?.configuration
+  ? await fetch(`/extensions/${lang.extension}/${lang.configuration}`)
+  : null;
+const config = configResponse?.ok ? parseLanguageConfiguration(await configResponse.text()) : {};
 const view = new EditorView({
   parent: document.getElementById("editor")!,
   state: EditorState.create({
     doc: params.get("doc") ?? "",
     extensions: editorExtensions({
-      fileName: params.get("file") ?? "note.md",
+      fileName,
       wrap: true,
       onUpdate: () => {},
+      languageData: languageData(config),
     }),
   }),
 });
