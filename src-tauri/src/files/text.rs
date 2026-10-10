@@ -27,8 +27,15 @@ pub struct TextScan {
 }
 
 pub fn scan(path: &Path) -> io::Result<TextScan> {
-    let mut file = File::open(path)?;
+    let file = File::open(path)?;
     let size = file.metadata()?.len();
+    scan_reader(file, size)
+}
+
+/// The first `size` bytes of `reader`. A log still being written grows while it is read; what
+/// came after the size the viewer was told is not part of this scan.
+fn scan_reader(reader: impl Read, size: u64) -> io::Result<TextScan> {
+    let mut reader = reader.take(size);
     let mut buf = vec![0u8; READ_CHUNK];
     let mut offset: u64 = 0;
     let mut line: u64 = 0;
@@ -36,7 +43,7 @@ pub fn scan(path: &Path) -> io::Result<TextScan> {
     let mut longest: u64 = 0;
     let mut checkpoints = vec![0u64];
     loop {
-        let n = file.read(&mut buf)?;
+        let n = reader.read(&mut buf)?;
         if n == 0 {
             break;
         }
@@ -128,6 +135,8 @@ pub fn search(
         }
         if line >= from_line && !query.query.is_empty() {
             let text = line_buf.strip_suffix(b"\n").unwrap_or(&line_buf);
+            // A CRLF line matches as the viewer shows it, without the \r (the fake does the same).
+            let text = text.strip_suffix(b"\r").unwrap_or(text);
             for found in re.find_iter(text) {
                 matches.push(TextMatch {
                     line,
@@ -200,6 +209,37 @@ mod tests {
         assert_eq!((s.line_count, s.checkpoints.len()), (1, 1));
         fs::write(&path, "a\r\nbbb\r\n").unwrap();
         assert_eq!(scan(&path).unwrap().longest_line, 4); // \r stays in the line; the viewer strips it
+    }
+
+    #[test]
+    fn scan_stops_at_the_size_it_started_with_while_the_file_grows() {
+        // A log being written: more bytes arrive than the size read when the scan began.
+        let grown = b"a\nbb\nccc\ndddd\n";
+        let s = scan_reader(&grown[..], 4).unwrap();
+        assert_eq!(s.size, 4);
+        assert_eq!((s.line_count, s.longest_line), (2, 2)); // "a", "bb"
+        assert_eq!(s.checkpoints, vec![0]);
+    }
+
+    #[test]
+    fn search_matches_a_crlf_line_without_its_cr() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("crlf.txt");
+        fs::write(&path, "a needle\r\nb\r\nlast needle\r").unwrap();
+        let q = TextQuery {
+            query: "needle$".into(),
+            case_sensitive: true,
+            regex: true,
+        };
+        let found = search(&path, &q, 0, 10, &|| false).unwrap();
+        assert_eq!(
+            found
+                .matches
+                .iter()
+                .map(|m| (m.line, m.column))
+                .collect::<Vec<_>>(),
+            vec![(0, 2), (2, 5)]
+        );
     }
 
     #[test]

@@ -5,7 +5,9 @@ import type { IRawTheme } from "@shikijs/vscode-textmate";
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
 import type { askUnsaved, pickLanguage, promptText, workspacePicker } from "../../src/ui/dialogs";
+import type { BackendError, TextQuery, TextSearch } from "../../src/backend/types";
 import type { ViewerHost } from "../../src/viewer/host";
+import type { LargeTextViewer } from "../../src/viewer/large-text";
 
 declare global {
   interface Window {
@@ -35,6 +37,18 @@ declare global {
     result: unknown;
     /** Set by tests/e2e/pages/viewer.ts. */
     viewerHost: ViewerHost;
+    /** Set by tests/e2e/pages/large-text.ts. */
+    largeTextViewer: LargeTextViewer;
+    searchCalls: {
+      query: TextQuery;
+      fromLine: number;
+      resolve(result: TextSearch): void;
+      reject(error: unknown): void;
+    }[];
+    /** The Range requests the viewer made, as [first byte, last byte]. */
+    fetchLog: [number, number][];
+    BackendError: typeof BackendError;
+    lineText(line: number): string;
     /** Set by src/main.ts when it runs on the fake backend. */
     __tote: { app: AppController; backend: FakeBackend; ready: boolean };
   }
