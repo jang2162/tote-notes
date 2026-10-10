@@ -1,0 +1,452 @@
+{
+  "name": "languages",
+  "publisher": "tote",
+  "version": "1.0.0",
+  "displayName": "tote 기본 언어 묶음",
+  "contributes": {
+    "languages": [
+      {
+        "id": "plaintext",
+        "aliases": [
+          "Plain Text"
+        ],
+        "extensions": [
+          ".txt",
+          ".text"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/plaintext.json"
+      },
+      {
+        "id": "markdown",
+        "aliases": [
+          "Markdown"
+        ],
+        "extensions": [
+          ".md",
+          ".markdown"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/markdown.json"
+      },
+      {
+        "id": "shellscript",
+        "aliases": [
+          "Shell Script"
+        ],
+        "extensions": [
+          ".sh",
+          ".bash",
+          ".zsh",
+          ".command"
+        ],
+        "filenames": [
+          ".bashrc",
+          ".zshrc",
+          ".profile",
+          ".bash_profile"
+        ],
+        "firstLine": "^#!.*\\b(bash|zsh|sh|ksh|dash)\\b",
+        "configuration": "./language-configuration/shellscript.json"
+      },
+      {
+        "id": "json",
+        "aliases": [
+          "JSON"
+        ],
+        "extensions": [
+          ".json"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/json.json"
+      },
+      {
+        "id": "jsonc",
+        "aliases": [
+          "JSON with Comments"
+        ],
+        "extensions": [
+          ".jsonc",
+          ".json5"
+        ],
+        "filenames": [
+          "tsconfig.json",
+          "jsconfig.json",
+          ".eslintrc",
+          "settings.json"
+        ],
+        "configuration": "./language-configuration/jsonc.json"
+      },
+      {
+        "id": "yaml",
+        "aliases": [
+          "YAML"
+        ],
+        "extensions": [
+          ".yaml",
+          ".yml"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/yaml.json"
+      },
+      {
+        "id": "toml",
+        "aliases": [
+          "TOML"
+        ],
+        "extensions": [
+          ".toml"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/toml.json"
+      },
+      {
+        "id": "ini",
+        "aliases": [
+          "INI"
+        ],
+        "extensions": [
+          ".ini",
+          ".cfg",
+          ".conf"
+        ],
+        "filenames": [
+          ".editorconfig",
+          ".gitconfig"
+        ],
+        "configuration": "./language-configuration/ini.json"
+      },
+      {
+        "id": "dotenv",
+        "aliases": [
+          "Dotenv"
+        ],
+        "extensions": [
+          ".env"
+        ],
+        "filenames": [
+          ".env",
+          ".env.local",
+          ".env.example"
+        ],
+        "configuration": "./language-configuration/dotenv.json"
+      },
+      {
+        "id": "javascript",
+        "aliases": [
+          "JavaScript"
+        ],
+        "extensions": [
+          ".js",
+          ".mjs",
+          ".cjs",
+          ".jsx"
+        ],
+        "filenames": [],
+        "firstLine": "^#!.*\\bnode\\b",
+        "configuration": "./language-configuration/javascript.json"
+      },
+      {
+        "id": "typescript",
+        "aliases": [
+          "TypeScript"
+        ],
+        "extensions": [
+          ".ts",
+          ".mts",
+          ".cts"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/typescript.json"
+      },
+      {
+        "id": "python",
+        "aliases": [
+          "Python"
+        ],
+        "extensions": [
+          ".py",
+          ".pyi"
+        ],
+        "filenames": [],
+        "firstLine": "^#!.*\\bpython[0-9.]*\\b",
+        "configuration": "./language-configuration/python.json"
+      },
+      {
+        "id": "html",
+        "aliases": [
+          "HTML"
+        ],
+        "extensions": [
+          ".html",
+          ".htm"
+        ],
+        "filenames": [],
+        "firstLine": "^\\s*<!doctype html",
+        "configuration": "./language-configuration/html.json"
+      },
+      {
+        "id": "css",
+        "aliases": [
+          "CSS"
+        ],
+        "extensions": [
+          ".css"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/css.json"
+      },
+      {
+        "id": "xml",
+        "aliases": [
+          "XML"
+        ],
+        "extensions": [
+          ".xml",
+          ".svg",
+          ".plist",
+          ".xsl",
+          ".xslt"
+        ],
+        "filenames": [],
+        "firstLine": "^\\s*<\\?xml",
+        "configuration": "./language-configuration/xml.json"
+      },
+      {
+        "id": "sql",
+        "aliases": [
+          "SQL"
+        ],
+        "extensions": [
+          ".sql"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/sql.json"
+      },
+      {
+        "id": "go",
+        "aliases": [
+          "Go"
+        ],
+        "extensions": [
+          ".go"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/go.json"
+      },
+      {
+        "id": "rust",
+        "aliases": [
+          "Rust"
+        ],
+        "extensions": [
+          ".rs"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/rust.json"
+      },
+      {
+        "id": "java",
+        "aliases": [
+          "Java"
+        ],
+        "extensions": [
+          ".java"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/java.json"
+      },
+      {
+        "id": "c",
+        "aliases": [
+          "C"
+        ],
+        "extensions": [
+          ".c",
+          ".h"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/c.json"
+      },
+      {
+        "id": "cpp",
+        "aliases": [
+          "C++"
+        ],
+        "extensions": [
+          ".cpp",
+          ".cc",
+          ".cxx",
+          ".hpp",
+          ".hh",
+          ".hxx"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/cpp.json"
+      },
+      {
+        "id": "diff",
+        "aliases": [
+          "Diff"
+        ],
+        "extensions": [
+          ".diff",
+          ".patch"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/diff.json"
+      },
+      {
+        "id": "dockerfile",
+        "aliases": [
+          "Dockerfile"
+        ],
+        "extensions": [
+          ".dockerfile"
+        ],
+        "filenames": [
+          "Dockerfile",
+          "Containerfile"
+        ],
+        "configuration": "./language-configuration/dockerfile.json"
+      },
+      {
+        "id": "makefile",
+        "aliases": [
+          "Makefile"
+        ],
+        "extensions": [
+          ".mk",
+          ".mak"
+        ],
+        "filenames": [
+          "Makefile",
+          "makefile",
+          "GNUmakefile"
+        ],
+        "configuration": "./language-configuration/makefile.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "markdown",
+        "scopeName": "text.html.markdown",
+        "path": "./grammars/markdown.json"
+      },
+      {
+        "language": "shellscript",
+        "scopeName": "source.shell",
+        "path": "./grammars/shellscript.json"
+      },
+      {
+        "language": "json",
+        "scopeName": "source.json",
+        "path": "./grammars/json.json"
+      },
+      {
+        "language": "jsonc",
+        "scopeName": "source.json.comments",
+        "path": "./grammars/jsonc.json"
+      },
+      {
+        "language": "yaml",
+        "scopeName": "source.yaml",
+        "path": "./grammars/yaml.json"
+      },
+      {
+        "language": "toml",
+        "scopeName": "source.toml",
+        "path": "./grammars/toml.json"
+      },
+      {
+        "language": "ini",
+        "scopeName": "source.ini",
+        "path": "./grammars/ini.json"
+      },
+      {
+        "language": "dotenv",
+        "scopeName": "source.dotenv",
+        "path": "./grammars/dotenv.json"
+      },
+      {
+        "language": "javascript",
+        "scopeName": "source.js",
+        "path": "./grammars/javascript.json"
+      },
+      {
+        "language": "typescript",
+        "scopeName": "source.ts",
+        "path": "./grammars/typescript.json"
+      },
+      {
+        "language": "python",
+        "scopeName": "source.python",
+        "path": "./grammars/python.json"
+      },
+      {
+        "language": "html",
+        "scopeName": "text.html.basic",
+        "path": "./grammars/html.json"
+      },
+      {
+        "language": "css",
+        "scopeName": "source.css",
+        "path": "./grammars/css.json"
+      },
+      {
+        "language": "xml",
+        "scopeName": "text.xml",
+        "path": "./grammars/xml.json"
+      },
+      {
+        "language": "sql",
+        "scopeName": "source.sql",
+        "path": "./grammars/sql.json"
+      },
+      {
+        "language": "go",
+        "scopeName": "source.go",
+        "path": "./grammars/go.json"
+      },
+      {
+        "language": "rust",
+        "scopeName": "source.rust",
+        "path": "./grammars/rust.json"
+      },
+      {
+        "language": "java",
+        "scopeName": "source.java",
+        "path": "./grammars/java.json"
+      },
+      {
+        "language": "c",
+        "scopeName": "source.c",
+        "path": "./grammars/c.json"
+      },
+      {
+        "language": "cpp",
+        "scopeName": "source.cpp",
+        "path": "./grammars/cpp.json"
+      },
+      {
+        "language": "diff",
+        "scopeName": "source.diff",
+        "path": "./grammars/diff.json"
+      },
+      {
+        "language": "dockerfile",
+        "scopeName": "source.dockerfile",
+        "path": "./grammars/docker.json"
+      },
+      {
+        "language": "makefile",
+        "scopeName": "source.makefile",
+        "path": "./grammars/make.json"
+      },
+      {
+        "scopeName": "source.cpp.embedded.macro",
+        "path": "./grammars/cpp-macro.json"
+      }
+    ]
+  }
+}

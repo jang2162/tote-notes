@@ -1,0 +1,224 @@
+import { readFileSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
+import { describe, expect, it } from "vitest";
+
+import { ALLOWED_LICENSES, EXTRA_GRAMMARS, LANGUAGES, THEMES } from "./bundled-languages.ts";
+import {
+  checkLicense,
+  fakeRegistry,
+  inlineViewer,
+  languageConfiguration,
+  manifestFor,
+} from "./sync-bundled.ts";
+
+const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
+const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
+
+describe("the selection table", () => {
+  it("covers the spec's language list and names a grammar tm-grammars has", async () => {
+    const { grammars, injections } = await import("tm-grammars");
+    const names = new Set([...grammars, ...injections].map((g) => g.name));
+    const ids = LANGUAGES.map((l) => l.id);
+    for (const wanted of [
+      "markdown",
+      "plaintext",
+      "shellscript",
+      "json",
+      "jsonc",
+      "yaml",
+      "toml",
+      "ini",
+      "dotenv",
+      "javascript",
+      "typescript",
+      "python",
+      "html",
+      "css",
+      "xml",
+      "sql",
+      "go",
+      "rust",
+      "java",
+      "c",
+      "cpp",
+      "diff",
+      "dockerfile",
+      "makefile",
+    ]) {
+      expect(ids).toContain(wanted);
+    }
+    for (const lang of LANGUAGES) if (lang.grammar) expect(names.has(lang.grammar)).toBe(true);
+    for (const extra of EXTRA_GRAMMARS) expect(names.has(extra)).toBe(true);
+    expect(new Set(ids).size).toBe(ids.length);
+  });
+});
+
+describe("checkLicense", () => {
+  it("takes the metadata's license when it is allowed and the table's note when it is missing", () => {
+    expect(
+      checkLicense("json", { license: "MIT", licenseUrl: "https://x/LICENSE" }, undefined),
+    ).toEqual({
+      name: "json",
+      spdx: "MIT",
+      url: "https://x/LICENSE",
+      note: "",
+    });
+    expect(
+      checkLicense(
+        "yaml",
+        {},
+        { spdx: "textmate-bundle", url: "https://y", note: "Permission to copy…" },
+      ),
+    ).toEqual({
+      name: "yaml",
+      spdx: "textmate-bundle",
+      url: "https://y",
+      note: "Permission to copy…",
+    });
+  });
+
+  it("refuses a missing or disallowed license", () => {
+    expect(() =>
+      checkLicense("ada", { license: "GPL-3.0", licenseUrl: "https://g" }, undefined),
+    ).toThrow(/GPL-3.0/);
+    expect(() => checkLicense("mystery", {}, undefined)).toThrow(/mystery/);
+    expect(ALLOWED_LICENSES).toContain("MIT");
+  });
+});
+
+describe("languageConfiguration and manifestFor", () => {
+  it("turns the table row into VS Code's language-configuration shape", () => {
+    const config = languageConfiguration({
+      id: "sql",
+      aliases: ["SQL"],
+      grammar: "sql",
+      extensions: ["sql"],
+      comments: { line: "--", block: ["/*", "*/"] },
+    });
+    expect(config).toEqual({
+      comments: { lineComment: "--", blockComment: ["/*", "*/"] },
+      brackets: [
+        ["(", ")"],
+        ["[", "]"],
+        ["{", "}"],
+      ],
+      autoClosingPairs: [
+        { open: "(", close: ")" },
+        { open: "[", close: "]" },
+        { open: "{", close: "}" },
+        { open: '"', close: '"', notIn: ["string"] },
+        { open: "'", close: "'", notIn: ["string", "comment"] },
+      ],
+    });
+  });
+
+  it("writes one language and one grammar contribution per row, extras without a language", () => {
+    const manifest = manifestFor(
+      [
+        { id: "plaintext", aliases: ["Plain Text"], grammar: null, extensions: ["txt"] },
+        { id: "c", aliases: ["C"], grammar: "c", extensions: ["c", "h"], firstLine: "^#!" },
+      ],
+      ["cpp-macro"],
+      { c: "source.c", "cpp-macro": "source.cpp.embedded.macro" },
+    );
+    expect(manifest.name).toBe("languages");
+    expect(manifest.publisher).toBe("tote");
+    expect(manifest.contributes.languages).toEqual([
+      {
+        id: "plaintext",
+        aliases: ["Plain Text"],
+        extensions: [".txt"],
+        filenames: [],
+        configuration: "./language-configuration/plaintext.json",
+      },
+      {
+        id: "c",
+        aliases: ["C"],
+        extensions: [".c", ".h"],
+        filenames: [],
+        firstLine: "^#!",
+        configuration: "./language-configuration/c.json",
+      },
+    ]);
+    expect(manifest.contributes.grammars).toEqual([
+      { language: "c", scopeName: "source.c", path: "./grammars/c.json" },
+      { scopeName: "source.cpp.embedded.macro", path: "./grammars/cpp-macro.json" },
+    ]);
+  });
+});
+
+describe("inlineViewer", () => {
+  it("inlines vendor scripts and locks the CSP to the hashes of every inline script", () => {
+    const template = `<!doctype html><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src __SCRIPT_HASHES__"><script>__INLINE:lib__</script><script>main()</script>`;
+    const html = inlineViewer(template, { lib: "var lib = 1;" });
+    expect(html).toContain("<script>var lib = 1;</script>");
+    expect(html).not.toContain("__INLINE");
+    const hashes = html.match(/'sha256-[A-Za-z0-9+/=]+'/g) ?? [];
+    expect(hashes).toHaveLength(2);
+    expect(html).not.toContain("__SCRIPT_HASHES__");
+  });
+
+  it("refuses a template that still has a placeholder after inlining", () => {
+    expect(() => inlineViewer("<script>__INLINE: marked__;</script>", {})).toThrow(/__INLINE/);
+  });
+
+  it("refuses a template that names a vendor it was not given", () => {
+    expect(() => inlineViewer("<script>__INLINE:nope__</script>", {})).toThrow(/nope/);
+  });
+});
+
+describe("the generated files", () => {
+  it("are what the generator makes now (run pnpm sync:bundled when this fails)", () => {
+    const manifest = JSON.parse(read("src-tauri/resources/extensions/tote.languages/package.json"));
+    expect(manifest.contributes.languages).toHaveLength(LANGUAGES.length);
+    expect(manifest.contributes.grammars).toHaveLength(
+      LANGUAGES.filter((l) => l.grammar).length + EXTRA_GRAMMARS.length,
+    );
+    for (const lang of LANGUAGES) {
+      expect(() =>
+        read(
+          `src-tauri/resources/extensions/tote.languages/language-configuration/${lang.id}.json`,
+        ),
+      ).not.toThrow();
+      if (lang.grammar) {
+        const grammar = JSON.parse(
+          read(`src-tauri/resources/extensions/tote.languages/grammars/${lang.grammar}.json`),
+        );
+        expect(typeof grammar.scopeName).toBe("string");
+      }
+    }
+    const licenses = read("src-tauri/resources/extensions/tote.languages/LICENSES.md");
+    for (const lang of LANGUAGES)
+      if (lang.grammar) expect(licenses).toContain(`| ${lang.grammar} |`);
+    const themes = JSON.parse(read("src-tauri/resources/extensions/tote.themes/package.json"));
+    expect(themes.contributes.themes.map((t: { label: string }) => t.label)).toEqual(
+      THEMES.map((t) => t.label),
+    );
+    for (const theme of THEMES) {
+      const json = JSON.parse(
+        read(`src-tauri/resources/extensions/tote.themes/themes/${theme.name}.json`),
+      );
+      expect(json.colors["editor.background"]).toMatch(/^#/);
+      expect(Array.isArray(json.tokenColors)).toBe(true);
+    }
+    const fake = JSON.parse(read("src/backend/fake-registry.json"));
+    expect(fake.extensions.map((e: { id: string }) => e.id)).toContain("tote.languages");
+    expect(fake.languages.find((l: { id: string }) => l.id === "markdown").grammar.scopeName).toBe(
+      "text.html.markdown",
+    );
+    expect(fake.themes).toHaveLength(THEMES.length);
+    expect(
+      fake.grammars.some((g: { scopeName: string }) => g.scopeName === "source.cpp.embedded.macro"),
+    ).toBe(true);
+    expect(fake.problems).toEqual([]);
+  });
+
+  it("match the fake registry a Rust scan of the same folders would make", () => {
+    const fake = JSON.parse(read("src/backend/fake-registry.json"));
+    const manifests = fake.extensions.map((e: { id: string }) =>
+      JSON.parse(read(`src-tauri/resources/extensions/${e.id}/package.json`)),
+    );
+    expect(fakeRegistry(manifests)).toEqual(fake);
+  });
+});

@@ -1,0 +1,20 @@
+{
+  "name": "themes",
+  "publisher": "tote",
+  "version": "1.0.0",
+  "displayName": "tote 기본 테마",
+  "contributes": {
+    "themes": [
+      {
+        "label": "Light+",
+        "uiTheme": "vs",
+        "path": "./themes/light-plus.json"
+      },
+      {
+        "label": "Dark+",
+        "uiTheme": "vs-dark",
+        "path": "./themes/dark-plus.json"
+      }
+    ]
+  }
+}

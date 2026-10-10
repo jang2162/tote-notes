@@ -5,6 +5,8 @@
     ".ruler/*/",
     "docs/guideline/",
     "pnpm-lock.yaml",
-    "src-tauri/fixtures/"
+    "src-tauri/fixtures/",
+    "src-tauri/resources/extensions/",
+    "src/backend/fake-registry.json"
   ]
 }

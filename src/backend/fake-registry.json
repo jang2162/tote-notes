@@ -1,0 +1,688 @@
+{
+  "extensions": [
+    {
+      "id": "tote.languages",
+      "version": "1.0.0",
+      "displayName": "tote 기본 언어 묶음",
+      "source": "bundled",
+      "enabled": true,
+      "path": "/bundled/tote.languages"
+    },
+    {
+      "id": "tote.themes",
+      "version": "1.0.0",
+      "displayName": "tote 기본 테마",
+      "source": "bundled",
+      "enabled": true,
+      "path": "/bundled/tote.themes"
+    }
+  ],
+  "languages": [
+    {
+      "id": "plaintext",
+      "extension": "tote.languages",
+      "aliases": [
+        "Plain Text"
+      ],
+      "extensions": [
+        "txt",
+        "text"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/plaintext.json",
+      "grammar": null
+    },
+    {
+      "id": "markdown",
+      "extension": "tote.languages",
+      "aliases": [
+        "Markdown"
+      ],
+      "extensions": [
+        "md",
+        "markdown"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/markdown.json",
+      "grammar": {
+        "scopeName": "text.html.markdown",
+        "path": "grammars/markdown.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "shellscript",
+      "extension": "tote.languages",
+      "aliases": [
+        "Shell Script"
+      ],
+      "extensions": [
+        "sh",
+        "bash",
+        "zsh",
+        "command"
+      ],
+      "filenames": [
+        ".bashrc",
+        ".zshrc",
+        ".profile",
+        ".bash_profile"
+      ],
+      "firstLine": "^#!.*\\b(bash|zsh|sh|ksh|dash)\\b",
+      "configuration": "language-configuration/shellscript.json",
+      "grammar": {
+        "scopeName": "source.shell",
+        "path": "grammars/shellscript.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "json",
+      "extension": "tote.languages",
+      "aliases": [
+        "JSON"
+      ],
+      "extensions": [
+        "json"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/json.json",
+      "grammar": {
+        "scopeName": "source.json",
+        "path": "grammars/json.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "jsonc",
+      "extension": "tote.languages",
+      "aliases": [
+        "JSON with Comments"
+      ],
+      "extensions": [
+        "jsonc",
+        "json5"
+      ],
+      "filenames": [
+        "tsconfig.json",
+        "jsconfig.json",
+        ".eslintrc",
+        "settings.json"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/jsonc.json",
+      "grammar": {
+        "scopeName": "source.json.comments",
+        "path": "grammars/jsonc.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "yaml",
+      "extension": "tote.languages",
+      "aliases": [
+        "YAML"
+      ],
+      "extensions": [
+        "yaml",
+        "yml"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/yaml.json",
+      "grammar": {
+        "scopeName": "source.yaml",
+        "path": "grammars/yaml.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "toml",
+      "extension": "tote.languages",
+      "aliases": [
+        "TOML"
+      ],
+      "extensions": [
+        "toml"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/toml.json",
+      "grammar": {
+        "scopeName": "source.toml",
+        "path": "grammars/toml.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "ini",
+      "extension": "tote.languages",
+      "aliases": [
+        "INI"
+      ],
+      "extensions": [
+        "ini",
+        "cfg",
+        "conf"
+      ],
+      "filenames": [
+        ".editorconfig",
+        ".gitconfig"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/ini.json",
+      "grammar": {
+        "scopeName": "source.ini",
+        "path": "grammars/ini.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "dotenv",
+      "extension": "tote.languages",
+      "aliases": [
+        "Dotenv"
+      ],
+      "extensions": [
+        "env"
+      ],
+      "filenames": [
+        ".env",
+        ".env.local",
+        ".env.example"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/dotenv.json",
+      "grammar": {
+        "scopeName": "source.dotenv",
+        "path": "grammars/dotenv.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "javascript",
+      "extension": "tote.languages",
+      "aliases": [
+        "JavaScript"
+      ],
+      "extensions": [
+        "js",
+        "mjs",
+        "cjs",
+        "jsx"
+      ],
+      "filenames": [],
+      "firstLine": "^#!.*\\bnode\\b",
+      "configuration": "language-configuration/javascript.json",
+      "grammar": {
+        "scopeName": "source.js",
+        "path": "grammars/javascript.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "typescript",
+      "extension": "tote.languages",
+      "aliases": [
+        "TypeScript"
+      ],
+      "extensions": [
+        "ts",
+        "mts",
+        "cts"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/typescript.json",
+      "grammar": {
+        "scopeName": "source.ts",
+        "path": "grammars/typescript.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "python",
+      "extension": "tote.languages",
+      "aliases": [
+        "Python"
+      ],
+      "extensions": [
+        "py",
+        "pyi"
+      ],
+      "filenames": [],
+      "firstLine": "^#!.*\\bpython[0-9.]*\\b",
+      "configuration": "language-configuration/python.json",
+      "grammar": {
+        "scopeName": "source.python",
+        "path": "grammars/python.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "html",
+      "extension": "tote.languages",
+      "aliases": [
+        "HTML"
+      ],
+      "extensions": [
+        "html",
+        "htm"
+      ],
+      "filenames": [],
+      "firstLine": "^\\s*<!doctype html",
+      "configuration": "language-configuration/html.json",
+      "grammar": {
+        "scopeName": "text.html.basic",
+        "path": "grammars/html.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "css",
+      "extension": "tote.languages",
+      "aliases": [
+        "CSS"
+      ],
+      "extensions": [
+        "css"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/css.json",
+      "grammar": {
+        "scopeName": "source.css",
+        "path": "grammars/css.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "xml",
+      "extension": "tote.languages",
+      "aliases": [
+        "XML"
+      ],
+      "extensions": [
+        "xml",
+        "svg",
+        "plist",
+        "xsl",
+        "xslt"
+      ],
+      "filenames": [],
+      "firstLine": "^\\s*<\\?xml",
+      "configuration": "language-configuration/xml.json",
+      "grammar": {
+        "scopeName": "text.xml",
+        "path": "grammars/xml.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "sql",
+      "extension": "tote.languages",
+      "aliases": [
+        "SQL"
+      ],
+      "extensions": [
+        "sql"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/sql.json",
+      "grammar": {
+        "scopeName": "source.sql",
+        "path": "grammars/sql.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "go",
+      "extension": "tote.languages",
+      "aliases": [
+        "Go"
+      ],
+      "extensions": [
+        "go"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/go.json",
+      "grammar": {
+        "scopeName": "source.go",
+        "path": "grammars/go.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "rust",
+      "extension": "tote.languages",
+      "aliases": [
+        "Rust"
+      ],
+      "extensions": [
+        "rs"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/rust.json",
+      "grammar": {
+        "scopeName": "source.rust",
+        "path": "grammars/rust.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "java",
+      "extension": "tote.languages",
+      "aliases": [
+        "Java"
+      ],
+      "extensions": [
+        "java"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/java.json",
+      "grammar": {
+        "scopeName": "source.java",
+        "path": "grammars/java.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "c",
+      "extension": "tote.languages",
+      "aliases": [
+        "C"
+      ],
+      "extensions": [
+        "c",
+        "h"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/c.json",
+      "grammar": {
+        "scopeName": "source.c",
+        "path": "grammars/c.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "cpp",
+      "extension": "tote.languages",
+      "aliases": [
+        "C++"
+      ],
+      "extensions": [
+        "cpp",
+        "cc",
+        "cxx",
+        "hpp",
+        "hh",
+        "hxx"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/cpp.json",
+      "grammar": {
+        "scopeName": "source.cpp",
+        "path": "grammars/cpp.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "diff",
+      "extension": "tote.languages",
+      "aliases": [
+        "Diff"
+      ],
+      "extensions": [
+        "diff",
+        "patch"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/diff.json",
+      "grammar": {
+        "scopeName": "source.diff",
+        "path": "grammars/diff.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "dockerfile",
+      "extension": "tote.languages",
+      "aliases": [
+        "Dockerfile"
+      ],
+      "extensions": [
+        "dockerfile"
+      ],
+      "filenames": [
+        "Dockerfile",
+        "Containerfile"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/dockerfile.json",
+      "grammar": {
+        "scopeName": "source.dockerfile",
+        "path": "grammars/docker.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "makefile",
+      "extension": "tote.languages",
+      "aliases": [
+        "Makefile"
+      ],
+      "extensions": [
+        "mk",
+        "mak"
+      ],
+      "filenames": [
+        "Makefile",
+        "makefile",
+        "GNUmakefile"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/makefile.json",
+      "grammar": {
+        "scopeName": "source.makefile",
+        "path": "grammars/make.json",
+        "embeddedLanguages": {}
+      }
+    }
+  ],
+  "grammars": [
+    {
+      "extension": "tote.languages",
+      "language": "markdown",
+      "scopeName": "text.html.markdown",
+      "path": "grammars/markdown.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "shellscript",
+      "scopeName": "source.shell",
+      "path": "grammars/shellscript.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "json",
+      "scopeName": "source.json",
+      "path": "grammars/json.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "jsonc",
+      "scopeName": "source.json.comments",
+      "path": "grammars/jsonc.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "yaml",
+      "scopeName": "source.yaml",
+      "path": "grammars/yaml.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "toml",
+      "scopeName": "source.toml",
+      "path": "grammars/toml.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "ini",
+      "scopeName": "source.ini",
+      "path": "grammars/ini.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "dotenv",
+      "scopeName": "source.dotenv",
+      "path": "grammars/dotenv.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "javascript",
+      "scopeName": "source.js",
+      "path": "grammars/javascript.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "typescript",
+      "scopeName": "source.ts",
+      "path": "grammars/typescript.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "python",
+      "scopeName": "source.python",
+      "path": "grammars/python.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "html",
+      "scopeName": "text.html.basic",
+      "path": "grammars/html.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "css",
+      "scopeName": "source.css",
+      "path": "grammars/css.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "xml",
+      "scopeName": "text.xml",
+      "path": "grammars/xml.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "sql",
+      "scopeName": "source.sql",
+      "path": "grammars/sql.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "go",
+      "scopeName": "source.go",
+      "path": "grammars/go.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "rust",
+      "scopeName": "source.rust",
+      "path": "grammars/rust.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "java",
+      "scopeName": "source.java",
+      "path": "grammars/java.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "c",
+      "scopeName": "source.c",
+      "path": "grammars/c.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "cpp",
+      "scopeName": "source.cpp",
+      "path": "grammars/cpp.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "diff",
+      "scopeName": "source.diff",
+      "path": "grammars/diff.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "dockerfile",
+      "scopeName": "source.dockerfile",
+      "path": "grammars/docker.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "makefile",
+      "scopeName": "source.makefile",
+      "path": "grammars/make.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": null,
+      "scopeName": "source.cpp.embedded.macro",
+      "path": "grammars/cpp-macro.json",
+      "embeddedLanguages": {}
+    }
+  ],
+  "themes": [
+    {
+      "extension": "tote.themes",
+      "label": "Light+",
+      "uiTheme": "vs",
+      "path": "themes/light-plus.json"
+    },
+    {
+      "extension": "tote.themes",
+      "label": "Dark+",
+      "uiTheme": "vs-dark",
+      "path": "themes/dark-plus.json"
+    }
+  ],
+  "viewers": [],
+  "problems": []
+}
