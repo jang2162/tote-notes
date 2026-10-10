@@ -60,6 +60,11 @@ impl AppPaths {
         self.data_dir.join("settings.json")
     }
 
+    /// Extensions the person installed, one folder per `<id>@<version>` (spec 「설치와 로딩」).
+    pub fn extensions_dir(&self) -> PathBuf {
+        self.data_dir.join("extensions")
+    }
+
     pub fn launch_file(&self) -> PathBuf {
         self.data_dir.join("state.json")
     }
@@ -273,6 +278,7 @@ mod tests {
         assert_eq!(paths.machine_file(), PathBuf::from("/tmp/t/machine.json"));
         assert_eq!(paths.settings_file(), PathBuf::from("/tmp/t/settings.json"));
         assert_eq!(paths.buffers_dir(), PathBuf::from("/tmp/t/buffers"));
+        assert_eq!(paths.extensions_dir(), PathBuf::from("/tmp/t/extensions"));
         assert_eq!(paths.inbox_dir(), PathBuf::from("/tmp/t/inbox"));
     }
 

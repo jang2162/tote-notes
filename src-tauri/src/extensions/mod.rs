@@ -132,7 +132,7 @@ pub fn file_inside(root: &Path, relative: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::fs;
 

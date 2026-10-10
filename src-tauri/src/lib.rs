@@ -29,7 +29,9 @@ pub fn run() {
         .on_menu_event(menu::on_event)
         .on_window_event(windows::on_event)
         .setup(|app| {
-            app.manage(AppCore::load()?);
+            app.manage(AppCore::load(
+                app.path().resource_dir()?.join("extensions"),
+            )?);
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
             Ok(())
         })
@@ -58,6 +60,13 @@ pub fn run() {
             commands::open_workspace,
             commands::flush_done,
             commands::close_window,
+            commands::extension_registry,
+            commands::read_extension_file,
+            commands::install_extension,
+            commands::remove_extension,
+            commands::set_extension_enabled,
+            commands::get_settings,
+            commands::update_settings,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");

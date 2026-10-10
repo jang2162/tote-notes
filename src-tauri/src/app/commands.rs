@@ -9,9 +9,13 @@ use std::sync::{Arc, Mutex};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::{AppHandle, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
+use crate::appdata::Settings;
+use crate::extensions::file_inside;
+use crate::extensions::install::{self, InstallError};
+use crate::extensions::registry::{ExtensionSummary, Registry};
 use crate::persist::external::ExternalInfo;
 use crate::session;
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
@@ -311,7 +315,7 @@ pub struct WorkspaceListItem {
 #[tauri::command]
 pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<WorkspaceListItem>> {
     let recent = core.recent();
-    let mut list: Vec<WorkspaceListItem> = Workspace::list(&core.workspace_root)
+    let mut list: Vec<WorkspaceListItem> = Workspace::list(&core.workspace_root())
         .into_iter()
         .map(|summary| {
             let path = std::fs::canonicalize(&summary.path).unwrap_or(summary.path);
@@ -338,7 +342,7 @@ pub async fn create_workspace(
     core: State<'_, AppCore>,
     name: String,
 ) -> CmdResult<()> {
-    let workspace = Workspace::create(&core.workspace_root, &name)?;
+    let workspace = Workspace::create(&core.workspace_root(), &name)?;
     windows::show(&app, workspace.root())?;
     Ok(())
 }
@@ -358,5 +362,106 @@ pub async fn flush_done(app: AppHandle, window: WebviewWindow, id: u64) -> CmdRe
 #[tauri::command]
 pub async fn close_window(window: WebviewWindow) -> CmdResult<()> {
     window.close()?;
+    Ok(())
+}
+
+impl From<InstallError> for CommandError {
+    fn from(err: InstallError) -> CommandError {
+        let code = match &err {
+            InstallError::AlreadyInstalled { .. } => "already-installed",
+            InstallError::Invalid(_) => "invalid-extension",
+            InstallError::NotInstalled(_) => "not-found",
+            InstallError::Io(io) => io_code(io),
+        };
+        CommandError::new(code, err.to_string())
+    }
+}
+
+/// Settings or the extension set changed: every window re-reads both.
+fn broadcast_config(app: &AppHandle) {
+    let _ = app.emit("tote://config", ());
+}
+
+#[tauri::command]
+pub fn extension_registry(core: State<'_, AppCore>) -> Registry {
+    core.registry()
+}
+
+#[tauri::command]
+pub async fn read_extension_file(
+    core: State<'_, AppCore>,
+    extension_id: String,
+    path: String,
+) -> CmdResult<Response> {
+    let root = core
+        .extension_path(&extension_id)
+        .ok_or_else(|| CommandError::new("not-found", format!("no extension {extension_id}")))?;
+    let file = file_inside(&root, &path)
+        .ok_or_else(|| CommandError::new("not-found", format!("{extension_id}: {path}")))?;
+    Ok(Response::new(std::fs::read(file)?))
+}
+
+#[tauri::command]
+pub async fn install_extension(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    path: String,
+    replace: bool,
+) -> CmdResult<ExtensionSummary> {
+    let installed = install::install(&core.extensions, &absolute_path(&path)?, replace)?;
+    core.rescan_extensions();
+    broadcast_config(&app);
+    let id = installed.manifest.id();
+    core.registry()
+        .extensions
+        .into_iter()
+        .find(|e| e.id == id)
+        .ok_or_else(|| CommandError::new("app", "installed extension did not register"))
+}
+
+#[tauri::command]
+pub async fn remove_extension(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    id: String,
+) -> CmdResult<()> {
+    install::remove(&core.extensions, &id)?;
+    let mut settings = core.settings();
+    settings.extensions.disabled.retain(|d| *d != id);
+    core.update_settings(settings)?;
+    broadcast_config(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn set_extension_enabled(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    id: String,
+    enabled: bool,
+) -> CmdResult<()> {
+    let mut settings = core.settings();
+    settings.extensions.disabled.retain(|d| *d != id);
+    if !enabled {
+        settings.extensions.disabled.push(id);
+    }
+    core.update_settings(settings)?;
+    broadcast_config(&app);
+    Ok(())
+}
+
+#[tauri::command]
+pub fn get_settings(core: State<'_, AppCore>) -> Settings {
+    core.settings()
+}
+
+#[tauri::command]
+pub async fn update_settings(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    settings: Settings,
+) -> CmdResult<()> {
+    core.update_settings(settings)?;
+    broadcast_config(&app);
     Ok(())
 }

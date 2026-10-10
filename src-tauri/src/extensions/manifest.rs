@@ -290,7 +290,7 @@ pub fn relative_path(raw: &str) -> Result<String, ManifestError> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use std::io::Read;
 

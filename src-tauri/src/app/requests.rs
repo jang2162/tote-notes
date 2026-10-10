@@ -13,7 +13,7 @@ use crate::workspace::WorkspaceError;
 pub fn handle(app: &AppHandle, request: CliRequest) {
     let core = app.state::<AppCore>();
     let label = match &request.workspace {
-        Some(name) => match workspace_dir(&core.workspace_root, name) {
+        Some(name) => match workspace_dir(&core.workspace_root(), name) {
             Some(dir) => windows::show(app, &dir).map_err(|e| e.message),
             None => Err(format!("workspace name is not usable: {name}")),
         },

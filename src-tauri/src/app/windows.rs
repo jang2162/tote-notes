@@ -95,7 +95,7 @@ pub fn open_latest(app: &AppHandle) {
     let core = app.state::<AppCore>();
     let path = match core.fallback_workspace() {
         Some(path) => path,
-        None => match Workspace::create(&core.workspace_root, DEFAULT_WORKSPACE) {
+        None => match Workspace::create(&core.workspace_root(), DEFAULT_WORKSPACE) {
             Ok(workspace) => workspace.root().to_path_buf(),
             Err(err) => {
                 eprintln!("tote: {err}");

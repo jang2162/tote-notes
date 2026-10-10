@@ -11,12 +11,15 @@ pub mod windows;
 
 use std::collections::{HashMap, HashSet};
 use std::fs;
+use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings};
+use crate::extensions::registry::{self, Registry};
+use crate::extensions::ExtensionStore;
 use crate::persist::content_hash;
 use crate::persist::external::ExternalFiles;
 use crate::session::drafts::DraftStore;
@@ -42,8 +45,11 @@ pub enum PendingOpen {
 pub struct AppCore {
     pub paths: AppPaths,
     pub machine: Machine,
-    pub workspace_root: PathBuf,
     pub external: ExternalFiles,
+    pub extensions: ExtensionStore,
+    workspace_root: Mutex<PathBuf>,
+    settings: Mutex<Settings>,
+    registry: Mutex<Registry>,
     inner: Mutex<Inner>,
 }
 
@@ -66,7 +72,8 @@ struct OpenWindow {
 }
 
 impl AppCore {
-    pub fn load() -> Result<AppCore, String> {
+    /// `bundled_dir`: the extensions folder inside the app bundle's resources.
+    pub fn load(bundled_dir: PathBuf) -> Result<AppCore, String> {
         let paths = AppPaths::resolve().ok_or("could not find the app data folder")?;
         let machine = Machine::load_or_create(&paths.machine_file(), device_name)
             .map_err(|err| format!("machine.json: {err}"))?;
@@ -74,22 +81,28 @@ impl AppCore {
             .map_err(|err| format!("settings.json: {err}"))?;
         let launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
-        Ok(AppCore::new(paths, machine, &settings, launch))
+        Ok(AppCore::new(paths, machine, settings, launch, bundled_dir))
     }
 
     pub fn new(
         paths: AppPaths,
         machine: Machine,
-        settings: &Settings,
+        settings: Settings,
         launch: LaunchState,
+        bundled_dir: PathBuf,
     ) -> AppCore {
         let workspace_root = settings.workspace_root(&paths);
         let external = ExternalFiles::new(DraftStore::new(paths.buffers_dir()));
+        let extensions = ExtensionStore::new(bundled_dir, paths.extensions_dir());
+        let registry = registry::build(&extensions.scan(), &settings.extensions);
         AppCore {
             paths,
             machine,
-            workspace_root,
             external,
+            extensions,
+            workspace_root: Mutex::new(workspace_root),
+            settings: Mutex::new(settings),
+            registry: Mutex::new(registry),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
                 reserved: HashSet::new(),
@@ -99,6 +112,42 @@ impl AppCore {
                 quitting: false,
             }),
         }
+    }
+
+    pub fn workspace_root(&self) -> PathBuf {
+        lock(&self.workspace_root).clone()
+    }
+
+    pub fn settings(&self) -> Settings {
+        lock(&self.settings).clone()
+    }
+
+    /// Saves and applies: the workspace root moves at once (open windows stay), the registry is
+    /// rebuilt with the new switches.
+    pub fn update_settings(&self, settings: Settings) -> io::Result<()> {
+        settings.save(&self.paths.settings_file())?;
+        *lock(&self.workspace_root) = settings.workspace_root(&self.paths);
+        *lock(&self.settings) = settings;
+        self.rescan_extensions();
+        Ok(())
+    }
+
+    pub fn registry(&self) -> Registry {
+        lock(&self.registry).clone()
+    }
+
+    pub fn rescan_extensions(&self) {
+        let settings = lock(&self.settings);
+        *lock(&self.registry) = registry::build(&self.extensions.scan(), &settings.extensions);
+    }
+
+    /// The folder of an installed extension, enabled or not.
+    pub fn extension_path(&self, id: &str) -> Option<PathBuf> {
+        lock(&self.registry)
+            .extensions
+            .iter()
+            .find(|e| e.id == id)
+            .map(|e| e.path.clone())
     }
 
     /// One window per workspace folder. The label comes from the folder, so opening the same
@@ -224,7 +273,7 @@ impl AppCore {
             .into_iter()
             .find(|path| Workspace::is_workspace(path))
             .or_else(|| {
-                let first = Workspace::list(&self.workspace_root).into_iter().next()?;
+                let first = Workspace::list(&self.workspace_root()).into_iter().next()?;
                 Some(fs::canonicalize(&first.path).unwrap_or(first.path))
             })
     }
@@ -291,11 +340,17 @@ mod tests {
             device_id: "device".into(),
             device_name: "맥".into(),
         };
-        AppCore::new(paths, machine, &Settings::default(), LaunchState::default())
+        AppCore::new(
+            paths,
+            machine,
+            Settings::default(),
+            LaunchState::default(),
+            dir.join("bundled"),
+        )
     }
 
     fn open(core: &AppCore, name: &str) -> String {
-        let workspace = Workspace::create(&core.workspace_root, name).unwrap();
+        let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
         let label = AppCore::label_for(workspace.root());
         core.register(&label, workspace);
         core.opened(&label);
@@ -357,10 +412,42 @@ mod tests {
     }
 
     #[test]
+    fn settings_changes_move_the_workspace_root_and_rebuild_the_registry() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        assert_eq!(core.workspace_root(), core.paths.default_workspace_root);
+        let mut settings = core.settings();
+        settings.workspace_root = Some(dir.path().join("elsewhere"));
+        settings.extensions.disabled = vec!["someone.ext".into()];
+        core.update_settings(settings.clone()).unwrap();
+        assert_eq!(core.workspace_root(), dir.path().join("elsewhere"));
+        assert_eq!(
+            Settings::load(&core.paths.settings_file()).unwrap(),
+            settings
+        );
+        crate::extensions::tests::write_extension(
+            &core.paths.extensions_dir(),
+            "someone.ext@1",
+            r#"{"name": "ext", "publisher": "someone", "version": "1",
+                "contributes": {"themes": [{"label": "T", "uiTheme": "vs", "path": "t.json"}]}}"#,
+        );
+        core.rescan_extensions();
+        let registry = core.registry();
+        assert_eq!(registry.extensions.len(), 1);
+        assert!(!registry.extensions[0].enabled);
+        assert!(registry.themes.is_empty());
+        assert_eq!(
+            core.extension_path("someone.ext"),
+            Some(core.paths.extensions_dir().join("someone.ext@1"))
+        );
+        assert_eq!(core.extension_path("nobody.ext"), None);
+    }
+
+    #[test]
     fn a_label_is_reserved_once() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
-        let workspace = Workspace::create(&core.workspace_root, "가").unwrap();
+        let workspace = Workspace::create(&core.workspace_root(), "가").unwrap();
         let label = AppCore::label_for(workspace.root());
         assert!(core.reserve(&label));
         assert!(!core.reserve(&label));
@@ -407,7 +494,7 @@ mod tests {
         core.closed(&a);
         assert_eq!(core.fallback_workspace(), Some(a_path.clone()));
         std::fs::rename(&a_path, dir.path().join("옮김")).unwrap();
-        let other = Workspace::create(&core.workspace_root, "다른").unwrap();
+        let other = Workspace::create(&core.workspace_root(), "다른").unwrap();
         assert_eq!(core.fallback_workspace(), Some(other.root().to_path_buf()));
     }
 
