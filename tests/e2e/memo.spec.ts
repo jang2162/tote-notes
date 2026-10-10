@@ -134,20 +134,27 @@ test("a memo gone from disk says so, without 텍스트로 열기", async ({ page
   await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
 });
 
-/** The app reads over IPC, the fake answers at once: without a delay nothing is ever loading. */
-async function slowReads(page: Page): Promise<void> {
-  await page.evaluate(() => {
-    const backend = window.__tote.backend;
-    const slow =
-      <A extends unknown[], R>(read: (...args: A) => Promise<R>) =>
-      async (...args: A) => {
+type SlowCall = "readMemo" | "openExternal" | "scanText" | "issueFileToken";
+
+/** The app calls the backend over IPC, the fake answers at once: without a delay there is never
+ * a moment between a tab switch and what the tab shows. */
+async function slowCalls(page: Page, ...names: SlowCall[]): Promise<void> {
+  await page.evaluate((names) => {
+    const backend = window.__tote.backend as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    for (const name of names) {
+      const call = backend[name];
+      backend[name] = async (...args) => {
         await new Promise((resolve) => setTimeout(resolve, 150));
-        return read.apply(backend, args);
+        return call.apply(backend, args);
       };
-    backend.readMemo = slow(backend.readMemo);
-    backend.openExternal = slow(backend.openExternal);
-  });
+    }
+  }, names);
 }
+
+const slowReads = (page: Page) => slowCalls(page, "readMemo", "openExternal");
 
 // A tab still reading its file is not yet in the editor; keys typed meanwhile must not land in
 // the tab left behind, which would save them into a document the person no longer sees. They are
@@ -230,13 +237,15 @@ const PNG = Uint8Array.from(
 );
 
 /** Memo `b` is already open and shown as `shown`; from memo `a` (focused, cursor at the end) ⌘⇧]
- * goes to `b` and keys are typed there. Memo `a` must come back as it was. */
+ * goes to `b` and keys are typed there — once `b` is on show, or with `early` at once, while the
+ * `slow` backend calls of showing it are still on their way. Memo `a` must come back as it was. */
 async function typeAfterKeyboardSwitch(
   page: Page,
   b: { file: string; autoTitle: boolean; data: string; modifiedMs: number },
   shown: (page: Page) => Locator,
-  prepare: (page: Page) => Promise<void> = async () => {},
+  options: { prepare?: (page: Page) => Promise<void>; early?: boolean; slow?: SlowCall[] } = {},
 ): Promise<void> {
+  const { prepare = async () => {}, early = false, slow = [] } = options;
   await start(page, { memos: { a: fakeMemo("a.txt", "AAA"), b } });
   await page.locator(`.memo-row[title="${b.file}"]`).click();
   await prepare(page);
@@ -244,9 +253,11 @@ async function typeAfterKeyboardSwitch(
   await page.locator('.memo-row[title="a.txt"]').click();
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Meta+ArrowDown");
+  await slowCalls(page, ...slow);
   await menu(page, "next-tab");
-  await expect(shown(page)).toBeVisible();
+  if (!early) await expect(shown(page)).toBeVisible();
   await page.keyboard.type("xy");
+  await expect(shown(page)).toBeVisible();
   await page.waitForTimeout(700); // past the memo's save delay
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
   await page.locator('.memo-row[title="a.txt"]').click();
@@ -258,7 +269,7 @@ test("keys typed in a tab showing its preview do not reach the tab left", async 
     page,
     fakeMemo("b.md", "# 둘"),
     (page) => page.locator("iframe.viewer-frame"),
-    (page) => menu(page, "toggle-preview"),
+    { prepare: (page) => menu(page, "toggle-preview") },
   );
 });
 
@@ -290,6 +301,39 @@ test("keys typed in a tab showing a placeholder do not reach the tab left", asyn
       modifiedMs: 1,
     },
     (page) => page.locator(".editor-placeholder p", { hasText: "텍스트로 열 수 없음" }),
+  );
+});
+
+// The switch itself lets go of the tab left: keys typed before the new tab is on show (a token,
+// a scan of a large file, a viewer page on its way) are dropped, whatever that tab shows.
+test("keys typed while a large text tab gets its viewer do not reach the tab left", async ({
+  page,
+}) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    fakeMemo("long.txt", "L".repeat(LONG_LINE_LIMIT + 1)),
+    (page) => page.locator(".large-text"),
+    { early: true, slow: ["scanText", "issueFileToken"] },
+  );
+});
+
+test("keys typed while a viewer tab gets its file do not reach the tab left", async ({ page }) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    { file: "pic.png", autoTitle: false, data: fakeFile(PNG), modifiedMs: 1 },
+    (page) => page.locator("iframe.viewer-frame"),
+    { early: true, slow: ["issueFileToken"] },
+  );
+});
+
+test("keys typed while a preview tab's viewer starts do not reach the tab left", async ({
+  page,
+}) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    fakeMemo("b.md", "# 둘"),
+    (page) => page.locator("iframe.viewer-frame"),
+    { prepare: (page) => menu(page, "toggle-preview"), early: true },
   );
 });
 

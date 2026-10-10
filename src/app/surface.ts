@@ -50,8 +50,8 @@ export class Surface {
     this.panelHost.replaceChildren(el);
   }
 
-  /** A tab is reading its file: nothing to show yet, and keys typed meanwhile are dropped. */
-  showLoading(): void {
+  /** Between a tab switch and what the new tab shows: nothing, and keys typed are dropped. */
+  showNothing(): void {
     this.showPlaceholder("");
   }
 

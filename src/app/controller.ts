@@ -361,8 +361,9 @@ export class AppController implements DocHost {
     }
     this.tabs.active = doc;
     this.renderTabs();
-    // Keys typed while the file is read would otherwise edit the tab left, and be saved there.
-    if (!doc.state && !doc.problem) this.surface.showLoading();
+    // The switch lets go of the tab left at once, whatever the new tab shows and however long it
+    // takes to come (a read, a token, a scan): keys typed meanwhile are dropped, not saved there.
+    this.surface.showNothing();
     await doc.ensureLoaded();
     // Loading can mark the tab dirty (a restored draft), which the render above could not know.
     this.renderTabs();
