@@ -1,5 +1,6 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
+import { LONG_LINE_LIMIT } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import { menu, ready, start } from "./helpers";
 
@@ -210,4 +211,93 @@ test("keys typed while a restored tab picked in the tab bar loads do not reach t
   await expect(page.locator(".cm-content")).toContainText("# 둘");
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+});
+
+// A tab shown as something other than the editor: the view must not keep the tab left either.
+
+const PNG = Uint8Array.from(
+  atob(
+    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
+  ),
+  (c) => c.charCodeAt(0),
+);
+
+/** Memo `b` is already open and shown as `shown`; from memo `a` (focused, cursor at the end) ⌘⇧]
+ * goes to `b` and keys are typed there. Memo `a` must come back as it was. */
+async function typeAfterKeyboardSwitch(
+  page: Page,
+  b: { file: string; autoTitle: boolean; data: string; modifiedMs: number },
+  shown: (page: Page) => Locator,
+  prepare: (page: Page) => Promise<void> = async () => {},
+): Promise<void> {
+  await start(page, { memos: { a: fakeMemo("a.txt", "AAA"), b } });
+  await page.locator(`.memo-row[title="${b.file}"]`).click();
+  await prepare(page);
+  await expect(shown(page)).toBeVisible();
+  await page.locator('.memo-row[title="a.txt"]').click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+ArrowDown");
+  await menu(page, "next-tab");
+  await expect(shown(page)).toBeVisible();
+  await page.keyboard.type("xy");
+  await page.waitForTimeout(700); // past the memo's save delay
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+  await page.locator('.memo-row[title="a.txt"]').click();
+  await expect(page.locator(".cm-content")).toHaveText("AAA");
+}
+
+test("keys typed in a tab showing its preview do not reach the tab left", async ({ page }) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    fakeMemo("b.md", "# 둘"),
+    (page) => page.locator("iframe.viewer-frame"),
+    (page) => menu(page, "toggle-preview"),
+  );
+});
+
+test("keys typed in a tab showing a viewer do not reach the tab left", async ({ page }) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    { file: "pic.png", autoTitle: false, data: fakeFile(PNG), modifiedMs: 1 },
+    (page) => page.locator("iframe.viewer-frame"),
+  );
+});
+
+test("keys typed in a tab showing the large text viewer do not reach the tab left", async ({
+  page,
+}) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    fakeMemo("long.txt", "L".repeat(LONG_LINE_LIMIT + 1)),
+    (page) => page.locator(".large-text"),
+  );
+});
+
+test("keys typed in a tab showing a placeholder do not reach the tab left", async ({ page }) => {
+  await typeAfterKeyboardSwitch(
+    page,
+    {
+      file: "latin1.txt",
+      autoTitle: false,
+      data: fakeFile(new Uint8Array([0x63, 0x61, 0x66, 0xe9])),
+      modifiedMs: 1,
+    },
+    (page) => page.locator(".editor-placeholder p", { hasText: "텍스트로 열 수 없음" }),
+  );
+});
+
+test("keys typed after ⇧⌘V turns the tab to its preview do not edit the hidden text", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 하나") } });
+  await page.locator('.memo-row[title="a.md"]').click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+ArrowDown");
+  await menu(page, "toggle-preview");
+  await expect(page.locator("iframe.viewer-frame")).toBeVisible();
+  await page.keyboard.type("xy");
+  await page.waitForTimeout(700);
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("# 하나");
+  await menu(page, "toggle-preview");
+  await expect(page.locator(".cm-content")).toHaveText("# 하나");
 });

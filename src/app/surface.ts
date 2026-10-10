@@ -3,7 +3,8 @@ import { EditorView } from "@codemirror/view";
 
 import { h } from "../ui/dom";
 
-const LOADING = EditorState.create({ extensions: EditorView.editable.of(false) });
+/** What the view holds while the editor is hidden. */
+const DETACHED = EditorState.create({ extensions: EditorView.editable.of(false) });
 
 /** The editor area: the editor, a placeholder sentence, or a panel (a viewer, the large text
  * viewer). One of them is visible at a time. */
@@ -49,10 +50,8 @@ export class Surface {
     this.panelHost.replaceChildren(el);
   }
 
-  /** A tab is reading its file. The view lets go of the tab left, which would save keys typed
-   * meanwhile; blurring alone does not stop WebKit typing into it. */
+  /** A tab is reading its file: nothing to show yet, and keys typed meanwhile are dropped. */
   showLoading(): void {
-    this.view.setState(LOADING);
     this.showPlaceholder("");
   }
 
@@ -64,5 +63,8 @@ export class Surface {
     for (const part of [this.editorHost, this.placeholder, this.panelHost])
       part.hidden = part !== shown;
     if (shown !== this.panelHost) this.panelHost.replaceChildren();
+    // A hidden editor still takes keys in WebKit, blurred or not, and the tab whose state it
+    // holds would save them; that tab keeps its state in its own `Doc`.
+    if (shown !== this.editorHost) this.view.setState(DETACHED);
   }
 }
