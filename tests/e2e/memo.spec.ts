@@ -150,7 +150,8 @@ async function slowReads(page: Page): Promise<void> {
 }
 
 // A tab still reading its file is not yet in the editor; keys typed meanwhile must not land in
-// the tab left behind, which would save them into a document the person no longer sees.
+// the tab left behind, which would save them into a document the person no longer sees. They are
+// dropped: the new tab's exact text also shows a run whose keys came after the read.
 test("keys typed while a file opened with ⌘O loads do not reach the tab left, nor its memo", async ({
   page,
 }) => {
@@ -165,14 +166,16 @@ test("keys typed while a file opened with ⌘O loads do not reach the tab left, 
   await slowReads(page);
   await menu(page, "open-file");
   await page.keyboard.type("xy");
-  await expect(page.locator(".cm-content")).toContainText("# 새");
+  await expect(page.locator(".cm-content")).toHaveText("# 새");
   await page.waitForTimeout(700); // past the memo's save delay
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
   await page.locator(".memo-row", { hasText: "a" }).click();
   await expect(page.locator(".cm-content")).toHaveText("AAA");
 });
 
-test("keys typed while a memo picked in the list loads do not reach the tab left", async ({
+// A guard, not evidence for the fix: clicking a row already takes the focus off the editor, so
+// this passed before it too.
+test("guard: keys typed while a memo picked in the list loads do not reach the tab left", async ({
   page,
 }) => {
   await start(page, { memos: { a: fakeMemo("a.txt", "AAA"), b: fakeMemo("b.md", "# 둘") } });
@@ -182,9 +185,11 @@ test("keys typed while a memo picked in the list loads do not reach the tab left
   await slowReads(page);
   await page.locator(".memo-row", { hasText: "b" }).click();
   await page.keyboard.type("xy");
-  await expect(page.locator(".cm-content")).toContainText("# 둘");
+  await expect(page.locator(".cm-content")).toHaveText("# 둘");
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+  await page.locator('.memo-row[title="a.txt"]').click();
+  await expect(page.locator(".cm-content")).toHaveText("AAA");
 });
 
 test("keys typed while a restored tab picked in the tab bar loads do not reach the tab left", async ({
@@ -208,9 +213,11 @@ test("keys typed while a restored tab picked in the tab bar loads do not reach t
   // The title, not the tab: the middle of a short tab is its close button.
   await page.locator(".tab-title", { hasText: "b" }).click();
   await page.keyboard.type("xy");
-  await expect(page.locator(".cm-content")).toContainText("# 둘");
+  await expect(page.locator(".cm-content")).toHaveText("# 둘");
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
+  await page.locator(".tab-title", { hasText: "a.txt" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("AAA");
 });
 
 // A tab shown as something other than the editor: the view must not keep the tab left either.
