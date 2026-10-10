@@ -85,3 +85,25 @@ test("the workspace picker shows why a name was refused", async ({ page }) => {
   await expect(page.locator(".modal-error b")).toHaveCount(0);
   await expect(page.locator(".modal")).toHaveCount(1);
 });
+
+// The picker closes itself when its create finishes, and Escape may have closed it before.
+test("a modal closed twice leaves the one under it able to take Escape", async ({ page }) => {
+  await page.evaluate(() => {
+    void window.promptText("under", "x");
+    (window as unknown as { finish: () => void }).finish = () => {};
+    void window.workspacePicker([], {
+      open: () => {},
+      create: () =>
+        new Promise((resolve) => {
+          (window as unknown as { finish: () => void }).finish = () => resolve(null);
+        }),
+    });
+  });
+  await page.locator(".modal.picker input").fill("새것");
+  await page.locator(".modal.picker button", { hasText: "만들기" }).click();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(1);
+  await page.evaluate(() => (window as unknown as { finish: () => void }).finish());
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+});

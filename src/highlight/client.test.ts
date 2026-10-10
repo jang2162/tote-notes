@@ -33,13 +33,14 @@ function setup() {
   };
   const client = new HighlightClient(worker, () => registry, read);
   const grammarMessages = () => sent.filter((r) => r.type === "grammars").length;
+  const forgets = () => sent.filter((r) => r.type === "forget-grammars").length;
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-  return { client, grammarMessages, reads: () => reads, settle };
+  return { client, grammarMessages, forgets, reads: () => reads, settle };
 }
 
 describe("HighlightClient grammar cache", () => {
   it("sends a language's grammars once, and again after they are forgotten", async () => {
-    const { client, grammarMessages, reads, settle } = setup();
+    const { client, grammarMessages, forgets, reads, settle } = setup();
     void client.open(1, lang, () => "x");
     await settle();
     void client.open(2, lang, () => "x");
@@ -48,6 +49,8 @@ describe("HighlightClient grammar cache", () => {
     expect(reads()).toBe(1);
     // An extension was reinstalled or replaced: its files may differ now.
     client.forgetGrammars();
+    // The worker's own registry must be told too, or it keeps the first grammar it loaded.
+    expect(forgets()).toBe(1);
     void client.open(3, lang, () => "x");
     await settle();
     expect(grammarMessages()).toBe(2);

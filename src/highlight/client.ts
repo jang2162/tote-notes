@@ -76,6 +76,7 @@ export class HighlightClient {
   forgetGrammars(): void {
     this.sent.clear();
     this.loading.clear();
+    this.send({ type: "forget-grammars" });
   }
 
   /** Sends the language's grammars (once per language) and opens the document. False when the

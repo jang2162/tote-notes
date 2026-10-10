@@ -1,5 +1,11 @@
 import { createOnigurumaEngine } from "@shikijs/engine-oniguruma";
-import { Registry, type IGrammar, type IOnigLib, type IRawGrammar } from "@shikijs/vscode-textmate";
+import {
+  Registry,
+  type IGrammar,
+  type IOnigLib,
+  type IRawGrammar,
+  type IRawTheme,
+} from "@shikijs/vscode-textmate";
 
 import type { WorkerReply, WorkerRequest } from "./protocol";
 import { LineTokenizer } from "./tokenizer";
@@ -13,16 +19,22 @@ const loaded = new Map<string, IGrammar | null>();
 const docs = new Map<number, LineTokenizer>();
 let advancing = false;
 
+let onigLib: IOnigLib;
+let lastTheme: IRawTheme | null = null;
+
+const makeRegistry = () =>
+  new Registry({ onigLib, loadGrammar: (scope) => grammars.get(scope) ?? null });
+
 // The inlined WASM needs no fetch, so the worker works the same from the dev server, the app's
 // protocol and a test runner.
-const registry: Promise<Registry> = createOnigurumaEngine(
+let registry: Promise<Registry> = createOnigurumaEngine(
   import("@shikijs/engine-oniguruma/wasm-inlined"),
 ).then((engine) => {
-  const onigLib: IOnigLib = {
+  onigLib = {
     createOnigScanner: (sources) => engine.createScanner(sources),
     createOnigString: (s) => engine.createString(s),
   };
-  return new Registry({ onigLib, loadGrammar: (scope) => grammars.get(scope) ?? null });
+  return makeRegistry();
 });
 
 const reply = (message: WorkerReply) =>
@@ -36,7 +48,8 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
   queue = queue.then(async () => {
     try {
-      handle(await registry, request);
+      const next = handle(await registry, request);
+      if (next) registry = Promise.resolve(next);
     } catch (error) {
       reply(failure(request, String(error)));
     }
@@ -58,9 +71,11 @@ function failure(request: WorkerRequest, message: string): WorkerReply {
   };
 }
 
-function handle(registry: Registry, request: WorkerRequest): void {
+/** Returns the registry that replaces `registry`, when a request makes it. */
+function handle(registry: Registry, request: WorkerRequest): Registry | void {
   switch (request.type) {
     case "theme":
+      lastTheme = request.theme;
       registry.setTheme(request.theme);
       // Colour ids changed with the theme: every cached state is stale.
       for (const doc of docs.values()) doc.reset();
@@ -72,6 +87,16 @@ function handle(registry: Registry, request: WorkerRequest): void {
         loaded.delete(source.scopeName);
       }
       return;
+    case "forget-grammars": {
+      // A vscode-textmate registry never asks again for a scope it has loaded, so a replaced
+      // grammar is only used by a new registry. Documents already open keep their own grammar;
+      // the same theme gives the new registry the same colour ids.
+      grammars.clear();
+      loaded.clear();
+      const fresh = makeRegistry();
+      if (lastTheme) fresh.setTheme(lastTheme);
+      return fresh;
+    }
     case "open": {
       const grammar = grammarFor(registry, request.scopeName);
       if (!grammar) {

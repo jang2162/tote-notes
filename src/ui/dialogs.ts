@@ -12,7 +12,8 @@ export function modal<T>(
     const backdrop = h("div", { class: "modal-backdrop" });
     const close = (value: T | null) => {
       document.removeEventListener("keydown", onKey, true);
-      openModals.splice(openModals.indexOf(backdrop), 1);
+      const at = openModals.indexOf(backdrop);
+      if (at >= 0) openModals.splice(at, 1);
       backdrop.remove();
       resolve(value);
     };

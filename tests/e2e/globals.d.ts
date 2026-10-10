@@ -5,7 +5,8 @@ import type { IRawTheme } from "@shikijs/vscode-textmate";
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
 import type { askUnsaved, pickLanguage, promptText, workspacePicker } from "../../src/ui/dialogs";
-import type { BackendError, TextQuery, TextSearch } from "../../src/backend/types";
+import type { HighlightClient } from "../../src/highlight/client";
+import type { BackendError, LanguageInfo, TextQuery, TextSearch } from "../../src/backend/types";
 import type { ViewerHost } from "../../src/viewer/host";
 import type { LargeTextViewer } from "../../src/viewer/large-text";
 
@@ -30,6 +31,11 @@ declare global {
     workerLog: { type: string; doc?: number }[];
     /** Editor page: destroys the view and closes its document in the worker, as closing a tab does. */
     closeDoc(): void;
+    /** Editor page with `?highlight=1`: the client of the worker, the text served for a path
+     * instead of the bundled file, and the language of `?file=`. */
+    highlightClient: HighlightClient;
+    fileOverride: Record<string, string>;
+    highlightLang: LanguageInfo;
     askUnsaved: typeof askUnsaved;
     promptText: typeof promptText;
     workspacePicker: typeof workspacePicker;

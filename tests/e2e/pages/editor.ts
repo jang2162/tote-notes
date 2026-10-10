@@ -29,7 +29,10 @@ const config = configResponse?.ok ? parseLanguageConfiguration(await configRespo
 // the app reads its grammar and every include over IPC before the worker can open it).
 const registry = new Registry(fakeRegistry as ExtensionRegistry);
 const slowGrammar = Number(params.get("slowgrammar") ?? 0);
+/** File text standing in for a bundled file, by path: a spec swaps a grammar for another one. */
+const fileOverride: Record<string, string> = {};
 const readFile = async (ext: string, path: string) => {
+  if (path in fileOverride) return new TextEncoder().encode(fileOverride[path]);
   if (slowGrammar && path.startsWith("grammars/"))
     await new Promise((resolve) => setTimeout(resolve, slowGrammar));
   if (params.get("badgrammar") && path.startsWith("grammars/"))
@@ -66,6 +69,7 @@ if (params.get("highlight")) {
     await client.setTheme(tokenTheme(loaded));
   };
   await highlightTheme("themes/dark-plus.json");
+  Object.assign(window, { highlightClient: client, fileOverride, highlightLang: lang });
   if (lang?.grammar) {
     const highlighting = workerHighlighting(client, lang);
     highlight = highlighting.extension;

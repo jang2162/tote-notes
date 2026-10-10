@@ -9,6 +9,9 @@ export interface GrammarSource {
 export type WorkerRequest =
   | { type: "theme"; theme: IRawTheme }
   | { type: "grammars"; grammars: GrammarSource[] }
+  /** The extension set changed: drop every grammar the worker holds, including the ones its
+   * vscode-textmate registry cached, so the next ones sent are the ones used. */
+  | { type: "forget-grammars" }
   | { type: "open"; doc: number; scopeName: string; text: string }
   | { type: "edit"; doc: number; fromLine: number; toLine: number; insert: string[] }
   | { type: "tokens"; doc: number; req: number; from: number; to: number }

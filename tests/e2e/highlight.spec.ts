@@ -153,3 +153,31 @@ test("a document stays open in the worker while another state is shown", async (
   expect(log.filter((m) => m.type === "open")).toHaveLength(1);
   expect(log.filter((m) => m.type === "close")).toEqual([]);
 });
+
+// The worker's vscode-textmate registry keeps the first grammar of a scope for good, so a
+// grammar that was replaced (a fixed version of a broken extension) needs a new registry.
+test("a document opened after the grammars were forgotten follows the replaced grammar", async ({
+  page,
+}) => {
+  await open(page, "", "run.sh");
+  const starts = (grammarMatch: string) =>
+    page.evaluate(async (match) => {
+      const lang = window.highlightLang;
+      const scope = lang.grammar!.scopeName;
+      window.fileOverride[lang.grammar!.path] = JSON.stringify({
+        scopeName: scope,
+        patterns: [{ match, name: "comment.line" }],
+      });
+      const client = window.highlightClient;
+      const doc = client.nextDocId();
+      await client.open(doc, lang, () => "foo bar");
+      const lines = await client.tokens(doc, 0, 1);
+      client.close(doc);
+      return Array.from(lines![0]).filter((_, i) => i % 3 === 0);
+    }, grammarMatch);
+  expect(await starts("foo")).toContain(3);
+  await page.evaluate(() => window.highlightClient.forgetGrammars());
+  const second = await starts("bar");
+  expect(second).toContain(4);
+  expect(second).not.toContain(3);
+});

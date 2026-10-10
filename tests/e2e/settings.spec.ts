@@ -122,3 +122,95 @@ test("installing an extension makes the next file read its language files again"
   await page.locator(".memo-row", { hasText: "b" }).first().click();
   await expect.poll(reads).toBeGreaterThan(before);
 });
+
+test("a manifest problem is listed with its path", async ({ page }) => {
+  await start(page, {
+    problems: [{ path: "/ext/broken@1.0.0", message: "package.json 을 읽을 수 없습니다" }],
+  });
+  await menu(page, "settings");
+  const problems = page.locator(".modal.settings .extension-problems");
+  await expect(problems).toBeVisible();
+  await expect(problems.locator("li")).toHaveText([
+    "/ext/broken@1.0.0: package.json 을 읽을 수 없습니다",
+  ]);
+});
+
+test("an unsaved root survives another setting being saved", async ({ page }) => {
+  await start(page);
+  await menu(page, "settings");
+  const panel = page.locator(".modal.settings");
+  await panel.locator("input[name=workspaceRoot]").fill("~/아직");
+  await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.dark))
+    .not.toBeNull();
+  await expect(panel.locator("input[name=workspaceRoot]")).toHaveValue("~/아직");
+  expect(await page.evaluate(() => window.__tote.backend.data.settings.workspaceRoot)).toBeNull();
+});
+
+test("saving a theme keeps a switch flipped a moment before", async ({ page }) => {
+  await start(page, {
+    userExtensions: [
+      {
+        id: "someone.night",
+        version: "1.0.0",
+        displayName: "Night Theme",
+        source: "user",
+        enabled: true,
+        path: "/x",
+      },
+    ],
+  });
+  await menu(page, "settings");
+  const panel = page.locator(".modal.settings");
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  // The backend takes the switch; the screen has not heard of it when the theme is saved.
+  await page.evaluate(async () => {
+    const backend = window.__tote.backend;
+    const handlers = (backend as unknown as { handlers: { config: (() => void)[] } }).handlers
+      .config;
+    const held = handlers.splice(0);
+    await backend.setExtensionEnabled("someone.night", false);
+    handlers.push(...held);
+  });
+  await panel.locator("select[name=light]").selectOption({ label: "Light+ (tote.themes)" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.light))
+    .not.toBeNull();
+  expect(
+    await page.evaluate(() => window.__tote.backend.data.settings.extensions.disabled),
+  ).toEqual(["someone.night"]);
+});
+
+test("a second ⌘, does not pile a second settings screen", async ({ page }) => {
+  await start(page);
+  await menu(page, "settings");
+  await menu(page, "settings");
+  await expect(page.locator(".modal.settings")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal.settings")).toHaveCount(0);
+});
+
+test("a theme that is not installed shows the default", async ({ page }) => {
+  await start(page, {
+    settings: {
+      workspaceRoot: null,
+      theme: { light: { extension: "gone.theme", label: "Gone" }, dark: null },
+      extensions: { disabled: [], precedence: "user" },
+    },
+  });
+  await menu(page, "settings");
+  await expect(page.locator(".modal.settings select[name=light] option:checked")).toHaveText(
+    "기본",
+  );
+});
+
+test("a folder dialog that fails says so instead of vanishing", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => {
+    window.__tote.backend.pickFolder = () => Promise.reject(new Error("dialog failed"));
+  });
+  await menu(page, "settings");
+  await page.locator(".modal.settings button", { hasText: "폴더 선택…" }).click();
+  await expect(page.locator(".modal.settings .modal-error")).not.toHaveText("");
+});

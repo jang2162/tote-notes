@@ -4,6 +4,7 @@ import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   BackendError,
   type Backend,
+  type ExtensionProblem,
   type ExtensionRegistry,
   type ExtensionSummary,
   type ExternalInfo,
@@ -61,6 +62,8 @@ export interface FakeData {
   >;
   /** `"<extension id>/<path>"` → file text. Missing entries are fetched from the dev server. */
   extensionFiles: Record<string, string>;
+  /** Problems the fake registry reports besides the bundled ones' (none). Absent in old seeds. */
+  problems?: ExtensionProblem[];
   /** Viewers added to the bundled ones, each with the page that stands in for it — the UI tests
    * open file types through them that no bundled viewer opens yet. */
   extraViewers: { info: ViewerInfo; url: string }[];
@@ -451,6 +454,7 @@ export class FakeBackend implements Backend {
     return {
       ...bundled,
       extensions: [...bundled.extensions, ...user],
+      problems: [...bundled.problems, ...(this.data.problems ?? [])],
       viewers: [...bundled.viewers, ...this.data.extraViewers.map((v) => v.info)],
     };
   }

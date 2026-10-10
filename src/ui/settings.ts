@@ -27,18 +27,20 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
     const status = h("p", { class: "modal-error" });
-    let settings: Settings | null = null;
+    /** What the root input last got from the saved settings: input differing from it is an edit
+     * not saved yet, which another setting's change must not wipe. */
+    let syncedRoot = "";
 
     const fail = (error: unknown) => {
       status.textContent = describeError(error);
     };
+    // The patch goes on the settings as they are now, not on what this screen last drew: a switch
+    // flipped a moment ago is saved by the backend before this screen hears of it.
     const save = async (patch: (s: Settings) => void) => {
-      if (!settings) return;
-      const next = structuredClone(settings);
-      patch(next);
       try {
+        const next = await backend.settings();
+        patch(next);
         await backend.updateSettings(next);
-        settings = next;
         status.textContent = "";
       } catch (error) {
         fail(error);
@@ -49,8 +51,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const rootSection = () => {
       const pick = h("button", { textContent: "폴더 선택…" });
       pick.addEventListener("click", async () => {
-        const folder = await backend.pickFolder();
-        if (folder) rootInput.value = folder;
+        try {
+          const folder = await backend.pickFolder();
+          if (folder) rootInput.value = folder;
+        } catch (error) {
+          fail(error);
+        }
       });
       const saveRoot = h("button", { textContent: "루트 저장", class: "primary" });
       saveRoot.addEventListener(
@@ -90,6 +96,11 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           ),
         );
       }
+    };
+    // A theme whose extension is off or gone is not an option; the default theme is what shows.
+    const selectTheme = (select: HTMLSelectElement, ref: ThemeRef | null) => {
+      select.value = themeValue(ref);
+      if (select.selectedIndex < 0) select.value = "";
     };
     const lightSelect = themeSelect("light");
     const darkSelect = themeSelect("dark");
@@ -132,10 +143,18 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         }
       }
     };
-    installFile.addEventListener("click", async () =>
-      install(await backend.pickExtensionPackage()),
+    const pickAndInstall = async (pick: () => Promise<string | null>) => {
+      try {
+        await install(await pick());
+      } catch (error) {
+        fail(error);
+      }
+    };
+    installFile.addEventListener(
+      "click",
+      () => void pickAndInstall(() => backend.pickExtensionPackage()),
     );
-    installFolder.addEventListener("click", async () => install(await backend.pickFolder()));
+    installFolder.addEventListener("click", () => void pickAndInstall(() => backend.pickFolder()));
     const extensionSection = h(
       "section",
       {},
@@ -201,11 +220,13 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           backend.settings(),
           backend.extensionRegistry(),
         ]);
-        settings = current;
         fillThemes(new Registry(registry));
-        rootInput.value = current.workspaceRoot ?? "";
-        lightSelect.value = themeValue(current.theme.light);
-        darkSelect.value = themeValue(current.theme.dark);
+        const saved = current.workspaceRoot ?? "";
+        if (rootInput.value === syncedRoot || rootInput.value.trim() === saved)
+          rootInput.value = saved;
+        syncedRoot = saved;
+        selectTheme(lightSelect, current.theme.light);
+        selectTheme(darkSelect, current.theme.dark);
         panel.querySelector<HTMLInputElement>(
           `input[name=precedence][value=${current.extensions.precedence}]`,
         )!.checked = true;

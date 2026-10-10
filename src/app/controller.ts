@@ -48,6 +48,15 @@ import { Tabs } from "./tabs";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
+/** The extensions and grammars that are on, with versions: equal signatures read the same files. */
+function extensionSignature(registry: Registry): string {
+  const { extensions, grammars } = registry.data;
+  return JSON.stringify([
+    extensions.map((e) => `${e.id}@${e.version}:${e.enabled}`),
+    grammars.map((g) => `${g.extension}/${g.path}`),
+  ]);
+}
+
 const SESSION_DELAY_MS = 1000;
 
 export const NOT_OPENABLE = "열 수 없음";
@@ -84,6 +93,9 @@ export class AppController implements DocHost {
     (ext, path) => this.backend.readExtensionFile(ext, path),
   );
   /** Open settings screens listen here: the backend takes one config handler per window. */
+  private settingsOpen = false;
+  /** `extensionSignature` of the registry the caches were filled from. */
+  private extensionSet = "";
   private readonly configListeners = new Set<() => void>();
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
@@ -166,11 +178,16 @@ export class AppController implements DocHost {
 
   /** Settings or extensions changed (this window's settings screen or another's). */
   private async onConfigChanged(): Promise<void> {
-    // An extension may have been reinstalled, replaced or removed: what was read from its files
-    // is stale. Open documents keep what they have; the next language open reads again.
-    this.languageConfigs.clear();
-    this.highlight.forgetGrammars();
     await this.loadRegistry();
+    // An extension may have been reinstalled, replaced, removed or switched: what was read from
+    // its files is stale. Open documents keep what they have; the next language open reads again.
+    // Theme and root changes leave the set alone and keep the caches.
+    const signature = extensionSignature(this.registry);
+    if (signature !== this.extensionSet) {
+      this.extensionSet = signature;
+      this.languageConfigs.clear();
+      this.highlight.forgetGrammars();
+    }
     await this.theme.refresh();
     for (const listener of this.configListeners) listener();
   }
@@ -676,6 +693,9 @@ export class AppController implements DocHost {
   }
 
   private async showSettings(): Promise<void> {
+    // The native menu works under a modal: a second ⌘, must not pile a second screen on the first.
+    if (this.settingsOpen) return;
+    this.settingsOpen = true;
     const subscribers = new Set<() => void>();
     await openSettings({
       backend: this.backend,
@@ -691,6 +711,7 @@ export class AppController implements DocHost {
     });
     // Escape closes the screen without its unsubscribe.
     for (const handler of subscribers) this.configListeners.delete(handler);
+    this.settingsOpen = false;
     if (this.tabs.active) this.view.focus();
   }
 
