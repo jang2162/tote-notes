@@ -10,13 +10,15 @@ use super::jsonc::strip_jsonc;
 
 #[derive(Debug, thiserror::Error)]
 pub enum ManifestError {
-    #[error("package.json is not JSON: {0}")]
+    #[error("package.json 이 올바른 JSON 이 아닙니다: {0}")]
     Json(String),
-    #[error("package.json has no {0}")]
+    #[error("package.json 에 {0} 이(가) 없습니다")]
     Missing(&'static str),
-    #[error("not a usable extension id: {0}")]
+    #[error("확장 ID 로 쓸 수 없는 이름입니다: {0}")]
     BadId(String),
-    #[error("a contribution path must stay inside the extension: {0}")]
+    #[error("버전으로 쓸 수 없는 값입니다: {0}")]
+    BadVersion(String),
+    #[error("기여 파일 경로는 확장 폴더 안이어야 합니다: {0}")]
     BadPath(String),
 }
 
@@ -167,6 +169,10 @@ impl Manifest {
         if version.trim().is_empty() {
             return Err(ManifestError::Missing("version"));
         }
+        // The version becomes part of the install folder's name (`<id>@<version>`).
+        if !is_version(&version) {
+            return Err(ManifestError::BadVersion(version));
+        }
         let languages = raw
             .contributes
             .languages
@@ -243,6 +249,16 @@ fn is_identifier(text: &str) -> bool {
         && text
             .chars()
             .all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
+}
+
+/// Characters a semver string uses, nothing that could act as a path: no `/`, `\`, `..` or a
+/// leading dot.
+fn is_version(text: &str) -> bool {
+    !text.starts_with('.')
+        && !text.contains("..")
+        && text
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '+' | '-'))
 }
 
 fn normalise_extensions(raw: &[String]) -> Vec<String> {
@@ -361,6 +377,32 @@ mod tests {
             Manifest::parse("{ nope"),
             Err(ManifestError::Json(_))
         ));
+    }
+
+    #[test]
+    fn a_version_that_could_act_as_a_path_is_refused() {
+        for bad in [
+            "1/../../x",
+            "..",
+            ".1",
+            "1\\2",
+            "1..2",
+            "1 2",
+            "\u{7}",
+            "1/2",
+        ] {
+            let text =
+                serde_json::json!({"name": "x", "publisher": "p", "version": bad}).to_string();
+            assert!(
+                matches!(Manifest::parse(&text), Err(ManifestError::BadVersion(_))),
+                "{bad:?}"
+            );
+        }
+        for good in ["1", "0.0.1", "2.0.0-beta.1+build.5"] {
+            let text =
+                serde_json::json!({"name": "x", "publisher": "p", "version": good}).to_string();
+            assert!(Manifest::parse(&text).is_ok(), "{good:?}");
+        }
     }
 
     #[test]

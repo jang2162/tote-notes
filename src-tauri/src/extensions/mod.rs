@@ -98,7 +98,7 @@ fn read_folder(dir: &Path, source: Source, scan: &mut Scan) {
             continue;
         }
         let parsed = fs::read_to_string(&file)
-            .map_err(|err| err.to_string())
+            .map_err(|err| format!("package.json 을 읽을 수 없습니다: {err}"))
             .and_then(|text| Manifest::parse(&text).map_err(|err| err.to_string()));
         match parsed {
             Ok(manifest) => {

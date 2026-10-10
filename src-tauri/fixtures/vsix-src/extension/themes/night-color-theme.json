@@ -5,10 +5,10 @@
   "colors": {
     "editor.background": "#101010",
     "editor.foreground": "#f0f0f0",
-    "sideBar.background": "#181818"
+    "sideBar.background": "#181818",
   },
   "tokenColors": [
     { "scope": "comment", "settings": { "foreground": "#808080", "fontStyle": "italic" } },
-    { "scope": ["keyword", "storage"], "settings": { "foreground": "#ff9966" } }
-  ]
+    { "scope": ["keyword", "storage"], "settings": { "foreground": "#ff9966" } },
+  ],
 }

@@ -126,18 +126,29 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
 pub struct Settings {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub workspace_root: Option<PathBuf>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub theme: ThemeSettings,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub extensions: ExtensionSettings,
+}
+
+/// A field whose value has the wrong shape (a hand-edit typo) falls back to its default instead of
+/// failing the whole file, which `read_json` would set aside — taking `workspaceRoot` with it.
+fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: serde::de::DeserializeOwned + Default,
+{
+    let value = serde_json::Value::deserialize(deserializer)?;
+    Ok(serde_json::from_value(value).unwrap_or_default())
 }
 
 /// Which theme to use under each OS appearance (spec 「테마」). `None` means the bundled default.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThemeSettings {
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub light: Option<ThemeRef>,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub dark: Option<ThemeRef>,
 }
 
@@ -151,10 +162,10 @@ pub struct ThemeRef {
 #[serde(rename_all = "camelCase")]
 pub struct ExtensionSettings {
     /// IDs of user-installed extensions switched off; bundled ones cannot be.
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub disabled: Vec<String>,
     /// Which side wins when two extensions claim one file extension (spec 「설치와 로딩」).
-    #[serde(default)]
+    #[serde(default, deserialize_with = "lenient")]
     pub precedence: Precedence,
 }
 
@@ -406,6 +417,29 @@ mod tests {
             Settings::default()
         );
         assert_eq!(Settings::default().extensions.precedence, Precedence::User);
+    }
+
+    #[test]
+    fn a_mistyped_new_field_falls_back_without_losing_the_rest() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, r#"{ "workspaceRoot": "/x", "theme": "dark" }"#).unwrap();
+        let settings = Settings::load(&file).unwrap();
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+        assert_eq!(settings.theme, ThemeSettings::default());
+        fs::write(
+            &file,
+            r#"{ "workspaceRoot": "/x",
+                 "theme": { "light": 3, "dark": { "extension": "a", "label": "b" } },
+                 "extensions": { "disabled": ["e"], "precedence": "users" } }"#,
+        )
+        .unwrap();
+        let settings = Settings::load(&file).unwrap();
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+        assert_eq!(settings.theme.light, None);
+        assert_eq!(settings.theme.dark.map(|t| t.label), Some("b".to_string()));
+        assert_eq!(settings.extensions.disabled, vec!["e"]);
+        assert_eq!(settings.extensions.precedence, Precedence::User);
     }
 
     #[test]
