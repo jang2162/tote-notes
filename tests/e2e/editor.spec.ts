@@ -289,3 +289,43 @@ test("Enter continues a Markdown list and Tab indents at the cursor", async ({ p
   await page.keyboard.press("Tab");
   expect(await text(page)).toBe("- 하나\n- 둘  ");
 });
+
+test("⌘Z after a composition at three cursors brings the three cursors back", async ({ page }) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  await page.evaluate(() => window.ime.start());
+  await page.evaluate(() => window.ime.update("ㄱ"));
+  await page.evaluate(() => window.ime.update("가"));
+  await page.evaluate(() => window.ime.end("replace"));
+  expect(await text(page)).toBe("사과가\n배가\n귤가");
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과\n배\n귤");
+  expect(await ranges(page)).toEqual(THREE);
+  // A second ⌘Z with nothing left to undo keeps the document and the cursors.
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과\n배\n귤");
+  expect(await ranges(page)).toEqual(THREE);
+});
+
+test("⌘Z after two compositions walks back one syllable at a time with every cursor", async ({
+  page,
+}) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  for (const syllable of ["가", "나"]) {
+    await page.evaluate(() => window.ime.start());
+    await page.evaluate((s) => window.ime.update(s), syllable);
+    await page.evaluate(() => window.ime.end("replace"));
+  }
+  expect(await text(page)).toBe("사과가나\n배가나\n귤가나");
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과가\n배가\n귤가");
+  expect(await ranges(page)).toEqual([
+    [3, 3],
+    [6, 6],
+    [9, 9],
+  ]);
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과\n배\n귤");
+  expect(await ranges(page)).toEqual(THREE);
+});

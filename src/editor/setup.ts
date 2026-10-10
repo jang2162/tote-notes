@@ -27,7 +27,7 @@ import {
 
 import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
-import { multiRangeIme } from "./ime";
+import { multiRangeIme, undoWithCursors } from "./ime";
 
 /** Tab: an indent unit at every cursor; with text selected, indents the selected lines. */
 export const insertIndent: Command = (view) => {
@@ -47,6 +47,7 @@ export const insertIndent: Command = (view) => {
 export const zedKeymap: KeyBinding[] = [
   { key: "Mod-l", run: selectLine, preventDefault: true },
   { key: "Mod-Shift-d", run: copyLineDown, preventDefault: true },
+  { key: "Mod-z", run: undoWithCursors, preventDefault: true },
   { key: "Tab", run: insertIndent, shift: indentLess },
 ];
 

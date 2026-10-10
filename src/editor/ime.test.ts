@@ -1,14 +1,25 @@
-import { EditorSelection, EditorState, type Transaction } from "@codemirror/state";
+import { EditorSelection, EditorState, Text, type Transaction } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
-import { compositionCommit, mainFirst, mirrorReplacement, type Composition } from "./ime";
+import {
+  compositionCommit,
+  mainFirst,
+  mirrorReplacement,
+  multiRangeIme,
+  undoRestores,
+  type Composition,
+} from "./ime";
 
 const cursors = (...positions: number[]) =>
   EditorSelection.create(positions.map((p) => EditorSelection.cursor(p)));
 const rangesOf = (tr: Transaction) => tr.newSelection.ranges.map((r) => [r.from, r.to]);
 // Without allowMultipleSelections, EditorState.create keeps the main range only.
 const state = (doc: string, selection: EditorSelection) =>
-  EditorState.create({ doc, selection, extensions: EditorState.allowMultipleSelections.of(true) });
+  EditorState.create({
+    doc,
+    selection,
+    extensions: [EditorState.allowMultipleSelections.of(true), multiRangeIme],
+  });
 
 describe("mainFirst", () => {
   it("moves the main range to the first of several", () => {
@@ -79,6 +90,8 @@ describe("compositionCommit", () => {
       from: 2,
       taken: "",
       others: [EditorSelection.cursor(5), EditorSelection.cursor(7)],
+      before: EditorSelection.single(0),
+      startDoc: Text.of([""]),
     };
     const s = waiting("사과가\n배\n귤", [3, 3]);
     const tr = s.update(compositionCommit(s, current));
@@ -94,7 +107,13 @@ describe("compositionCommit", () => {
   it("replaces a waiting selection the way the main one was replaced (recording 2)", () => {
     // `test test`, both selected; the composition replaced the first with 가, so the other,
     // mapped through that change, is at 2..6.
-    const current: Composition = { from: 0, taken: "", others: [EditorSelection.range(2, 6)] };
+    const current: Composition = {
+      from: 0,
+      taken: "",
+      others: [EditorSelection.range(2, 6)],
+      before: EditorSelection.single(0),
+      startDoc: Text.of(["test test"]),
+    };
     const s = waiting("가 test", [1, 1]);
     const tr = s.update(compositionCommit(s, current));
     expect(tr.newDoc.toString()).toBe("가 가");
@@ -110,6 +129,8 @@ describe("compositionCommit", () => {
       from: 2,
       taken: "ㄱ",
       others: [EditorSelection.cursor(6), EditorSelection.cursor(9)],
+      before: EditorSelection.single(0),
+      startDoc: Text.of([""]),
     };
     const s = waiting("사과가\n배ㄱ\n귤ㄱ", [3, 3]);
     const tr = s.update(compositionCommit(s, current));
@@ -126,6 +147,8 @@ describe("compositionCommit", () => {
       from: 2,
       taken: "ㄱ",
       others: [EditorSelection.cursor(6), EditorSelection.cursor(9)],
+      before: EditorSelection.single(0),
+      startDoc: Text.of([""]),
     };
     const s = waiting("사과가\n배ㄴ\n귤ㄱ", [3, 3]);
     const tr = s.update(compositionCommit(s, current));
@@ -142,6 +165,8 @@ describe("compositionCommit", () => {
       from: 2,
       taken: "",
       others: [EditorSelection.cursor(4), EditorSelection.cursor(6)],
+      before: EditorSelection.single(0),
+      startDoc: Text.of([""]),
     };
     const s = waiting("사과\n배\n귤", [2, 2]);
     const tr = s.update(compositionCommit(s, current));
@@ -151,5 +176,25 @@ describe("compositionCommit", () => {
       [4, 4],
       [6, 6],
     ]);
+  });
+});
+
+describe("undoRestores", () => {
+  it("remembers the document and selection a composition started from", () => {
+    const start = state("사과\n배\n귤", cursors(2, 4, 6));
+    const current: Composition = {
+      from: 2,
+      taken: "",
+      others: [EditorSelection.cursor(4), EditorSelection.cursor(6)],
+      before: start.selection,
+      startDoc: start.doc,
+    };
+    // After composing 가 at the main range only.
+    const composed = state("사과가\n배\n귤", cursors(3));
+    const tr = composed.update(compositionCommit(composed, current));
+    const records = tr.state.field(undoRestores);
+    expect(records).toHaveLength(1);
+    expect(records[0].doc.toString()).toBe("사과\n배\n귤");
+    expect(records[0].selection.ranges.map((r) => r.head)).toEqual([2, 4, 6]);
   });
 });

@@ -1,13 +1,16 @@
+import { isolateHistory, undo } from "@codemirror/commands";
 import {
   EditorSelection,
   EditorState,
   StateEffect,
   StateField,
+  Transaction,
   type ChangeSpec,
   type SelectionRange,
+  type Text,
   type TransactionSpec,
 } from "@codemirror/state";
-import { EditorView, ViewPlugin, type ViewUpdate } from "@codemirror/view";
+import { EditorView, ViewPlugin, type Command, type ViewUpdate } from "@codemirror/view";
 
 // Every cursor and selection gets the text the input method produces, as with Latin typing
 // (spec 「편집기」). WKWebView's Korean input method was recorded feeding text through two paths,
@@ -94,9 +97,14 @@ export interface Composition {
   taken: string;
   /** The ranges the composed text goes to at the end, in document order after the main range. */
   others: readonly SelectionRange[];
+  /** The whole selection before the composition — what ⌘Z brings back. */
+  before: EditorSelection;
+  /** The document before the composition; ⌘Z restores `before` only when it lands on it. */
+  startDoc: Text;
 }
 
 const startComposition = StateEffect.define<Composition>();
+const rememberBefore = StateEffect.define<UndoRestore>();
 const endComposition = StateEffect.define<null>();
 
 const composition = StateField.define<Composition | null>({
@@ -125,6 +133,8 @@ const composition = StateField.define<Composition | null>({
       from: tr.changes.mapPos(from, -1),
       taken,
       others: value.others.map((range) => range.map(tr.changes)),
+      before: value.before,
+      startDoc: value.startDoc,
     };
   },
 });
@@ -153,7 +163,10 @@ export function compositionCommit(state: EditorState, current: Composition): Tra
   return {
     changes,
     selection: EditorSelection.create(ranges, 0),
-    effects: endComposition.of(null),
+    effects: [
+      endComposition.of(null),
+      rememberBefore.of({ doc: current.startDoc, selection: current.before }),
+    ],
     userEvent: "input.type.compose",
   };
 }
@@ -175,7 +188,12 @@ const compositionEvents = EditorView.domEventObservers({
         from: main.from,
         taken: "",
         others: ranges.filter((range) => range !== main),
+        before: state.selection,
+        startDoc: state.doc,
       }),
+      // Not an undo step of its own (the next ⌘Z would undo only the collapse), but a boundary:
+      // a syllable typed within the join delay of the last one still gets its own group.
+      annotations: [Transaction.addToHistory.of(false), isolateHistory.of("full")],
       userEvent: "select",
     });
   },
@@ -222,6 +240,64 @@ const settleWithoutEvent = ViewPlugin.fromClass(
   },
 );
 
+export interface UndoRestore {
+  doc: Text;
+  selection: EditorSelection;
+}
+
+const UNDO_RESTORE_DEPTH = 50;
+
+/** What each finished composition started from, newest last. CodeMirror's undo restores the
+ * selection of the first change of a group, which is the collapsed main range; this is where the
+ * full selection waits. Stays through later edits — an undo that still lands on the recorded
+ * document (adjacent typing joined the group) is restored too; one that does not is left alone. */
+export const undoRestores = StateField.define<readonly UndoRestore[]>({
+  create: () => [],
+  update(records, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(rememberBefore))
+        records = [...records, effect.value].slice(-UNDO_RESTORE_DEPTH);
+    }
+    if (tr.isUserEvent("undo") && records.length) {
+      const i = records.findLastIndex(
+        (r) => r.doc.length === tr.newDoc.length && r.doc.eq(tr.newDoc),
+      );
+      if (i >= 0) records = records.slice(0, i);
+    }
+    return records;
+  },
+});
+
+/** ⌘Z. Runs CodeMirror's undo, then puts the pre-composition selection back when the undo
+ * brought the document to where a composition started. Two dispatches, because neither a
+ * transaction filter (history skips filters) nor an extender (cannot set the selection) can do
+ * it inside the undo transaction. */
+export const undoWithCursors: Command = (view) => {
+  const records = view.state.field(undoRestores, false) ?? [];
+  const { doc: before, selection: kept } = view.state;
+  // A composition leaves a step that changes no text (the input method deletes the composed text
+  // and writes it again, which composes to nothing), so keep undoing until the text changes.
+  let undone = false;
+  while (undo(view)) {
+    undone = true;
+    if (!view.state.doc.eq(before)) break;
+  }
+  if (!undone) return false;
+  const doc = view.state.doc;
+  // Nothing left that changes text: the cursors stay where they were.
+  const match = doc.eq(before)
+    ? { selection: kept }
+    : records.findLast((r) => r.doc.length === doc.length && r.doc.eq(doc));
+  if (match && !match.selection.eq(view.state.selection)) {
+    view.dispatch({
+      selection: match.selection,
+      annotations: Transaction.addToHistory.of(false),
+      userEvent: "select",
+    });
+  }
+  return true;
+};
+
 /** Gives every cursor and selection the input method's text. */
 export const multiRangeIme = [
   keepMainFirst,
@@ -229,4 +305,5 @@ export const multiRangeIme = [
   composition,
   compositionEvents,
   settleWithoutEvent,
+  undoRestores,
 ];
