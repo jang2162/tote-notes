@@ -1,4 +1,10 @@
-import { RangeSetBuilder, StateEffect, StateField, type Extension } from "@codemirror/state";
+import {
+  RangeSetBuilder,
+  StateEffect,
+  StateField,
+  type EditorState,
+  type Extension,
+} from "@codemirror/state";
 import {
   Decoration,
   EditorView,
@@ -18,19 +24,6 @@ export const HIGHLIGHT_LIMIT_CHARS = 20_000_000;
 /** Viewport and edit requests settle for this long before the worker is asked. */
 const REQUEST_DELAY_MS = 30;
 
-const setHighlight = StateEffect.define<DecorationSet>();
-
-// Decorations live in a field so the async worker reply can replace them with a plain dispatch,
-// and edits in between map the old ones instead of dropping all colour.
-const highlightField = StateField.define<DecorationSet>({
-  create: () => Decoration.none,
-  update(deco, tr) {
-    for (const e of tr.effects) if (e.is(setHighlight)) return e.value;
-    return tr.docChanged ? deco.map(tr.changes) : deco;
-  },
-  provide: (f) => EditorView.decorations.from(f),
-});
-
 const marks = new Map<string, Decoration>();
 function mark(foreground: number, fontStyle: number): Decoration {
   const classes = [`tm-c${foreground}`];
@@ -47,26 +40,62 @@ function mark(foreground: number, fontStyle: number): Decoration {
   return deco;
 }
 
-/** TextMate colours for one editor state. The worker gets the text on creation, every change
- * as a line replacement, and a request for the visible lines after each change or scroll. */
-export function workerHighlighting(client: HighlightClient, lang: LanguageInfo): Extension {
+/** TextMate colours for one document in one language. */
+export interface WorkerHighlighting {
+  /** For the document's editor state; keep the same value while the language stays. */
+  readonly extension: Extension;
+  /** Takes the document out of the worker: the tab closed, or its language or text was replaced. */
+  close(): void;
+}
+
+/** The worker gets the text when the extension is first shown, every change as a line
+ * replacement, and a request for the visible lines after each change or scroll. The document
+ * stays in the worker until `close`, not as long as a view plugin: the view rebuilds its plugins
+ * on every tab switch, and a document closed with them would send its whole text again and lose
+ * its line states each time. */
+export function workerHighlighting(
+  client: HighlightClient,
+  lang: LanguageInfo,
+): WorkerHighlighting {
+  const docId = client.nextDocId();
+  let open: Promise<boolean> | null = null;
+  let closed = false;
+  /** The document's latest state: only a plugin sees it, and the open may be sent after the
+   * view has moved on to another tab's state. */
+  let latest: EditorState | null = null;
+
+  // Decorations live in a field so the async worker reply can replace them with a plain dispatch,
+  // and edits in between map the old ones instead of dropping all colour. One field per call: a
+  // new language brings a new field, so the old language's colours go with the old one.
+  const setHighlight = StateEffect.define<DecorationSet>();
+  const highlightField = StateField.define<DecorationSet>({
+    create: () => Decoration.none,
+    update(deco, tr) {
+      for (const e of tr.effects) if (e.is(setHighlight)) return e.value;
+      return tr.docChanged ? deco.map(tr.changes) : deco;
+    },
+    provide: (f) => EditorView.decorations.from(f),
+  });
+
   const plugin = ViewPlugin.fromClass(
     class {
-      private readonly doc = client.nextDocId();
       private version = 0;
-      private open: Promise<boolean>;
       private timer: ReturnType<typeof setTimeout> | null = null;
       private destroyed = false;
       private readonly unsubscribe: () => void;
 
       constructor(private readonly view: EditorView) {
-        this.open = client.open(this.doc, lang, () => view.state.doc.toString());
-        void this.open.then((ok) => ok && this.schedule());
+        latest = view.state;
+        open ??= client.open(docId, lang, () => latest!.doc.toString());
+        // Shown again after another tab: the colours of the lines now visible may be missing.
+        void open.then((ok) => ok && this.schedule());
         // The decorations carry the old theme's colour ids until they are asked for again.
         this.unsubscribe = client.onThemeChange(() => this.schedule());
       }
 
       update(update: ViewUpdate): void {
+        latest = update.state;
+        if (closed) return;
         if (update.docChanged) {
           this.version++;
           this.sendEdit(update);
@@ -78,7 +107,6 @@ export function workerHighlighting(client: HighlightClient, lang: LanguageInfo):
         this.destroyed = true;
         this.unsubscribe();
         if (this.timer) clearTimeout(this.timer);
-        client.close(this.doc);
       }
 
       // One edit message per update: the old line span covering every change becomes the new
@@ -99,7 +127,7 @@ export function workerHighlighting(client: HighlightClient, lang: LanguageInfo):
         const firstLine = newDoc.lineAt(fromB).number;
         const lastLine = newDoc.lineAt(toB).number;
         client.edit(
-          this.doc,
+          docId,
           oldDoc.lineAt(fromA).number - 1,
           oldDoc.lineAt(toA).number,
           newDoc.sliceString(newDoc.line(firstLine).from, newDoc.line(lastLine).to).split("\n"),
@@ -112,13 +140,13 @@ export function workerHighlighting(client: HighlightClient, lang: LanguageInfo):
       }
 
       private async request(): Promise<void> {
-        if (!(await this.open) || this.destroyed) return;
+        if (!(await open) || this.destroyed || closed) return;
         const version = this.version;
         const { from, to } = this.view.viewport;
         const doc = this.view.state.doc;
         const first = doc.lineAt(from).number - 1;
-        const lines = await client.tokens(this.doc, first, doc.lineAt(to).number);
-        if (!lines || this.destroyed) return;
+        const lines = await client.tokens(docId, first, doc.lineAt(to).number);
+        if (!lines || this.destroyed || closed) return;
         // Tokens for an older document would land on the wrong characters; ask again instead.
         if (version !== this.version) return this.schedule();
         this.view.dispatch({ effects: setHighlight.of(this.build(first, lines)) });
@@ -142,5 +170,12 @@ export function workerHighlighting(client: HighlightClient, lang: LanguageInfo):
       }
     },
   );
-  return [highlightField, plugin];
+  return {
+    extension: [highlightField, plugin],
+    close() {
+      if (closed) return;
+      closed = true;
+      client.close(docId);
+    },
+  };
 }

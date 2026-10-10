@@ -43,6 +43,7 @@ pub fn run() {
             commands::write_memo,
             commands::retitle_memo,
             commands::rename_memo,
+            commands::set_memo_language,
             commands::delete_memo,
             commands::import_memo,
             commands::import_file,

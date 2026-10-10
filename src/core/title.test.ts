@@ -50,3 +50,19 @@ describe("titleLine and memoTitle", () => {
     expect(memoTitle(doc)).toBe("untitled");
   });
 });
+
+describe("titleLine skips a shebang on the first line", () => {
+  const doc = (s: string) => Text.of(s.split("\n"));
+  it("takes the next non-blank line", () => {
+    expect(titleLine(doc("#!/bin/sh\n\necho hi"))).toEqual({ text: "echo hi", number: 3 });
+    expect(memoTitle(doc("#!/bin/sh\n\necho hi"))).toBe("echo hi");
+  });
+  it("is untitled when only the shebang is there", () => {
+    expect(memoTitle(doc("#!/usr/bin/env python3"))).toBe("untitled");
+    expect(titleLine(doc("#!/usr/bin/env python3")).number).toBe(1);
+  });
+  it("does not skip a #! further down or a Markdown heading", () => {
+    expect(memoTitle(doc("\n#!/bin/sh"))).toBe("! bin sh");
+    expect(memoTitle(doc("# 제목"))).toBe("제목");
+  });
+});

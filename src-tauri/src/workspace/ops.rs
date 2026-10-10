@@ -59,6 +59,36 @@ impl Workspace {
         self.move_memo(id, &entry.file, file.to_string(), false)
     }
 
+    /// The language chosen in the status bar (spec 「편집기」): the file takes the language's
+    /// extension and the index remembers the id. Automatic titles go on as before — a language
+    /// is not a name the person typed.
+    pub fn set_language(
+        &mut self,
+        id: &str,
+        language: &str,
+        ext: &str,
+    ) -> Result<MemoInfo, WorkspaceError> {
+        let entry = self.entry(id)?.clone();
+        let (stem, current) = split_name(&entry.file);
+        let file = if current.eq_ignore_ascii_case(ext) {
+            entry.file.clone()
+        } else {
+            if !is_valid_file_name(&join_name(stem, ext)) {
+                return Err(WorkspaceError::InvalidName(ext.to_string()));
+            }
+            self.free_name(stem, ext, Some(&entry.file))
+        };
+        if file != entry.file {
+            fs::rename(self.root.join(&entry.file), self.root.join(&file))?;
+        }
+        if let Some(entry) = self.index.get_mut(id) {
+            entry.file = file;
+            entry.language = Some(language.to_string());
+        }
+        self.index.save()?;
+        self.memo_info(id)
+    }
+
     pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let file = self.entry(id)?.file.clone();
         match fs::remove_file(self.root.join(file)) {
@@ -192,6 +222,35 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn set_language_renames_the_extension_and_records_the_language() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"#!/bin/sh\necho").unwrap();
+        ws.retitle_memo(&memo.id, "deploy").unwrap();
+        let info = ws.set_language(&memo.id, "shellscript", "sh").unwrap();
+        assert_eq!(info.file, "deploy.sh");
+        assert_eq!(info.language.as_deref(), Some("shellscript"));
+        assert!(info.auto_title); // a language is not a name the person chose
+        assert_eq!(listed(&ws), vec!["deploy.sh"]);
+        // The same extension only records the language; a taken name gets a number.
+        let info = ws.set_language(&memo.id, "bash", "sh").unwrap();
+        assert_eq!(
+            (info.file.as_str(), info.language.as_deref()),
+            ("deploy.sh", Some("bash"))
+        );
+        ws.import_memo("deploy.py", b"").unwrap();
+        let info = ws.set_language(&memo.id, "python", "py").unwrap();
+        assert_eq!(info.file, "deploy 2.py");
+        assert!(matches!(
+            ws.set_language("nope", "x", "x"),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        assert!(matches!(
+            ws.set_language(&memo.id, "x", "a/b"),
+            Err(WorkspaceError::InvalidName(_))
+        ));
     }
 
     #[test]

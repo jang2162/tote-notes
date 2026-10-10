@@ -1,4 +1,4 @@
-import type { WorkspaceListItem } from "../backend/types";
+import type { LanguageInfo, WorkspaceListItem } from "../backend/types";
 import { h } from "./dom";
 
 /** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape. */
@@ -150,6 +150,50 @@ export async function workspacePicker(
         button("만들기", () => void create(), "primary"),
       ),
       error,
+    );
+  });
+}
+
+/** The status bar's language picker: a filter over ids and display names, the current language
+ * in bold. Enter takes the first language shown. */
+export function pickLanguage(
+  languages: LanguageInfo[],
+  currentId: string | null,
+): Promise<LanguageInfo | null> {
+  return modal<LanguageInfo>((close) => {
+    const input = h("input", { placeholder: "언어 이름" });
+    input.spellcheck = false;
+    const list = h("ul", { class: "picker-list" });
+    let shown = languages;
+    const render = () => {
+      const query = input.value.trim().toLocaleLowerCase();
+      shown = languages.filter(
+        (l) => !query || [l.id, ...l.aliases].some((n) => n.toLocaleLowerCase().includes(query)),
+      );
+      list.replaceChildren(
+        ...shown.map((lang) => {
+          const li = h("li", {
+            textContent: lang.aliases[0] ?? lang.id,
+            class: lang.id === currentId ? "current" : "",
+          });
+          li.addEventListener("click", () => close(lang));
+          return li;
+        }),
+      );
+    };
+    input.addEventListener("input", render);
+    input.addEventListener("keydown", (event) => {
+      if (!isSubmitEnter(event)) return;
+      event.preventDefault();
+      if (shown[0]) close(shown[0]);
+    });
+    render();
+    return h(
+      "div",
+      { class: "modal picker", role: "dialog" },
+      h("p", { textContent: "언어" }),
+      input,
+      list,
     );
   });
 }

@@ -236,6 +236,14 @@ body {
   color: var(--danger);
 }
 
+.status-language.clickable {
+  cursor: pointer;
+}
+
+.status-language.clickable:hover {
+  color: var(--fg);
+}
+
 button {
   padding: 4px 12px;
   border: 1px solid var(--border);
@@ -323,6 +331,10 @@ button.danger {
 
 .picker-list li:hover {
   background: var(--active-bg);
+}
+
+.picker-list li.current {
+  font-weight: 600;
 }
 
 .picker-create {

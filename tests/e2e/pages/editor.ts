@@ -41,6 +41,7 @@ const readFile = async (ext: string, path: string) => {
   return new Uint8Array(await response.arrayBuffer());
 };
 let highlight: Extension | undefined;
+let closeHighlight = () => {};
 let highlightTheme = async (_theme: string | IRawTheme) => {};
 /** Every request the page sent the worker, without its payload. */
 const workerLog: { type: string; doc?: number }[] = [];
@@ -63,7 +64,11 @@ if (params.get("highlight")) {
     await client.setTheme(tokenTheme(loaded));
   };
   await highlightTheme("themes/dark-plus.json");
-  if (lang?.grammar) highlight = workerHighlighting(client, lang);
+  if (lang?.grammar) {
+    const highlighting = workerHighlighting(client, lang);
+    highlight = highlighting.extension;
+    closeHighlight = () => highlighting.close();
+  }
 }
 
 const view = new EditorView({
@@ -194,4 +199,18 @@ const ime = {
 };
 
 // The specs drive and inspect the editor through these.
-Object.assign(window, { view, EditorSelection, ime, highlightTheme, workerLog });
+/** What closing a tab does: the view goes, and so does the document in the worker. */
+function closeDoc() {
+  view.destroy();
+  closeHighlight();
+}
+
+Object.assign(window, {
+  view,
+  EditorSelection,
+  EditorState,
+  ime,
+  highlightTheme,
+  workerLog,
+  closeDoc,
+});

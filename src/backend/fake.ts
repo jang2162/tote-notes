@@ -24,6 +24,7 @@ export const FAKE_STORAGE_KEY = "tote-fake";
 export interface FakeMemo {
   file: string;
   autoTitle: boolean;
+  language?: string;
   /** Contents, base64. */
   data: string;
   modifiedMs: number;
@@ -278,6 +279,18 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
+  async setMemoLanguage(id: string, language: string, ext: string) {
+    const memo = this.memo(id);
+    const { stem, ext: current } = splitName(memo.file);
+    if (current.toLowerCase() !== ext.toLowerCase()) {
+      if (!validName(`${stem}.${ext}`)) throw new BackendError("invalid-name", ext);
+      memo.file = this.freeName(stem, ext, id);
+    }
+    memo.language = language;
+    this.commit();
+    return this.info(id, memo);
+  }
+
   async deleteMemo(id: string) {
     this.memo(id);
     delete this.data.memos[id];
@@ -517,6 +530,7 @@ export class FakeBackend implements Backend {
       modifiedMs: memo.modifiedMs,
       size: fromBase64(memo.data).length,
       kind: kindOf(memo.file),
+      ...(memo.language ? { language: memo.language } : {}),
     };
   }
 

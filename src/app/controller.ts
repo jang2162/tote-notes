@@ -1,3 +1,4 @@
+import type { Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
 import type { Backend, LanguageInfo, MemoInfo } from "../backend/types";
@@ -7,13 +8,22 @@ import {
   parseLanguageConfiguration,
   type LanguageData,
 } from "../editor/language-config";
-import { editorExtensions, languageDataEffect, languageEffect } from "../editor/setup";
+import {
+  editorExtensions,
+  highlightEffect,
+  languageDataEffect,
+  languageEffect,
+} from "../editor/setup";
 import { EMPTY_REGISTRY, languageLabelFor, Registry } from "../extensions/registry";
 import { HighlightClient } from "../highlight/client";
-import { HIGHLIGHT_LIMIT_CHARS, workerHighlighting } from "../highlight/extension";
+import {
+  HIGHLIGHT_LIMIT_CHARS,
+  workerHighlighting,
+  type WorkerHighlighting,
+} from "../highlight/extension";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, promptText, workspacePicker } from "../ui/dialogs";
+import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { StatusBar } from "../ui/status-bar";
@@ -58,6 +68,8 @@ export class AppController implements DocHost {
     (ext, path) => this.backend.readExtensionFile(ext, path),
   );
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
+  /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
+  private readonly highlights = new Map<Doc, { key: string; highlighting: WorkerHighlighting }>();
   private session!: SessionSync;
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
@@ -134,18 +146,40 @@ export class AppController implements DocHost {
   }
 
   extensions(doc: Doc, options: { wrap: boolean; text: string }) {
-    const lang = this.languageOf(doc);
-    const highlight =
-      lang?.grammar && options.text.length <= HIGHLIGHT_LIMIT_CHARS
-        ? workerHighlighting(this.highlight, lang)
-        : undefined;
+    // A new state: the worker's copy of the old text is no use to it.
+    this.dropHighlight(doc);
     return editorExtensions({
       fileName: doc.fileName,
+      languageId: this.languageOf(doc)?.id,
       wrap: options.wrap,
       languageData: doc.languageData,
-      highlight,
+      highlight: this.highlightFor(doc, options.text.length),
       onUpdate: (update) => this.onUpdate(doc, update),
     });
+  }
+
+  /** The tab's highlighting for its current language: the same extension (and worker document)
+   * while the language stays, a new one when it changes. */
+  private highlightFor(doc: Doc, length: number): Extension {
+    const lang = this.languageOf(doc);
+    const key =
+      lang?.grammar && length <= HIGHLIGHT_LIMIT_CHARS ? `${lang.extension}:${lang.id}` : null;
+    const current = this.highlights.get(doc);
+    if (current && current.key === key) return current.highlighting.extension;
+    this.dropHighlight(doc);
+    if (!lang || !key) return [];
+    const highlighting = workerHighlighting(this.highlight, lang);
+    this.highlights.set(doc, { key, highlighting });
+    return highlighting.extension;
+  }
+
+  private dropHighlight(doc: Doc): void {
+    this.highlights.get(doc)?.highlighting.close();
+    this.highlights.delete(doc);
+  }
+
+  languages(): LanguageInfo[] {
+    return this.registry.languages;
   }
 
   /** The language of a tab: the chosen one, else the file name's (spec 「편집기」). */
@@ -179,7 +213,11 @@ export class AppController implements DocHost {
     if (doc instanceof MemoDoc && (change === "info" || change === "language"))
       this.memoList.upsert(doc.info);
     if (doc instanceof MemoDoc && change === "deleted") this.memoList.remove(doc.info.id);
-    if (change === "language") this.reconfigureLanguage(doc);
+    if (change === "language") {
+      this.reconfigureLanguage(doc);
+      // An external file's pick lives in the session only.
+      this.saveSessionSoon();
+    }
     if (active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
     if (active && change === "saved" && doc instanceof ExternalDoc)
       this.statusBar.setMessage("저장됨");
@@ -228,6 +266,7 @@ export class AppController implements DocHost {
     }
     const wasActive = doc === this.tabs.active;
     const next = this.tabs.remove(doc);
+    this.dropHighlight(doc);
     if (wasActive) {
       if (next) await this.activate(next);
       else this.showEmpty();
@@ -284,7 +323,7 @@ export class AppController implements DocHost {
   private show(doc: Doc): void {
     const state = doc.problem ? null : doc.state;
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
-    this.statusBar.setLanguage(languageLabelFor(this.languageOf(doc), doc.fileName));
+    this.showLanguage(doc);
     this.statusBar.setMessage(doc.notice ?? "");
     if (!state) {
       this.surface.showPlaceholder(PROBLEM_TEXT[doc.problem ?? "unreadable"]);
@@ -403,6 +442,7 @@ export class AppController implements DocHost {
     this.capture(doc);
     const memo = await importExternal(doc, this);
     this.tabs.list[this.tabs.indexOf(doc)] = memo;
+    this.dropHighlight(doc);
     this.memoList.upsert(memo.info);
     this.tabs.active = null;
     await this.activate(memo);
@@ -438,11 +478,33 @@ export class AppController implements DocHost {
 
   private reconfigureLanguage(doc: Doc): void {
     if (!doc.state) return;
-    const effects = [languageEffect(doc.fileName), languageDataEffect(doc.languageData)];
+    const effects = [
+      languageEffect(doc.fileName, this.languageOf(doc)?.id),
+      languageDataEffect(doc.languageData),
+      highlightEffect(this.highlightFor(doc, doc.state.doc.length)),
+    ];
     if (doc === this.tabs.active && this.view.state === doc.state) this.view.dispatch({ effects });
     else doc.state = doc.state.update({ effects }).state;
-    if (doc === this.tabs.active)
-      this.statusBar.setLanguage(languageLabelFor(this.languageOf(doc), doc.fileName));
+    if (doc === this.tabs.active) this.showLanguage(doc);
+  }
+
+  /** The status bar's language; a button for a tab showing text. */
+  private showLanguage(doc: Doc): void {
+    const label = languageLabelFor(this.languageOf(doc), doc.fileName);
+    const editable = doc.state && !doc.problem;
+    this.statusBar.setLanguage(label, editable ? () => void this.pickLanguageFor(doc) : undefined);
+  }
+
+  private async pickLanguageFor(doc: Doc): Promise<void> {
+    const current = this.languageOf(doc)?.id ?? null;
+    const picked = await pickLanguage(this.registry.languages, current);
+    this.view.focus();
+    if (!picked || picked.id === current) return;
+    try {
+      await doc.changeLanguage(picked);
+    } catch (error) {
+      this.report(error);
+    }
   }
 
   private async refreshMemos(): Promise<void> {

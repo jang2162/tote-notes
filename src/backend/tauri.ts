@@ -69,6 +69,9 @@ export class TauriBackend implements Backend {
   renameMemo(id: string, file: string) {
     return call<MemoInfo>("rename_memo", { id, file });
   }
+  setMemoLanguage(id: string, language: string, ext: string) {
+    return call<MemoInfo>("set_memo_language", { id, language, ext });
+  }
   deleteMemo(id: string) {
     return call<void>("delete_memo", { id });
   }

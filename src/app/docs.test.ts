@@ -9,6 +9,8 @@ import {
   memoryStorage,
   type FakeData,
 } from "../backend/fake";
+import fakeRegistry from "../backend/fake-registry.json";
+import type { ExtensionRegistry } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
 import {
   DRAFT_RESTORED_NOTICE,
@@ -21,6 +23,8 @@ import {
   type DocHost,
 } from "./docs";
 
+const fakeLanguages = (fakeRegistry as ExtensionRegistry).languages;
+
 function setup(seed: Partial<FakeData> = {}) {
   const backend = new FakeBackend(memoryStorage(JSON.stringify({ ...defaultFakeData(), ...seed })));
   const changes: Change[] = [];
@@ -32,6 +36,7 @@ function setup(seed: Partial<FakeData> = {}) {
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,
+    languages: () => fakeLanguages,
     changed: (_doc, change) => void changes.push(change),
   };
   return { backend, host, changes };
@@ -239,6 +244,74 @@ describe("MemoDoc", () => {
     const { anchor, head } = doc.state!.selection.main;
     expect([anchor, head]).toEqual([2, 3]);
   });
+
+  it("moves a .md memo without a language to the language its first line names, once", async () => {
+    const { backend, host } = setup();
+    const doc = new MemoDoc(host, await backend.createMemo());
+    doc.startEmpty();
+    type(doc, "#!/bin/sh");
+    await vi.runAllTimersAsync();
+    expect(doc.info.file).toBe("untitled.md");
+    // Leaving line 1 detects; the title waits for the cursor to leave the title line (line 2).
+    type(doc, "\necho hi");
+    await vi.runAllTimersAsync();
+    expect(doc.info.file).toBe("untitled.sh");
+    expect(doc.info.language).toBe("shellscript");
+    expect(backend.data.memos[doc.info.id].language).toBe("shellscript");
+    // Never back: the first line changes, the language stays.
+    type(doc, "# just a note", 0);
+    await doc.leave();
+    expect(doc.info.file).toBe("just a note#! bin sh.sh");
+    expect(doc.info.language).toBe("shellscript");
+  });
+
+  it("detects on leave even when the cursor never left line 1", async () => {
+    const { backend, host } = setup();
+    const doc = new MemoDoc(host, await backend.createMemo());
+    doc.startEmpty();
+    type(doc, '{"a": 1}');
+    await doc.leave();
+    expect(doc.info).toMatchObject({ file: "{ a 1}.json", language: "json" });
+  });
+
+  it("does not detect for a memo that already has a language or is not .md", async () => {
+    const { backend, host } = setup({
+      memos: {
+        a: fakeMemo("a.md", "#!/bin/sh"),
+        b: fakeMemo("b.txt", "#!/bin/sh"),
+      },
+    });
+    backend.data.memos.a.language = "markdown";
+    const a = new MemoDoc(
+      host,
+      (await backend.listMemos()).find((m) => m.id === "a")!,
+    );
+    const b = new MemoDoc(
+      host,
+      (await backend.listMemos()).find((m) => m.id === "b")!,
+    );
+    await a.ensureLoaded();
+    await b.ensureLoaded();
+    await a.leave();
+    await b.leave();
+    expect(a.info.file).toBe("a.md");
+    expect(b.info.file).toBe("b.txt");
+  });
+
+  it("changeLanguage renames a memo and records the language; an external file only remembers it", async () => {
+    const { backend, host, changes } = setup({ files: { "/x/a.txt": fakeFile("x") } });
+    const memo = new MemoDoc(host, await backend.createMemo());
+    memo.startEmpty();
+    await memo.changeLanguage(fakeLanguages.find((l) => l.id === "python")!);
+    expect(memo.info.file).toBe("untitled.py");
+    expect(memo.language).toBe("python");
+    expect(changes).toContain("language");
+    const ext = new ExternalDoc(host, "/x/a.txt");
+    await ext.ensureLoaded();
+    await ext.changeLanguage(fakeLanguages.find((l) => l.id === "python")!);
+    expect(ext.language).toBe("python");
+    expect(backend.data.files["/x/a.txt"]).toBe(fakeFile("x"));
+  });
 });
 
 describe("ExternalDoc", () => {
@@ -379,5 +452,17 @@ describe("importExternal", () => {
     expect(backend.memoText(memo.info.id)).toBe("echo hi\necho more\n");
     expect(backend.fileText("/x/deploy.sh")).toBe("echo hi\n");
     expect(backend.data.drafts["/x/deploy.sh"]).toBeUndefined();
+  });
+
+  it("carries the language picked for the file over to the memo", async () => {
+    const { backend, host } = setup({ files: { "/x/notes": fakeFile("select 1") } });
+    const ext = new ExternalDoc(host, "/x/notes");
+    await ext.ensureLoaded();
+    await ext.changeLanguage(fakeLanguages.find((l) => l.id === "sql")!);
+    const memo = await importExternal(ext, host);
+    expect(memo.info).toMatchObject({ file: "notes.sql", language: "sql", autoTitle: false });
+    expect(memo.language).toBe("sql");
+    expect(backend.data.memos[memo.info.id].language).toBe("sql");
+    expect(backend.memoText(memo.info.id)).toBe("select 1");
   });
 });

@@ -172,6 +172,7 @@ export interface Backend {
   writeMemo(id: string, bytes: Uint8Array): Promise<MemoInfo>;
   retitleMemo(id: string, stem: string): Promise<MemoInfo>;
   renameMemo(id: string, file: string): Promise<MemoInfo>;
+  setMemoLanguage(id: string, language: string, ext: string): Promise<MemoInfo>;
   deleteMemo(id: string): Promise<void>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;

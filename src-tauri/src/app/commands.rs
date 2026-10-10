@@ -207,6 +207,19 @@ pub async fn rename_memo(
 }
 
 #[tauri::command]
+pub async fn set_memo_language(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+    language: String,
+    ext: String,
+) -> CmdResult<MemoInfo> {
+    let workspace = workspace_of(&core, &window)?;
+    let info = lock(&workspace).set_language(&id, &language, &ext)?;
+    Ok(info)
+}
+
+#[tauri::command]
 pub async fn delete_memo(
     core: State<'_, AppCore>,
     window: WebviewWindow,

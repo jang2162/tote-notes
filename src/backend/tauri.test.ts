@@ -29,6 +29,11 @@ describe("TauriBackend", () => {
       [() => backend.readMemo("m"), "read_memo", { id: "m" }],
       [() => backend.retitleMemo("m", "제목"), "retitle_memo", { id: "m", stem: "제목" }],
       [() => backend.renameMemo("m", "a.md"), "rename_memo", { id: "m", file: "a.md" }],
+      [
+        () => backend.setMemoLanguage("m", "python", "py"),
+        "set_memo_language",
+        { id: "m", language: "python", ext: "py" },
+      ],
       [() => backend.deleteMemo("m"), "delete_memo", { id: "m" }],
       [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],
       [() => backend.readSession(), "read_session", undefined],

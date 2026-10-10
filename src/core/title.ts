@@ -29,10 +29,12 @@ export function titleFromLine(line: string): string {
   return cut || UNTITLED;
 }
 
-/** The first non-blank line and its number (line 1 for a blank memo). */
+/** The first non-blank line and its number (line 1 for a blank memo). A shebang on line 1 is
+ * skipped so a script memo is not titled "! bin sh". */
 export function titleLine(doc: Text): { text: string; number: number } {
   const last = Math.min(doc.lines, TITLE_SCAN_LINES);
-  for (let n = 1; n <= last; n++) {
+  const first = doc.line(1).text.startsWith("#!") ? 2 : 1;
+  for (let n = first; n <= last; n++) {
     const line = doc.line(n);
     if (line.text.trim() !== "") return { text: line.text, number: n };
   }

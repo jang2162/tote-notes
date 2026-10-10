@@ -28,7 +28,11 @@ export class StatusBar {
     this.position.textContent = `줄 ${line.number}, 열 ${head - line.from + 1}${cursors > 1 ? ` · 커서 ${cursors}개` : ""}`;
   }
 
-  setLanguage(label: string): void {
+  /** `onPick` makes the label a button that opens the language picker. */
+  setLanguage(label: string, onPick?: () => void): void {
     this.language.textContent = label;
+    this.language.onclick = onPick ?? null;
+    this.language.classList.toggle("clickable", Boolean(onPick));
+    this.language.title = onPick ? "언어 바꾸기" : "";
   }
 }

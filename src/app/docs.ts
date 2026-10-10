@@ -2,6 +2,7 @@ import { EditorState, type EditorSelection, type Extension, type Text } from "@c
 
 import { errorCode, type Backend, type LanguageInfo, type MemoInfo } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
+import { detectLanguage } from "../core/language";
 import { basename, splitName } from "../core/names";
 import type { WriteScheduler } from "../core/scheduler";
 import { restoreSelection, type SelectionJSON, type ViewMode } from "../core/session";
@@ -40,6 +41,8 @@ export interface DocHost {
   /** The language-configuration data of `doc`'s language (`{}` when it has none). */
   languageConfig(lang: LanguageInfo | undefined): Promise<LanguageData>;
   languageOf(doc: Doc): LanguageInfo | undefined;
+  /** Every language the registry knows, one per id (the picker's list). */
+  languages(): LanguageInfo[];
   /** Something the tab bar, memo list or status bar shows about `doc` changed. */
   changed(doc: Doc, change: Change): void;
 }
@@ -65,13 +68,20 @@ export function isBlank(text: Text): boolean {
   return true;
 }
 
+const cursorLine = (state: EditorState) => state.doc.lineAt(state.selection.main.head).number;
+
 /** The main cursor just left the title line (the first non-blank one): time for the title. */
 export function leftTitleLine(update: DocUpdate): boolean {
-  const lineOf = (state: EditorState) => state.doc.lineAt(state.selection.main.head).number;
   return (
-    lineOf(update.startState) === titleLine(update.startState.doc).number &&
-    lineOf(update.state) !== titleLine(update.state.doc).number
+    cursorLine(update.startState) === titleLine(update.startState.doc).number &&
+    cursorLine(update.state) !== titleLine(update.state.doc).number
   );
+}
+
+/** The main cursor just left line 1, where a shebang sits: time for language detection. Not the
+ * title moment — the title skips a shebang, so its line is further down. */
+export function leftFirstLine(update: DocUpdate): boolean {
+  return cursorLine(update.startState) === 1 && cursorLine(update.state) !== 1;
 }
 
 /** One tab's document. The editor view shows the active one; every document keeps its own
@@ -133,6 +143,16 @@ export abstract class Doc {
     if (update.docChanged) this.edited();
   }
 
+  /** Reloads the language-configuration data for the current language and tells the host, which
+   * reconfigures the editor (comment tokens, brackets, highlighting). */
+  async refreshLanguage(): Promise<void> {
+    this.languageData = await this.host.languageConfig(this.host.languageOf(this));
+    this.host.changed(this, "language");
+  }
+
+  /** The language picked in the status bar. */
+  abstract changeLanguage(lang: LanguageInfo): Promise<void>;
+
   protected encode(text: Text): Uint8Array {
     return encodeText(text.sliceString(0, text.length, this.eol), this.bom);
   }
@@ -193,6 +213,7 @@ export class MemoDoc extends Doc {
   readonly kind = "memo" as const;
   private savedText: Text | null = null;
   private retitling: Promise<void> | null = null;
+  private detecting: Promise<void> | null = null;
 
   constructor(
     host: DocHost,
@@ -257,7 +278,9 @@ export class MemoDoc extends Doc {
 
   update(update: DocUpdate): void {
     super.update(update);
-    if ((update.docChanged || update.selectionSet) && leftTitleLine(update)) void this.retitle();
+    if (!(update.docChanged || update.selectionSet)) return;
+    if (leftTitleLine(update)) void this.retitle();
+    if (leftFirstLine(update)) void this.detect();
   }
 
   async save(): Promise<void> {
@@ -337,9 +360,43 @@ export class MemoDoc extends Doc {
     this.setInfo(await this.host.backend.renameMemo(this.info.id, file));
   }
 
+  /** Spec 「편집기」: the file takes the language's first extension, the index keeps the id. */
+  async changeLanguage(lang: LanguageInfo): Promise<void> {
+    await this.saveNow();
+    const ext = lang.extensions[0] ?? splitName(this.info.file).ext;
+    this.info = await this.host.backend.setMemoLanguage(this.info.id, lang.id, ext);
+    this.language = lang.id;
+    this.host.changed(this, "info");
+    await this.refreshLanguage();
+  }
+
+  /** Automatic detection (spec 「편집기」): only a `.md` memo without a language, only up and
+   * away from Markdown, when the cursor leaves line 1 and when the tab is left. */
+  private detect(): Promise<void> {
+    this.detecting ??= this.runDetect().finally(() => {
+      this.detecting = null;
+    });
+    return this.detecting;
+  }
+
+  private async runDetect(): Promise<void> {
+    // A title rename in flight goes first: both move the file, and the later answer wins.
+    await this.retitling;
+    if (this.info.language || splitName(this.info.file).ext.toLowerCase() !== "md" || !this.state)
+      return;
+    const found = detectLanguage(this.state.doc.toString(), this.host.languages());
+    if (!found || found.id === "markdown") return;
+    try {
+      await this.changeLanguage(found);
+    } catch (error) {
+      this.fail(error);
+    }
+  }
+
   async leave(): Promise<void> {
     await this.saveNow();
     await this.retitle();
+    await this.detect();
   }
 
   flush(): Promise<void> {
@@ -511,6 +568,12 @@ export class ExternalDoc extends Doc {
     return this.leave();
   }
 
+  /** The choice lives in the session only; the file on disk is not touched. */
+  async changeLanguage(lang: LanguageInfo): Promise<void> {
+    this.language = lang.id;
+    await this.refreshLanguage();
+  }
+
   async close(ask: CloseAsk): Promise<boolean> {
     if (!this.modified) return true;
     const choice = await ask();
@@ -543,5 +606,8 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
   const memo = new MemoDoc(host, info);
   memo.scrollAnchor = ext.scrollAnchor;
   if (ext.state) memo.adopt(ext.state, ext.lineFormat);
+  // A language picked for the file stays with the text; as a memo it is kept the memo way.
+  const lang = ext.language && host.languages().find((l) => l.id === ext.language);
+  if (lang) await memo.changeLanguage(lang);
   return memo;
 }

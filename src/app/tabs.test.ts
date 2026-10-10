@@ -13,6 +13,7 @@ function host(): DocHost {
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,
+    languages: () => [],
     changed: () => {},
   };
 }

@@ -23,6 +23,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,
+    languages: () => [],
     changed: () => {},
   };
   const infos = new Map<string, MemoInfo>();
@@ -123,6 +124,7 @@ describe("SessionSync.build and sessionTab", () => {
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,
+          languages: () => [],
           changed: () => {},
         },
         { id: "a", file: "가.md", autoTitle: false, modifiedMs: 0, size: 0, kind: "text" },
@@ -137,6 +139,7 @@ describe("SessionSync.build and sessionTab", () => {
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,
+          languages: () => [],
           changed: () => {},
         },
         "/x/a.sh",

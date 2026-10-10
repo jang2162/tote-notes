@@ -11,7 +11,7 @@ import {
 import { markdown } from "@codemirror/lang-markdown";
 import { indentUnit } from "@codemirror/language";
 import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -55,26 +55,39 @@ export const zedKeymap: KeyBinding[] = [
 const language = new Compartment();
 
 /** Markdown gets its editing aids (list continuation) from the bundled parser and keymap. Colours
- * come later from TextMate highlighting, so no highlight style is attached here. */
-export function languageFor(fileName: string): Extension {
+ * come from TextMate highlighting, so no highlight style is attached here. The registry's
+ * language decides when there is one (an `.md` file shown as Python is not Markdown); without
+ * one, the extension does. */
+export function languageFor(fileName: string, languageId?: string): Extension {
+  if (languageId !== undefined) return languageId === "markdown" ? markdown() : [];
   const ext = splitName(fileName).ext.toLowerCase();
   return ext === "md" || ext === "markdown" ? markdown() : [];
 }
 
-/** Switches the language of a state built by `editorExtensions` (after a rename). */
-export function languageEffect(fileName: string) {
-  return language.reconfigure(languageFor(fileName));
+/** Switches the language of a state built by `editorExtensions` (after a rename or a pick). */
+export function languageEffect(fileName: string, languageId?: string) {
+  return language.reconfigure(languageFor(fileName, languageId));
 }
 
 const configuration = new Compartment();
 
+// Ahead of the bundled parser's data (Markdown's `<!--` comment): the configuration file is
+// what decides ⌘/ and bracket closing.
 function languageDataExtension(data: LanguageData): Extension {
-  return EditorState.languageData.of(() => [data]);
+  return Prec.high(EditorState.languageData.of(() => [data]));
 }
 
 /** Swaps the language-configuration data of a state built by `editorExtensions`. */
 export function languageDataEffect(data: LanguageData) {
   return configuration.reconfigure(languageDataExtension(data));
+}
+
+const highlightSlot = new Compartment();
+
+/** Swaps the TextMate colours of a state built by `editorExtensions` (`workerHighlighting`'s
+ * extension, or nothing). */
+export function highlightEffect(extension: Extension) {
+  return highlightSlot.reconfigure(extension);
 }
 
 /** Colours come from the CSS variables in styles.css, which the theme manager fills from the selected theme. */
@@ -98,6 +111,8 @@ const appTheme = EditorView.theme({
 
 export interface EditorOptions {
   fileName: string;
+  /** The registry's language id for the file, when it has one (`languageFor`). */
+  languageId?: string;
   /** Soft wrap; off when a line is too long to wrap cheaply (`WRAP_LIMIT` in src/app/docs.ts). */
   wrap: boolean;
   onUpdate: (update: ViewUpdate) => void;
@@ -122,7 +137,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     search({ top: true }),
     multiRangeIme,
     options.wrap ? EditorView.lineWrapping : [],
-    language.of(languageFor(options.fileName)),
+    language.of(languageFor(options.fileName, options.languageId)),
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
     keymap.of([
       ...zedKeymap,
@@ -131,7 +146,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
       ...searchKeymap,
       ...historyKeymap,
     ]),
-    options.highlight ?? [],
+    highlightSlot.of(options.highlight ?? []),
     appTheme,
     EditorView.updateListener.of(options.onUpdate),
   ];

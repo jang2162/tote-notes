@@ -64,7 +64,7 @@ test("a document closed while its grammar loads is never opened in the worker", 
   page,
 }) => {
   await open(page, "echo hi", "run.sh", "&slowgrammar=500");
-  await page.evaluate(() => window.view.destroy());
+  await page.evaluate(() => window.closeDoc());
   await page.waitForTimeout(1000);
   const log = await page.evaluate(() => window.workerLog);
   expect(log.filter((m) => m.type === "close")).toHaveLength(1);
@@ -129,4 +129,27 @@ test("a theme change recolours the open document without an edit", async ({ page
     }),
   );
   await expect(comment).toHaveCSS("color", "rgb(0, 170, 0)");
+});
+
+// The app swaps the view's state on every tab switch, which rebuilds the plugins: the document
+// must stay in the worker (with its line states) instead of being closed and sent again.
+test("a document stays open in the worker while another state is shown", async ({ page }) => {
+  await open(page, "# comment\necho hi", "run.sh");
+  await expect(coloured(page).first()).toBeVisible();
+  await page.evaluate(() => {
+    const state = window.view.state;
+    window.view.setState(window.EditorState.create({ doc: "other" }));
+    window.view.setState(state);
+  });
+  await expect(coloured(page).first()).toBeVisible();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("# after");
+  await expect(page.locator(".cm-line").last().locator("span[class*='tm-c']").first()).toHaveCSS(
+    "color",
+    DARK_PLUS_COMMENT,
+  );
+  const log = await page.evaluate(() => window.workerLog);
+  expect(log.filter((m) => m.type === "open")).toHaveLength(1);
+  expect(log.filter((m) => m.type === "close")).toEqual([]);
 });
