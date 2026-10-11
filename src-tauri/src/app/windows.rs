@@ -123,8 +123,8 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
             lifecycle::begin(app, FlushGoal::CloseWindow(label.to_string()));
         }
         WindowEvent::Destroyed => {
-            for goal in core.closed(label) {
-                lifecycle::finish(app, goal);
+            for (id, ack) in core.closed(label) {
+                lifecycle::settle(app, id, ack);
             }
         }
         _ => {}

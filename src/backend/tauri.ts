@@ -137,8 +137,8 @@ export class TauriBackend implements Backend {
     return (await open({ multiple: true, directory: false })) ?? [];
   }
 
-  flushDone(id: number) {
-    return call<void>("flush_done", { id });
+  flushDone(id: number, blocked?: string) {
+    return call<void>("flush_done", { id, blocked });
   }
   closeWindow() {
     return call<void>("close_window");

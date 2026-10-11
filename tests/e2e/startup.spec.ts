@@ -1,28 +1,9 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
-import { start } from "./helpers";
+import { quietErrors, start } from "./helpers";
 
 const LISTING_FAILED = "the workspace could not be read";
-
-/** The app logs each error it reports; the ones a test makes on purpose stay out of the output.
- * Vite's client wraps `console.error` to forward it to the dev server's log, so the filter stays
- * outermost: whatever is assigned later goes under it. */
-async function quietErrors(page: Page, ...expected: string[]): Promise<void> {
-  await page.addInitScript((expected) => {
-    let inner = console.error.bind(console);
-    const filtered = (...args: unknown[]) => {
-      if (!args.some((arg) => expected.some((text) => String(arg).includes(text)))) inner(...args);
-    };
-    Object.defineProperty(console, "error", {
-      configurable: true,
-      get: () => filtered,
-      set: (next: typeof console.error) => {
-        inner = next;
-      },
-    });
-  }, expected);
-}
 
 const twoTabSession = JSON.stringify({
   version: 1,
@@ -46,7 +27,9 @@ test("a failed memo listing at start keeps the session file as it was", async ({
   await expect(message).toHaveClass(/error/);
   // A flush (window close, quit) and hiding the window are what write the session.
   await page.evaluate(() => window.__tote.backend.requestFlush(1));
-  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.flushed)).toEqual([1]);
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 1 }]);
   await page.evaluate(() => window.__tote.app.flushAll());
   expect(await page.evaluate(() => window.__tote.backend.data.session)).toBe(session);
 

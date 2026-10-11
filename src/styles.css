@@ -184,6 +184,11 @@ body {
   content: " ●";
 }
 
+.tab.failed .tab-title::after {
+  content: " ⚠";
+  color: var(--danger);
+}
+
 .tab-close {
   visibility: hidden;
   padding: 0 4px;

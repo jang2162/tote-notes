@@ -51,7 +51,7 @@ export interface FakeData {
   clock: number;
   /** `readMemo` calls per memo ID — lets tests check that a restore loads lazily. */
   reads: Record<string, number>;
-  flushed: number[];
+  flushed: { id: number; blocked?: string }[];
   windowClosed: boolean;
   settings: Settings;
   /** Extensions the fake "installed"; they contribute nothing but a row in the list. */
@@ -77,6 +77,8 @@ export interface FakeData {
   textSearchCancelled: number;
   /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
   failListMemos?: number;
+  /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
+  failWrites?: number;
 }
 
 export interface FakeStorage {
@@ -300,6 +302,11 @@ export class FakeBackend implements Backend {
   }
 
   async writeMemo(id: string, bytes: Uint8Array) {
+    if (this.data.failWrites) {
+      this.data.failWrites -= 1;
+      this.commit();
+      throw new BackendError("io", "no space left on device");
+    }
     const memo = this.memo(id);
     memo.data = toBase64(bytes);
     memo.modifiedMs = this.tick();
@@ -453,8 +460,8 @@ export class FakeBackend implements Backend {
     return picks;
   }
 
-  async flushDone(id: number) {
-    this.data.flushed.push(id);
+  async flushDone(id: number, blocked?: string) {
+    this.data.flushed.push(blocked === undefined ? { id } : { id, blocked });
     this.commit();
   }
 

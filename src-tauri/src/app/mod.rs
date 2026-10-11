@@ -26,7 +26,7 @@ use crate::persist::content_hash;
 use crate::persist::external::ExternalFiles;
 use crate::session::drafts::DraftStore;
 use crate::workspace::Workspace;
-use flush::{Begin, FlushCoordinator, FlushGoal};
+use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 
 /// A poisoned lock only means another command panicked; the data is still the best there is.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -301,8 +301,8 @@ impl AppCore {
         lock(&self.searches).get(window) == Some(&request_id)
     }
 
-    /// A window is gone. Returns the flush rounds it was the last one to wait for.
-    pub fn closed(&self, label: &str) -> Vec<FlushGoal> {
+    /// A window is gone. Returns the flush rounds it was the last one to wait for, by id.
+    pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);
@@ -365,12 +365,16 @@ impl AppCore {
         inner.flush.begin(goal, windows)
     }
 
-    pub fn ack_flush(&self, id: u64, label: &str) -> Option<FlushGoal> {
-        lock(&self.inner).flush.ack(id, label)
+    pub fn ack_flush(&self, id: u64, label: &str, blocked: Option<String>) -> Ack {
+        lock(&self.inner).flush.ack(id, label, blocked)
     }
 
-    pub fn expire_flush(&self, id: u64) -> Option<FlushGoal> {
+    pub fn expire_flush(&self, id: u64) -> Ack {
         lock(&self.inner).flush.expire(id)
+    }
+
+    pub fn cancel_flush(&self, id: u64) {
+        lock(&self.inner).flush.cancel(id);
     }
 
     /// Fixes what reopens at the next launch: every open window, the most recently focused last
@@ -686,13 +690,35 @@ mod tests {
             panic!("expected a round")
         };
         assert_eq!(windows, vec![a.clone()]);
-        assert_eq!(core.closed(&a), vec![FlushGoal::Quit]);
-        assert_eq!(core.ack_flush(id, &a), None);
+        assert_eq!(core.closed(&a), vec![(id, Ack::Done(FlushGoal::Quit))]);
+        assert_eq!(core.ack_flush(id, &a, None), Ack::Pending);
         // A window that is not registered has nothing to write: closing it needs no round.
         assert_eq!(
             core.begin_flush(FlushGoal::CloseWindow("gone".into())),
             Begin::Done(FlushGoal::CloseWindow("gone".into()))
         );
+    }
+
+    #[test]
+    fn a_cancelled_quit_round_lets_the_next_quit_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let Begin::Started { id, .. } = core.begin_flush(FlushGoal::Quit) else {
+            panic!("expected a round")
+        };
+        let blocked = Some("저장하지 못한 메모 1개".to_string());
+        assert!(matches!(
+            core.ack_flush(id, &a, blocked),
+            Ack::Blocked { .. }
+        ));
+        assert_eq!(core.begin_flush(FlushGoal::Quit), Begin::AlreadyRunning);
+        core.cancel_flush(id);
+        assert!(!core.is_quitting());
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { .. }
+        ));
     }
 
     #[test]

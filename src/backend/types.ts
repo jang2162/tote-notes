@@ -238,7 +238,8 @@ export interface Backend {
   windowFrame(): Promise<WindowFrame | null>;
   /** The 「파일 열기」 dialog; empty when cancelled. */
   pickFiles(): Promise<string[]>;
-  flushDone(id: number): Promise<void>;
+  /** Answers flush round `id`; `blocked` says what could not be written (the quit asks first). */
+  flushDone(id: number, blocked?: string): Promise<void>;
   closeWindow(): Promise<void>;
   extensionRegistry(): Promise<ExtensionRegistry>;
   /** A file inside an installed extension, by the path its manifest uses. */

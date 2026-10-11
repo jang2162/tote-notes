@@ -71,7 +71,9 @@ test("a flush request writes pending edits and the title before answering", asyn
   // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
   await page.keyboard.insertText("급히 끈다");
   await page.evaluate(() => window.__tote.backend.requestFlush(7));
-  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.flushed)).toEqual([7]);
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 7 }]);
   const files = await page.evaluate(() =>
     Object.values(window.__tote.backend.data.memos).map((m) => m.file),
   );

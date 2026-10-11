@@ -22,6 +22,8 @@ export const LARGE_MEMO_SAVE_DELAY_MS = 3000;
  * what the longer delay saves. */
 export const LARGE_MEMO_CHARS = 1_000_000;
 export const DRAFT_DELAY_MS = 1000;
+/** Spec 「오류 처리」: a failed save keeps the text in memory and tries again this often. */
+export const SAVE_RETRY_MS = 5000;
 /** Bigger files open in the large text viewer instead of loading into the editor.
  * Same value as `MAX_EDITOR_BYTES` in src-tauri/src/persist/external.rs. */
 export const MAX_EDITOR_BYTES = 100 * 1024 * 1024;
@@ -121,9 +123,12 @@ export abstract class Doc {
   restoreSelection: SelectionJSON | undefined;
   /** 「텍스트로 열기」: read the bytes as text no matter what the kind says. */
   forceText = false;
+  /** The last write of the tab's text failed: it is only in memory, and a retry is scheduled. */
+  saveFailed = false;
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;
+  private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Counts `refreshLanguage` calls: only the latest one's answer is applied. */
   private languageRequest = 0;
 
@@ -191,6 +196,38 @@ export abstract class Doc {
   protected fail(error: unknown): void {
     this.error = error;
     this.host.changed(this, "error");
+  }
+
+  /** A write of the tab's text failed: the tab says so and `retry` runs again in SAVE_RETRY_MS. */
+  protected failSave(error: unknown, key: string, retry: () => Promise<void>): void {
+    this.saveFailed = true;
+    this.retryLater(key, retry);
+    this.fail(error);
+  }
+
+  /** The wait is a timer of its own, not the scheduler's delay: a flush runs what the key's slot
+   * holds until it is empty, so a retry waiting there would run again at once — forever, while
+   * the disk stays full. */
+  protected retryLater(key: string, retry: () => Promise<void>): void {
+    this.cancelRetry();
+    this.retryTimer = setTimeout(() => {
+      this.retryTimer = null;
+      this.host.writes.schedule(key, 0, retry);
+      void this.host.writes.flush(key);
+    }, SAVE_RETRY_MS);
+  }
+
+  protected cancelRetry(): void {
+    if (this.retryTimer !== null) clearTimeout(this.retryTimer);
+    this.retryTimer = null;
+  }
+
+  /** Nothing is left to write: the retry and the failed mark go. */
+  protected clearSaveFailed(): void {
+    this.cancelRetry();
+    if (!this.saveFailed) return;
+    this.saveFailed = false;
+    this.host.changed(this, "dirty");
   }
 
   /** The state is built at once and the language data follows (the host swaps it in). */
@@ -326,23 +363,26 @@ export class MemoDoc extends Doc {
 
   async save(): Promise<void> {
     const text = this.state?.doc;
-    if (!text || text === this.savedText) return;
+    // Undone back to what is saved: a failed save has nothing left to write.
+    if (!text || text === this.savedText) return this.clearSaveFailed();
+    const retry = () => this.save();
     try {
       this.setInfo(await this.host.backend.writeMemo(this.info.id, this.encode(text)));
     } catch (error) {
-      if (errorCode(error) !== "unknown-memo") return this.fail(error);
+      if (errorCode(error) !== "unknown-memo") return this.failSave(error, this.saveKey, retry);
       // The file went away under us (renamed or deleted in Finder). Typed text must survive, so
       // it becomes a new memo instead of failing every save from here on.
       try {
         this.setInfo(await this.recover(this.encode(text)));
       } catch (again) {
-        return this.fail(again);
+        return this.failSave(again, this.saveKey, retry);
       }
       this.notice = RECOVERED_NOTICE;
       this.host.changed(this, "notice");
     }
     this.savedText = text;
     this.error = null;
+    this.clearSaveFailed();
     this.host.changed(this, "saved");
   }
 
@@ -485,7 +525,6 @@ export class ExternalDoc extends Doc {
   exists = false;
   /** Bytes on disk when the file was read; a viewer is told it. */
   size = 0;
-  private draftFailed = false;
 
   constructor(
     host: DocHost,
@@ -569,16 +608,15 @@ export class ExternalDoc extends Doc {
     this.host.writes.schedule(this.draftKey, DRAFT_DELAY_MS, () => this.keepDraft());
   }
 
+  /** Losing the edits since the last ⌘S is a loss too, so a failed draft is retried like a memo. */
   private async keepDraft(): Promise<void> {
-    if (this.modified && this.state) {
-      try {
-        await this.host.backend.keepExternalDraft(this.path, this.encode(this.state.doc));
-        this.draftFailed = false;
-      } catch (error) {
-        this.draftFailed = true;
-        throw error;
-      }
+    if (!this.modified || !this.state) return this.clearSaveFailed();
+    try {
+      await this.host.backend.keepExternalDraft(this.path, this.encode(this.state.doc));
+    } catch (error) {
+      return this.failSave(error, this.draftKey, () => this.keepDraft());
     }
+    this.clearSaveFailed();
   }
 
   /** ⌘S. Returns whether the file was written. */
@@ -589,12 +627,15 @@ export class ExternalDoc extends Doc {
     try {
       await this.host.backend.saveExternal(this.path, this.encode(text));
     } catch (error) {
+      // Settling dropped a draft retry; the edits still need their draft.
+      if (this.saveFailed) this.retryLater(this.draftKey, () => this.keepDraft());
       this.fail(error);
       return false;
     }
     this.exists = true;
     this.notice = null;
     this.error = null;
+    this.clearSaveFailed();
     if (this.state.doc === text) this.modified = false;
     // Typed while saving: those edits are still unsaved and need their draft.
     else this.host.writes.schedule(this.draftKey, DRAFT_DELAY_MS, () => this.keepDraft());
@@ -606,6 +647,7 @@ export class ExternalDoc extends Doc {
   async discard(): Promise<void> {
     await this.settleDraft();
     this.modified = false;
+    this.clearSaveFailed();
     await this.host.backend.discardExternalDraft(this.path);
     this.host.changed(this, "dirty");
   }
@@ -614,7 +656,7 @@ export class ExternalDoc extends Doc {
    * is what the window close and quit run, and the draft is all that survives them. */
   async leave(): Promise<void> {
     await this.host.writes.flush(this.draftKey);
-    if (!this.draftFailed) return;
+    if (!this.saveFailed) return;
     this.host.writes.schedule(this.draftKey, 0, () => this.keepDraft());
     await this.host.writes.flush(this.draftKey);
   }
@@ -641,6 +683,7 @@ export class ExternalDoc extends Doc {
   /** No draft write pending or running: one landing after a save or discard would bring the
    * draft back. */
   private async settleDraft(): Promise<void> {
+    this.cancelRetry();
     this.host.writes.cancel(this.draftKey);
     await this.host.writes.flush(this.draftKey);
   }

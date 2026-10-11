@@ -341,11 +341,13 @@ export class AppController implements DocHost {
     await this.saveSessionNow();
   }
 
+  /** Answers with what is still only in memory: the native side asks before closing over it. */
   private async onFlush(id: number): Promise<void> {
     try {
       await this.flushAll();
     } finally {
-      await this.backend.flushDone(id);
+      const failed = this.tabs.list.filter((doc) => doc.saveFailed).length;
+      await this.backend.flushDone(id, failed ? `저장하지 못한 메모 ${failed}개` : undefined);
     }
   }
 
@@ -566,8 +568,9 @@ export class AppController implements DocHost {
       this.tabs.list.map((doc) => ({
         id: doc.tabId,
         title: doc.title,
-        hint: doc.hint,
+        hint: doc.saveFailed ? `${doc.hint}\n저장 실패: ${describeError(doc.error)}` : doc.hint,
         dirty: doc.dirty,
+        failed: doc.saveFailed,
         external: doc.kind === "external",
         active: doc === this.tabs.active,
       })),

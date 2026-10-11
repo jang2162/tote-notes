@@ -369,8 +369,13 @@ pub async fn open_workspace(app: AppHandle, path: String) -> CmdResult<()> {
 }
 
 #[tauri::command]
-pub async fn flush_done(app: AppHandle, window: WebviewWindow, id: u64) -> CmdResult<()> {
-    lifecycle::ack(&app, id, window.label());
+pub async fn flush_done(
+    app: AppHandle,
+    window: WebviewWindow,
+    id: u64,
+    blocked: Option<String>,
+) -> CmdResult<()> {
+    lifecycle::ack(&app, id, window.label(), blocked);
     Ok(())
 }
 

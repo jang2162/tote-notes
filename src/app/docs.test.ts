@@ -20,6 +20,7 @@ import {
   LONG_LINE_LIMIT,
   MemoDoc,
   RECOVERED_NOTICE,
+  SAVE_RETRY_MS,
   type Change,
   type Doc,
   type DocHost,
@@ -211,6 +212,47 @@ describe("MemoDoc", () => {
     broken = false;
     await doc.flush();
     expect(backend.memoText("a")).toBe("우유\n계란");
+  });
+
+  it("a failed save is retried after SAVE_RETRY_MS and the tab says so", async () => {
+    const { backend, host, changes } = setup({
+      memos: { a: fakeMemo("장보기.md", "우유") },
+      failWrites: 2,
+    });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    type(doc, "\n계란");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(doc.saveFailed).toBe(true);
+    expect(changes).toContain("error");
+    expect(backend.data.failWrites).toBe(1);
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS - 1);
+    expect(backend.data.failWrites).toBe(1);
+    await vi.advanceTimersByTimeAsync(1);
+    expect(backend.data.failWrites).toBe(0);
+    expect(doc.saveFailed).toBe(true);
+    expect(backend.memoText("a")).toBe("우유");
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(doc.saveFailed).toBe(false);
+    expect(doc.error).toBeNull();
+    expect(backend.memoText("a")).toBe("우유\n계란");
+  });
+
+  it("a failed save whose text is undone back to the saved one is no longer failed", async () => {
+    const { backend, host } = setup({
+      memos: { a: fakeMemo("장보기.md", "우유") },
+      failWrites: 1,
+    });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    const saved = doc.state!;
+    type(doc, "\n계란");
+    await vi.advanceTimersByTimeAsync(500);
+    expect(doc.saveFailed).toBe(true);
+    doc.update({ state: saved, startState: doc.state!, docChanged: true, selectionSet: true });
+    await vi.advanceTimersByTimeAsync(500);
+    expect(doc.saveFailed).toBe(false);
+    expect(backend.memoText("a")).toBe("우유");
   });
 
   it("loads once, lazily, and keeps CRLF and the BOM", async () => {
@@ -481,6 +523,24 @@ describe("ExternalDoc", () => {
     expect(backend.data.drafts["/x/a.sh"]).toBeUndefined();
     broken = false;
     await doc.leave();
+    expect(backend.data.drafts["/x/a.sh"]).toBeDefined();
+  });
+
+  it("a draft that failed to be kept is tried again after SAVE_RETRY_MS", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("echo hi\n") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    const keep = backend.keepExternalDraft.bind(backend);
+    let broken = true;
+    vi.spyOn(backend, "keepExternalDraft").mockImplementation((path, bytes) =>
+      broken ? Promise.reject(new Error("no space")) : keep(path, bytes),
+    );
+    type(doc, "# 수정");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(doc.saveFailed).toBe(true);
+    broken = false;
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(doc.saveFailed).toBe(false);
     expect(backend.data.drafts["/x/a.sh"]).toBeDefined();
   });
 

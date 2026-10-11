@@ -5,6 +5,8 @@ export interface TabView {
   title: string;
   hint: string;
   dirty: boolean;
+  /** The last save failed; the text is only in memory until a retry succeeds. */
+  failed: boolean;
   external: boolean;
   active: boolean;
 }
@@ -31,6 +33,7 @@ export class TabBar {
       "tab",
       tab.active && "active",
       tab.dirty && "dirty",
+      tab.failed && "failed",
       tab.external && "external",
     ]
       .filter(Boolean)

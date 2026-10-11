@@ -46,7 +46,11 @@ describe("TauriBackend", () => {
       [() => backend.listWorkspaces(), "list_workspaces", undefined],
       [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
       [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
-      [() => backend.flushDone(3), "flush_done", { id: 3 }],
+      [
+        () => backend.flushDone(3, "저장하지 못한 메모 1개"),
+        "flush_done",
+        { id: 3, blocked: "저장하지 못한 메모 1개" },
+      ],
       [() => backend.closeWindow(), "close_window", undefined],
       [() => backend.extensionRegistry(), "extension_registry", undefined],
       [
