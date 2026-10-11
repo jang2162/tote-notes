@@ -13,6 +13,7 @@ import {
   type MemoInfo,
   type PendingOpen,
   type Settings,
+  type SettingsPatch,
   type TextMatch,
   type TextQuery,
   type ViewerInfo,
@@ -516,8 +517,13 @@ export class FakeBackend implements Backend {
     return structuredClone(this.data.settings);
   }
 
-  async updateSettings(settings: Settings) {
-    this.data.settings = structuredClone(settings);
+  async patchSettings(patch: SettingsPatch) {
+    const settings = this.data.settings;
+    // `undefined` is what JSON leaves out on the way to Rust: such a field is kept.
+    if (patch.workspaceRoot !== undefined) settings.workspaceRoot = patch.workspaceRoot;
+    if (patch.themeLight !== undefined) settings.theme.light = structuredClone(patch.themeLight);
+    if (patch.themeDark !== undefined) settings.theme.dark = structuredClone(patch.themeDark);
+    if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
     this.commit();
     this.config();
   }

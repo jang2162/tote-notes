@@ -149,6 +149,15 @@ export interface Settings {
   extensions: { disabled: string[]; precedence: "user" | "bundled" };
 }
 
+/** The settings fields one change names (`SettingsPatch` in src-tauri/src/appdata.rs). A key left
+ * out is kept as it is; `null` clears it. */
+export interface SettingsPatch {
+  workspaceRoot?: string | null;
+  themeLight?: ThemeRef | null;
+  themeDark?: ThemeRef | null;
+  precedence?: "user" | "bundled";
+}
+
 export interface WorkspaceListItem {
   name: string;
   path: string;
@@ -235,7 +244,8 @@ export interface Backend {
   removeExtension(id: string): Promise<void>;
   setExtensionEnabled(id: string, enabled: boolean): Promise<void>;
   settings(): Promise<Settings>;
-  updateSettings(settings: Settings): Promise<void>;
+  /** Saves only the fields `patch` names, so two windows changing different fields keep both. */
+  patchSettings(patch: SettingsPatch): Promise<void>;
   /** Where a bundled viewer page loads from. */
   viewerUrl(extensionId: string, entry: string): string;
   /** A URL only this view may use for the file; revoked with `revokeFileTokens(owner)`. */

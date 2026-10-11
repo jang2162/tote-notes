@@ -12,7 +12,7 @@ use tauri::ipc::{InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
-use crate::appdata::Settings;
+use crate::appdata::{Settings, SettingsPatch};
 use crate::extensions::file_inside;
 use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
@@ -472,12 +472,12 @@ pub fn get_settings(core: State<'_, AppCore>) -> Settings {
 }
 
 #[tauri::command]
-pub async fn update_settings(
+pub async fn patch_settings(
     app: AppHandle,
     core: State<'_, AppCore>,
-    settings: Settings,
+    patch: SettingsPatch,
 ) -> CmdResult<()> {
-    core.update_settings(settings)?;
+    core.patch_settings(patch)?;
     broadcast_config(&app);
     Ok(())
 }

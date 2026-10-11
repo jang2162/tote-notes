@@ -95,17 +95,15 @@ describe("TauriBackend", () => {
       ],
       [
         () =>
-          backend.updateSettings({
+          backend.patchSettings({
             workspaceRoot: null,
-            theme: { light: null, dark: null },
-            extensions: { disabled: [], precedence: "user" },
+            themeDark: { extension: "tote.themes", label: "Light+" },
           }),
-        "update_settings",
+        "patch_settings",
         {
-          settings: {
+          patch: {
             workspaceRoot: null,
-            theme: { light: null, dark: null },
-            extensions: { disabled: [], precedence: "user" },
+            themeDark: { extension: "tote.themes", label: "Light+" },
           },
         },
       ],

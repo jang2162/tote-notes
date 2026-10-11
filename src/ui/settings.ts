@@ -1,4 +1,4 @@
-import type { Backend, ExtensionRegistry, Settings, ThemeRef } from "../backend/types";
+import type { Backend, ExtensionRegistry, SettingsPatch, ThemeRef } from "../backend/types";
 import { describeError } from "../app/errors";
 import { errorCode } from "../backend/types";
 import { Registry } from "../extensions/registry";
@@ -34,13 +34,11 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const fail = (error: unknown) => {
       status.textContent = describeError(error);
     };
-    // The patch goes on the settings as they are now, not on what this screen last drew: a switch
-    // flipped a moment ago is saved by the backend before this screen hears of it.
-    const save = async (patch: (s: Settings) => void) => {
+    // Only the field changed here is sent: a switch flipped a moment ago, or another window's
+    // settings screen saving its own field, stays as the backend has it.
+    const save = async (patch: SettingsPatch) => {
       try {
-        const next = await backend.settings();
-        patch(next);
-        await backend.updateSettings(next);
+        await backend.patchSettings(patch);
         status.textContent = "";
       } catch (error) {
         fail(error);
@@ -61,7 +59,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       const saveRoot = h("button", { textContent: "루트 저장", class: "primary" });
       saveRoot.addEventListener(
         "click",
-        () => void save((s) => (s.workspaceRoot = rootInput.value.trim() || null)),
+        () => void save({ workspaceRoot: rootInput.value.trim() || null }),
       );
       return h(
         "section",
@@ -79,7 +77,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       const select = h("select", { name });
       select.addEventListener(
         "change",
-        () => void save((s) => (s.theme[name] = themeRef(select.value))),
+        () =>
+          void save(
+            name === "light"
+              ? { themeLight: themeRef(select.value) }
+              : { themeDark: themeRef(select.value) },
+          ),
       );
       return select;
     };
@@ -121,7 +124,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const problems = h("ul", { class: "extension-problems" });
     const precedence = (value: "user" | "bundled", label: string) => {
       const radio = h("input", { type: "radio", name: "precedence", value });
-      radio.addEventListener("change", () => void save((s) => (s.extensions.precedence = value)));
+      radio.addEventListener("change", () => void save({ precedence: value }));
       return h("label", {}, radio, label);
     };
     const installFile = h("button", { textContent: "파일에서 설치…" });

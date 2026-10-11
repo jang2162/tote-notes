@@ -182,6 +182,36 @@ test("saving a theme keeps a switch flipped a moment before", async ({ page }) =
   ).toEqual(["someone.night"]);
 });
 
+// One FakeBackend cannot back two pages, so the other window is the test writing the backend's
+// settings itself — once, at the next settings read, which is where a screen that reads the
+// whole settings and writes them back would pick up the old value.
+test("two settings screens do not undo each other", async ({ page }) => {
+  await start(page);
+  await menu(page, "settings");
+  const panel = page.locator(".modal.settings");
+  await expect(panel.locator(".extension-row").first()).toBeVisible();
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const read = backend.settings.bind(backend);
+    let otherWindowSaved = false;
+    backend.settings = async () => {
+      const current = await read();
+      if (!otherWindowSaved) {
+        otherWindowSaved = true;
+        backend.data.settings.workspaceRoot = "~/다른 창";
+      }
+      return current;
+    };
+  });
+  await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.dark))
+    .toEqual({ extension: "tote.themes", label: "Light+" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.workspaceRoot))
+    .toBe("~/다른 창");
+});
+
 test("a second ⌘, does not pile a second settings screen", async ({ page }) => {
   await start(page);
   await menu(page, "settings");

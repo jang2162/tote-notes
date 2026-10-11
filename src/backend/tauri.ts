@@ -15,6 +15,7 @@ import {
   type MemoInfo,
   type PendingOpen,
   type Settings,
+  type SettingsPatch,
   type TextQuery,
   type TextScan,
   type TextSearch,
@@ -161,8 +162,8 @@ export class TauriBackend implements Backend {
   settings() {
     return call<Settings>("get_settings");
   }
-  updateSettings(settings: Settings) {
-    return call<void>("update_settings", { settings });
+  patchSettings(patch: SettingsPatch) {
+    return call<void>("patch_settings", { patch });
   }
   viewerUrl(extensionId: string, entry: string) {
     return `tote-ext://localhost/${encodeURIComponent(extensionId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;

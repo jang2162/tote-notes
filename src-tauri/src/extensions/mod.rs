@@ -70,6 +70,24 @@ impl ExtensionStore {
         scan
     }
 
+    /// Removes what an install cut short leaves in the user folder: a staging folder, or the old
+    /// versions moved aside during a replace. Only at start: during a run another window may be
+    /// installing, and its staging folder is in use.
+    pub fn remove_leftovers(&self) {
+        let Ok(entries) = fs::read_dir(&self.user_dir) else {
+            return;
+        };
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+            if (name.starts_with(".staging-") || name.starts_with(".trash-"))
+                && entry.file_type().is_ok_and(|kind| kind.is_dir())
+            {
+                let _ = fs::remove_dir_all(entry.path());
+            }
+        }
+    }
+
     pub fn find(&self, id: &str) -> Option<Installed> {
         self.scan()
             .extensions
@@ -194,6 +212,38 @@ pub(crate) mod tests {
         let dir = tempfile::tempdir().unwrap();
         let scan = ExtensionStore::new(dir.path().join("none"), dir.path().join("none2")).scan();
         assert!(scan.extensions.is_empty() && scan.problems.is_empty());
+    }
+
+    #[test]
+    fn leftovers_of_an_interrupted_install_are_removed() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user");
+        write_extension(
+            &user,
+            ".staging-1",
+            r#"{"name": "a", "publisher": "p", "version": "1"}"#,
+        );
+        write_extension(
+            &user,
+            ".trash-2",
+            r#"{"name": "b", "publisher": "p", "version": "1"}"#,
+        );
+        write_extension(
+            &user,
+            "p.c@1",
+            r#"{"name": "c", "publisher": "p", "version": "1"}"#,
+        );
+        fs::write(user.join(".DS_Store"), "").unwrap();
+        let store = ExtensionStore::new(dir.path().join("bundled"), user.clone());
+        store.remove_leftovers();
+        let mut left: Vec<String> = fs::read_dir(&user)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec![".DS_Store", "p.c@1"]);
+        ExtensionStore::new(dir.path().join("bundled"), dir.path().join("none")).remove_leftovers();
     }
 
     #[test]

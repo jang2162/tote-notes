@@ -92,7 +92,7 @@ pub fn run() {
             commands::remove_extension,
             commands::set_extension_enabled,
             commands::get_settings,
-            commands::update_settings,
+            commands::patch_settings,
             commands::issue_file_token,
             commands::revoke_file_tokens,
             commands::resolve_relative,

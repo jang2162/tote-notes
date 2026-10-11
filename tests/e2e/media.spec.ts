@@ -143,11 +143,7 @@ test("the viewer takes the theme's colours and follows a theme change", async ({
   await expect(body).toHaveCSS("background-color", "rgb(255, 255, 255)");
   await page.evaluate(async () => {
     const { backend, app } = window.__tote;
-    const settings = await backend.settings();
-    await backend.updateSettings({
-      ...settings,
-      theme: { ...settings.theme, light: { extension: "tote.themes", label: "Dark+" } },
-    });
+    await backend.patchSettings({ themeLight: { extension: "tote.themes", label: "Dark+" } });
     await app.theme.refresh();
   });
   // Dark+ editor.background #1e1e1e, pushed to the open viewer without a reload.
@@ -158,11 +154,7 @@ test("the first paint already carries the configured theme", async ({ page }) =>
   await start(page, { files: { "/x/점.png": fakeFile(PNG) } });
   await page.evaluate(async () => {
     const { backend, app } = window.__tote;
-    const settings = await backend.settings();
-    await backend.updateSettings({
-      ...settings,
-      theme: { ...settings.theme, light: { extension: "tote.themes", label: "Dark+" } },
-    });
+    await backend.patchSettings({ themeLight: { extension: "tote.themes", label: "Dark+" } });
     await app.theme.refresh();
     backend.data.picks = ["/x/점.png"];
   });

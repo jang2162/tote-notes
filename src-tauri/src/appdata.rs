@@ -182,6 +182,49 @@ pub enum Precedence {
     Bundled,
 }
 
+/// A change to some settings fields, as one settings screen makes it. Only the fields it names
+/// are written, so two windows changing different fields at once keep both changes; writing
+/// whole settings would put back whatever the other window had just changed.
+#[derive(Debug, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SettingsPatch {
+    #[serde(default, deserialize_with = "double_option")]
+    pub workspace_root: Option<Option<PathBuf>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub theme_light: Option<Option<ThemeRef>>,
+    #[serde(default, deserialize_with = "double_option")]
+    pub theme_dark: Option<Option<ThemeRef>>,
+    #[serde(default)]
+    pub precedence: Option<Precedence>,
+}
+
+/// A key that is present, `null` included, becomes `Some`; a missing key stays `None` through
+/// `#[serde(default)]`. That is what tells "clear it" from "leave it".
+fn double_option<'de, D, T>(deserializer: D) -> Result<Option<Option<T>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+    T: Deserialize<'de>,
+{
+    Option::<T>::deserialize(deserializer).map(Some)
+}
+
+impl SettingsPatch {
+    pub fn apply(&self, settings: &mut Settings) {
+        if let Some(root) = &self.workspace_root {
+            settings.workspace_root = root.clone();
+        }
+        if let Some(light) = &self.theme_light {
+            settings.theme.light = light.clone();
+        }
+        if let Some(dark) = &self.theme_dark {
+            settings.theme.dark = dark.clone();
+        }
+        if let Some(precedence) = self.precedence {
+            settings.extensions.precedence = precedence;
+        }
+    }
+}
+
 impl Settings {
     pub fn load(path: &Path) -> io::Result<Settings> {
         Ok(read_json(path)?.unwrap_or_default())
@@ -446,6 +489,49 @@ mod tests {
         assert_eq!(settings.theme.dark.map(|t| t.label), Some("b".to_string()));
         assert_eq!(settings.extensions.disabled, vec!["e"]);
         assert_eq!(settings.extensions.precedence, Precedence::User);
+    }
+
+    #[test]
+    fn a_patch_changes_only_the_fields_it_names() {
+        let night = ThemeRef {
+            extension: "someone.night".into(),
+            label: "Night".into(),
+        };
+        let day = ThemeRef {
+            extension: "tote.themes".into(),
+            label: "Light+".into(),
+        };
+        let mut settings = Settings {
+            workspace_root: Some("/x".into()),
+            theme: ThemeSettings {
+                light: None,
+                dark: Some(night.clone()),
+            },
+            extensions: ExtensionSettings {
+                disabled: vec!["e".into()],
+                precedence: Precedence::User,
+            },
+        };
+        SettingsPatch {
+            theme_light: Some(Some(day.clone())),
+            ..Default::default()
+        }
+        .apply(&mut settings);
+        assert_eq!(settings.theme.light, Some(day));
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+        assert_eq!(settings.theme.dark, Some(night));
+        assert_eq!(settings.extensions.disabled, vec!["e"]);
+        SettingsPatch {
+            workspace_root: Some(None),
+            ..Default::default()
+        }
+        .apply(&mut settings);
+        assert_eq!(settings.workspace_root, None);
+
+        let null = serde_json::from_str::<SettingsPatch>(r#"{"workspaceRoot": null}"#).unwrap();
+        assert_eq!(null.workspace_root, Some(None));
+        let empty = serde_json::from_str::<SettingsPatch>("{}").unwrap();
+        assert_eq!(empty.workspace_root, None);
     }
 
     #[test]

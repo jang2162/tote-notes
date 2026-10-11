@@ -4,7 +4,7 @@
 //! never leaves a half-installed folder, and a rename is what makes it visible.
 
 use std::fs;
-use std::io::{self, Read};
+use std::io;
 use std::path::{Path, PathBuf};
 
 use super::manifest::{Manifest, ManifestError};
@@ -14,7 +14,7 @@ use super::{ExtensionStore, Installed, Source};
 const VSIX_PREFIX: &str = "extension/";
 /// Unpacked size above which an archive is refused: no theme or grammar pack comes near it, and
 /// a zip bomb would otherwise fill the disk.
-const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
+pub(crate) const MAX_UNPACKED_BYTES: u64 = 256 * 1024 * 1024;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InstallError {
@@ -76,20 +76,47 @@ fn stage_and_place(
         }
     }
     let target = store.user_dir().join(format!("{id}@{}", manifest.version));
-    // The manifest parser keeps id and version to a safe alphabet; this is the second lock, so a
-    // path that leaves the user folder never gets a rename or a delete.
-    if target.parent() != Some(store.user_dir()) {
+    if !inside_user_dir(store.user_dir(), &target) {
         return Err(InstallError::Invalid(format!("안전하지 않은 경로: {id}")));
     }
+    // The old versions are moved aside, not deleted, until the new one is in place: a rename
+    // that fails puts them back, so a failed replace leaves the extension as it was. Trash left
+    // by a crash in between is removed at the next start (`ExtensionStore::remove_leftovers`).
+    let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (folder, _) in &existing {
-        fs::remove_dir_all(folder)?;
+        let trash = store
+            .user_dir()
+            .join(format!(".trash-{}", uuid::Uuid::new_v4().simple()));
+        if let Err(err) = fs::rename(folder, &trash) {
+            put_back(&trashed);
+            return Err(err.into());
+        }
+        trashed.push((folder.clone(), trash));
     }
-    fs::rename(staging, &target)?;
+    if let Err(err) = fs::rename(staging, &target) {
+        put_back(&trashed);
+        return Err(err.into());
+    }
+    for (_, trash) in &trashed {
+        let _ = fs::remove_dir_all(trash);
+    }
     Ok(Installed {
         manifest,
         path: target,
         source: Source::User,
     })
+}
+
+/// The manifest parser keeps id and version to a safe alphabet; this is the second lock, so a
+/// path that leaves the user folder never gets a rename or a delete.
+fn inside_user_dir(user_dir: &Path, target: &Path) -> bool {
+    target.parent() == Some(user_dir)
+}
+
+fn put_back(trashed: &[(PathBuf, PathBuf)]) {
+    for (folder, trash) in trashed {
+        let _ = fs::rename(trash, folder);
+    }
 }
 
 pub fn remove(store: &ExtensionStore, id: &str) -> Result<(), InstallError> {
@@ -128,6 +155,10 @@ fn installed_folders(user_dir: &Path, id: &str) -> io::Result<Vec<(PathBuf, Stri
 /// traversal-safe name); any other entry fails the whole install. The `extension/` prefix of a
 /// vsix is dropped; a zip whose only top-level folder holds package.json is unwrapped likewise.
 fn unpack(archive: &Path, into: &Path) -> Result<(), InstallError> {
+    unpack_with_limit(archive, into, MAX_UNPACKED_BYTES)
+}
+
+fn unpack_with_limit(archive: &Path, into: &Path, limit: u64) -> Result<(), InstallError> {
     let file = fs::File::open(archive)?;
     let mut zip = zip::ZipArchive::new(file)
         .map_err(|err| InstallError::Invalid(format!("zip 을 열지 못했습니다: {err}")))?;
@@ -160,16 +191,14 @@ fn unpack(archive: &Path, into: &Path) -> Result<(), InstallError> {
             continue; // a vsix's wrapper files outside extension/
         };
         total += entry.size();
-        if total > MAX_UNPACKED_BYTES {
+        if total > limit {
             return Err(InstallError::Invalid("압축을 풀면 너무 큽니다".into()));
         }
         let target = into.join(rest);
         if let Some(parent) = target.parent() {
             fs::create_dir_all(parent)?;
         }
-        let mut bytes = Vec::with_capacity(entry.size() as usize);
-        entry.read_to_end(&mut bytes)?;
-        fs::write(&target, bytes)?;
+        io::copy(&mut entry, &mut fs::File::create(&target)?)?;
     }
     Ok(())
 }
@@ -462,6 +491,123 @@ mod tests {
             Err(InstallError::Invalid(_))
         ));
         assert!(user_dir_is_empty(dir.path()));
+    }
+
+    #[test]
+    fn archive_prefix_finds_the_manifest_at_root_under_extension_or_a_single_top_folder() {
+        let names = |list: &[&str]| list.iter().map(|n| n.to_string()).collect::<Vec<_>>();
+        assert_eq!(
+            archive_prefix(&names(&["package.json", "themes/a.json"])).unwrap(),
+            ""
+        );
+        assert_eq!(
+            archive_prefix(&names(&[
+                "extension.vsixmanifest",
+                "extension/package.json",
+                "extension/themes/a.json",
+            ]))
+            .unwrap(),
+            "extension/"
+        );
+        assert_eq!(
+            archive_prefix(&names(&["night/package.json", "night/themes/a.json"])).unwrap(),
+            "night/"
+        );
+        assert!(matches!(
+            archive_prefix(&names(&["night/package.json", "other/readme.md"])),
+            Err(InstallError::Invalid(_))
+        ));
+    }
+
+    #[test]
+    fn an_archive_over_the_unpacked_limit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let zip_path = dir.path().join("big.zip");
+        {
+            let file = fs::File::create(&zip_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("package.json", options).unwrap();
+            zip.write_all(br#"{"name": "big", "publisher": "p", "version": "1"}"#)
+                .unwrap();
+            zip.start_file("data.bin", options).unwrap();
+            zip.write_all(&[7; 100]).unwrap();
+            zip.finish().unwrap();
+        }
+        assert!(matches!(
+            unpack_with_limit(&zip_path, &dir.path().join("small"), 120),
+            Err(InstallError::Invalid(_))
+        ));
+        unpack_with_limit(&zip_path, &dir.path().join("roomy"), 1024).unwrap();
+        assert_eq!(
+            fs::read(dir.path().join("roomy/data.bin")).unwrap(),
+            [7; 100]
+        );
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn copy_folder_skips_symlinks_and_keeps_files() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let secret = dir.path().join("secret");
+        fs::create_dir_all(&secret).unwrap();
+        fs::write(secret.join("key.txt"), "private").unwrap();
+        let folder = write_extension(
+            dir.path(),
+            "linked",
+            r#"{"name": "linked", "publisher": "p", "version": "1"}"#,
+        );
+        fs::write(folder.join("theme.json"), "{}").unwrap();
+        std::os::unix::fs::symlink(secret.join("key.txt"), folder.join("key.txt")).unwrap();
+        std::os::unix::fs::symlink(&secret, folder.join("secret")).unwrap();
+        let installed = install(&store, &folder, false).unwrap();
+        assert!(installed.path.join("theme.json").is_file());
+        assert!(installed.path.join("package.json").is_file());
+        assert!(fs::symlink_metadata(installed.path.join("key.txt")).is_err());
+        assert!(fs::symlink_metadata(installed.path.join("secret")).is_err());
+    }
+
+    #[test]
+    fn a_target_outside_the_user_folder_is_refused() {
+        let user = Path::new("/data/extensions");
+        assert!(inside_user_dir(user, &user.join("p.x@1")));
+        assert!(!inside_user_dir(user, &user.join("../x@1")));
+        assert!(!inside_user_dir(user, &user.join("p/x@1")));
+        assert!(!inside_user_dir(user, Path::new("/elsewhere/p.x@1")));
+    }
+
+    #[test]
+    fn a_replace_that_fails_at_the_rename_keeps_the_old_version() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = store(dir.path());
+        let old = write_extension(
+            &dir.path().join("user"),
+            "tote-test.test-theme@0.0.0",
+            r#"{"name": "test-theme", "publisher": "tote-test", "version": "0.0.0"}"#,
+        );
+        // A file where the new version's folder goes: the rename into place cannot succeed.
+        fs::write(
+            dir.path().join("user/tote-test.test-theme@0.0.1"),
+            "in the way",
+        )
+        .unwrap();
+        assert!(matches!(
+            install(&store, &fixture_vsix(), true),
+            Err(InstallError::Io(_))
+        ));
+        assert!(old.join("package.json").is_file());
+        let mut left: Vec<String> = fs::read_dir(dir.path().join("user"))
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(
+            left,
+            vec!["tote-test.test-theme@0.0.0", "tote-test.test-theme@0.0.1"]
+        );
     }
 
     #[test]

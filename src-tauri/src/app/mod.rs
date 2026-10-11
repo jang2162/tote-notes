@@ -17,7 +17,7 @@ use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
-use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings};
+use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
 use crate::extensions::registry::{self, Registry};
 use crate::extensions::ExtensionStore;
 use crate::files::TokenStore;
@@ -85,7 +85,9 @@ impl AppCore {
             .map_err(|err| format!("settings.json: {err}"))?;
         let launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
-        Ok(AppCore::new(paths, machine, settings, launch, bundled_dir))
+        let core = AppCore::new(paths, machine, settings, launch, bundled_dir);
+        core.extensions.remove_leftovers();
+        Ok(core)
     }
 
     pub fn new(
@@ -128,10 +130,10 @@ impl AppCore {
         lock(&self.settings).clone()
     }
 
-    /// Saves and applies: the workspace root moves at once (open windows stay), the registry is
-    /// rebuilt with the new switches.
-    pub fn update_settings(&self, settings: Settings) -> io::Result<()> {
-        self.modify_settings(|current| *current = settings)
+    /// Saves and applies the fields `patch` names: the workspace root moves at once (open windows
+    /// stay), the registry is rebuilt with the new switches.
+    pub fn patch_settings(&self, patch: SettingsPatch) -> io::Result<()> {
+        self.modify_settings(|settings| patch.apply(settings))
     }
 
     /// `change` runs on the current settings under the settings lock, and the result is saved and
@@ -154,9 +156,12 @@ impl AppCore {
         lock(&self.registry).clone()
     }
 
+    /// The disk is read before the settings lock is taken: a slow scan does not hold up settings
+    /// reads and changes in every other window.
     pub fn rescan_extensions(&self) {
+        let scan = self.extensions.scan();
         let settings = lock(&self.settings);
-        *lock(&self.registry) = registry::build(&self.extensions.scan(), &settings.extensions);
+        *lock(&self.registry) = registry::build(&scan, &settings.extensions);
     }
 
     /// The folder of an installed extension, enabled or not.
@@ -362,6 +367,7 @@ fn bring_to_front(focus: &mut Vec<String>, label: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::appdata::Precedence;
 
     fn core(dir: &Path) -> AppCore {
         let paths = AppPaths::from_parts(Some(dir.join("data")), None, None, false).unwrap();
@@ -449,7 +455,8 @@ mod tests {
         let mut settings = core.settings();
         settings.workspace_root = Some(dir.path().join("elsewhere"));
         settings.extensions.disabled = vec!["someone.ext".into()];
-        core.update_settings(settings.clone()).unwrap();
+        core.modify_settings(|current| *current = settings.clone())
+            .unwrap();
         assert_eq!(core.workspace_root(), dir.path().join("elsewhere"));
         assert_eq!(
             Settings::load(&core.paths.settings_file()).unwrap(),
@@ -497,6 +504,38 @@ mod tests {
             .disabled;
         on_disk.sort();
         assert_eq!(on_disk, expected);
+    }
+
+    #[test]
+    fn two_windows_patching_different_fields_keep_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let root = dir.path().join("elsewhere");
+        std::thread::scope(|scope| {
+            let core = &core;
+            let root = root.clone();
+            scope.spawn(move || {
+                core.patch_settings(SettingsPatch {
+                    workspace_root: Some(Some(root)),
+                    ..Default::default()
+                })
+                .unwrap();
+            });
+            scope.spawn(move || {
+                core.patch_settings(SettingsPatch {
+                    precedence: Some(Precedence::Bundled),
+                    ..Default::default()
+                })
+                .unwrap();
+            });
+        });
+        for settings in [
+            core.settings(),
+            Settings::load(&core.paths.settings_file()).unwrap(),
+        ] {
+            assert_eq!(settings.workspace_root, Some(root.clone()));
+            assert_eq!(settings.extensions.precedence, Precedence::Bundled);
+        }
     }
 
     #[test]
