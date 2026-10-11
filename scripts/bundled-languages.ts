@@ -13,7 +13,8 @@ export interface BundledLanguage {
   firstLine?: string;
   comments?: { line?: string; block?: [string, string] };
   /** Only for grammars whose tm-grammars metadata carries no license: the license as read from
-   * the source's README, with where it was read. */
+   * the source's README, with where it was read. `note` is also the license text that
+   * LICENSES.md ships for the grammar, since NOTICE has no block for it. */
   license?: { spdx: string; url: string; note: string };
 }
 

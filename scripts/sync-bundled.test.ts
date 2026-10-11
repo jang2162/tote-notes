@@ -11,12 +11,52 @@ import {
   inlineViewer,
   vendorFiles,
   languageConfiguration,
+  licenseTextFor,
+  licensesMarkdown,
   manifestFor,
+  parseNotice,
 } from "./sync-bundled.ts";
 
 const require = createRequire(import.meta.url);
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..");
 const read = (path: string) => readFileSync(join(ROOT, path), "utf8");
+// The packages' exports map hides NOTICE, so it is found next to a file the map does expose.
+const grammarsNotice = () =>
+  readFileSync(
+    join(dirname(require.resolve("tm-grammars/grammars/markdown.json")), "../NOTICE"),
+    "utf8",
+  );
+
+describe("parseNotice", () => {
+  it("splits the NOTICE into blocks with files, url, spdx and the full text", () => {
+    const blocks = parseNotice(grammarsNotice());
+    const vscode = blocks.find((b) => b.files.includes("markdown.json"))!;
+    expect(vscode.spdx).toBe("MIT");
+    expect(vscode.url).toBe("https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt");
+    expect(vscode.text).toContain("Copyright (c) 2015 - present Microsoft Corporation");
+    expect(vscode.text).toContain("Permission is hereby granted, free of charge");
+    expect(vscode.files).toContain("cpp-macro.json");
+  });
+  it("gives every bundled grammar a text: NOTICE for most, the override for yaml and toml", () => {
+    const blocks = parseNotice(grammarsNotice());
+    for (const lang of LANGUAGES.filter((l) => l.grammar))
+      expect(licenseTextFor(lang.grammar!, blocks, lang.license).length).toBeGreaterThan(100);
+    expect(
+      licenseTextFor("yaml", blocks, LANGUAGES.find((l) => l.id === "yaml")!.license),
+    ).toContain("Permission to copy, use, modify, sell and distribute");
+    expect(() => licenseTextFor("no-such-grammar", blocks)).toThrow(/no license text/);
+  });
+  it("writes each distinct text once, headed by the names that use it", () => {
+    const md = licensesMarkdown("t", [
+      { name: "a", spdx: "MIT", url: "u", note: "", text: "TEXT-1" },
+      { name: "b", spdx: "MIT", url: "u", note: "", text: "TEXT-1" },
+      { name: "c", spdx: "textmate-bundle", url: "v", note: "n", text: "TEXT-2" },
+    ]);
+    expect(md.split("TEXT-1").length).toBe(2);
+    expect(md).toMatch(/## a, b\n\nTEXT-1/);
+    expect(md).toMatch(/## c\n\nTEXT-2/);
+  });
+});
 
 describe("the selection table", () => {
   it("covers the spec's language list and names a grammar tm-grammars has", async () => {
@@ -234,6 +274,8 @@ describe("the generated files", () => {
     const licenses = read("src-tauri/resources/extensions/tote.languages/LICENSES.md");
     for (const lang of LANGUAGES)
       if (lang.grammar) expect(licenses).toContain(`| ${lang.grammar} |`);
+    for (const id of ["tote.languages", "tote.themes", "tote.markdown-preview"])
+      expect(read(`src-tauri/resources/extensions/${id}/LICENSES.md`)).toContain("Copyright");
     const themes = JSON.parse(read("src-tauri/resources/extensions/tote.themes/package.json"));
     expect(themes.contributes.themes.map((t: { label: string }) => t.label)).toEqual(
       THEMES.map((t) => t.label),
