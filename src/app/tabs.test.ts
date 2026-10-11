@@ -67,6 +67,19 @@ describe("Tabs", () => {
     expect(tabs.list).toEqual([]);
   });
 
+  it("closing the middle tab keeps the order of the rest and activates the next", () => {
+    const h = host();
+    const tabs = new Tabs();
+    const a = tabs.insertAfterActive(memo(h, "a"));
+    const b = tabs.insertAfterActive(memo(h, "b"));
+    const c = tabs.insertAfterActive(memo(h, "c"));
+    const d = tabs.insertAfterActive(memo(h, "d"));
+    expect(tabs.list).toEqual([a, b, c, d]);
+    tabs.active = b;
+    expect(tabs.remove(b)).toBe(c);
+    expect(tabs.list).toEqual([a, c, d]);
+  });
+
   it("removing an inactive tab keeps the active one", () => {
     const h = host();
     const tabs = new Tabs();

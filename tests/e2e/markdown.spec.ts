@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import { menu, ready, start } from "./helpers";
 
@@ -83,6 +84,39 @@ test("HTML in the Markdown cannot run scripts or handlers, and links do not navi
   await page.waitForTimeout(300);
   expect(await body.getAttribute("data-pwned")).toBeNull();
   await expect(body.locator("h1")).toHaveText("회의 준비"); // still our page, not example.com
+});
+
+// The CSP would stop a handler or a script from running even if one got through; these look at
+// the DOM, so they hold the viewer's own stripping to account.
+test("the sanitizer drops on* handlers and script tags independently of CSP", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("회의.md", DOC),
+      pic: { file: "pic.png", autoTitle: false, data: fakeFile(PNG), modifiedMs: 1 },
+    },
+  });
+  await page.locator(".memo-row", { hasText: "회의" }).click();
+  await menu(page, "toggle-preview");
+  const main = frame(page).locator("#main");
+  await expect(main.locator("h1")).toHaveText("회의 준비");
+  // The raw <img> stays (only its handler goes): it and ![그림] both load pic.png.
+  await expect(main.locator('img[src^="data:image/png"]')).toHaveCount(2);
+  await expect(main.locator("[onerror]")).toHaveCount(0);
+  await expect(main.locator("script")).toHaveCount(0);
+});
+
+test("the status bar keeps a document's notice over the preview hint", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 처음") } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  // The file goes away under the tab: the next save recovers it as a new memo.
+  await page.evaluate(() => delete window.__tote.backend.data.memos.a);
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText(" 둘");
+  await expect(page.locator(".status-message")).toHaveText(RECOVERED_NOTICE);
+  await menu(page, "toggle-preview");
+  await expect(frame(page).locator("body h1")).toHaveText("처음 둘");
+  await expect(page.locator(".status-message")).toHaveText(RECOVERED_NOTICE);
 });
 
 test("the preview shows the text as it is when it opens, and the mode comes back after a restart", async ({

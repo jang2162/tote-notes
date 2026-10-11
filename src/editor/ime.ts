@@ -1,4 +1,4 @@
-import { isolateHistory, undo } from "@codemirror/commands";
+import { isolateHistory, redo, undo } from "@codemirror/commands";
 import {
   EditorSelection,
   EditorState,
@@ -105,6 +105,7 @@ export interface Composition {
 
 const startComposition = StateEffect.define<Composition>();
 const rememberBefore = StateEffect.define<UndoRestore>();
+const rememberRedo = StateEffect.define<UndoRestore>();
 const endComposition = StateEffect.define<null>();
 
 const composition = StateField.define<Composition | null>({
@@ -247,10 +248,11 @@ export interface UndoRestore {
 
 const UNDO_RESTORE_DEPTH = 50;
 
-/** What each finished composition started from, newest last. CodeMirror's undo restores the
- * selection of the first change of a group, which is the collapsed main range; this is where the
- * full selection waits. Stays through later edits — an undo that still lands on the recorded
- * document (adjacent typing joined the group) is restored too; one that does not is left alone. */
+/** What each finished composition started from, newest last — and what each ⇧⌘Z redid from.
+ * CodeMirror's undo restores the selection of the first change of a group, which is the collapsed
+ * main range; this is where the full selection waits. Stays through later edits — an undo that
+ * still lands on the recorded document (adjacent typing joined the group) is restored too; one
+ * that does not is left alone. */
 export const undoRestores = StateField.define<readonly UndoRestore[]>({
   create: () => [],
   update(records, tr) {
@@ -268,35 +270,72 @@ export const undoRestores = StateField.define<readonly UndoRestore[]>({
   },
 });
 
-/** ⌘Z. Runs CodeMirror's undo, then puts the pre-composition selection back when the undo
- * brought the document to where a composition started. Two dispatches, because neither a
- * transaction filter (history skips filters) nor an extender (cannot set the selection) can do
- * it inside the undo transaction. */
-export const undoWithCursors: Command = (view) => {
-  const records = view.state.field(undoRestores, false) ?? [];
+/** What each ⌘Z undid from, newest last: the mirror of `undoRestores` for ⇧⌘Z. CodeMirror's redo
+ * of a composition brings the text back at every range but leaves the main cursor only. A new
+ * edit drops them all, as it drops CodeMirror's redo steps. */
+export const redoRestores = StateField.define<readonly UndoRestore[]>({
+  create: () => [],
+  update(records, tr) {
+    for (const effect of tr.effects) {
+      if (effect.is(rememberRedo)) records = [...records, effect.value].slice(-UNDO_RESTORE_DEPTH);
+    }
+    if (tr.isUserEvent("redo") && records.length) {
+      const i = records.findLastIndex(
+        (r) => r.doc.length === tr.newDoc.length && r.doc.eq(tr.newDoc),
+      );
+      if (i >= 0) records = records.slice(0, i);
+    } else if (tr.docChanged && !tr.isUserEvent("undo")) {
+      records = [];
+    }
+    return records;
+  },
+});
+
+/** Runs `step` (undo or redo), then puts back the selection recorded in `restores` when the step
+ * brought the document to a recorded one, and records where it started in the other direction's
+ * field with `remember`. Two dispatches, because neither a transaction filter (history skips
+ * filters) nor an extender (cannot set the selection) can do it inside the history transaction. */
+function stepWithCursors(
+  view: EditorView,
+  step: Command,
+  restores: StateField<readonly UndoRestore[]>,
+  remember: typeof rememberBefore,
+): boolean {
+  const records = view.state.field(restores, false) ?? [];
   const { doc: before, selection: kept } = view.state;
   // A composition leaves a step that changes no text (the input method deletes the composed text
-  // and writes it again, which composes to nothing), so keep undoing until the text changes.
-  let undone = false;
-  while (undo(view)) {
-    undone = true;
+  // and writes it again, which composes to nothing), so keep going until the text changes.
+  let moved = false;
+  while (step(view)) {
+    moved = true;
     if (!view.state.doc.eq(before)) break;
   }
-  if (!undone) return false;
+  if (!moved) return false;
   const doc = view.state.doc;
   // Nothing left that changes text: the cursors stay where they were.
-  const match = doc.eq(before)
-    ? { selection: kept }
-    : records.findLast((r) => r.doc.length === doc.length && r.doc.eq(doc));
-  if (match && !match.selection.eq(view.state.selection)) {
+  const changed = !doc.eq(before);
+  const match = changed
+    ? records.findLast((r) => r.doc.length === doc.length && r.doc.eq(doc))
+    : { selection: kept };
+  const selection = match && !match.selection.eq(view.state.selection) ? match.selection : null;
+  if (selection || changed) {
     view.dispatch({
-      selection: match.selection,
+      selection: selection ?? undefined,
+      effects: changed ? remember.of({ doc: before, selection: kept }) : [],
       annotations: Transaction.addToHistory.of(false),
       userEvent: "select",
     });
   }
   return true;
-};
+}
+
+/** ⌘Z. CodeMirror's undo, with the pre-composition selection put back. */
+export const undoWithCursors: Command = (view) =>
+  stepWithCursors(view, undo, undoRestores, rememberRedo);
+
+/** ⇧⌘Z. CodeMirror's redo, with the selection the matching ⌘Z started from put back. */
+export const redoWithCursors: Command = (view) =>
+  stepWithCursors(view, redo, redoRestores, rememberBefore);
 
 /** Gives every cursor and selection the input method's text. */
 export const multiRangeIme = [
@@ -306,4 +345,5 @@ export const multiRangeIme = [
   compositionEvents,
   settleWithoutEvent,
   undoRestores,
+  redoRestores,
 ];

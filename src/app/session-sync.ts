@@ -41,7 +41,7 @@ export class SessionSync {
       doc.restoreSelection = tab.selection;
       doc.scrollAnchor = tab.scrollAnchor ?? 0;
       doc.mode = tab.mode ?? "edit";
-      this.tabs.list.push(doc);
+      this.tabs.push(doc);
       if (index === session.activeTab) active = doc;
     }
     return active ?? this.tabs.list.at(-1) ?? null;

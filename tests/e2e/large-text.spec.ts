@@ -11,10 +11,10 @@ const lines = Array.from({ length: 3000 }, (_, i) =>
 );
 const TEXT = lines.join("\n");
 
-/** Opens the app with `TEXT` as `/x/huge.log`. The file is put in the fake backend after the page
+/** Opens the app with `text` as `/x/huge.log`. The file is put in the fake backend after the page
  * is up and the fake stops persisting: at the measured limit the file is megabytes, which a
  * sessionStorage seed (or the write after each backend change) cannot hold. */
-async function startWithHugeLog(page: Page) {
+async function startWithHugeLog(page: Page, text = TEXT) {
   await start(page, { picks: ["/x/huge.log"] });
   await page.evaluate((data) => {
     const backend = window.__tote.backend as unknown as {
@@ -23,7 +23,7 @@ async function startWithHugeLog(page: Page) {
     };
     backend.storage = { save: () => {} };
     backend.data.files["/x/huge.log"] = data;
-  }, fakeFile(TEXT));
+  }, fakeFile(text));
 }
 
 test("a file with a line over the limit opens read-only in the large text viewer and pages through the file", async ({
@@ -42,6 +42,15 @@ test("a file with a line over the limit opens read-only in the large text viewer
   );
   await page.evaluate(() => window.__tote.app.largeText!.viewer.goToLine(2999));
   await expect(viewer.locator(".large-text-line.current")).toHaveText("row 2999 needle");
+});
+
+test("the first line of a long one-line file ends with the count", async ({ page }) => {
+  await startWithHugeLog(page, "x".repeat(300_000));
+  await menu(page, "open-file");
+  const viewer = page.locator(".large-text");
+  await expect(viewer).toBeVisible();
+  await expect(viewer.locator(".large-text-info")).toHaveText("1줄");
+  await expect(viewer.locator(".large-text-line").first()).toHaveText(/^x+ … \(300000자\)$/);
 });
 
 test("search runs in the backend and walks the matches", async ({ page }) => {

@@ -1,3 +1,4 @@
+import { history, isolateHistory, undo } from "@codemirror/commands";
 import { EditorSelection, EditorState, Text, type Transaction } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
@@ -196,5 +197,47 @@ describe("undoRestores", () => {
     expect(records).toHaveLength(1);
     expect(records[0].doc.toString()).toBe("사과\n배\n귤");
     expect(records[0].selection.ranges.map((r) => r.head)).toEqual([2, 4, 6]);
+  });
+
+  it("drops the records past an undo", () => {
+    let s = EditorState.create({
+      doc: "사과\n배\n귤",
+      selection: cursors(2, 4, 6),
+      extensions: [EditorState.allowMultipleSelections.of(true), history(), multiRangeIme],
+    });
+    // A composition as the editor sees it: the collapse to the main range, the syllable at the
+    // main range (`compose.start` opens a history group; plain `compose` always joins the last
+    // one), then the commit to the waiting cursors.
+    const compose = (syllable: string) => {
+      const before = s.selection;
+      const { main } = before;
+      s = s.update({
+        selection: EditorSelection.create([main]),
+        annotations: isolateHistory.of("full"),
+      }).state;
+      const typed = s.update({
+        changes: { from: main.from, insert: syllable },
+        selection: EditorSelection.cursor(main.from + syllable.length),
+        userEvent: "input.type.compose.start",
+      });
+      s = typed.state;
+      const current: Composition = {
+        from: main.from,
+        taken: "",
+        others: before.ranges.filter((r) => r !== main).map((r) => r.map(typed.changes)),
+        before,
+        startDoc: typed.startState.doc,
+      };
+      s = s.update(compositionCommit(s, current)).state;
+    };
+    compose("가");
+    compose("나");
+    expect(s.doc.toString()).toBe("사과가나\n배가나\n귤가나");
+    expect(s.field(undoRestores)).toHaveLength(2);
+    undo({ state: s, dispatch: (tr) => (s = tr.state) });
+    expect(s.doc.toString()).toBe("사과가\n배가\n귤가");
+    const records = s.field(undoRestores);
+    expect(records).toHaveLength(1);
+    expect(records[0].doc.toString()).toBe("사과\n배\n귤");
   });
 });

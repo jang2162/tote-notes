@@ -330,6 +330,31 @@ test("⌘Z after two compositions walks back one syllable at a time with every c
   expect(await ranges(page)).toEqual(THREE);
 });
 
+test("redo after two undos of two syllables brings both back with every cursor", async ({
+  page,
+}) => {
+  await open(page, "사과\n배\n귤");
+  await select(page, THREE, 1);
+  for (const syllable of ["가", "나"]) {
+    await page.evaluate(() => window.ime.start());
+    await page.evaluate((s) => window.ime.update(s), syllable);
+    await page.evaluate(() => window.ime.end("replace"));
+  }
+  expect(await text(page)).toBe("사과가나\n배가나\n귤가나");
+  await page.keyboard.press("Meta+z");
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과\n배\n귤");
+  expect(await ranges(page)).toEqual(THREE);
+  await page.keyboard.press("Meta+Shift+z");
+  await page.keyboard.press("Meta+Shift+z");
+  expect(await text(page)).toBe("사과가나\n배가나\n귤가나");
+  expect(await ranges(page)).toEqual([
+    [4, 4],
+    [8, 8],
+    [12, 12],
+  ]);
+});
+
 test("⌘/ toggles the line comment of the language and brackets close as configured", async ({
   page,
 }) => {

@@ -181,13 +181,14 @@ export class AppController implements DocHost {
   private async onConfigChanged(): Promise<void> {
     await this.loadRegistry();
     // An extension may have been reinstalled, replaced, removed or switched: what was read from
-    // its files is stale. Open documents keep what they have; the next language open reads again.
-    // Theme and root changes leave the set alone and keep the caches.
+    // its files is stale, so every open tab reads its language again. Theme and root changes
+    // leave the set alone and keep the caches.
     const signature = extensionSignature(this.registry);
     if (signature !== this.extensionSet) {
       this.extensionSet = signature;
       this.languageConfigs.clear();
       this.highlight.forgetGrammars();
+      for (const doc of this.tabs.list) void doc.refreshLanguage();
     }
     await this.theme.refresh();
     for (const listener of this.configListeners) listener();

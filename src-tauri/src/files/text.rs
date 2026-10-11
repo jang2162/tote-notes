@@ -284,6 +284,34 @@ mod tests {
         ));
     }
 
+    // The extensions smoke left the real searcher unverified on a big log; the E2E runs the fake's.
+    #[test]
+    fn search_finds_an_exact_line_and_a_regex_in_a_synthetic_big_log() {
+        let lines: Vec<String> = (0..100_000).map(|n| format!("{n} lorem ipsum")).collect();
+        let refs: Vec<&str> = lines.iter().map(String::as_str).collect();
+        let (_dir, path) = file(&refs);
+        let q = |query: &str, regex: bool| TextQuery {
+            query: query.into(),
+            case_sensitive: false,
+            regex,
+        };
+        let at = |found: &TextSearch| {
+            found
+                .matches
+                .iter()
+                .map(|m| (m.line, m.column))
+                .collect::<Vec<_>>()
+        };
+        let exact = search(&path, &q("99990", false), 0, 1000, &|| false).unwrap();
+        assert_eq!(at(&exact), vec![(99_990, 0)]);
+        assert!(exact.done);
+        // `^1000+ ` is 1000, 10000 — a number, then the space; 100 and 10001 are not.
+        let regex = search(&path, &q("^1000+ ", true), 0, 1000, &|| false).unwrap();
+        assert_eq!(at(&regex), vec![(1000, 0), (10_000, 0)]);
+        let literal = search(&path, &q("^1000+ ", false), 0, 1000, &|| false).unwrap();
+        assert!(literal.matches.is_empty());
+    }
+
     #[test]
     fn search_stops_when_cancelled_and_says_so() {
         let lines: Vec<String> = (0..5000).map(|i| format!("row {i}")).collect();

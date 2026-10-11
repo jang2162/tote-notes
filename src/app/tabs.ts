@@ -3,13 +3,23 @@ import { ExternalDoc, MemoDoc, type Doc } from "./docs";
 /** The ordered tabs of one window and which one is active. No DOM, no backend: the controller
  * asks it where things go and renders the answer. */
 export class Tabs {
-  readonly list: Doc[] = [];
+  private readonly docs: Doc[] = [];
   active: Doc | null = null;
+
+  /** In tab order. Changed only through the methods below. */
+  get list(): readonly Doc[] {
+    return this.docs;
+  }
+
+  /** Appends `doc` as the last tab (the session's tabs, in their order). */
+  push(doc: Doc): void {
+    this.docs.push(doc);
+  }
 
   /** New tabs open right after the active one. */
   insertAfterActive<D extends Doc>(doc: D): D {
     const at = this.active ? this.list.indexOf(this.active) + 1 : this.list.length;
-    this.list.splice(at, 0, doc);
+    this.docs.splice(at, 0, doc);
     return doc;
   }
 
@@ -18,7 +28,7 @@ export class Tabs {
   replace<D extends Doc>(doc: Doc, next: D): D {
     const index = this.list.indexOf(doc);
     if (index < 0) return this.insertAfterActive(next);
-    this.list[index] = next;
+    this.docs[index] = next;
     return next;
   }
 
@@ -27,7 +37,7 @@ export class Tabs {
   remove(doc: Doc): Doc | null {
     const index = this.list.indexOf(doc);
     if (index < 0) return null;
-    this.list.splice(index, 1);
+    this.docs.splice(index, 1);
     if (doc !== this.active) return null;
     this.active = null;
     return this.list[index] ?? this.list[index - 1] ?? null;

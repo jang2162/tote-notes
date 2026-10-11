@@ -12,6 +12,8 @@ async function open(page: Page, doc: string, file: string, extra = "") {
 const coloured = (page: Page) => page.locator(".cm-line span[class*='tm-c']");
 /** Dark+ comments, #6A9955. */
 const DARK_PLUS_COMMENT = "rgb(106, 153, 85)";
+/** Dark+ `storage.type` (`const`), #569CD6. */
+const DARK_PLUS_STORAGE = "rgb(86, 156, 214)";
 
 test("a shell script gets TextMate colours from the worker", async ({ page }) => {
   await open(page, "# comment\necho hi", "run.sh");
@@ -26,6 +28,18 @@ test("a shell script gets TextMate colours from the worker", async ({ page }) =>
   expect(await page.evaluate(() => document.getElementById("tm-colors")?.textContent)).toContain(
     ".tm-c",
   );
+});
+
+test("a ts fence inside markdown is coloured", async ({ page }) => {
+  await open(page, "```ts\nconst a = 1;\n```\n\n```\nconst b = 2;\n```", "note.md");
+  const lines = page.locator(".cm-line");
+  const fenced = lines.nth(1).locator("span[class*='tm-c']", { hasText: /^const$/ });
+  await expect(fenced).toHaveCSS("color", DARK_PLUS_STORAGE);
+  expect(await fenced.getAttribute("class")).toMatch(/tm-c\d+/);
+  // A fence without a language stays the fence's colour: the colour above is TypeScript's.
+  const plain = lines.nth(5).locator("span[class*='tm-c']").first();
+  await expect(plain).toBeVisible();
+  await expect(plain).not.toHaveCSS("color", DARK_PLUS_STORAGE);
 });
 
 test("typed text is coloured and an edit recolours from its line", async ({ page }) => {
