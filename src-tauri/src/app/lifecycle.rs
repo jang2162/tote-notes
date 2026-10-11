@@ -16,6 +16,11 @@ const FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
 pub fn begin(app: &AppHandle, goal: FlushGoal) {
     let round = app.state::<AppCore>().begin_flush(goal);
+    run(app, round);
+}
+
+/// Carries out what starting a round calls for.
+fn run(app: &AppHandle, round: Begin) {
     match round {
         Begin::Done(goal) => finish(app, goal),
         Begin::AlreadyRunning => {}
@@ -129,7 +134,7 @@ mod system_quit {
     use objc2_app_kit::{NSApplication, NSApplicationTerminateReply};
     use tauri::{AppHandle, Manager};
 
-    use super::super::flush::FlushGoal;
+    use super::super::flush::{Begin, FlushGoal};
     use super::super::AppCore;
 
     type ShouldTerminate =
@@ -139,12 +144,17 @@ mod system_quit {
     /// macOS was told 「later」 and waits for `replyToApplicationShouldTerminate:`.
     static WAITING: AtomicBool = AtomicBool::new(false);
 
+    const NOT_HOOKED: &str =
+        "tote: could not answer macOS's quit; the Dock's quit will not write first";
+
     pub fn install(app: &AppHandle) {
         let _ = APP.set(app.clone());
         let Some(mtm) = MainThreadMarker::new() else {
+            eprintln!("{NOT_HOOKED} (not on the main thread)");
             return;
         };
         let Some(delegate) = NSApplication::sharedApplication(mtm).delegate() else {
+            eprintln!("{NOT_HOOKED} (no app delegate)");
             return;
         };
         let class: &AnyClass = AsRef::<AnyObject>::as_ref(&*delegate).class();
@@ -160,7 +170,7 @@ mod system_quit {
             )
         };
         if !added.as_bool() {
-            eprintln!("tote: could not answer macOS's quit; the Dock's quit will not write first");
+            eprintln!("{NOT_HOOKED}");
         }
     }
 
@@ -177,9 +187,25 @@ mod system_quit {
         if !core.has_windows() || core.is_quitting() {
             return NSApplicationTerminateReply::TerminateNow;
         }
-        WAITING.store(true, Ordering::SeqCst);
-        super::begin(app, FlushGoal::Quit);
-        NSApplicationTerminateReply::TerminateLater
+        let round = core.begin_flush(FlushGoal::Quit);
+        let reply = reply_for(&round);
+        if reply == NSApplicationTerminateReply::TerminateLater {
+            WAITING.store(true, Ordering::SeqCst);
+            super::run(app, round);
+        }
+        reply
+    }
+
+    /// 「Later」 only while a round is left to answer it. A round that is over as it starts
+    /// (no window to wait for) is answered now: an answer given before 「later」 is returned is
+    /// lost, and macOS would wait for good.
+    fn reply_for(round: &Begin) -> NSApplicationTerminateReply {
+        match round {
+            Begin::Started { .. } | Begin::AlreadyRunning => {
+                NSApplicationTerminateReply::TerminateLater
+            }
+            Begin::Done(_) => NSApplicationTerminateReply::TerminateNow,
+        }
     }
 
     /// Tells a waiting macOS whether tote quits. False when macOS is not waiting — the quit came
@@ -188,11 +214,41 @@ mod system_quit {
         if !WAITING.swap(false, Ordering::SeqCst) {
             return false;
         }
-        let _ = app.run_on_main_thread(move || {
+        let replied = app.run_on_main_thread(move || {
             if let Some(mtm) = MainThreadMarker::new() {
                 NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(quit);
             }
         });
+        if let Err(err) = replied {
+            eprintln!("tote: could not answer macOS's quit: {err}");
+        }
         true
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::super::super::flush::{Begin, FlushGoal};
+        use super::*;
+
+        #[test]
+        fn only_a_round_left_running_makes_macos_wait() {
+            let started = Begin::Started {
+                id: 1,
+                windows: vec!["a".into()],
+            };
+            assert_eq!(
+                reply_for(&started),
+                NSApplicationTerminateReply::TerminateLater
+            );
+            assert_eq!(
+                reply_for(&Begin::AlreadyRunning),
+                NSApplicationTerminateReply::TerminateLater
+            );
+            // Nothing will answer later: a 「later」 here would leave macOS waiting for good.
+            assert_eq!(
+                reply_for(&Begin::Done(FlushGoal::Quit)),
+                NSApplicationTerminateReply::TerminateNow
+            );
+        }
     }
 }
