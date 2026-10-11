@@ -147,3 +147,15 @@ test("cancelling the folder dialog keeps the picker open with nothing relocated"
   await expect(page.locator(".modal")).toHaveCount(1);
   await expect(page.locator(".modal-error")).toHaveText("");
 });
+
+test("pointing a missing workspace at a plain folder says so in Korean", async ({ page }) => {
+  await start(page, {
+    workspaces: [{ name: "옛", path: "/gone/옛", open: false, missing: true }],
+    picks: ["/plain"],
+    notWorkspaces: ["/plain"],
+  });
+  await menu(page, "open-workspace");
+  await page.locator(".picker-list li").click();
+  await expect(page.locator(".modal-error")).toHaveText("워크스페이스가 아닌 폴더입니다");
+  await expect(page.locator(".modal")).toHaveCount(1);
+});

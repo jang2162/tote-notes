@@ -298,7 +298,7 @@ impl LaunchState {
     }
 
     /// The workspace at `from` now lives at `to`: every mention follows it. A `to` that is already
-    /// listed keeps one entry, at the place `from` had in `recent`.
+    /// listed keeps one entry, the earlier of the two places.
     pub fn relocate(&mut self, from: &Path, to: &Path) {
         for list in [&mut self.recent, &mut self.open_windows] {
             let mut seen_to = false;
@@ -613,6 +613,9 @@ mod tests {
         );
         // The target already listed: one entry stays.
         launch.recent = vec!["/new/옛".into(), "/gone/옛".into()];
+        launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
+        assert_eq!(launch.recent, vec![PathBuf::from("/new/옛")]);
+        launch.recent = vec!["/gone/옛".into(), "/new/옛".into()];
         launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
         assert_eq!(launch.recent, vec![PathBuf::from("/new/옛")]);
     }

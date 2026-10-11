@@ -50,6 +50,8 @@ export interface FakeData {
   picks: string[];
   /** Every `relocateWorkspace` call, in order. */
   relocations: { from: string; to: string }[];
+  /** Folders `relocateWorkspace` refuses with `not-a-workspace`. */
+  notWorkspaces: string[];
   clock: number;
   /** `readMemo` calls per memo ID — lets tests check that a restore loads lazily. */
   reads: Record<string, number>;
@@ -109,6 +111,7 @@ export function defaultFakeData(): FakeData {
     workspaces: [{ name: "메모", path: "/fake/메모", open: true, missing: false }],
     picks: [],
     relocations: [],
+    notWorkspaces: [],
     clock: 1000,
     reads: {},
     flushed: [],
@@ -453,6 +456,8 @@ export class FakeBackend implements Backend {
   }
 
   async relocateWorkspace(from: string, to: string) {
+    if (this.data.notWorkspaces.includes(to))
+      throw new BackendError("not-a-workspace", `${to} is not a tote workspace`);
     this.data.relocations.push({ from, to });
     const item = this.data.workspaces.find((w) => w.path === from);
     if (item) Object.assign(item, { path: to, open: true, missing: false });

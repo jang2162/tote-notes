@@ -6,6 +6,7 @@ export const ERROR_TEXT: Partial<Record<BackendErrorCode, string>> = {
   "invalid-name": "쓸 수 없는 이름입니다",
   "not-found": "파일을 찾을 수 없습니다",
   "already-installed": "같은 확장이 이미 설치돼 있습니다",
+  "not-a-workspace": "워크스페이스가 아닌 폴더입니다",
   "invalid-extension": "확장 패키지를 읽을 수 없습니다",
 };
 
