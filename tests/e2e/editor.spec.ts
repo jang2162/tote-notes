@@ -353,6 +353,29 @@ test("redo after two undos of two syllables brings both back with every cursor",
     [8, 8],
     [12, 12],
   ]);
+  // ⌘Z again walks back with every cursor. CodeMirror's own undo keeps this: it restores the
+  // selection the redo started from, which the ⌘Z before had already put back.
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("사과가\n배가\n귤가");
+  expect(await ranges(page)).toEqual([
+    [3, 3],
+    [6, 6],
+    [9, 9],
+  ]);
+});
+
+// ⇧⌘Z puts cursors back only after a ⌘Z that put a composition's cursors back; plain typing keeps
+// CodeMirror's own redo, which leaves the cursor at the end of the change it makes again.
+test("redo of plain typing leaves the cursor where CodeMirror puts it", async ({ page }) => {
+  await open(page, "one\ntwo");
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("abc");
+  await page.keyboard.press("Meta+ArrowUp");
+  await page.keyboard.press("Meta+z");
+  expect(await text(page)).toBe("one\ntwo");
+  await page.keyboard.press("Meta+Shift+z");
+  expect(await text(page)).toBe("one\ntwoabc");
+  expect(await ranges(page)).toEqual([[10, 10]]);
 });
 
 test("⌘/ toggles the line comment of the language and brackets close as configured", async ({

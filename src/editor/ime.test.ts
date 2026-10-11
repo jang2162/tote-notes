@@ -1,5 +1,12 @@
 import { history, isolateHistory, undo } from "@codemirror/commands";
-import { EditorSelection, EditorState, Text, type Transaction } from "@codemirror/state";
+import {
+  EditorSelection,
+  EditorState,
+  Text,
+  Transaction,
+  type TransactionSpec,
+} from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import {
@@ -7,7 +14,9 @@ import {
   mainFirst,
   mirrorReplacement,
   multiRangeIme,
+  redoRestores,
   undoRestores,
+  undoWithCursors,
   type Composition,
 } from "./ime";
 
@@ -21,6 +30,49 @@ const state = (doc: string, selection: EditorSelection) =>
     selection,
     extensions: [EditorState.allowMultipleSelections.of(true), multiRangeIme],
   });
+
+/** A state with history and the input-method fields, behind as much of an EditorView as the
+ * history commands use. `compose` replays a composition as the editor sees it: the collapse to the
+ * main range, the syllable at the main range (`compose.start` opens a history group; plain
+ * `compose` always joins the last one), then the commit to the waiting cursors. */
+function composer(doc: string, selection: EditorSelection) {
+  let s = EditorState.create({
+    doc,
+    selection,
+    extensions: [EditorState.allowMultipleSelections.of(true), history(), multiRangeIme],
+  });
+  const view = {
+    get state() {
+      return s;
+    },
+    dispatch(tr: Transaction | TransactionSpec) {
+      s = tr instanceof Transaction ? tr.state : s.update(tr).state;
+    },
+  } as unknown as EditorView;
+  const compose = (syllable: string) => {
+    const before = s.selection;
+    const { main } = before;
+    s = s.update({
+      selection: EditorSelection.create([main]),
+      annotations: isolateHistory.of("full"),
+    }).state;
+    const typed = s.update({
+      changes: { from: main.from, insert: syllable },
+      selection: EditorSelection.cursor(main.from + syllable.length),
+      userEvent: "input.type.compose.start",
+    });
+    s = typed.state;
+    const current: Composition = {
+      from: main.from,
+      taken: "",
+      others: before.ranges.filter((r) => r !== main).map((r) => r.map(typed.changes)),
+      before,
+      startDoc: typed.startState.doc,
+    };
+    s = s.update(compositionCommit(s, current)).state;
+  };
+  return { view, compose };
+}
 
 describe("mainFirst", () => {
   it("moves the main range to the first of several", () => {
@@ -200,44 +252,26 @@ describe("undoRestores", () => {
   });
 
   it("drops the records past an undo", () => {
-    let s = EditorState.create({
-      doc: "사과\n배\n귤",
-      selection: cursors(2, 4, 6),
-      extensions: [EditorState.allowMultipleSelections.of(true), history(), multiRangeIme],
-    });
-    // A composition as the editor sees it: the collapse to the main range, the syllable at the
-    // main range (`compose.start` opens a history group; plain `compose` always joins the last
-    // one), then the commit to the waiting cursors.
-    const compose = (syllable: string) => {
-      const before = s.selection;
-      const { main } = before;
-      s = s.update({
-        selection: EditorSelection.create([main]),
-        annotations: isolateHistory.of("full"),
-      }).state;
-      const typed = s.update({
-        changes: { from: main.from, insert: syllable },
-        selection: EditorSelection.cursor(main.from + syllable.length),
-        userEvent: "input.type.compose.start",
-      });
-      s = typed.state;
-      const current: Composition = {
-        from: main.from,
-        taken: "",
-        others: before.ranges.filter((r) => r !== main).map((r) => r.map(typed.changes)),
-        before,
-        startDoc: typed.startState.doc,
-      };
-      s = s.update(compositionCommit(s, current)).state;
-    };
+    const { view, compose } = composer("사과\n배\n귤", cursors(2, 4, 6));
     compose("가");
     compose("나");
-    expect(s.doc.toString()).toBe("사과가나\n배가나\n귤가나");
-    expect(s.field(undoRestores)).toHaveLength(2);
-    undo({ state: s, dispatch: (tr) => (s = tr.state) });
-    expect(s.doc.toString()).toBe("사과가\n배가\n귤가");
-    const records = s.field(undoRestores);
+    expect(view.state.doc.toString()).toBe("사과가나\n배가나\n귤가나");
+    expect(view.state.field(undoRestores)).toHaveLength(2);
+    undo(view);
+    expect(view.state.doc.toString()).toBe("사과가\n배가\n귤가");
+    const records = view.state.field(undoRestores);
     expect(records).toHaveLength(1);
     expect(records[0].doc.toString()).toBe("사과\n배\n귤");
+  });
+});
+
+describe("redoRestores", () => {
+  it("drops what ⇧⌘Z would put back once a new edit comes", () => {
+    const { view, compose } = composer("사과\n배\n귤", cursors(2, 4, 6));
+    compose("가");
+    undoWithCursors(view);
+    expect(view.state.field(redoRestores)).toHaveLength(1);
+    view.dispatch({ changes: { from: 0, insert: "x" }, userEvent: "input.type" });
+    expect(view.state.field(redoRestores)).toHaveLength(0);
   });
 });
