@@ -164,3 +164,51 @@ test("the memo list follows added and removed files", async ({ page }) => {
   );
   await expect(page.locator(".memo-row .memo-name")).toHaveText(["여행", "장보기"]);
 });
+
+test("closing the window with two conflicts keeps every file as the other app left it and 내 버전 as new memos", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("장보기.md", "우유"), b: fakeMemo("할 일.md", "청소") },
+  });
+  for (const [id, name, text, typed, theirs] of [
+    ["a", "장보기", "우유", " 계란", "두유"],
+    ["b", "할 일", "청소", " 빨래", "설거지"],
+  ] as const) {
+    await page.locator(".memo-row", { hasText: name }).click();
+    await expect(page.locator(".cm-content")).toHaveText(text);
+    await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+    await page.keyboard.insertText(typed);
+    await writeElsewhere(page, id, theirs);
+    await outside(page, { kind: "modified", id });
+    await expect(banner(page)).toBeVisible();
+  }
+  // What the native side asks of a window that closes or of the app that quits.
+  await page.evaluate(() => window.__tote.backend.requestFlush(3));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 3 }]);
+  const text = (file: string) =>
+    page.evaluate((f) => window.__tote.backend.memoTextByFile(f), file);
+  expect(await text("장보기.md")).toBe("두유");
+  expect(await text("할 일.md")).toBe("설거지");
+  expect(await text("장보기 2.md")).toBe("우유 계란");
+  expect(await text("할 일 2.md")).toBe("청소 빨래");
+  await expect(banner(page)).toBeHidden();
+  await expect(page.locator(".status-message")).toHaveText(
+    "다른 앱이 바꾼 파일은 그대로 두고 내 버전을 새 메모로 저장했습니다",
+  );
+});
+
+test("⌘W on a memo with the conflict open keeps the tab and says what to do", async ({ page }) => {
+  await typeInto(page);
+  await writeElsewhere(page, "a", "두유");
+  await outside(page, { kind: "modified", id: "a" });
+  await expect(banner(page)).toBeVisible();
+  await page.evaluate(() => window.__tote.backend.menu("close-tab"));
+  await expect(page.locator(".status-message")).toHaveText(
+    "먼저 디스크 버전과 내 버전 중 하나를 고르세요",
+  );
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+});

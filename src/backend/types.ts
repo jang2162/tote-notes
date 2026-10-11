@@ -274,9 +274,6 @@ export interface Backend {
   readVersion(snapshot: string, file: string): Promise<Uint8Array>;
   /** Shows this workspace's backup folder in Finder. */
   revealBackups(): Promise<void>;
-  /** Snapshots this workspace now, changed or not: what another app wrote is kept before a quit
-   * writes over it. */
-  backupNow(): Promise<void>;
 
   /** Where this window is, for the session; `null` where there is no native window. */
   windowFrame(): Promise<WindowFrame | null>;

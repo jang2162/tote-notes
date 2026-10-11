@@ -55,6 +55,9 @@ export const DELETED_TEXT = "파일이 지워졌습니다. 다시 저장하거�
 export const DISK_VERSION = "디스크 버전";
 export const MY_VERSION = "내 버전";
 export const RESAVE = "다시 저장";
+export const CONFLICT_KEPT_NOTICE =
+  "다른 앱이 바꾼 파일은 그대로 두고 내 버전을 새 메모로 저장했습니다";
+export const CHOOSE_VERSION_FIRST = "먼저 디스크 버전과 내 버전 중 하나를 고르세요";
 
 /** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
  * were read as text and are not UTF-8 (or hold a NUL). */
@@ -327,6 +330,16 @@ export abstract class Doc {
     this.host.changed(this, "reloaded");
   }
 
+  /** A tab that could not show its text (not UTF-8, a line too long) reads the file again after
+   * another app changed it: the change may have mended it. A tab never read stays unread. */
+  protected async retryProblem(): Promise<void> {
+    if (this.problem !== "not-utf8" && this.problem !== "long-line") return;
+    this.problem = null;
+    this.error = null;
+    await this.ensureLoaded();
+    this.host.changed(this, "reloaded");
+  }
+
   private async load(): Promise<void> {
     let bytes: Uint8Array | Problem;
     try {
@@ -526,8 +539,8 @@ export class MemoDoc extends Doc {
   }
 
   private async outsideModified(): Promise<void> {
-    // Not read yet, or not text: it reads the file as it is when it is shown.
-    if (!this.state) return;
+    // Not read yet, or not shown as text: it reads the file as it is when it is shown.
+    if (!this.state) return this.retryProblem();
     if (this.unsaved) return this.raiseConflict();
     let bytes: Uint8Array;
     try {
@@ -655,18 +668,24 @@ export class MemoDoc extends Doc {
     await this.detect();
   }
 
-  /** A conflict still open is settled as 「내 버전」 — the typed text must outlive the window — but
-   * only once a snapshot holds the other app's text. When the snapshot fails nothing is written
-   * over it: the save counts as failed, which makes the quit ask first. */
+  /** The window closes or the app quits with a conflict nobody answered: neither side is dropped.
+   * The file keeps the other app's text and 「내 버전」 becomes a new memo, as a save into a
+   * vanished file does (`recover`) — one write, so the flush round stays quick. Also when the text
+   * was undone back to the last save: the file no longer holds it. When the write fails the save
+   * counts as failed, which makes the quit ask first. */
   async flush(): Promise<void> {
-    if (this.banner?.kind === "conflict" && this.unsaved) {
+    if (this.banner?.kind === "conflict" && this.state) {
+      const text = this.state.doc;
       try {
-        await this.host.backend.backupNow();
+        this.setInfo(await this.recover(this.encode(text)));
       } catch (error) {
         return this.failSave(error, this.saveKey, () => this.save());
       }
-      this.savedText = null;
+      this.savedText = text;
+      this.notice = CONFLICT_KEPT_NOTICE;
+      this.host.changed(this, "notice");
       this.setBanner(null);
+      this.clearSaveFailed();
     }
     return this.leave();
   }
@@ -674,7 +693,8 @@ export class MemoDoc extends Doc {
   async close(): Promise<boolean> {
     await this.saveNow();
     // Still unsaved: keep the tab, and the text in it, rather than lose what the error was about.
-    if (this.unsaved) return false;
+    // A conflict waits for its answer even when the text is the saved one: the file is not.
+    if (this.unsaved || this.banner?.kind === "conflict") return false;
     // An empty new memo leaves no file behind (spec 「세션」); "new" means tote still names it.
     if (this.info.autoTitle && this.state && isBlank(this.state.doc)) {
       try {
@@ -784,8 +804,8 @@ export class ExternalDoc extends Doc {
   /** Another app changed or removed the file (`watchExternal`). A clean tab reads it again; one
    * with edits since ⌘S asks, 「내 버전」 being a save. */
   async onOutside(change: ExternalState): Promise<void> {
-    // Not read yet, or not text: it reads the file as it is when it is shown.
-    if (!this.state) return;
+    // Not read yet, or not shown as text: it reads the file as it is when it is shown.
+    if (!this.state) return change === "modified" ? this.retryProblem() : undefined;
     if (change === "removed") {
       this.exists = false;
       return this.deletedBanner(() => this.save());

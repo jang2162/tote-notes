@@ -90,8 +90,6 @@ export interface FakeData {
   backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
   /** `revealBackups` calls. Absent in old seeds. */
   revealed?: number;
-  /** `backupNow` calls that went through. Absent in old seeds. */
-  backedUp?: number;
   /** External path → how many `watchExternal` calls are not yet undone. Absent in old seeds. */
   watched?: Record<string, number>;
 }
@@ -525,11 +523,6 @@ export class FakeBackend implements Backend {
 
   async revealBackups() {
     this.data.revealed = (this.data.revealed ?? 0) + 1;
-    this.commit();
-  }
-
-  async backupNow() {
-    this.data.backedUp = (this.data.backedUp ?? 0) + 1;
     this.commit();
   }
 

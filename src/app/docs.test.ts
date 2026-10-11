@@ -15,6 +15,7 @@ import { BackendError, type ExtensionRegistry } from "../backend/types";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
+  CONFLICT_KEPT_NOTICE,
   CONFLICT_TEXT,
   DELETED_TEXT,
   ExternalDoc,
@@ -505,34 +506,51 @@ describe("MemoDoc outside changes", () => {
     expect(backend.memoText("a")).toBe("다른 앱");
   });
 
-  it("a window close or quit with the conflict open backs up the disk's text, then writes the typed text", async () => {
+  it("a window close or quit with the conflict open keeps both: the file and 내 버전 as a new memo", async () => {
     const { backend, doc } = await opened("원래");
     type(doc, " 내 글");
     backend.data.memos.a.data = fakeFile("다른 앱");
     await doc.onOutside({ kind: "modified", id: "a" });
-    const onDiskAtBackup: (string | null)[] = [];
-    const backupNow = backend.backupNow.bind(backend);
-    backend.backupNow = async () => {
-      onDiskAtBackup.push(backend.memoText("a"));
-      await backupNow();
-    };
     // Leaving the tab (or the window hiding) is not a choice: the conflict stays open.
     await doc.leave();
     expect(backend.memoText("a")).toBe("다른 앱");
-    expect(onDiskAtBackup).toEqual([]);
+    expect(doc.banner?.kind).toBe("conflict");
     await doc.flush();
-    expect(onDiskAtBackup).toEqual(["다른 앱"]);
-    expect(backend.memoText("a")).toBe("원래 내 글");
+    expect(backend.memoText("a")).toBe("다른 앱");
+    expect(doc.info.id).not.toBe("a");
+    expect(doc.info.file).toBe("a 2.md");
+    expect(backend.memoText(doc.info.id)).toBe("원래 내 글");
+    expect(doc.notice).toBe(CONFLICT_KEPT_NOTICE);
+    expect(doc.banner).toBeNull();
+    // From here the tab is the new memo: typing saves there, the file stays the other app's.
+    type(doc, "!");
+    await vi.runAllTimersAsync();
+    expect(backend.memoText(doc.info.id)).toBe("원래 내 글!");
+    expect(backend.memoText("a")).toBe("다른 앱");
+  });
+
+  it("a conflict undone back to the saved text still keeps both at close or quit", async () => {
+    const { backend, doc } = await opened("원래");
+    const saved = doc.state!;
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    // Undone: the text is what tote saved last, yet the file holds the other app's.
+    doc.update({ state: saved, startState: doc.state!, docChanged: true, selectionSet: true });
+    expect(await doc.close()).toBe(false);
+    await doc.flush();
+    expect(backend.memoText("a")).toBe("다른 앱");
+    expect(backend.memoTextByFile("a 2.md")).toBe("원래");
     expect(doc.banner).toBeNull();
   });
 
-  it("a close or quit whose backup fails leaves the disk alone and the save failed", async () => {
+  it("a close or quit whose new memo cannot be written leaves the save failed", async () => {
     const { backend, doc } = await opened("원래");
     type(doc, " 내 글");
     backend.data.memos.a.data = fakeFile("다른 앱");
     await doc.onOutside({ kind: "modified", id: "a" });
-    backend.backupNow = async () => {
-      throw new BackendError("io", "backup disk full");
+    backend.importMemo = async () => {
+      throw new BackendError("io", "no space left on device");
     };
     await doc.flush();
     expect(backend.memoText("a")).toBe("다른 앱");
@@ -540,6 +558,20 @@ describe("MemoDoc outside changes", () => {
     expect(doc.saveFailed).toBe(true);
     expect(doc.banner?.kind).toBe("conflict");
     expect(doc.state!.doc.toString()).toBe("원래 내 글");
+  });
+
+  it("a memo reread into text it cannot show is read again when the file is mended", async () => {
+    const { backend, doc, changes } = await opened("원래");
+    backend.data.memos.a.data = fakeFile(new Uint8Array([0x63, 0xe9]));
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.state).toBeNull();
+    expect(doc.problem).toBe("not-utf8");
+    backend.data.memos.a.data = fakeFile("고침");
+    changes.length = 0;
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.problem).toBeNull();
+    expect(doc.state!.doc.toString()).toBe("고침");
+    expect(changes).toContain("reloaded");
   });
 
   it("an outside removal raises the deleted banner and keeps the text", async () => {

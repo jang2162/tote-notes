@@ -35,6 +35,7 @@ import { openVersions } from "../ui/versions";
 import { ViewerHost } from "../viewer/host";
 import { LargeTextViewer } from "../viewer/large-text";
 import {
+  CHOOSE_VERSION_FIRST,
   ExternalDoc,
   importExternal,
   MemoDoc,
@@ -326,6 +327,8 @@ export class AppController implements DocHost {
     if (!doc) return;
     this.capture(doc);
     if (!(await doc.close(() => askUnsaved(doc.title)))) {
+      // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
+      if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
       if (doc === this.tabs.active) this.view.focus();
       return;
     }
