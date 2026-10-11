@@ -4,9 +4,11 @@ import { LargeTextViewer } from "../../../src/viewer/large-text";
 // A file of `?lines=` lines (6,000,000 by default) that exists only as an answer to Range
 // requests: line i is "L" and i in nine digits, so every line is 11 bytes with its newline and
 // a page is generated on demand. `?trailing=1` ends the file with a newline, as `seq` does.
+// `?maxRange=<n>` answers at most n bytes at a time, as `tote-file` cuts a long range.
 const params = new URLSearchParams(location.search);
 const contentLines = Number(params.get("lines") ?? 6_000_000);
 const trailing = params.has("trailing");
+const maxRange = Number(params.get("maxRange") ?? Infinity);
 const WIDTH = 11;
 const URL_ = "fake:big";
 const lineText = (i: number) => `L${String(i).padStart(9, "0")}`;
@@ -23,12 +25,14 @@ window.fetch = async (input, init) => {
   const [a, b] = range.replace("bytes=", "").split("-").map(Number);
   fetchLog.push([a, b]);
   if (a >= size || a > b) return new Response(null, { status: 416 });
+  const end = Math.min(b, size - 1, a + maxRange - 1);
   const first = Math.floor(a / WIDTH);
-  const last = Math.floor(Math.min(b, size - 1) / WIDTH);
+  const last = Math.floor(end / WIDTH);
   let text = "";
   for (let i = first; i <= last; i++) text += `${lineText(i)}\n`;
-  return new Response(text.slice(a - first * WIDTH, Math.min(b, size - 1) - first * WIDTH + 1), {
+  return new Response(text.slice(a - first * WIDTH, end - first * WIDTH + 1), {
     status: 206,
+    headers: { "Content-Range": `bytes ${a}-${end}/${size}` },
   });
 };
 

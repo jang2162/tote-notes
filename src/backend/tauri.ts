@@ -183,6 +183,9 @@ export class TauriBackend implements Backend {
   searchText(source: FileSource, query: TextQuery, fromLine: number, requestId: number) {
     return call<TextSearch>("search_text", { source, query, fromLine, requestId });
   }
+  cancelTextSearch() {
+    return call<void>("cancel_text_search");
+  }
   async pickExtensionPackage() {
     const picked = await open({
       multiple: false,

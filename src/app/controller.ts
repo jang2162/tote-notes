@@ -526,6 +526,10 @@ export class AppController implements DocHost {
     this.panel = null;
     open.host.destroy();
     this.revoke(open.owner);
+    // A search through a file of gigabytes would otherwise read on for nobody.
+    if (open.host instanceof LargeTextViewer) {
+      void this.backend.cancelTextSearch().catch((error: unknown) => console.warn(error));
+    }
   }
 
   private revoke(owner: string): void {

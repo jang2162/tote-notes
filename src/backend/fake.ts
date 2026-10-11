@@ -73,6 +73,8 @@ export interface FakeData {
   /** Owner → the names of the files issued to it and not yet revoked; tests check the
    * revocation. Names, not the data: URLs — a big file's would overflow sessionStorage. */
   tokens: Record<string, string[]>;
+  /** `cancelTextSearch` calls; the fake's searches finish at once, so tests count the asks. */
+  textSearchCancelled: number;
 }
 
 export interface FakeStorage {
@@ -114,6 +116,7 @@ export function defaultFakeData(): FakeData {
     extensionFiles: {},
     extraViewers: [],
     tokens: {},
+    textSearchCancelled: 0,
   };
 }
 
@@ -606,6 +609,11 @@ export class FakeBackend implements Backend {
       }
     }
     return { matches, done: true, cancelled: false };
+  }
+
+  async cancelTextSearch() {
+    this.data.textSearchCancelled++;
+    this.commit();
   }
 
   private issue(owner: string, name: string, data: string): string {

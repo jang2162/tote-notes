@@ -263,6 +263,8 @@ export interface Backend {
     fromLine: number,
     requestId: number,
   ): Promise<TextSearch>;
+  /** Stops this window's running `searchText`, as a newer one would. */
+  cancelTextSearch(): Promise<void>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
   pickExtensionPackage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;

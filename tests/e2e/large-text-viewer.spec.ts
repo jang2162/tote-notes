@@ -183,3 +183,20 @@ test("the empty page after a final newline is not fetched", async ({ page }) => 
     await page.evaluate(() => window.fetchLog.filter(([start]) => start >= 2000 * 11)),
   ).toEqual([]);
 });
+
+test("a page longer than one range answer is fetched in pieces", async ({ page }) => {
+  // A page of 1,000 lines is 11,000 bytes; answers of 6,000 cut line 545 in two.
+  await open(page, "?lines=2000&maxRange=6000");
+  await page.evaluate(() => window.largeTextViewer.goToLine(545));
+  await expect(page.locator(".large-text-line.current")).toHaveText("L000000545");
+  const wrong = await page.evaluate(() =>
+    [...document.querySelectorAll<HTMLElement>(".large-text-line")]
+      .map((row) => ({ line: Number(row.dataset.line), text: row.textContent }))
+      .filter(({ line, text }) => text !== window.lineText(line)),
+  );
+  expect(wrong).toEqual([]);
+  expect(await page.evaluate(() => window.fetchLog)).toEqual([
+    [0, 10_999],
+    [6000, 10_999],
+  ]);
+});

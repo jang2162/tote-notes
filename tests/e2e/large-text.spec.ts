@@ -76,3 +76,14 @@ test("closing the tab takes the viewer and its token down", async ({ page }) => 
   await expect(page.locator(".large-text")).toHaveCount(0);
   expect(await page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
 });
+
+test("closing the viewer cancels its search", async ({ page }) => {
+  await startWithHugeLog(page);
+  await menu(page, "open-file");
+  await expect(page.locator(".large-text")).toBeVisible();
+  const cancelled = () => page.evaluate(() => window.__tote.backend.data.textSearchCancelled);
+  expect(await cancelled()).toBe(0);
+  await menu(page, "close-tab");
+  await expect(page.locator(".large-text")).toHaveCount(0);
+  await expect.poll(cancelled).toBe(1);
+});

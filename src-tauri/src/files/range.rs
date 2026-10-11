@@ -9,9 +9,16 @@ use tauri::http::{header, Method, Response, StatusCode};
 
 use super::TokenStore;
 
-/// The most an open-ended range (`bytes=N-`) gets in one answer. WebKit's media loader opens
-/// with `bytes=0-` even for a file of gigabytes; a shorter 206 is allowed and it asks on.
-pub const MAX_OPEN_RANGE: u64 = 8 * 1024 * 1024;
+/// The most a range of any form (`bytes=N-`, `bytes=N-M`, `bytes=-N`) gets in one answer: the
+/// answer is read whole into memory. WebKit's media loader opens with `bytes=0-` even for a file
+/// of gigabytes; a shorter 206 is allowed, and the media loader and the large text viewer both
+/// ask on from where it ended.
+pub const MAX_RANGE: u64 = 8 * 1024 * 1024;
+
+/// The most a request without a range gets: past it the answer is 413 rather than the file read
+/// whole into memory. The large text viewer always reads by range and WebKit plays media by
+/// range, so what meets this is an image too big to show, and an error is the right answer for it.
+pub const MAX_FULL_RESPONSE: u64 = 64 * 1024 * 1024;
 
 #[derive(Debug, PartialEq, Eq)]
 pub enum RangeSpec {
@@ -47,7 +54,6 @@ pub fn parse_range(value: Option<&str>, len: u64) -> RangeSpec {
         };
         let end = if b.is_empty() {
             len.saturating_sub(1)
-                .min(start.saturating_add(MAX_OPEN_RANGE - 1))
         } else {
             let Ok(end) = b.parse::<u64>() else {
                 return RangeSpec::Full;
@@ -59,7 +65,10 @@ pub fn parse_range(value: Option<&str>, len: u64) -> RangeSpec {
     if len == 0 || start >= len || start > end {
         return RangeSpec::Unsatisfiable;
     }
-    RangeSpec::Partial { start, end }
+    RangeSpec::Partial {
+        start,
+        end: end.min(start.saturating_add(MAX_RANGE - 1)),
+    }
 }
 
 fn read_slice(path: &Path, start: u64, end: u64) -> io::Result<Vec<u8>> {
@@ -96,6 +105,9 @@ pub fn respond(
         .header(header::ACCEPT_RANGES, "bytes")
         .header(header::CONTENT_TYPE, content_type(&path));
     let result = match parse_range(range, len) {
+        RangeSpec::Full if len > MAX_FULL_RESPONSE => Ok(builder
+            .status(StatusCode::PAYLOAD_TOO_LARGE)
+            .body(Vec::new())),
         RangeSpec::Full => std::fs::read(&path).map(|body| {
             builder
                 .status(StatusCode::OK)
@@ -199,19 +211,19 @@ mod tests {
 
     #[test]
     fn an_open_ended_range_on_a_big_file_is_cut_to_a_bounded_slice() {
-        let len = 3 * MAX_OPEN_RANGE;
+        let len = 3 * MAX_RANGE;
         assert_eq!(
             parse_range(Some("bytes=0-"), len),
             RangeSpec::Partial {
                 start: 0,
-                end: MAX_OPEN_RANGE - 1
+                end: MAX_RANGE - 1
             }
         );
         assert_eq!(
             parse_range(Some("bytes=10-"), len),
             RangeSpec::Partial {
                 start: 10,
-                end: 10 + MAX_OPEN_RANGE - 1
+                end: 10 + MAX_RANGE - 1
             }
         );
         assert_eq!(
@@ -219,6 +231,26 @@ mod tests {
             RangeSpec::Partial {
                 start: len - 5,
                 end: len - 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_closed_range_is_cut_to_the_limit_too() {
+        let len = 3 * MAX_RANGE;
+        assert_eq!(
+            parse_range(Some(&format!("bytes=0-{len}")), len),
+            RangeSpec::Partial {
+                start: 0,
+                end: MAX_RANGE - 1
+            }
+        );
+        // A suffix range asks for the last bytes; it gets the first of them and asks on.
+        assert_eq!(
+            parse_range(Some(&format!("bytes=-{len}")), len),
+            RangeSpec::Partial {
+                start: 0,
+                end: MAX_RANGE - 1
             }
         );
     }
@@ -359,6 +391,26 @@ mod tests {
         assert_eq!(res.body(), b"abc");
         assert_eq!(res.headers()[header::CONTENT_TYPE], "video/mp4");
         assert_eq!(res.headers()[header::CONTENT_LENGTH], "3");
+    }
+
+    #[test]
+    fn a_full_request_over_the_limit_is_413_and_under_it_is_200() {
+        let dir = tempfile::tempdir().unwrap();
+        let store = TokenStore::default();
+        let sparse = |name: &str, len: u64| {
+            let path = dir.path().join(name);
+            fs::File::create(&path).unwrap().set_len(len).unwrap();
+            store.issue("w", "o", path)
+        };
+        let over = sparse("over.bin", MAX_FULL_RESPONSE + 1);
+        let res = respond(&store, &Method::GET, &format!("/{over}"), None);
+        assert_eq!(res.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert!(res.body().is_empty());
+        assert_eq!(res.headers()[header::ACCESS_CONTROL_ALLOW_ORIGIN], "*");
+        let under = sparse("under.bin", MAX_RANGE + 1);
+        let res = respond(&store, &Method::GET, &format!("/{under}"), None);
+        assert_eq!(res.status(), StatusCode::OK);
+        assert_eq!(res.body().len() as u64, MAX_RANGE + 1);
     }
 
     #[test]

@@ -36,6 +36,21 @@ export function pageRange(scan: TextScan, page: number): [number, number] {
   return [scan.checkpoints[page], scan.checkpoints[page + 1] ?? scan.size];
 }
 
+/** What is left of the inclusive byte range `requested` after a 206 whose `Content-Range` is
+ * `contentRange`, or null when it came whole. `tote-file` answers at most MAX_RANGE
+ * (src-tauri/src/files/range.rs) at a time, and a page of long lines can be more. */
+export function continueRange(
+  requested: [number, number],
+  contentRange: string,
+): [number, number] | null {
+  const match = /^bytes (\d+)-(\d+)\//.exec(contentRange.trim());
+  if (!match) return null;
+  const last = Number(match[2]);
+  // Only an answer that moved forward is continued, so the asking always ends.
+  if (last < requested[0] || last >= requested[1]) return null;
+  return [last + 1, requested[1]];
+}
+
 /** Pixels of the scroll range and of the whole file (every line at LINE_HEIGHT) that the
  * viewport can move through. */
 function scrollRanges(height: number, lineCount: number): [number, number] {
@@ -226,12 +241,8 @@ export class LargeTextViewer {
       // A file ending in a newline after a whole page of lines has an empty last page: its
       // checkpoint is the file's end and a Range for it would be unsatisfiable.
       if (start >= end) return Promise.resolve([""]);
-      pending = fetch(this.options.url, { headers: { Range: `bytes=${start}-${end - 1}` } })
-        .then(async (response) => {
-          if (!response.ok) throw new Error(`${response.status}`);
-          const bytes = new Uint8Array(await response.arrayBuffer());
-          // A server without Range support (the fake's data: URL) answers 200 with everything.
-          const slice = response.status === 206 ? bytes : bytes.subarray(start, end);
+      pending = this.read(start, end)
+        .then((slice) => {
           const text = new TextDecoder().decode(slice);
           const lines = text.split("\n");
           // The page ends at the next checkpoint, right after a newline — except the last page.
@@ -245,6 +256,32 @@ export class LargeTextViewer {
       this.pages.set(index, pending);
     }
     return pending;
+  }
+
+  /** Bytes [start, end) of the file, in as many Range requests as the server's answers take. */
+  private async read(start: number, end: number): Promise<Uint8Array> {
+    const pieces: Uint8Array[] = [];
+    let next: [number, number] | null = [start, end - 1];
+    while (next) {
+      const response: Response = await fetch(this.options.url, {
+        headers: { Range: `bytes=${next[0]}-${next[1]}` },
+      });
+      if (!response.ok) throw new Error(`${response.status}`);
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      // A server without Range support (the fake's data: URL) answers 200 with everything.
+      if (response.status !== 206) return bytes.subarray(start, end);
+      pieces.push(bytes);
+      const contentRange: string | null = response.headers.get("Content-Range");
+      next = contentRange === null ? null : continueRange(next, contentRange);
+    }
+    if (pieces.length === 1) return pieces[0];
+    const whole = new Uint8Array(pieces.reduce((sum, piece) => sum + piece.length, 0));
+    let at = 0;
+    for (const piece of pieces) {
+      whole.set(piece, at);
+      at += piece.length;
+    }
+    return whole;
   }
 
   private async render(): Promise<void> {

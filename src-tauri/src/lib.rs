@@ -36,7 +36,7 @@ pub fn run() {
                 .and_then(|v| v.to_str().ok())
                 .map(str::to_string);
             // Off the main thread: a 206 for a video seek reads from disk.
-            std::thread::spawn(move || {
+            files::pool::spawn(move || {
                 let core = app.state::<AppCore>();
                 responder.respond(files::range::respond(
                     &core.files,
@@ -98,6 +98,7 @@ pub fn run() {
             commands::resolve_relative,
             commands::scan_text,
             commands::search_text,
+            commands::cancel_text_search,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");

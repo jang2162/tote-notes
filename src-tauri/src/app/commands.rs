@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::ipc::{InvokeBody, Request, Response};
-use tauri::{AppHandle, Emitter, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
@@ -539,6 +539,14 @@ impl From<SearchError> for CommandError {
     }
 }
 
+/// Runs `f` on the blocking pool. A scan or a search reads a file of up to gigabytes; on the
+/// async runtime's own threads it would hold up every other async command meanwhile.
+async fn blocking<T: Send + 'static>(
+    f: impl FnOnce() -> CmdResult<T> + Send + 'static,
+) -> CmdResult<T> {
+    tauri::async_runtime::spawn_blocking(f).await?
+}
+
 #[tauri::command]
 pub async fn scan_text(
     core: State<'_, AppCore>,
@@ -546,12 +554,13 @@ pub async fn scan_text(
     source: FileSource,
 ) -> CmdResult<TextScan> {
     let path = source_path(&core, &window, &source)?;
-    Ok(text::scan(&path)?)
+    blocking(move || Ok(text::scan(&path)?)).await
 }
 
 #[tauri::command]
 pub async fn search_text(
     core: State<'_, AppCore>,
+    app: AppHandle,
     window: WebviewWindow,
     source: FileSource,
     query: TextQuery,
@@ -560,13 +569,26 @@ pub async fn search_text(
 ) -> CmdResult<TextSearch> {
     let path = source_path(&core, &window, &source)?;
     let label = window.label().to_string();
+    // Before the blocking pool, in the order the searches came: one that waited there for a
+    // thread must not make itself live over a newer one.
     core.begin_search(&label, request_id);
-    let live = || core.search_is_live(&label, request_id);
-    Ok(text::search(
-        &path,
-        &query,
-        from_line,
-        text::SEARCH_PAGE,
-        &|| !live(),
-    )?)
+    blocking(move || {
+        let core = app.state::<AppCore>();
+        let live = || core.search_is_live(&label, request_id);
+        Ok(text::search(
+            &path,
+            &query,
+            from_line,
+            text::SEARCH_PAGE,
+            &|| !live(),
+        )?)
+    })
+    .await
+}
+
+/// The window's large text viewer closed: its search, if one is running, stops at its next
+/// check. The frontend numbers searches from 1, so 0 is live for no search.
+#[tauri::command]
+pub fn cancel_text_search(core: State<'_, AppCore>, window: WebviewWindow) {
+    core.begin_search(window.label(), 0);
 }

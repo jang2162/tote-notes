@@ -3,6 +3,7 @@
 //! dozens of Range requests — until the view that got it closes. Tokens are keyed by window and
 //! owner so a closing view, or a closing window, revokes exactly its own.
 
+pub mod pool;
 pub mod range;
 pub mod text;
 

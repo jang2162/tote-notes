@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  continueRange,
   displayLine,
   DISPLAY_LINE_LIMIT,
   LINE_HEIGHT,
@@ -71,6 +72,15 @@ describe("paging", () => {
     // A file that fits is not scaled.
     expect(scrollTopFor(1000, height, 2500)).toBe(1000);
     expect(virtualTop(1000, height, 2500)).toBe(1000);
+  });
+});
+
+describe("continueRange", () => {
+  it("asks for the rest after an answer shorter than the request, and stops at its end", () => {
+    expect(continueRange([0, 9_999_999], "bytes 0-8388607/20000000")).toEqual([
+      8_388_608, 9_999_999,
+    ]);
+    expect(continueRange([8_388_608, 9_999_999], "bytes 8388608-9999999/20000000")).toBeNull();
   });
 });
 
