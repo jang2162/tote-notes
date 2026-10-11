@@ -7,13 +7,14 @@ pub mod memo;
 pub mod names;
 mod ops;
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{is_temp_file, read_json, write_json};
+use crate::persist::{content_hash, is_temp_file, read_json, write_json};
 use index::MemoIndex;
 use names::is_valid_file_name;
 
@@ -51,6 +52,34 @@ pub struct Workspace {
     index: MemoIndex,
     /// A write since the last backup took it (`take_changed`).
     changed: bool,
+    /// File name → hash of the bytes tote last wrote there. A change the watcher sees with that
+    /// hash is tote's own write (spec 「외부 변경」).
+    last_written: BTreeMap<String, String>,
+    /// File name → `index::file_id`, kept through tote's own writes and renames, so a rename by
+    /// another app is told apart from a removal and a new file.
+    inodes: BTreeMap<String, (u64, u64)>,
+}
+
+/// What `apply_fs_events` found another app did to the workspace.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum Change {
+    Modified {
+        id: String,
+    },
+    Added {
+        id: String,
+        file: String,
+    },
+    Removed {
+        id: String,
+        file: String,
+    },
+    Renamed {
+        id: String,
+        from: String,
+        to: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -102,11 +131,14 @@ impl Workspace {
         remove_temp_files(&root);
         remove_temp_files_below(&root.join(TOTE_DIR));
         let index = MemoIndex::load(&root)?;
+        let inodes = index::file_ids(&root, &index);
         Ok(Workspace {
             root,
             id: meta.id,
             index,
             changed: false,
+            last_written: BTreeMap::new(),
+            inodes,
         })
     }
 
@@ -152,12 +184,167 @@ impl Workspace {
         std::mem::take(&mut self.changed)
     }
 
+    /// The hash of what tote last wrote to `file`, if it wrote it since the workspace opened.
+    pub fn last_written(&self, file: &str) -> Option<&str> {
+        self.last_written.get(file).map(String::as_str)
+    }
+
+    pub fn inodes(&self) -> &BTreeMap<String, (u64, u64)> {
+        &self.inodes
+    }
+
+    /// Brings the index in line with what the watcher saw: `touched` are the file names in one
+    /// batch, `renames` the from → to pairs the watcher paired itself. In order: those pairs; a
+    /// file gone and a new one with its inode are a rename; what is left gone is removed and new
+    /// is added (`autoTitle: false`, spec 「rename 을 놓치면 새 메모」); a file still there changed
+    /// unless it hashes like tote's last write to it.
+    ///
+    /// Whether a name is there is read from the folder listing, not by looking the name up: APFS
+    /// finds `memo.md` when the file is `Memo.md`, which would hide a case-only rename.
+    pub fn apply_fs_events(
+        &mut self,
+        touched: &BTreeSet<String>,
+        renames: &[(String, String)],
+    ) -> io::Result<Vec<Change>> {
+        let listed = index::entry_names(&self.root)?;
+        let present = |file: &str| {
+            listed.contains(file) && fs::metadata(self.root.join(file)).is_ok_and(|m| m.is_file())
+        };
+        let mut touched: BTreeSet<String> = touched
+            .iter()
+            .filter(|f| is_memo_name(f))
+            .cloned()
+            .collect();
+        let mut renamed = Vec::new();
+        for (from, to) in renames {
+            let pair = (is_memo_name(from) && is_memo_name(to) && present(to))
+                .then(|| self.id_of(from))
+                .flatten()
+                .filter(|_| self.id_of(to).is_none() && !present(from));
+            match pair {
+                Some(id) => renamed.push((id, from.clone(), to.clone())),
+                None => touched.extend([from, to].into_iter().filter(|f| is_memo_name(f)).cloned()),
+            }
+        }
+
+        let by_file: BTreeMap<String, String> = self
+            .index
+            .iter()
+            .map(|(id, entry)| (entry.file.clone(), id.clone()))
+            .collect();
+        let mut gone = Vec::new();
+        let mut new = Vec::new();
+        let mut stayed = Vec::new();
+        for file in &touched {
+            match (by_file.get(file), present(file)) {
+                (Some(id), false) => gone.push((id.clone(), file.clone())),
+                (Some(id), true) => stayed.push((id.clone(), file.clone())),
+                (None, true) => new.push(file.clone()),
+                (None, false) => {}
+            }
+        }
+        let mut removed = Vec::new();
+        for (id, from) in gone {
+            let inode = self.inodes.get(&from).copied();
+            let same = inode.and_then(|inode| {
+                new.iter()
+                    .position(|to| index::file_id(&self.root.join(to)) == Some(inode))
+            });
+            match same {
+                Some(at) => renamed.push((id, from, new.remove(at))),
+                None => removed.push((id, from)),
+            }
+        }
+
+        let mut changes = Vec::new();
+        for (id, from, to) in renamed {
+            self.follow_rename(&id, &from, &to);
+            changes.push(Change::Renamed { id, from, to });
+        }
+        for (id, file) in removed {
+            self.index.remove(&id);
+            self.last_written.remove(&file);
+            self.inodes.remove(&file);
+            changes.push(Change::Removed { id, file });
+        }
+        for file in new {
+            let id = new_id();
+            self.index.insert(
+                id.clone(),
+                index::MemoEntry {
+                    file: file.clone(),
+                    auto_title: false,
+                    language: None,
+                },
+            );
+            self.track_inode(&file);
+            changes.push(Change::Added { id, file });
+        }
+        let index_changed = !changes.is_empty();
+        for (id, file) in stayed {
+            self.track_inode(&file);
+            // Only what tote wrote is worth reading to compare; anything else changed.
+            let ours = match self.last_written.get(&file) {
+                Some(hash) => {
+                    fs::read(self.root.join(&file)).is_ok_and(|bytes| content_hash(&bytes) == *hash)
+                }
+                None => false,
+            };
+            if !ours {
+                // No longer what tote wrote: tote's next write there sets it again.
+                self.last_written.remove(&file);
+                changes.push(Change::Modified { id });
+            }
+        }
+
+        if !changes.is_empty() {
+            self.mark_changed();
+        }
+        if index_changed {
+            self.index.save()?;
+        }
+        Ok(changes)
+    }
+
+    fn id_of(&self, file: &str) -> Option<String> {
+        self.index
+            .iter()
+            .find(|(_, entry)| entry.file == file)
+            .map(|(id, _)| id.clone())
+    }
+
+    /// Another app renamed the memo's file. The name is the person's now, so automatic titles
+    /// stop — or the next keystroke would rename it back.
+    fn follow_rename(&mut self, id: &str, from: &str, to: &str) {
+        if let Some(entry) = self.index.get_mut(id) {
+            if !names::split_name(from)
+                .1
+                .eq_ignore_ascii_case(names::split_name(to).1)
+            {
+                entry.language = None;
+            }
+            entry.file = to.to_string();
+            entry.auto_title = false;
+        }
+        if let Some(hash) = self.last_written.remove(from) {
+            self.last_written.insert(to.to_string(), hash);
+        }
+        self.inodes.remove(from);
+        self.track_inode(to);
+    }
+
     pub fn name(&self) -> String {
         self.root
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default()
     }
+}
+
+/// A name that can be a memo: dot files are not, which also leaves out `.tote/` and tote's
+/// temporary files (`index::memo_files`).
+fn is_memo_name(file: &str) -> bool {
+    !file.is_empty() && !file.starts_with('.')
 }
 
 fn new_id() -> String {
@@ -263,6 +450,158 @@ mod tests {
             .map(|s| s.name)
             .collect();
         assert_eq!(names, vec!["가", "나"]);
+    }
+
+    fn names(names: &[&str]) -> BTreeSet<String> {
+        names.iter().map(|name| name.to_string()).collect()
+    }
+
+    fn workspace() -> (tempfile::TempDir, Workspace) {
+        let root = tempfile::tempdir().unwrap();
+        let ws = Workspace::create(root.path(), "w").unwrap();
+        (root, ws)
+    }
+
+    #[test]
+    fn a_change_that_hashes_like_our_last_write_is_ignored() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.write_memo(&memo.id, "# 회의".as_bytes()).unwrap();
+        assert_eq!(
+            ws.last_written("untitled.md"),
+            Some(crate::persist::content_hash("# 회의".as_bytes()).as_str())
+        );
+        ws.take_changed();
+        let seen = names(&["untitled.md", ".tote-tmp-0"]);
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+        assert!(!ws.take_changed(), "our own write is not another change");
+
+        // tote's own renames carry the hash along, so they are not someone else's either.
+        ws.retitle_memo(&memo.id, "회의").unwrap();
+        let seen = names(&["untitled.md", "회의.md"]);
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+        ws.retitle_memo(&memo.id, "Meeting").unwrap();
+        ws.retitle_memo(&memo.id, "MEETING").unwrap();
+        let seen = names(&["회의.md", "Meeting.md", "MEETING.md"]);
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+        // Even a memo tote never wrote: it was there when the workspace opened.
+        fs::write(ws.root().join("옛 메모.md"), "그대로").unwrap();
+        let mut ws = Workspace::open(ws.root()).unwrap();
+        let old = ws.list_memos().unwrap();
+        let old = old.iter().find(|m| m.file == "옛 메모.md").unwrap();
+        ws.rename_memo(&old.id, "새 이름.md").unwrap();
+        let seen = names(&["옛 메모.md", "새 이름.md"]);
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_change_by_another_app_is_modified() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        ws.take_changed();
+        fs::write(ws.root().join(&memo.file), "theirs").unwrap();
+        assert_eq!(
+            ws.apply_fs_events(&names(&[&memo.file]), &[]).unwrap(),
+            vec![Change::Modified {
+                id: memo.id.clone()
+            }]
+        );
+        assert!(ws.take_changed(), "the next backup takes it");
+    }
+
+    #[test]
+    fn a_rename_pair_updates_the_index_and_keeps_the_id() {
+        // macOS never pairs renames (FSEvents reports each path alone), so this test is the only
+        // thing holding the paired branch.
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"x").unwrap();
+        fs::rename(ws.root().join("untitled.md"), ws.root().join("회의.md")).unwrap();
+        let pair = [("untitled.md".to_string(), "회의.md".to_string())];
+        assert_eq!(
+            ws.apply_fs_events(&BTreeSet::new(), &pair).unwrap(),
+            vec![Change::Renamed {
+                id: memo.id.clone(),
+                from: "untitled.md".into(),
+                to: "회의.md".into()
+            }]
+        );
+        let info = ws.memo_info(&memo.id).unwrap();
+        assert_eq!(info.file, "회의.md");
+        assert!(
+            !info.auto_title,
+            "a name given elsewhere is the person's own"
+        );
+        let reopened = Workspace::open(ws.root()).unwrap();
+        assert_eq!(reopened.memo_info(&memo.id).unwrap().file, "회의.md");
+    }
+
+    #[test]
+    fn a_rename_seen_only_as_remove_and_create_is_matched_by_inode() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("메모.md", b"x").unwrap();
+        fs::rename(ws.root().join("메모.md"), ws.root().join("이름.md")).unwrap();
+        let renamed = Change::Renamed {
+            id: memo.id.clone(),
+            from: "메모.md".into(),
+            to: "이름.md".into(),
+        };
+        let seen = names(&["메모.md", "이름.md"]);
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![renamed]);
+        // Writing on goes to the new name; the old one does not come back.
+        ws.write_memo(&memo.id, b"y").unwrap();
+        assert_eq!(fs::read(ws.root().join("이름.md")).unwrap(), b"y");
+        assert!(!ws.root().join("메모.md").exists());
+        // Only the case changes: on APFS the old spelling still opens, so the folder decides.
+        fs::rename(ws.root().join("이름.md"), ws.root().join("이름.MD")).unwrap();
+        let seen = names(&["이름.md", "이름.MD"]);
+        assert_eq!(
+            ws.apply_fs_events(&seen, &[]).unwrap(),
+            vec![Change::Renamed {
+                id: memo.id.clone(),
+                from: "이름.md".into(),
+                to: "이름.MD".into()
+            }]
+        );
+    }
+
+    #[test]
+    fn a_missed_rename_becomes_a_new_memo() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("a.md", b"x").unwrap();
+        // Both exist for a moment, so `b.md` cannot get the inode `a.md` frees.
+        fs::write(ws.root().join("b.md"), "x").unwrap();
+        fs::remove_file(ws.root().join("a.md")).unwrap();
+        let changes = ws.apply_fs_events(&names(&["a.md", "b.md"]), &[]).unwrap();
+        let [Change::Removed { id, file }, Change::Added {
+            id: new,
+            file: added,
+        }] = &changes[..]
+        else {
+            panic!("expected a removal and an addition, got {changes:?}");
+        };
+        assert_eq!(
+            (id, file.as_str(), added.as_str()),
+            (&memo.id, "a.md", "b.md")
+        );
+        assert!(matches!(
+            ws.memo_info(&memo.id),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        let info = ws.memo_info(new).unwrap();
+        assert_eq!(info.file, "b.md");
+        assert!(!info.auto_title, "tote did not name it");
+    }
+
+    #[test]
+    fn tote_temp_files_and_dot_files_never_appear() {
+        let (_root, mut ws) = workspace();
+        fs::write(ws.root().join(".tote-tmp-x"), "half").unwrap();
+        fs::write(ws.root().join(".DS_Store"), "finder").unwrap();
+        let seen = names(&[".tote-tmp-x", ".DS_Store", ".tote"]);
+        let pair = [(".tote-tmp-y".to_string(), ".DS_Store".to_string())];
+        assert_eq!(ws.apply_fs_events(&seen, &pair).unwrap(), vec![]);
+        assert!(ws.list_memos().unwrap().is_empty());
+        assert!(!ws.take_changed());
     }
 
     #[test]

@@ -6,6 +6,7 @@ pub mod extensions;
 pub mod files;
 pub mod persist;
 pub mod session;
+pub mod watch;
 pub mod workspace;
 
 use std::collections::HashSet;
@@ -65,6 +66,7 @@ pub fn run() {
             )?);
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());
+            start_watching(app.handle().clone());
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
             start_backups(app.handle().clone());
             Ok(())
@@ -90,6 +92,8 @@ pub fn run() {
             commands::keep_external_draft,
             commands::discard_external_draft,
             commands::save_external,
+            commands::watch_external,
+            commands::unwatch_external,
             commands::list_workspaces,
             commands::create_workspace,
             commands::relocate_workspace,
@@ -128,6 +132,25 @@ pub fn run() {
         } => windows::open_latest(app),
         _ => {}
     });
+}
+
+/// Outside changes go to the window they concern as `tote://outside`. Before any window opens, so
+/// every one is watched; without a watcher tote still works, it only misses those changes.
+fn start_watching(app: AppHandle) {
+    let handle = app.clone();
+    let watching = app.state::<AppCore>().start_watching(move |target, batch| {
+        let core = handle.state::<AppCore>();
+        if let Some((label, change)) = core.on_batch(target, batch) {
+            let _ = handle.emit_to(
+                EventTarget::webview_window(&label),
+                "tote://outside",
+                change,
+            );
+        }
+    });
+    if let Err(err) = watching {
+        eprintln!("tote: cannot watch for outside changes: {err}");
+    }
 }
 
 /// Backup rounds on a thread of their own (spec 「백업」): the first one an interval after launch,

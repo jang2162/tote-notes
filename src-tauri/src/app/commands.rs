@@ -59,6 +59,17 @@ impl From<io::Error> for CommandError {
     }
 }
 
+impl From<notify::Error> for CommandError {
+    fn from(err: notify::Error) -> CommandError {
+        let code = match &err.kind {
+            notify::ErrorKind::Io(io) => io_code(io),
+            notify::ErrorKind::PathNotFound => "not-found",
+            _ => "io",
+        };
+        CommandError::new(code, err.to_string())
+    }
+}
+
 impl From<tauri::Error> for CommandError {
     fn from(err: tauri::Error) -> CommandError {
         CommandError::new("app", err.to_string())
@@ -353,6 +364,28 @@ pub async fn discard_external_draft(core: State<'_, AppCore>, path: String) -> C
 pub async fn save_external(core: State<'_, AppCore>, request: Request<'_>) -> CmdResult<u64> {
     let path = absolute_path(&header(&request, "x-path")?)?;
     Ok(core.external.save(&path, body(&request)?)?)
+}
+
+/// The window shows the external file at `path`: what other apps do to it comes as
+/// `tote://outside`. Each call needs an `unwatch_external`.
+#[tauri::command]
+pub async fn watch_external(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    path: String,
+) -> CmdResult<()> {
+    core.watch_external(window.label(), &absolute_path(&path)?)?;
+    Ok(())
+}
+
+#[tauri::command]
+pub async fn unwatch_external(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    path: String,
+) -> CmdResult<()> {
+    core.unwatch_external(window.label(), &absolute_path(&path)?);
+    Ok(())
 }
 
 #[derive(Serialize)]

@@ -14,7 +14,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use serde::Serialize;
 
@@ -25,9 +25,10 @@ use crate::extensions::registry::{self, Registry};
 use crate::extensions::{ExtensionStore, Scan};
 use crate::files::TokenStore;
 use crate::persist::content_hash;
-use crate::persist::external::ExternalFiles;
+use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
-use crate::workspace::Workspace;
+use crate::watch::{Batch, WatchTarget, Watcher};
+use crate::workspace::{Change, Workspace};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 
 /// A poisoned lock only means another command panicked; the data is still the best there is.
@@ -54,6 +55,14 @@ pub enum PendingOpen {
     },
 }
 
+/// What `tote://outside` tells a window another app did (spec 「외부 변경」).
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum OutsideChange {
+    Workspace { changes: Vec<Change> },
+    External { path: PathBuf, state: ExternalState },
+}
+
 pub struct AppCore {
     pub paths: AppPaths,
     pub machine: Machine,
@@ -67,6 +76,8 @@ pub struct AppCore {
     rescans: AtomicU64,
     /// Window label → the number of its latest large-text search.
     searches: Mutex<HashMap<String, u64>>,
+    /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
+    watcher: OnceLock<Watcher>,
     inner: Mutex<Inner>,
 }
 
@@ -134,6 +145,7 @@ impl AppCore {
             }),
             rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
+            watcher: OnceLock::new(),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
                 reserved: HashSet::new(),
@@ -237,20 +249,90 @@ impl AppCore {
 
     /// Undoes this caller's own `reserve` (and `register`) after a failed open.
     pub fn release(&self, label: &str) {
-        let mut inner = lock(&self.inner);
-        inner.reserved.remove(label);
-        inner.windows.remove(label);
+        {
+            let mut inner = lock(&self.inner);
+            inner.reserved.remove(label);
+            inner.windows.remove(label);
+        }
+        if let Some(watcher) = self.watcher.get() {
+            watcher.unwatch_window(label);
+        }
     }
 
     pub fn register(&self, label: &str, workspace: Workspace) {
+        let root = workspace.root().to_path_buf();
         let window = OpenWindow {
-            path: workspace.root().to_path_buf(),
+            path: root.clone(),
             workspace: Arc::new(Mutex::new(workspace)),
             pending: Vec::new(),
         };
-        let mut inner = lock(&self.inner);
-        inner.reserved.remove(label);
-        inner.windows.insert(label.to_string(), window);
+        {
+            let mut inner = lock(&self.inner);
+            inner.reserved.remove(label);
+            inner.windows.insert(label.to_string(), window);
+        }
+        // An unwatched workspace still works; it only misses outside changes until reopened.
+        if let Some(watcher) = self.watcher.get() {
+            if let Err(err) = watcher.watch_workspace(label, &root) {
+                eprintln!("tote: cannot watch {} for changes: {err}", root.display());
+            }
+        }
+    }
+
+    /// Starts the watcher. `on_batch` runs on the watcher's thread for every batch and hands it to
+    /// `AppCore::on_batch`. Windows registered before this are not watched, so it runs before any
+    /// window opens.
+    pub fn start_watching(
+        &self,
+        on_batch: impl Fn(WatchTarget, Batch) + Send + 'static,
+    ) -> notify::Result<()> {
+        let watcher = Watcher::new(on_batch)?;
+        let _ = self.watcher.set(watcher);
+        Ok(())
+    }
+
+    /// The window `label` shows the external file at `path` (counted per call).
+    pub fn watch_external(&self, label: &str, path: &Path) -> notify::Result<()> {
+        match self.watcher.get() {
+            Some(watcher) => watcher.watch_external(label, path),
+            None => Ok(()),
+        }
+    }
+
+    pub fn unwatch_external(&self, label: &str, path: &Path) {
+        if let Some(watcher) = self.watcher.get() {
+            watcher.unwatch_external(label, path);
+        }
+    }
+
+    /// What a batch from the watcher means for the window it is for, if anything: changes that
+    /// are tote's own writes are dropped here. A workspace batch is applied under the workspace's
+    /// lock, so it cannot interleave with a save or `list_memos`.
+    pub fn on_batch(&self, target: WatchTarget, batch: Batch) -> Option<(String, OutsideChange)> {
+        match target {
+            WatchTarget::Workspace(label) => {
+                let workspace = self.workspace(&label)?;
+                let name = |path: &PathBuf| path.file_name()?.to_str().map(str::to_string);
+                let touched = batch.touched.iter().filter_map(name).collect();
+                let renames: Vec<(String, String)> = batch
+                    .renames
+                    .iter()
+                    .filter_map(|(from, to)| Some((name(from)?, name(to)?)))
+                    .collect();
+                let changes = match lock(&workspace).apply_fs_events(&touched, &renames) {
+                    Ok(changes) => changes,
+                    Err(err) => {
+                        eprintln!("tote: could not take in outside changes for {label}: {err}");
+                        return None;
+                    }
+                };
+                (!changes.is_empty()).then_some((label, OutsideChange::Workspace { changes }))
+            }
+            WatchTarget::External(label, path) => {
+                let state = self.external.outside_state(&path)?;
+                Some((label, OutsideChange::External { path, state }))
+            }
+        }
     }
 
     pub fn workspace(&self, label: &str) -> Option<Arc<Mutex<Workspace>>> {
@@ -315,6 +397,9 @@ impl AppCore {
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);
+        if let Some(watcher) = self.watcher.get() {
+            watcher.unwatch_window(label);
+        }
         let mut inner = lock(&self.inner);
         let removed = inner.windows.remove(label);
         inner.focus.retain(|l| l != label);
@@ -555,6 +640,60 @@ mod tests {
         assert_eq!(
             ticked[0].1.as_ref().unwrap().as_deref(),
             Some(a_backups.path_of(later).as_path())
+        );
+    }
+
+    #[test]
+    fn outside_changes_are_reported_unless_they_are_our_own() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let label = open(&core, "가");
+        let memo = lock(&core.workspace(&label).unwrap())
+            .create_memo("md", b"ours")
+            .unwrap();
+        let file = core.path_of(&label).unwrap().join(&memo.file);
+        let ours = || Batch {
+            touched: [file.clone()].into(),
+            renames: vec![],
+        };
+        let target = WatchTarget::Workspace(label.clone());
+        assert_eq!(core.on_batch(target.clone(), ours()), None);
+        fs::write(&file, "theirs").unwrap();
+        let (to, change) = core.on_batch(target.clone(), ours()).unwrap();
+        assert_eq!(to, label);
+        assert_eq!(
+            serde_json::to_value(&change).unwrap(),
+            serde_json::json!({"kind": "workspace", "changes": [{"kind": "modified", "id": memo.id}]})
+        );
+        assert_eq!(
+            core.on_batch(WatchTarget::Workspace("gone".into()), ours()),
+            None
+        );
+
+        let path = dir.path().join("밖.txt");
+        fs::write(&path, "disk").unwrap();
+        core.external.open(&path).unwrap();
+        core.external.save(&path, b"saved").unwrap();
+        let outside = WatchTarget::External(label.clone(), path.clone());
+        let seen = || Batch {
+            touched: [path.clone()].into(),
+            renames: vec![],
+        };
+        assert_eq!(core.on_batch(outside.clone(), seen()), None, "our own save");
+        fs::write(&path, "elsewhere").unwrap();
+        let (_, change) = core.on_batch(outside.clone(), seen()).unwrap();
+        assert_eq!(
+            serde_json::to_value(&change).unwrap(),
+            serde_json::json!({"kind": "external", "path": path, "state": "modified"})
+        );
+        fs::remove_file(&path).unwrap();
+        let (_, change) = core.on_batch(outside, seen()).unwrap();
+        assert_eq!(
+            change,
+            OutsideChange::External {
+                path,
+                state: ExternalState::Removed
+            }
         );
     }
 

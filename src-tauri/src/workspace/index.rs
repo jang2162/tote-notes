@@ -105,6 +105,39 @@ pub fn memo_files(root: &Path) -> io::Result<BTreeSet<String>> {
     Ok(names)
 }
 
+/// The names directly in `root`, without looking at each entry. Unlike a lookup by name, this
+/// spells a name the way the folder holds it: APFS finds `memo.md` when the file is `Memo.md`.
+pub fn entry_names(root: &Path) -> io::Result<BTreeSet<String>> {
+    let mut names = BTreeSet::new();
+    for entry in fs::read_dir(root)? {
+        if let Ok(name) = entry?.file_name().into_string() {
+            names.insert(name);
+        }
+    }
+    Ok(names)
+}
+
+/// A folder entry's identity, (device, inode): it stays with the file through a rename. The
+/// entry itself is looked at, so a symlink is known by the link and not by its target.
+#[cfg(unix)]
+pub fn file_id(path: &Path) -> Option<(u64, u64)> {
+    use std::os::unix::fs::MetadataExt;
+    fs::symlink_metadata(path).ok().map(|m| (m.dev(), m.ino()))
+}
+
+#[cfg(not(unix))]
+pub fn file_id(_path: &Path) -> Option<(u64, u64)> {
+    None
+}
+
+/// `file_id` of every indexed file in `root`, by file name.
+pub fn file_ids(root: &Path, index: &MemoIndex) -> BTreeMap<String, (u64, u64)> {
+    index
+        .iter()
+        .filter_map(|(_, entry)| Some((entry.file.clone(), file_id(&root.join(&entry.file))?)))
+        .collect()
+}
+
 /// Drops entries whose file is gone and gives every unindexed file a new ID with
 /// `autoTitle: false` (tote did not name it). Two entries naming one file keep the first. A file
 /// renamed while tote was not watching therefore becomes a new memo; only its tab position is

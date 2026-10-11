@@ -35,6 +35,14 @@ pub struct DraftInfo {
     pub disk_changed: bool,
 }
 
+/// What another app did to an open external file (`ExternalFiles::outside_state`).
+#[derive(Clone, Copy, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ExternalState {
+    Modified,
+    Removed,
+}
+
 pub struct ExternalFiles {
     drafts: DraftStore,
     /// Hash of each open file when editing started (`None`: it did not exist yet).
@@ -144,6 +152,30 @@ impl ExternalFiles {
         self.bases_lock()
             .insert(path.to_path_buf(), Some(content_hash(contents)));
         Ok(contents.len() as u64)
+    }
+
+    /// The file at `path` changed on disk: whether that is news. Contents hashing like the base —
+    /// what tote saved last, or what was there when editing started — are not; neither is a file
+    /// still missing that was missing then. A file without a base (one the editor does not open)
+    /// is not read and counts as modified.
+    pub fn outside_state(&self, path: &Path) -> Option<ExternalState> {
+        let base = self.bases_lock().get(path).cloned();
+        let meta = match fs::metadata(path) {
+            Ok(meta) => meta,
+            Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                return (base != Some(None)).then_some(ExternalState::Removed);
+            }
+            Err(err) => {
+                eprintln!("tote: could not look at {}: {err}", path.display());
+                return None;
+            }
+        };
+        let Some(Some(base)) = base else {
+            return Some(ExternalState::Modified);
+        };
+        let same = is_editable(path, meta.len())
+            && fs::read(path).is_ok_and(|bytes| content_hash(&bytes) == base);
+        (!same).then_some(ExternalState::Modified)
     }
 
     fn bases_lock(&self) -> std::sync::MutexGuard<'_, HashMap<PathBuf, Option<String>>> {

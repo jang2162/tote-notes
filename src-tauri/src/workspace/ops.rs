@@ -5,10 +5,11 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
-use super::index::MemoEntry;
+use super::index::{file_id, MemoEntry};
 use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
-use super::{MemoInfo, Workspace, WorkspaceError};
-use crate::persist::atomic_write;
+use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
+use crate::persist::external::MAX_EDITOR_BYTES;
+use crate::persist::{atomic_write, content_hash};
 
 impl Workspace {
     pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
@@ -30,7 +31,8 @@ impl Workspace {
     pub fn write_memo(&mut self, id: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
         self.mark_changed();
-        atomic_write(&self.root.join(file), contents)?;
+        atomic_write(&self.root.join(&file), contents)?;
+        self.wrote(&file, contents);
         self.memo_info(id)
     }
 
@@ -86,6 +88,7 @@ impl Workspace {
         self.mark_changed();
         if file != entry.file {
             fs::rename(self.root.join(&entry.file), self.root.join(&file))?;
+            self.moved(&entry.file, &file);
         }
         if let Some(entry) = self.index.get_mut(id) {
             entry.file = file;
@@ -98,11 +101,13 @@ impl Workspace {
     pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let file = self.entry(id)?.file.clone();
         self.mark_changed();
-        match fs::remove_file(self.root.join(file)) {
+        match fs::remove_file(self.root.join(&file)) {
             Ok(()) => {}
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
+        self.last_written.remove(&file);
+        self.inodes.remove(&file);
         self.index.remove(id);
         self.index.save()?;
         Ok(())
@@ -141,6 +146,7 @@ impl Workspace {
     ) -> Result<MemoInfo, WorkspaceError> {
         self.mark_changed();
         atomic_write(&self.root.join(&file), contents)?;
+        self.wrote(&file, contents);
         let id = uuid::Uuid::new_v4().to_string();
         self.index.insert(
             id.clone(),
@@ -174,6 +180,7 @@ impl Workspace {
         self.mark_changed();
         if from != to {
             fs::rename(self.root.join(from), self.root.join(&to))?;
+            self.moved(from, &to);
         }
         if let Some(entry) = self.index.get_mut(id) {
             // The extension decides the language (spec 「편집기」): a new one drops the picked one.
@@ -185,6 +192,38 @@ impl Workspace {
         }
         self.index.save()?;
         self.memo_info(id)
+    }
+
+    /// tote wrote `contents` to `file`: the watcher's next event there is this write.
+    fn wrote(&mut self, file: &str, contents: &[u8]) {
+        self.last_written
+            .insert(file.to_string(), content_hash(contents));
+        self.track_inode(file);
+    }
+
+    /// tote renamed `from` to `to`; the contents did not change, so neither does what counts as
+    /// tote's own. A file tote has not written since opening is hashed now, or the rename would
+    /// look like another app's edit — unless the editor would not open it anyway.
+    fn moved(&mut self, from: &str, to: &str) {
+        let hash = self.last_written.remove(from).or_else(|| {
+            let path = self.root.join(to);
+            let meta = fs::metadata(&path).ok()?;
+            (meta.len() <= MAX_EDITOR_BYTES && kind_for(to) == FileKind::Text)
+                .then(|| fs::read(&path).ok().map(|bytes| content_hash(&bytes)))
+                .flatten()
+        });
+        if let Some(hash) = hash {
+            self.last_written.insert(to.to_string(), hash);
+        }
+        self.inodes.remove(from);
+        self.track_inode(to);
+    }
+
+    pub(super) fn track_inode(&mut self, file: &str) {
+        match file_id(&self.root.join(file)) {
+            Some(id) => self.inodes.insert(file.to_string(), id),
+            None => self.inodes.remove(file),
+        };
     }
 
     /// `stem.ext`, then `stem 2.ext`, … — the first name no other file in the folder uses. The
