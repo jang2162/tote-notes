@@ -10,4 +10,4 @@
 | tote-notes 코어 기반 계획을 실행하거나, 그 계획의 다음 계획(확장과 화면·안전망)을 쓸 때            | `docs/superpowers/plans/2026-10-08-tote-note-core-foundation.md`        |
 | tote-notes 확장과 화면 계획을 실행하거나, 그 다음 계획(안전망)을 쓸 때                             | `docs/superpowers/plans/2026-10-10-tote-note-extensions-and-screens.md` |
 | tote-notes 안전망 계획을 실행하거나, 그 다음 계획을 쓸 때                                          | `docs/superpowers/plans/2026-10-12-tote-notes-safety-net.md`            |
-| 테스트를 쓰거나 돌릴 때, 새 워크트리에서 훅·툴체인이 실패할 때                                     | `docs/development.md`                                                   |
+| 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                | `docs/development.md`                                                   |
