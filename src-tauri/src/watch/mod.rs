@@ -341,15 +341,20 @@ mod tests {
     #[test]
     fn events_under_dot_tote_are_dropped() {
         let dir = tempfile::tempdir().unwrap();
-        let root = fs::canonicalize(dir.path()).unwrap();
-        fs::create_dir(dir.path().join(".tote")).unwrap();
+        // Not the tempdir itself: its `.tmp…` name is a dot name, so the dot rule alone would drop
+        // the folder's own events (FSEvents sends some for a fresh tempdir as watching starts).
+        // On macOS notify already drops what is below `.tote/`; `route`'s own rule for both is
+        // held by `only_memo_entries_directly_in_the_folder_count`.
+        let folder = dir.path().join("ws");
+        fs::create_dir_all(folder.join(".tote")).unwrap();
+        let root = fs::canonicalize(&folder).unwrap();
         let (watcher, batches) = watcher();
-        watcher.watch_workspace("ws-1", dir.path()).unwrap();
-        fs::write(dir.path().join(".tote/index.json"), "{}").unwrap();
-        fs::write(dir.path().join(".tote-tmp-0"), "half").unwrap();
-        fs::write(dir.path().join(".DS_Store"), "finder").unwrap();
+        watcher.watch_workspace("ws-1", &folder).unwrap();
+        fs::write(folder.join(".tote/index.json"), "{}").unwrap();
+        fs::write(folder.join(".tote-tmp-0"), "half").unwrap();
+        fs::write(folder.join(".DS_Store"), "finder").unwrap();
         // Something that does count, so the test ends without waiting out a silence.
-        fs::write(dir.path().join("memo.md"), "x").unwrap();
+        fs::write(folder.join("memo.md"), "x").unwrap();
         let (_, batch) = batches.recv_timeout(WAIT).expect("a batch");
         assert_eq!(batch.touched, BTreeSet::from([root.join("memo.md")]));
         assert!(batch.renames.is_empty());
@@ -364,13 +369,13 @@ mod tests {
         let (watcher, batches) = watcher();
         watcher.watch_external("ws-1", &a).unwrap();
         fs::write(&b, "b2").unwrap();
+        assert!(batches.recv_timeout(QUIET).is_err(), "nothing for b.txt");
         fs::write(&a, "a2").unwrap();
         let (target, batch) = batches.recv_timeout(WAIT).expect("a batch");
         // Named by the path the window gave, so it finds its tab.
         assert_eq!(target, WatchTarget::External("ws-1".into(), a.clone()));
         let canonical = fs::canonicalize(&a).unwrap();
         assert_eq!(batch.touched, BTreeSet::from([canonical]));
-        assert!(batches.recv_timeout(QUIET).is_err(), "nothing for b.txt");
     }
 
     fn event(kind: EventKind, paths: &[&str], tracker: Option<usize>) -> Event {
@@ -382,6 +387,41 @@ mod tests {
             Some(tracker) => event.set_tracker(tracker),
             None => event,
         }
+    }
+
+    #[test]
+    fn only_memo_entries_directly_in_the_folder_count() {
+        let mut targets = Targets::default();
+        targets.workspaces.insert("w".into(), PathBuf::from("/r"));
+        let data = EventKind::Modify(ModifyKind::Data(notify::event::DataChange::Content));
+        let events = [
+            event(
+                EventKind::Create(notify::event::CreateKind::Folder),
+                &["/r"],
+                None,
+            ),
+            event(data, &["/r/.tote/index.json"], None),
+            event(data, &["/r/.tote"], None),
+            event(data, &["/r/sub/inner.md"], None),
+            event(data, &["/r/.tote-tmp-0"], None),
+            event(data, &["/elsewhere/memo.md"], None),
+            event(
+                EventKind::Modify(ModifyKind::Metadata(notify::event::MetadataKind::Extended)),
+                &["/r/tagged.md"],
+                None,
+            ),
+            event(data, &["/r/memo.md"], None),
+        ];
+        assert_eq!(
+            route(&targets, &events),
+            vec![(
+                WatchTarget::Workspace("w".into()),
+                Batch {
+                    touched: BTreeSet::from([PathBuf::from("/r/memo.md")]),
+                    renames: vec![],
+                }
+            )]
+        );
     }
 
     #[test]
