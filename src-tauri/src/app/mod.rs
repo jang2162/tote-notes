@@ -13,13 +13,14 @@ use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::Serialize;
 
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
 use crate::extensions::registry::{self, Registry};
-use crate::extensions::ExtensionStore;
+use crate::extensions::{ExtensionStore, Scan};
 use crate::files::TokenStore;
 use crate::persist::content_hash;
 use crate::persist::external::ExternalFiles;
@@ -51,10 +52,18 @@ pub struct AppCore {
     pub files: TokenStore,
     workspace_root: Mutex<PathBuf>,
     settings: Mutex<Settings>,
-    registry: Mutex<Registry>,
+    registry: Mutex<Rescanned>,
+    /// The start number of the latest `rescan_extensions`.
+    rescans: AtomicU64,
     /// Window label → the number of its latest large-text search.
     searches: Mutex<HashMap<String, u64>>,
     inner: Mutex<Inner>,
+}
+
+/// The registry and the start number of the scan it was built from.
+struct Rescanned {
+    started: u64,
+    registry: Registry,
 }
 
 struct Inner {
@@ -109,7 +118,11 @@ impl AppCore {
             files: TokenStore::default(),
             workspace_root: Mutex::new(workspace_root),
             settings: Mutex::new(settings),
-            registry: Mutex::new(registry),
+            registry: Mutex::new(Rescanned {
+                started: 0,
+                registry,
+            }),
+            rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
@@ -153,20 +166,39 @@ impl AppCore {
     }
 
     pub fn registry(&self) -> Registry {
-        lock(&self.registry).clone()
+        lock(&self.registry).registry.clone()
     }
 
     /// The disk is read before the settings lock is taken: a slow scan does not hold up settings
     /// reads and changes in every other window.
     pub fn rescan_extensions(&self) {
+        let started = self.start_rescan();
         let scan = self.extensions.scan();
+        self.apply_rescan(started, &scan);
+    }
+
+    fn start_rescan(&self) -> u64 {
+        self.rescans.fetch_add(1, Ordering::Relaxed) + 1
+    }
+
+    /// Two rescans can overlap and finish in either order. One that started before the scan
+    /// already in the registry read an older disk (an install in between would be missing), so
+    /// it is dropped. The settings are read here, so the one kept still gets the latest switches.
+    fn apply_rescan(&self, started: u64, scan: &Scan) {
         let settings = lock(&self.settings);
-        *lock(&self.registry) = registry::build(&scan, &settings.extensions);
+        let mut current = lock(&self.registry);
+        if started > current.started {
+            *current = Rescanned {
+                started,
+                registry: registry::build(scan, &settings.extensions),
+            };
+        }
     }
 
     /// The folder of an installed extension, enabled or not.
     pub fn extension_path(&self, id: &str) -> Option<PathBuf> {
         lock(&self.registry)
+            .registry
             .extensions
             .iter()
             .find(|e| e.id == id)
@@ -478,6 +510,43 @@ mod tests {
             Some(core.paths.extensions_dir().join("someone.ext@1"))
         );
         assert_eq!(core.extension_path("nobody.ext"), None);
+    }
+
+    #[test]
+    fn an_installed_extension_is_found_once_rescanned() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let installed = crate::extensions::install::install(
+            &core.extensions,
+            &crate::extensions::manifest::tests::fixture_vsix(),
+            false,
+        )
+        .unwrap();
+        core.rescan_extensions();
+        assert_eq!(
+            core.extension_path("tote-test.test-theme"),
+            Some(installed.path)
+        );
+    }
+
+    #[test]
+    fn an_older_rescan_finishing_last_does_not_undo_a_newer_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let older = core.start_rescan();
+        let before_install = core.extensions.scan();
+        crate::extensions::tests::write_extension(
+            &core.paths.extensions_dir(),
+            "someone.ext@1",
+            r#"{"name": "ext", "publisher": "someone", "version": "1"}"#,
+        );
+        let newer = core.start_rescan();
+        core.apply_rescan(newer, &core.extensions.scan());
+        core.apply_rescan(older, &before_install);
+        assert_eq!(
+            core.extension_path("someone.ext"),
+            Some(core.paths.extensions_dir().join("someone.ext@1"))
+        );
     }
 
     #[test]
