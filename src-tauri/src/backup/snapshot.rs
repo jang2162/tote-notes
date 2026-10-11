@@ -52,13 +52,24 @@ pub enum SkipReason {
     Changed,
 }
 
-/// Snapshots the workspace at `workspace_root` into `dir` under the name `now`, returning the new
-/// folder, or `None` when there was no file to keep.
-pub fn take(
-    workspace_root: &Path,
-    dir: &BackupDir,
-    now: SnapshotName,
-) -> io::Result<Option<PathBuf>> {
+/// What one `take` did.
+#[derive(Debug, PartialEq)]
+pub struct Taken {
+    /// The new snapshot. `None` when no file went in: the workspace has no memo files, or every
+    /// one was binary, too large, or changed while being read.
+    pub folder: Option<PathBuf>,
+    /// Files that changed while being read (`SkipReason::Changed`). The next round must take
+    /// them, so while this is not zero the workspace stays marked as changed — with a folder or
+    /// without one.
+    pub deferred: usize,
+}
+
+/// Snapshots the workspace at `workspace_root` into `dir` under the name `now`.
+///
+/// An error means no snapshot was made, so the caller keeps the workspace marked as changed: the
+/// name was already taken (see `take_with`), or writing into the backup failed — a full disk, say
+/// (see `NotKept::Fail`).
+pub fn take(workspace_root: &Path, dir: &BackupDir, now: SnapshotName) -> io::Result<Taken> {
     take_with(workspace_root, dir, now, |path| fs::read(path))
 }
 
@@ -73,7 +84,7 @@ pub fn take_with(
     dir: &BackupDir,
     now: SnapshotName,
     read: impl Fn(&Path) -> io::Result<Vec<u8>>,
-) -> io::Result<Option<PathBuf>> {
+) -> io::Result<Taken> {
     let target = dir.path_of(now);
     if target.exists() {
         return Err(io::Error::new(
@@ -99,27 +110,45 @@ pub fn take_with(
         Err(err) if err.kind() != io::ErrorKind::NotFound => return Err(err),
         _ => {}
     }
-    let result = fill(workspace_root, &tmp, previous.as_ref(), &read).and_then(|kept| {
-        if !kept {
-            return Ok(None);
+    let result = fill(workspace_root, &tmp, previous.as_ref(), &read).and_then(|filled| {
+        let deferred = filled.deferred;
+        if !filled.kept {
+            return Ok(Taken {
+                folder: None,
+                deferred,
+            });
         }
         fs::rename(&tmp, &target)?;
-        Ok(Some(target))
+        Ok(Taken {
+            folder: Some(target),
+            deferred,
+        })
     });
-    if !matches!(result, Ok(Some(_))) {
+    if !matches!(
+        result,
+        Ok(Taken {
+            folder: Some(_),
+            ..
+        })
+    ) {
         let _ = fs::remove_dir_all(&tmp);
     }
     result
 }
 
-/// Copies or links every memo file into `into`, then the index and the manifest. Returns whether
-/// any memo file went in.
+struct Filled {
+    /// Whether any memo file went in.
+    kept: bool,
+    deferred: usize,
+}
+
+/// Copies or links every memo file into `into`, then the index and the manifest.
 fn fill(
     workspace_root: &Path,
     into: &Path,
     previous: Option<&(PathBuf, Manifest)>,
     read: &impl Fn(&Path) -> io::Result<Vec<u8>>,
-) -> io::Result<bool> {
+) -> io::Result<Filled> {
     fs::create_dir_all(into.join(TOTE_DIR))?;
     let mut manifest = Manifest {
         version: 1,
@@ -140,11 +169,22 @@ fn fill(
             Ok(record) => {
                 manifest.files.insert(file, record);
             }
-            Err(reason) => manifest.skipped.push(Skipped { file, reason }),
+            Err(NotKept::Skip(reason)) => manifest.skipped.push(Skipped { file, reason }),
+            Err(NotKept::Fail(err)) => {
+                return Err(io::Error::new(err.kind(), format!("{file}: {err}")));
+            }
         }
     }
+    let deferred = manifest
+        .skipped
+        .iter()
+        .filter(|skipped| skipped.reason == SkipReason::Changed)
+        .count();
     if manifest.files.is_empty() {
-        return Ok(false);
+        return Ok(Filled {
+            kept: false,
+            deferred,
+        });
     }
     let index = workspace_root.join(TOTE_DIR).join(INDEX_FILE);
     match fs::copy(&index, into.join(TOTE_DIR).join(INDEX_FILE)) {
@@ -152,8 +192,23 @@ fn fill(
         _ => {}
     }
     write_json(&into.join(TOTE_DIR).join(MANIFEST_FILE), &manifest)?;
-    Ok(true)
+    Ok(Filled {
+        kept: true,
+        deferred,
+    })
 }
+
+/// Why a workspace file is not in the snapshot.
+enum NotKept {
+    /// Left out, and the snapshot goes on without it.
+    Skip(SkipReason),
+    /// Writing into the backup failed while the file stayed as it was. The whole snapshot fails:
+    /// one without this file would pass for complete, and the workspace would no longer be marked
+    /// as changed.
+    Fail(io::Error),
+}
+
+const CHANGED: NotKept = NotKept::Skip(SkipReason::Changed);
 
 /// Puts one workspace file at `copy`: a hard link to the previous snapshot's copy when the
 /// contents are the same, else a copy of the workspace file. Never a link to the workspace file
@@ -163,10 +218,10 @@ fn keep_file(
     copy: &Path,
     earlier: Option<(PathBuf, &FileRecord)>,
     read: &impl Fn(&Path) -> io::Result<Vec<u8>>,
-) -> Result<FileRecord, SkipReason> {
-    let before = fs::metadata(source).map_err(|_| SkipReason::Changed)?;
+) -> Result<FileRecord, NotKept> {
+    let before = fs::metadata(source).map_err(|_| CHANGED)?;
     if before.len() > MAX_FILE_BYTES {
-        return Err(SkipReason::TooLarge);
+        return Err(NotKept::Skip(SkipReason::TooLarge));
     }
     let mtime_ms = mtime_ms(&before);
     // Same size and mtime is taken as same contents without reading the file. A tool that changes
@@ -181,34 +236,48 @@ fn keep_file(
         }
     }
     // Only the head first: a large media file is known to be binary without reading all of it.
-    if starts_binary(source).map_err(|_| SkipReason::Changed)? {
-        return Err(SkipReason::Binary);
+    if starts_binary(source).map_err(|_| CHANGED)? {
+        return Err(NotKept::Skip(SkipReason::Binary));
     }
-    let bytes = read(source).map_err(|_| SkipReason::Changed)?;
+    let bytes = read(source).map_err(|_| CHANGED)?;
     if is_binary(&bytes) {
-        return Err(SkipReason::Binary);
+        return Err(NotKept::Skip(SkipReason::Binary));
     }
     let record = FileRecord {
         size: before.len(),
         mtime_ms,
         sha256: content_hash(&bytes),
     };
-    if let Some((earlier_copy, earlier_record)) = &earlier {
-        if earlier_record.sha256 == record.sha256 && link_or_copy(earlier_copy, copy).is_ok() {
-            return Ok(record);
-        }
-    }
-    // `fs::copy` clones on APFS. It reads the file again, so the copy is only kept when the file
-    // is still the one that was hashed: a save in between (a new inode) or an in-place edit would
-    // leave a copy the manifest's hash does not describe.
-    fs::copy(source, copy).map_err(|_| SkipReason::Changed)?;
-    match fs::metadata(source) {
-        Ok(after) if same_file_state(&before, &after) => Ok(record),
-        _ => {
+    let linked = earlier
+        .as_ref()
+        .is_some_and(|(earlier_copy, earlier_record)| {
+            earlier_record.sha256 == record.sha256 && link_or_copy(earlier_copy, copy).is_ok()
+        });
+    if !linked {
+        // `fs::copy` clones on APFS.
+        if let Err(err) = fs::copy(source, copy) {
             let _ = fs::remove_file(copy);
-            Err(SkipReason::Changed)
+            return Err(if unchanged(source, &before) {
+                NotKept::Fail(err)
+            } else {
+                CHANGED
+            });
         }
     }
+    // The record is kept only when it describes one state of the file. A save after the size and
+    // mtime were looked up (a new inode) or an in-place edit would pair them with another text's
+    // hash, and `fs::copy` reads the file again, so its copy could hold text the hash does not
+    // describe.
+    if !unchanged(source, &before) {
+        let _ = fs::remove_file(copy);
+        return Err(CHANGED);
+    }
+    Ok(record)
+}
+
+/// Whether the file at `source` is still the one `before` described.
+fn unchanged(source: &Path, before: &Metadata) -> bool {
+    fs::metadata(source).is_ok_and(|after| same_file_state(before, &after))
 }
 
 /// A hard link to an earlier snapshot's copy, or a copy of that copy where links fail (another
@@ -331,7 +400,7 @@ mod tests {
         fs::write(s.workspace.join(TOTE_DIR).join("sessions/d.json"), "{}").unwrap();
 
         let name = at("20261012-153000");
-        let snapshot = take(&s.workspace, &s.dir, name).unwrap().unwrap();
+        let snapshot = take(&s.workspace, &s.dir, name).unwrap().folder.unwrap();
         assert_eq!(snapshot, s.dir.path_of(name));
         assert_eq!(
             listing(&snapshot),
@@ -369,10 +438,12 @@ mod tests {
         fs::write(&b, "echo 1\n").unwrap();
         let first = take(&s.workspace, &s.dir, at("20261012-150000"))
             .unwrap()
+            .folder
             .unwrap();
         fs::write(&b, "echo changed\n").unwrap();
         let second = take(&s.workspace, &s.dir, at("20261012-151000"))
             .unwrap()
+            .folder
             .unwrap();
 
         assert_eq!(inode(&first.join("a.md")), inode(&second.join("a.md")));
@@ -389,6 +460,7 @@ mod tests {
         filetime::set_file_mtime(&a, FileTime::from_unix_time(2_000_000_000, 0)).unwrap();
         let third = take(&s.workspace, &s.dir, at("20261012-152000"))
             .unwrap()
+            .folder
             .unwrap();
         assert_eq!(inode(&second.join("a.md")), inode(&third.join("a.md")));
         assert_eq!(manifest(&third).files["a.md"].mtime_ms, 2_000_000_000_000);
@@ -401,6 +473,7 @@ mod tests {
         fs::write(&a, "before\n").unwrap();
         let first = take(&s.workspace, &s.dir, at("20261012-150000"))
             .unwrap()
+            .folder
             .unwrap();
         OpenOptions::new()
             .append(true)
@@ -412,6 +485,7 @@ mod tests {
 
         let second = take(&s.workspace, &s.dir, at("20261012-151000"))
             .unwrap()
+            .folder
             .unwrap();
         assert_eq!(read(&first.join("a.md")), "before\n");
         assert_eq!(read(&second.join("a.md")), "before\nafter\n");
@@ -424,6 +498,7 @@ mod tests {
         fs::write(&a, "aaaa\n").unwrap();
         let first = take(&s.workspace, &s.dir, at("20261012-150000"))
             .unwrap()
+            .folder
             .unwrap();
         let mtime = FileTime::from_last_modification_time(&fs::metadata(&a).unwrap());
         fs::write(&a, "bbbb\n").unwrap();
@@ -433,6 +508,7 @@ mod tests {
         // keeping the old copy — the accepted cost `keep_file` explains.
         let second = take(&s.workspace, &s.dir, at("20261012-151000"))
             .unwrap()
+            .folder
             .unwrap();
         assert_eq!(read(&second.join("a.md")), "aaaa\n");
         assert_eq!(inode(&first.join("a.md")), inode(&second.join("a.md")));
@@ -454,9 +530,10 @@ mod tests {
                 fs::read(path)
             }
         };
-        let first = take_with(&s.workspace, &s.dir, at("20261012-150000"), gone)
-            .unwrap()
-            .unwrap();
+        let taken = take_with(&s.workspace, &s.dir, at("20261012-150000"), gone).unwrap();
+        // Deferred, not done: the workspace must stay marked as changed.
+        assert_eq!(taken.deferred, 1);
+        let first = taken.folder.unwrap();
         assert_eq!(read(&first.join("a.md")), "a\n");
         assert!(!first.join("b.md").exists());
         let m = manifest(&first);
@@ -470,11 +547,73 @@ mod tests {
         );
 
         // The next snapshot picks it up.
-        let second = take(&s.workspace, &s.dir, at("20261012-151000"))
-            .unwrap()
-            .unwrap();
+        let taken = take(&s.workspace, &s.dir, at("20261012-151000")).unwrap();
+        assert_eq!(taken.deferred, 0);
+        let second = taken.folder.unwrap();
         assert_eq!(read(&second.join("b.md")), "b\n");
         assert!(manifest(&second).skipped.is_empty());
+
+        // Every file changing at once makes no folder, but still tells the caller to come back.
+        fs::write(s.workspace.join("a.md"), "a, edited\n").unwrap();
+        fs::write(s.workspace.join("b.md"), "b, edited\n").unwrap();
+        let everything_gone = |_: &Path| Err(io::Error::from(io::ErrorKind::NotFound));
+        assert_eq!(
+            take_with(&s.workspace, &s.dir, at("20261012-152000"), everything_gone).unwrap(),
+            Taken {
+                folder: None,
+                deferred: 2
+            }
+        );
+        assert_eq!(s.dir.snapshots().unwrap().len(), 2);
+    }
+
+    #[test]
+    fn a_save_that_brings_back_the_previous_text_mid_snapshot_is_skipped() {
+        let s = setup();
+        let a = s.workspace.join("a.md");
+        fs::write(&a, "x\n").unwrap();
+        take(&s.workspace, &s.dir, at("20261012-150000")).unwrap();
+        fs::write(&a, "a longer text\n").unwrap();
+        // Read after tote saved the first text back: the hash matches the previous copy, but the
+        // size and mtime looked up before belong to the longer file.
+        let save_before_read = |path: &Path| {
+            atomic_write(path, b"x\n")?;
+            fs::read(path)
+        };
+        let taken = take_with(
+            &s.workspace,
+            &s.dir,
+            at("20261012-151000"),
+            save_before_read,
+        )
+        .unwrap();
+        assert_eq!(
+            taken,
+            Taken {
+                folder: None,
+                deferred: 1
+            }
+        );
+    }
+
+    #[test]
+    fn a_failed_write_into_the_backup_fails_the_whole_snapshot() {
+        let s = setup();
+        fs::write(s.workspace.join("a.md"), "a\n").unwrap();
+        fs::write(s.workspace.join("b.md"), "b\n").unwrap();
+        let tmp = s.dir.root.join(".tmp-20261012-150000");
+        // Something already sits where `b.md`'s copy goes, as a full disk would refuse it; the
+        // workspace file itself stays as it was.
+        let blocked = |path: &Path| {
+            if path.ends_with("b.md") {
+                fs::create_dir(tmp.join("b.md"))?;
+            }
+            fs::read(path)
+        };
+        assert!(take_with(&s.workspace, &s.dir, at("20261012-150000"), blocked).is_err());
+        assert!(s.dir.snapshots().unwrap().is_empty());
+        assert!(!tmp.exists());
+        assert_eq!(read(&s.workspace.join("b.md")), "b\n");
     }
 
     #[test]
@@ -494,6 +633,7 @@ mod tests {
         };
         let snapshot = take_with(&s.workspace, &s.dir, at("20261012-150000"), save_after_read)
             .unwrap()
+            .folder
             .unwrap();
         assert!(!snapshot.join("a.md").exists());
         assert_eq!(
@@ -516,6 +656,7 @@ mod tests {
             .unwrap();
         let snapshot = take(&s.workspace, &s.dir, at("20261012-150000"))
             .unwrap()
+            .folder
             .unwrap();
         assert!(!snapshot.join("big.log").exists());
         assert_eq!(
@@ -533,6 +674,7 @@ mod tests {
         fs::write(s.workspace.join("a.md"), "a\n").unwrap();
         let kept = take(&s.workspace, &s.dir, at("20261012-001000"))
             .unwrap()
+            .folder
             .unwrap();
         let leftover = s.dir.root.join(".tmp-20261012-000000");
         fs::create_dir_all(leftover.join(TOTE_DIR)).unwrap();
@@ -552,7 +694,10 @@ mod tests {
         fs::write(s.workspace.join(TOTE_DIR).join("sessions/d.json"), "{}").unwrap();
         assert_eq!(
             take(&s.workspace, &s.dir, at("20261012-150000")).unwrap(),
-            None
+            Taken {
+                folder: None,
+                deferred: 0
+            }
         );
         assert!(s.dir.snapshots().unwrap().is_empty());
         let left = fs::read_dir(&s.dir.root).map_or(0, |entries| entries.count());
@@ -564,7 +709,7 @@ mod tests {
         let s = setup();
         fs::write(s.workspace.join("a.md"), "first\n").unwrap();
         let name = at("20261012-150000");
-        let first = take(&s.workspace, &s.dir, name).unwrap().unwrap();
+        let first = take(&s.workspace, &s.dir, name).unwrap().folder.unwrap();
         fs::write(s.workspace.join("a.md"), "second, longer\n").unwrap();
         let err = take(&s.workspace, &s.dir, name).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
