@@ -173,7 +173,6 @@ export class AppController implements DocHost {
     if (first) await this.activate(first);
     else this.renderTabs();
     this.restoring = false;
-    await this.drainPending();
   }
 
   private async loadRegistry(): Promise<void> {
@@ -604,6 +603,7 @@ export class AppController implements DocHost {
 
   private async drainPending(): Promise<void> {
     if (this.restoring) return;
+    const notices: string[] = [];
     for (const open of await this.backend.takePendingOpens()) {
       if (open.kind === "memo") {
         await this.refreshMemos();
@@ -611,9 +611,12 @@ export class AppController implements DocHost {
       } else if (open.kind === "external") {
         await this.openExternal(open.path);
       } else {
-        this.statusBar.setMessage(open.message, "error");
+        notices.push(open.message);
       }
     }
+    // After the opens: showing a tab sets the status bar, which would wipe a failure of the same
+    // request (`tote -i 없는.txt 있는.txt`) before anyone saw it.
+    if (notices.length) this.statusBar.setMessage(notices.join(" · "), "error");
   }
 
   private async onMenu(id: string): Promise<void> {
@@ -776,7 +779,15 @@ export class AppController implements DocHost {
     }
     if (this.memosLoaded) return;
     this.memosLoaded = true;
-    await this.restoreSession();
+    try {
+      await this.restoreSession();
+    } catch (error) {
+      // The next listing tries again: a window that never restores never writes its session.
+      this.memosLoaded = false;
+      this.report(error);
+      return;
+    }
+    await this.drainPending();
   }
 
   private report(error: unknown): void {

@@ -36,8 +36,10 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
         Ok(label) => label,
         Err(message) => {
             eprintln!("tote: {message}");
-            // No window was meant: the one the person used last says it, if there is one.
+            // No window was meant: the one the person used last says it, if there is one, and
+            // comes to the front as it would for a request that worked.
             if let Some(label) = core.latest_window() {
+                windows::focus(app, &label);
                 notify(app, &label, message);
                 poke(app, &label);
             }
