@@ -11,9 +11,11 @@ import type { EditorView } from "@codemirror/view";
 import {
   errorCode,
   type Backend,
+  type ExternalState,
   type FileSource,
   type LanguageInfo,
   type MemoInfo,
+  type WorkspaceChange,
 } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
 import { detectLanguage } from "../core/language";
@@ -22,6 +24,7 @@ import type { WriteScheduler } from "../core/scheduler";
 import { restoreSelection, type SelectionJSON, type ViewMode } from "../core/session";
 import { memoTitle, titleLine } from "../core/title";
 import type { LanguageData } from "../editor/language-config";
+import type { BannerAction, BannerState } from "../ui/banner";
 
 // Spec 「저장」·「크기별 단계」.
 export const MEMO_SAVE_DELAY_MS = 500;
@@ -46,13 +49,27 @@ export const LONG_LINE_LIMIT = 200_000;
 export const WRAP_LIMIT = 20_000;
 
 export const RECOVERED_NOTICE = "원래 파일을 찾지 못해 새 메모로 저장했습니다";
-export const DRAFT_RESTORED_NOTICE =
-  "보관한 수정분을 복원했습니다 — 그사이 디스크의 파일이 바뀌었습니다";
+// Spec 「외부 변경」.
+export const CONFLICT_TEXT = "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?";
+export const DELETED_TEXT = "파일이 지워졌습니다. 다시 저장하거나 탭을 닫을 수 있습니다";
+export const DISK_VERSION = "디스크 버전";
+export const MY_VERSION = "내 버전";
+export const RESAVE = "다시 저장";
 
 /** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
  * were read as text and are not UTF-8 (or hold a NUL). */
 export type Problem = "binary" | "not-utf8" | "too-large" | "long-line" | "missing" | "unreadable";
-export type Change = "info" | "language" | "dirty" | "saved" | "deleted" | "notice" | "error";
+/** `reloaded`: the text was read again after another app changed the file, as a new state. */
+export type Change =
+  | "info"
+  | "language"
+  | "dirty"
+  | "saved"
+  | "deleted"
+  | "notice"
+  | "error"
+  | "banner"
+  | "reloaded";
 export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 
 /** What a document needs from the window around it. */
@@ -135,6 +152,9 @@ export abstract class Doc {
   forceText = false;
   /** The last write of the tab's text failed: it is only in memory, and a retry is scheduled. */
   saveFailed = false;
+  /** What the tab asks about its file (another app changed or deleted it); kept while the tab is
+   * left and come back to. */
+  banner: BannerState | null = null;
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;
@@ -245,20 +265,66 @@ export abstract class Doc {
     void this.refreshLanguage();
   }
 
-  /** Builds the editor state for `text`, with `selection` or else the session's. */
+  protected setBanner(banner: BannerState | null): void {
+    this.banner = banner;
+    this.host.changed(this, "banner");
+  }
+
+  /** The conflict banner: 「디스크 버전」 runs `takeDisk`, 「내 버전」 runs `keepMine`. */
+  protected conflictBanner(takeDisk: () => Promise<void>, keepMine: () => Promise<void>): void {
+    if (this.banner?.kind === "conflict") return;
+    this.setBanner({
+      kind: "conflict",
+      text: CONFLICT_TEXT,
+      actions: [this.action(DISK_VERSION, takeDisk), this.action(MY_VERSION, keepMine)],
+    });
+  }
+
+  protected deletedBanner(resave: () => Promise<unknown>): void {
+    this.setBanner({ kind: "deleted", text: DELETED_TEXT, actions: [this.action(RESAVE, resave)] });
+  }
+
+  /** A banner button: the click does not wait, and a failure is reported like any other. */
+  private action(label: string, run: () => Promise<unknown>): BannerAction {
+    return { label, run: () => void run().catch((error: unknown) => this.fail(error)) };
+  }
+
+  /** Builds the editor state for `text`, with the selection `select` gives for it or else the
+   * session's. */
   protected setText(
     text: string,
-    selection?: EditorSelection,
+    select?: (doc: Text) => EditorSelection,
     longest: number = longestLine(text),
   ): void {
     let state = EditorState.create({
       doc: text,
       extensions: this.host.extensions(this, { wrap: longest <= WRAP_LIMIT, text }),
     });
-    const wanted =
-      selection ?? (this.restoreSelection && restoreSelection(this.restoreSelection, state.doc));
+    const wanted = select
+      ? select(state.doc)
+      : this.restoreSelection && restoreSelection(this.restoreSelection, state.doc);
     if (wanted) state = state.update({ selection: wanted }).state;
     this.state = state;
+  }
+
+  /** The file as another app left it, with the selection kept (pulled in when the text got
+   * shorter). A new state rather than a transaction: a reload is not an edit, so it is not
+   * written back, and ⌘Z does not step into the text it replaced. Called only when nothing is
+   * unsaved, so the undo history is all it drops. */
+  protected reload(bytes: Uint8Array): void {
+    const decoded = decodeText(bytes);
+    const longest = decoded ? longestLine(decoded.text) : 0;
+    if (!decoded || longest > LONG_LINE_LIMIT) {
+      this.state = null;
+      this.problem = decoded ? "long-line" : "not-utf8";
+    } else {
+      this.eol = decoded.eol;
+      this.bom = decoded.bom;
+      const selection = this.state?.selection.toJSON() as SelectionJSON | undefined;
+      this.setText(decoded.text, (doc) => restoreSelection(selection, doc), longest);
+      this.loaded();
+    }
+    this.host.changed(this, "reloaded");
   }
 
   private async load(): Promise<void> {
@@ -341,7 +407,7 @@ export class MemoDoc extends Doc {
     this.eol = format.eol;
     this.bom = format.bom;
     this.fetchLanguageData();
-    this.setText(from.doc.toString(), from.selection);
+    this.setText(from.doc.toString(), () => from.selection);
     this.loaded();
   }
 
@@ -375,6 +441,9 @@ export class MemoDoc extends Doc {
     const text = this.state?.doc;
     // Undone back to what is saved: a failed save has nothing left to write.
     if (!text || text === this.savedText) return this.clearSaveFailed();
+    // Writing now would answer the conflict banner for the person: the save waits for the choice
+    // (or for the window to close, `flush`).
+    if (this.banner?.kind === "conflict") return;
     const retry = () => this.save();
     try {
       this.setInfo(await this.host.backend.writeMemo(this.info.id, this.encode(text)));
@@ -393,6 +462,8 @@ export class MemoDoc extends Doc {
     this.savedText = text;
     this.error = null;
     this.clearSaveFailed();
+    // The file is there again.
+    if (this.banner?.kind === "deleted") this.setBanner(null);
     this.host.changed(this, "saved");
   }
 
@@ -423,8 +494,76 @@ export class MemoDoc extends Doc {
     }
   }
 
+  /** Writes the text whatever tote last saved: the file is gone (「다시 저장」) or holds another
+   * app's text (「내 버전」), so text equal to the last save must still go. */
+  async resave(): Promise<void> {
+    this.savedText = null;
+    await this.saveNow();
+  }
+
   private get unsaved(): boolean {
     return this.state !== null && this.state.doc !== this.savedText;
+  }
+
+  /** Another app changed the workspace (spec 「외부 변경」). A modification is read again when
+   * nothing here is unsaved, and asked about when something is; a removal keeps the text and
+   * offers to write it back; a rename only moves the name. */
+  async onOutside(change: WorkspaceChange): Promise<void> {
+    switch (change.kind) {
+      case "modified":
+        return this.outsideModified();
+      case "removed":
+        // Not read yet: there is no text to write back, and showing it says the file is missing.
+        if (!this.state) return;
+        // Nothing unsaved either: 「다시 저장」 must write all the same (`resave`).
+        return this.deletedBanner(() => this.resave());
+      case "renamed":
+        // Named in Finder: tote stops naming it, as the index does.
+        return this.setInfo({ ...this.info, file: change.to, autoTitle: false });
+      case "added":
+        return;
+    }
+  }
+
+  private async outsideModified(): Promise<void> {
+    // Not read yet, or not text: it reads the file as it is when it is shown.
+    if (!this.state) return;
+    if (this.unsaved) return this.raiseConflict();
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.host.backend.readMemo(this.info.id);
+    } catch (error) {
+      return this.fail(error);
+    }
+    // Typed while it was read: that text must not be replaced.
+    if (this.unsaved) return this.raiseConflict();
+    this.reload(bytes);
+    if (this.banner) this.setBanner(null);
+  }
+
+  private raiseConflict(): void {
+    this.conflictBanner(
+      () => this.takeDisk(),
+      async () => {
+        this.setBanner(null);
+        await this.resave();
+      },
+    );
+  }
+
+  /** 「디스크 버전」: the unsaved text goes for the file's. */
+  private async takeDisk(): Promise<void> {
+    this.host.writes.cancel(this.saveKey);
+    this.cancelRetry();
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.host.backend.readMemo(this.info.id);
+    } catch (error) {
+      return this.fail(error);
+    }
+    this.reload(bytes);
+    this.setBanner(null);
+    this.clearSaveFailed();
   }
 
   /** 「이 버전으로 되돌리기」 (spec 「백업」 복원): the whole text becomes `text` in one transaction,
@@ -516,7 +655,19 @@ export class MemoDoc extends Doc {
     await this.detect();
   }
 
-  flush(): Promise<void> {
+  /** A conflict still open is settled as 「내 버전」 — the typed text must outlive the window — but
+   * only once a snapshot holds the other app's text. When the snapshot fails nothing is written
+   * over it: the save counts as failed, which makes the quit ask first. */
+  async flush(): Promise<void> {
+    if (this.banner?.kind === "conflict" && this.unsaved) {
+      try {
+        await this.host.backend.backupNow();
+      } catch (error) {
+        return this.failSave(error, this.saveKey, () => this.save());
+      }
+      this.savedText = null;
+      this.setBanner(null);
+    }
     return this.leave();
   }
 
@@ -555,6 +706,8 @@ export class ExternalDoc extends Doc {
   exists = false;
   /** Bytes on disk when the file was read; a viewer is told it. */
   size = 0;
+  /** `watchExternal` was asked for this tab and not yet undone. */
+  private watching = false;
 
   constructor(
     host: DocHost,
@@ -591,6 +744,7 @@ export class ExternalDoc extends Doc {
   }
 
   protected async read(): Promise<Uint8Array | Problem> {
+    this.watch();
     const info = await this.host.backend.openExternal(this.path);
     this.exists = info.exists;
     this.size = info.size;
@@ -608,12 +762,88 @@ export class ExternalDoc extends Doc {
         return draft;
       }
       this.modified = true;
-      if (info.draft.diskChanged) this.notice = DRAFT_RESTORED_NOTICE;
+      if (info.draft.diskChanged) this.draftOverChangedFile(info.exists);
       return draft;
     }
     if (!this.forceText && info.kind !== "text") return "binary";
     if (info.size > MAX_EDITOR_BYTES) return "too-large";
     return info.exists ? this.host.backend.readExternal(this.path) : new Uint8Array();
+  }
+
+  /** Spec 「외부 변경」: a draft over a file that changed since asks which to keep. 「내 버전」
+   * leaves the edits unsaved, for ⌘S — a draft is written only when the person saves. A file
+   * gone since has no disk version to take: the deleted banner offers to write it back. */
+  private draftOverChangedFile(exists: boolean): void {
+    if (!exists) return this.deletedBanner(() => this.save());
+    this.conflictBanner(
+      () => this.takeDisk(),
+      async () => this.setBanner(null),
+    );
+  }
+
+  /** Another app changed or removed the file (`watchExternal`). A clean tab reads it again; one
+   * with edits since ⌘S asks, 「내 버전」 being a save. */
+  async onOutside(change: ExternalState): Promise<void> {
+    // Not read yet, or not text: it reads the file as it is when it is shown.
+    if (!this.state) return;
+    if (change === "removed") {
+      this.exists = false;
+      return this.deletedBanner(() => this.save());
+    }
+    if (this.modified) return this.raiseConflict();
+    let bytes: Uint8Array;
+    try {
+      bytes = await this.host.backend.readExternal(this.path);
+    } catch (error) {
+      return this.fail(error);
+    }
+    if (this.modified) return this.raiseConflict();
+    this.exists = true;
+    this.size = bytes.length;
+    this.reload(bytes);
+    if (this.banner) this.setBanner(null);
+  }
+
+  private raiseConflict(): void {
+    this.conflictBanner(
+      () => this.takeDisk(),
+      async () => {
+        await this.save();
+      },
+    );
+  }
+
+  /** 「디스크 버전」: the edits and their draft go for the file's text. */
+  private async takeDisk(): Promise<void> {
+    let bytes: Uint8Array;
+    try {
+      await this.discard();
+      bytes = await this.host.backend.readExternal(this.path);
+    } catch (error) {
+      return this.fail(error);
+    }
+    this.exists = true;
+    this.size = bytes.length;
+    this.reload(bytes);
+    this.setBanner(null);
+  }
+
+  /** Changes other apps make to the file come to `onOutside` from here on. */
+  private watch(): void {
+    if (this.watching) return;
+    this.watching = true;
+    this.host.backend
+      .watchExternal(this.path)
+      .catch((error: unknown) => console.warn(`cannot watch ${this.path}`, error));
+  }
+
+  /** The tab closed, or became a memo. */
+  stopWatching(): void {
+    if (!this.watching) return;
+    this.watching = false;
+    this.host.backend
+      .unwatchExternal(this.path)
+      .catch((error: unknown) => console.warn(`cannot stop watching ${this.path}`, error));
   }
 
   /** Best effort: on any failure the draft stays and opens as a draft. Drops it only when it is
@@ -666,6 +896,8 @@ export class ExternalDoc extends Doc {
     this.notice = null;
     this.error = null;
     this.clearSaveFailed();
+    // Saving is a choice too: what is on disk is now the tab's.
+    if (this.banner) this.setBanner(null);
     if (this.state.doc === text) this.modified = false;
     // Typed while saving: those edits are still unsaved and need their draft.
     else this.host.writes.schedule(this.draftKey, DRAFT_DELAY_MS, () => this.keepDraft());
@@ -702,6 +934,12 @@ export class ExternalDoc extends Doc {
   }
 
   async close(ask: CloseAsk): Promise<boolean> {
+    const closed = await this.mayClose(ask);
+    if (closed) this.stopWatching();
+    return closed;
+  }
+
+  private async mayClose(ask: CloseAsk): Promise<boolean> {
     if (!this.modified) return true;
     const choice = await ask();
     if (choice === "cancel") return false;
@@ -731,6 +969,7 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
     ? await host.backend.importMemo(ext.fileName, bytes)
     : await host.backend.importFile(ext.path);
   await ext.discard();
+  ext.stopWatching();
   const memo = new MemoDoc(host, info);
   memo.scrollAnchor = ext.scrollAnchor;
   memo.mode = ext.mode;

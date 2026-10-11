@@ -179,6 +179,22 @@ export interface Version {
   sha256: string;
 }
 
+/** What another app did to a workspace's files (`Change` in src-tauri/src/workspace/mod.rs). */
+export type WorkspaceChange =
+  | { kind: "modified"; id: string }
+  | { kind: "added"; id: string; file: string }
+  | { kind: "removed"; id: string; file: string }
+  | { kind: "renamed"; id: string; from: string; to: string };
+
+/** What another app did to an open external file (`ExternalState` in src-tauri/src/persist/external.rs). */
+export type ExternalState = "modified" | "removed";
+
+/** The payload of `tote://outside` (`OutsideChange` in src-tauri/src/app/mod.rs). `path` is the
+ * path the window gave `watchExternal`. */
+export type OutsideChange =
+  | { kind: "workspace"; changes: WorkspaceChange[] }
+  | { kind: "external"; path: string; state: ExternalState };
+
 export interface WindowFrame {
   x: number;
   y: number;
@@ -240,6 +256,10 @@ export interface Backend {
   keepExternalDraft(path: string, bytes: Uint8Array): Promise<void>;
   discardExternalDraft(path: string): Promise<void>;
   saveExternal(path: string, bytes: Uint8Array): Promise<void>;
+  /** Changes other apps make to the file come as `onOutsideChange`. Counted: each call needs an
+   * `unwatchExternal`. */
+  watchExternal(path: string): Promise<void>;
+  unwatchExternal(path: string): Promise<void>;
 
   listWorkspaces(): Promise<WorkspaceListItem[]>;
   createWorkspace(name: string): Promise<void>;
@@ -254,6 +274,9 @@ export interface Backend {
   readVersion(snapshot: string, file: string): Promise<Uint8Array>;
   /** Shows this workspace's backup folder in Finder. */
   revealBackups(): Promise<void>;
+  /** Snapshots this workspace now, changed or not: what another app wrote is kept before a quit
+   * writes over it. */
+  backupNow(): Promise<void>;
 
   /** Where this window is, for the session; `null` where there is no native window. */
   windowFrame(): Promise<WindowFrame | null>;
@@ -301,4 +324,6 @@ export interface Backend {
   onFlush(handler: (id: number) => void): void;
   onPending(handler: () => void): void;
   onFileDrop(handler: (paths: string[]) => void): void;
+  /** Another app changed this window's workspace or one of its watched external files. */
+  onOutsideChange(handler: (change: OutsideChange) => void): void;
 }

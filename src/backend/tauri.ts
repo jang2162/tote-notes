@@ -13,6 +13,7 @@ import {
   type ExternalInfo,
   type FileSource,
   type MemoInfo,
+  type OutsideChange,
   type PendingOpen,
   type Settings,
   type SettingsPatch,
@@ -116,6 +117,12 @@ export class TauriBackend implements Backend {
   async saveExternal(path: string, bytes: Uint8Array) {
     await call<number>("save_external", bytes, { "x-path": enc(path) });
   }
+  watchExternal(path: string) {
+    return call<void>("watch_external", { path });
+  }
+  unwatchExternal(path: string) {
+    return call<void>("unwatch_external", { path });
+  }
 
   listWorkspaces() {
     return call<WorkspaceListItem[]>("list_workspaces");
@@ -138,6 +145,9 @@ export class TauriBackend implements Backend {
   }
   revealBackups() {
     return call<void>("reveal_backups");
+  }
+  backupNow() {
+    return call<void>("backup_now");
   }
 
   async windowFrame(): Promise<WindowFrame> {
@@ -224,6 +234,9 @@ export class TauriBackend implements Backend {
   }
   onConfigChanged(handler: () => void) {
     void this.window.listen("tote://config", () => handler());
+  }
+  onOutsideChange(handler: (change: OutsideChange) => void) {
+    void this.window.listen<OutsideChange>("tote://outside", (event) => handler(event.payload));
   }
   onFileDrop(handler: (paths: string[]) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {

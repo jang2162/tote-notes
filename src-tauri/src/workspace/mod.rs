@@ -404,6 +404,34 @@ mod tests {
     use super::*;
     use std::fs;
 
+    /// The shape `WorkspaceChange` in src/backend/types.ts reads from `tote://outside`.
+    #[test]
+    fn changes_serialize_as_the_frontend_reads_them() {
+        let json = |change: Change| serde_json::to_value(change).unwrap();
+        assert_eq!(
+            json(Change::Added {
+                id: "i".into(),
+                file: "새.md".into()
+            }),
+            serde_json::json!({"kind": "added", "id": "i", "file": "새.md"})
+        );
+        assert_eq!(
+            json(Change::Removed {
+                id: "i".into(),
+                file: "옛.md".into()
+            }),
+            serde_json::json!({"kind": "removed", "id": "i", "file": "옛.md"})
+        );
+        assert_eq!(
+            json(Change::Renamed {
+                id: "i".into(),
+                from: "a.md".into(),
+                to: "b.md".into()
+            }),
+            serde_json::json!({"kind": "renamed", "id": "i", "from": "a.md", "to": "b.md"})
+        );
+    }
+
     #[test]
     fn create_then_open_keeps_the_id() {
         let root = tempfile::tempdir().unwrap();

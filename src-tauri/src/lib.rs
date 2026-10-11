@@ -116,6 +116,7 @@ pub fn run() {
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,
+            commands::backup_now,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");

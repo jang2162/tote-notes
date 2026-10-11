@@ -108,12 +108,22 @@ impl ExternalFiles {
         })
     }
 
-    /// The file's bytes; a path that does not exist yet reads as empty.
+    /// The file's bytes; a path that does not exist yet reads as empty. An open file without a
+    /// draft takes what is read as its base: a tab reading it again after another app changed it
+    /// edits from there, so a draft it makes later is not taken for a change on disk. A draft
+    /// keeps the base it was made against.
     pub fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        match fs::read(path) {
-            Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(Vec::new()),
-            other => other,
+        let bytes = match fs::read(path) {
+            Ok(bytes) => Some(bytes),
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err),
+        };
+        // A draft store that cannot be read may hold one: the base stays.
+        if self.bases_lock().contains_key(path) && matches!(self.drafts.get(path), Ok(None)) {
+            let base = bytes.as_deref().map(content_hash);
+            self.bases_lock().insert(path.to_path_buf(), base);
         }
+        Ok(bytes.unwrap_or_default())
     }
 
     pub fn read_draft(&self, path: &Path) -> io::Result<Vec<u8>> {
@@ -232,6 +242,44 @@ mod tests {
         assert_eq!(after.read_draft(&path).unwrap(), b"edited");
 
         fs::write(&path, "someone else").unwrap();
+        let info = files(dir.path()).open(&path).unwrap();
+        assert_eq!(info.draft, Some(DraftInfo { disk_changed: true }));
+    }
+
+    #[test]
+    fn a_reread_of_a_clean_file_moves_its_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "v1").unwrap();
+        let ext = files(dir.path());
+        ext.open(&path).unwrap();
+        fs::write(&path, "v2").unwrap();
+        assert_eq!(ext.outside_state(&path), Some(ExternalState::Modified));
+        assert_eq!(ext.read(&path).unwrap(), b"v2");
+        // Read again, the file is where editing starts from: the same contents are no news, and a
+        // draft made now is measured against them.
+        assert_eq!(ext.outside_state(&path), None);
+        ext.keep_draft(&path, b"v2!").unwrap();
+        let info = files(dir.path()).open(&path).unwrap();
+        assert_eq!(
+            info.draft,
+            Some(DraftInfo {
+                disk_changed: false
+            })
+        );
+    }
+
+    #[test]
+    fn a_read_under_a_waiting_draft_keeps_the_drafts_base() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "v0").unwrap();
+        let ext = files(dir.path());
+        ext.open(&path).unwrap();
+        ext.keep_draft(&path, b"mine").unwrap();
+        fs::write(&path, "v1").unwrap();
+        assert_eq!(ext.read(&path).unwrap(), b"v1");
+        ext.keep_draft(&path, b"mine!").unwrap();
         let info = files(dir.path()).open(&path).unwrap();
         assert_eq!(info.draft, Some(DraftInfo { disk_changed: true }));
     }

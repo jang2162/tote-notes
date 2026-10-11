@@ -1,23 +1,33 @@
 import { EditorState } from "@codemirror/state";
 import { EditorView } from "@codemirror/view";
 
+import { Banner } from "../ui/banner";
 import { h } from "../ui/dom";
 
 /** What the view holds while the editor is hidden. */
 const DETACHED = EditorState.create({ extensions: EditorView.editable.of(false) });
 
 /** The editor area: the editor, a placeholder sentence, or a panel (a viewer, the large text
- * viewer). One of them is visible at a time. */
+ * viewer). One of them is visible at a time, under the tab's banner when it has one. */
 export class Surface {
   // CodeMirror's own CSS sets `display` on .cm-editor with !important, so its host is what hides.
   private readonly editorHost: HTMLElement;
   private readonly placeholder = h("div", { class: "editor-placeholder" });
   private readonly panelHost = h("div", { class: "panel-host" });
+  readonly banner: Banner;
   readonly el: HTMLElement;
 
   constructor(private readonly view: EditorView) {
     this.editorHost = h("div", { class: "editor-host" }, view.dom);
-    this.el = h("div", { class: "editor-area" }, this.editorHost, this.placeholder, this.panelHost);
+    this.banner = new Banner(() => {
+      if (this.showsEditor) this.view.focus();
+    });
+    this.el = h(
+      "div",
+      { class: "surface" },
+      this.banner.el,
+      h("div", { class: "editor-area" }, this.editorHost, this.placeholder, this.panelHost),
+    );
     this.showEmpty();
   }
 
@@ -32,6 +42,15 @@ export class Surface {
     this.view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: "start" }) });
     this.view.requestMeasure();
     this.view.focus();
+  }
+
+  /** The tab on show was read again: its new state, scrolled to `scrollAnchor`, without taking
+   * the focus from wherever it is. */
+  replaceState(state: EditorState, scrollAnchor: number): void {
+    this.view.setState(state);
+    const anchor = Math.min(scrollAnchor, state.doc.length);
+    this.view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: "start" }) });
+    this.view.requestMeasure();
   }
 
   showPlaceholder(text: string, action?: { label: string; run: () => void }): void {

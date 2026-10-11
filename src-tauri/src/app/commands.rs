@@ -14,7 +14,7 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
-use crate::backup::BackupDir;
+use crate::backup::{BackupDir, SnapshotName};
 use crate::extensions::file_inside;
 use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
@@ -295,6 +295,12 @@ pub async fn read_version(
 ) -> CmdResult<Response> {
     let dir = backup_dir(&core, &window)?;
     Ok(Response::new(versions::read(&dir, &snapshot, &file)?))
+}
+
+/// Snapshots the window's workspace now (`AppCore::backup_now`).
+#[tauri::command]
+pub async fn backup_now(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<()> {
+    Ok(core.backup_now(window.label(), SnapshotName::now())?)
 }
 
 #[tauri::command]

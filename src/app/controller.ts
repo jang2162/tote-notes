@@ -1,7 +1,7 @@
 import type { Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
-import type { Backend, LanguageInfo, MemoInfo, ViewerInfo } from "../backend/types";
+import type { Backend, LanguageInfo, MemoInfo, OutsideChange, ViewerInfo } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
@@ -162,12 +162,13 @@ export class AppController implements DocHost {
     this.backend.onFlush((id) => void this.onFlush(id));
     this.backend.onPending(() => void this.drainPending());
     this.backend.onFileDrop((paths) => void this.openExternals(paths));
+    this.backend.onOutsideChange((change) => void this.onOutside(change));
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => void this.tabs.active?.leave());
     window.addEventListener("focus", () => void this.refreshMemos());
     document.addEventListener("visibilitychange", () => {
-      if (document.hidden) void this.flushAll();
+      if (document.hidden) void this.flushAll(false);
     });
     // Restores the session if it lists the memos; else the next listing that does (focus).
     await this.refreshMemos();
@@ -281,6 +282,8 @@ export class AppController implements DocHost {
       this.saveSessionSoon();
     }
     if (active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
+    if (active && change === "banner") this.surface.banner.render(doc.banner);
+    if (active && change === "reloaded") this.showReloaded(doc);
     if (active && change === "saved" && doc instanceof ExternalDoc)
       this.statusBar.setMessage("저장됨");
     // A memo that saved after a failed save no longer has the error to show.
@@ -338,10 +341,14 @@ export class AppController implements DocHost {
     this.saveSessionSoon();
   }
 
-  /** Everything written now — tab edits, titles and the session (window close, quit, hiding). */
-  async flushAll(): Promise<void> {
+  /** Everything written now — tab edits, titles and the session. `closing` (the window closes or
+   * the app quits) also settles what waits for a choice, a conflicted memo; a window that only
+   * hides leaves that open. */
+  async flushAll(closing = true): Promise<void> {
     await Promise.all(
-      this.tabs.list.map((doc) => doc.flush().catch((error: unknown) => this.report(error))),
+      this.tabs.list.map((doc) =>
+        (closing ? doc.flush() : doc.leave()).catch((error: unknown) => this.report(error)),
+      ),
     );
     await this.saveSessionNow();
   }
@@ -349,7 +356,7 @@ export class AppController implements DocHost {
   /** Answers with what is still only in memory: the native side asks before closing over it. */
   private async onFlush(id: number): Promise<void> {
     try {
-      await this.flushAll();
+      await this.flushAll(true);
     } finally {
       const failed = this.tabs.list.filter((doc) => doc.saveFailed).length;
       await this.backend.flushDone(id, failed ? `저장하지 못한 메모 ${failed}개` : undefined);
@@ -380,6 +387,7 @@ export class AppController implements DocHost {
     // The switch lets go of the tab left at once, whatever the new tab shows and however long it
     // takes to come (a read, a token, a scan): keys typed meanwhile are dropped, not saved there.
     this.surface.showNothing();
+    this.surface.banner.render(doc.banner);
     await doc.ensureLoaded();
     // Loading can mark the tab dirty (a restored draft), which the render above could not know.
     this.renderTabs();
@@ -388,8 +396,34 @@ export class AppController implements DocHost {
     this.saveSessionSoon();
   }
 
+  /** Another app changed the workspace or a watched file (spec 「외부 변경」): each tab it names
+   * reacts, then the memo list is listed again (names, order, added and removed memos). */
+  private async onOutside(change: OutsideChange): Promise<void> {
+    try {
+      if (change.kind === "external") {
+        await this.tabs.external(change.path)?.onOutside(change.state);
+        return;
+      }
+      for (const each of change.changes) await this.tabs.memo(each.id)?.onOutside(each);
+    } catch (error) {
+      this.report(error);
+    }
+    if (change.kind === "workspace") await this.refreshMemos();
+  }
+
+  /** The active tab's text was read again. The view still holds the old state, so the scroll is
+   * taken from it before the new one goes in. */
+  private showReloaded(doc: Doc): void {
+    const editing = doc.state && !doc.problem && doc.mode === "edit";
+    if (!editing || !this.surface.showsEditor) return this.show(doc);
+    doc.scrollAnchor = this.view.lineBlockAtHeight(this.view.scrollDOM.scrollTop).from;
+    this.surface.replaceState(doc.state!, doc.scrollAnchor);
+    this.statusBar.setPosition(this.view.state);
+  }
+
   private show(doc: Doc): void {
     this.closePanel();
+    this.surface.banner.render(doc.banner);
     const state = doc.problem ? null : doc.state;
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
     this.showLanguage(doc);
@@ -554,6 +588,7 @@ export class AppController implements DocHost {
 
   private showEmpty(): void {
     this.closePanel();
+    this.surface.banner.hide();
     this.surface.showEmpty();
     this.memoList.setActive(null);
     this.statusBar.setPosition(null);

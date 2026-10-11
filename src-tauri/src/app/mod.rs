@@ -78,6 +78,9 @@ pub struct AppCore {
     searches: Mutex<HashMap<String, u64>>,
     /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
     watcher: OnceLock<Watcher>,
+    /// Held while a snapshot is made: the backup round and `backup_now` take turns, so neither
+    /// clears away the other's half-made folder.
+    snapshots: Mutex<()>,
     inner: Mutex<Inner>,
 }
 
@@ -146,6 +149,7 @@ impl AppCore {
             rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
+            snapshots: Mutex::new(()),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
                 reserved: HashSet::new(),
@@ -514,7 +518,8 @@ impl AppCore {
                 (workspace.root().to_path_buf(), workspace.id().to_string())
             };
             let dir = BackupDir::new(&self.paths.backups_dir(), &id);
-            // Left by an app that died mid-snapshot; this thread is the only one making them.
+            let _taking = lock(&self.snapshots);
+            // Left by an app that died mid-snapshot; `snapshots` keeps `backup_now` out meanwhile.
             if let Err(err) = dir.remove_leftovers() {
                 eprintln!("tote: could not remove a half-made snapshot of {id}: {err}");
             }
@@ -534,6 +539,36 @@ impl AppCore {
             ticked.push((label, result.map(|taken| taken.folder)));
         }
         ticked
+    }
+
+    /// Snapshots the window's workspace now, changed since the last round or not: a conflicted
+    /// memo is about to be written over at quit, and what another app wrote there must be in a
+    /// snapshot first (spec 「외부 변경」, 「백업」). An error means it may not be — a file that
+    /// changed while being read is left out — so the caller does not write over it.
+    pub fn backup_now(&self, label: &str, now: SnapshotName) -> io::Result<()> {
+        let workspace = self.workspace(label).ok_or_else(|| {
+            io::Error::new(io::ErrorKind::NotFound, format!("no workspace for {label}"))
+        })?;
+        let (root, id) = {
+            let workspace = lock(&workspace);
+            (workspace.root().to_path_buf(), workspace.id().to_string())
+        };
+        let dir = BackupDir::new(&self.paths.backups_dir(), &id);
+        let _taking = lock(&self.snapshots);
+        let taken = snapshot::take(&root, &dir, now)?;
+        if taken.folder.is_some() {
+            if let Err(err) = retention::prune(&dir, now) {
+                eprintln!("tote: could not prune the backups of {id}: {err}");
+            }
+        }
+        if taken.deferred > 0 {
+            lock(&workspace).mark_changed();
+            return Err(io::Error::other(format!(
+                "{} files changed while they were backed up",
+                taken.deferred
+            )));
+        }
+        Ok(())
     }
 
     pub fn is_quitting(&self) -> bool {
@@ -641,6 +676,27 @@ mod tests {
             ticked[0].1.as_ref().unwrap().as_deref(),
             Some(a_backups.path_of(later).as_path())
         );
+    }
+
+    #[test]
+    fn a_backup_now_snapshots_even_an_unchanged_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let label = open(&core, "가");
+        let workspace = core.workspace(&label).unwrap();
+        let memo = lock(&workspace).create_memo("md", b"ours").unwrap();
+        // As if a round had just taken it: a tick would skip the workspace now.
+        lock(&workspace).take_changed();
+        let file = core.path_of(&label).unwrap().join(&memo.file);
+        fs::write(&file, "theirs").unwrap();
+        let now = SnapshotName::parse("20261012-101500").unwrap();
+        core.backup_now(&label, now).unwrap();
+        let backups = BackupDir::new(&core.paths.backups_dir(), lock(&workspace).id());
+        assert_eq!(
+            fs::read_to_string(backups.path_of(now).join(&memo.file)).unwrap(),
+            "theirs"
+        );
+        assert!(core.backup_now("gone", now).is_err());
     }
 
     #[test]

@@ -15,10 +15,12 @@ import { BackendError, type ExtensionRegistry } from "../backend/types";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
-  DRAFT_RESTORED_NOTICE,
+  CONFLICT_TEXT,
+  DELETED_TEXT,
   ExternalDoc,
   importExternal,
   LONG_LINE_LIMIT,
+  MEMO_SAVE_DELAY_MS,
   MemoDoc,
   RECOVERED_NOTICE,
   SAVE_RETRY_MS,
@@ -442,6 +444,133 @@ describe("MemoDoc", () => {
   });
 });
 
+describe("MemoDoc outside changes", () => {
+  async function opened(text: string, options: { autoTitle?: boolean; file?: string } = {}) {
+    const ctx = setup({
+      memos: { a: fakeMemo(options.file ?? "a.md", text, { autoTitle: options.autoTitle }) },
+    });
+    const doc = new MemoDoc(ctx.host, (await ctx.backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    return { ...ctx, doc };
+  }
+
+  it("an outside modification with nothing unsaved reloads and keeps the selection", async () => {
+    const { backend, doc, changes } = await opened("첫 줄\n둘째 줄");
+    const start = doc.state!;
+    const moved = start.update({ selection: { anchor: 4 } }).state;
+    doc.update({ state: moved, startState: start, docChanged: false, selectionSet: true });
+    backend.data.memos.a.data = fakeFile("다른 앱이 고친 첫 줄\n둘째 줄");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.state!.doc.toString()).toBe("다른 앱이 고친 첫 줄\n둘째 줄");
+    expect(doc.state!.selection.main.head).toBe(4);
+    expect(doc.banner).toBeNull();
+    expect(changes).toContain("reloaded");
+    // Shorter than where the cursor was: it goes to the end.
+    backend.data.memos.a.data = fakeFile("짧");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.state!.doc.toString()).toBe("짧");
+    expect(doc.state!.selection.main.head).toBe(1);
+    // A reload is not an edit: nothing is written back.
+    await vi.runAllTimersAsync();
+    expect(backend.data.memos.a.modifiedMs).toBe(1);
+  });
+
+  it("an outside modification with unsaved text raises the conflict banner", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.banner?.text).toBe(CONFLICT_TEXT);
+    expect(doc.banner?.actions.map((a) => a.label)).toEqual(["디스크 버전", "내 버전"]);
+    expect(doc.state!.doc.toString()).toBe("원래 내 글");
+    // The save waits for the choice: the other app's text stays on disk meanwhile.
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS * 4);
+    expect(backend.memoText("a")).toBe("다른 앱");
+    doc.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(backend.memoText("a")).toBe("원래 내 글");
+    expect(doc.banner).toBeNull();
+  });
+
+  it("디스크 버전 takes the disk's text and drops the unsaved edit", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("다른 앱");
+    expect(doc.banner).toBeNull();
+    expect(backend.memoText("a")).toBe("다른 앱");
+  });
+
+  it("a window close or quit with the conflict open backs up the disk's text, then writes the typed text", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    const onDiskAtBackup: (string | null)[] = [];
+    const backupNow = backend.backupNow.bind(backend);
+    backend.backupNow = async () => {
+      onDiskAtBackup.push(backend.memoText("a"));
+      await backupNow();
+    };
+    // Leaving the tab (or the window hiding) is not a choice: the conflict stays open.
+    await doc.leave();
+    expect(backend.memoText("a")).toBe("다른 앱");
+    expect(onDiskAtBackup).toEqual([]);
+    await doc.flush();
+    expect(onDiskAtBackup).toEqual(["다른 앱"]);
+    expect(backend.memoText("a")).toBe("원래 내 글");
+    expect(doc.banner).toBeNull();
+  });
+
+  it("a close or quit whose backup fails leaves the disk alone and the save failed", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    backend.backupNow = async () => {
+      throw new BackendError("io", "backup disk full");
+    };
+    await doc.flush();
+    expect(backend.memoText("a")).toBe("다른 앱");
+    // The quit asks first (a failed save is what holds it), and the choice is still open.
+    expect(doc.saveFailed).toBe(true);
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.state!.doc.toString()).toBe("원래 내 글");
+  });
+
+  it("an outside removal raises the deleted banner and keeps the text", async () => {
+    const { backend, doc } = await opened("남길 글");
+    delete backend.data.memos.a;
+    await doc.onOutside({ kind: "removed", id: "a", file: "a.md" });
+    expect(doc.banner?.kind).toBe("deleted");
+    expect(doc.banner?.text).toBe(DELETED_TEXT);
+    expect(doc.banner?.actions.map((a) => a.label)).toEqual(["다시 저장"]);
+    expect(doc.state!.doc.toString()).toBe("남길 글");
+    // Nothing is unsaved, yet 다시 저장 writes: the file is what is missing.
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(backend.memoTextByFile("a.md")).toBe("남길 글");
+    expect(doc.info.id).not.toBe("a");
+    expect(doc.notice).toBe(RECOVERED_NOTICE);
+    expect(doc.banner).toBeNull();
+  });
+
+  it("an outside rename updates the file name", async () => {
+    const { backend, doc, changes } = await opened("회의", { file: "회의.md", autoTitle: true });
+    Object.assign(backend.data.memos.a, { file: "회의록.md", autoTitle: false });
+    await doc.onOutside({ kind: "renamed", id: "a", from: "회의.md", to: "회의록.md" });
+    expect(doc.info.file).toBe("회의록.md");
+    // Named by the person in Finder: tote stops naming it (as the index does).
+    expect(doc.info.autoTitle).toBe(false);
+    expect(doc.title).toBe("회의록");
+    expect(changes).toContain("info");
+  });
+});
+
 describe("ExternalDoc", () => {
   it("keeps a draft a second after typing and finds it again after a restart", async () => {
     const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("echo hi\n") } });
@@ -462,15 +591,101 @@ describe("ExternalDoc", () => {
     expect(again.notice).toBeNull();
   });
 
-  it("says so when the file changed on disk after the draft", async () => {
-    const { host } = setup({
+  it("a draft whose file changed on disk opens with the conflict banner", async () => {
+    const seed = {
       files: { "/x/a.sh": fakeFile("v1") },
       drafts: { "/x/a.sh": { base: fakeFile("v0"), data: fakeFile("mine") } },
-    });
+    };
+    const { backend, host } = setup(seed);
     const doc = new ExternalDoc(host, "/x/a.sh");
     await doc.ensureLoaded();
     expect(doc.state!.doc.toString()).toBe("mine");
-    expect(doc.notice).toBe(DRAFT_RESTORED_NOTICE);
+    expect(doc.notice).toBeNull();
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.banner?.actions.map((a) => a.label)).toEqual(["디스크 버전", "내 버전"]);
+    // 디스크 버전: the disk's text, the draft gone.
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("v1");
+    expect(doc.dirty).toBe(false);
+    expect(doc.banner).toBeNull();
+    expect(backend.data.drafts["/x/a.sh"]).toBeUndefined();
+
+    // 내 버전: the edits stay unsaved, for ⌘S to write; nothing is written now.
+    const other = setup(seed);
+    const mine = new ExternalDoc(other.host, "/x/a.sh");
+    await mine.ensureLoaded();
+    mine.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(mine.banner).toBeNull();
+    expect(mine.dirty).toBe(true);
+    expect(other.backend.fileText("/x/a.sh")).toBe("v1");
+    await mine.save();
+    expect(other.backend.fileText("/x/a.sh")).toBe("mine");
+  });
+
+  it("an external file edited elsewhere while clean is reread, and a later draft is not a conflict", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    await doc.onOutside("modified");
+    expect(doc.state!.doc.toString()).toBe("v2");
+    expect(doc.dirty).toBe(false);
+    expect(doc.banner).toBeNull();
+    // The base moved with the reread: a draft made now is against v2.
+    type(doc, "!");
+    await vi.advanceTimersByTimeAsync(1000);
+    const restarted = setup({ ...backend.data });
+    const again = new ExternalDoc(restarted.host, "/x/a.sh");
+    await again.ensureLoaded();
+    expect(again.state!.doc.toString()).toBe("v2!");
+    expect(again.banner).toBeNull();
+  });
+
+  it("an edited external file changed elsewhere raises the conflict banner; 내 버전 saves", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    await doc.onOutside("modified");
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.state!.doc.toString()).toBe("v1!");
+    doc.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(backend.fileText("/x/a.sh")).toBe("v1!");
+    expect(doc.dirty).toBe(false);
+    expect(doc.banner).toBeNull();
+  });
+
+  it("an external file removed elsewhere raises the deleted banner; 다시 저장 writes it back", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    delete backend.data.files["/x/a.sh"];
+    await doc.onOutside("removed");
+    expect(doc.banner?.kind).toBe("deleted");
+    expect(doc.state!.doc.toString()).toBe("v1");
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(backend.fileText("/x/a.sh")).toBe("v1");
+    expect(doc.banner).toBeNull();
+  });
+
+  it("watches the file while its tab is open", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    await vi.runAllTimersAsync();
+    expect(backend.data.watched).toEqual({ "/x/a.sh": 1 });
+    // Reading again (텍스트로 열기) does not watch twice.
+    await doc.openAsText();
+    await vi.runAllTimersAsync();
+    expect(backend.data.watched).toEqual({ "/x/a.sh": 1 });
+    expect(await doc.close(async () => "cancel")).toBe(true);
+    await vi.runAllTimersAsync();
+    expect(backend.data.watched).toEqual({});
   });
 
   it("a_draft_equal_to_the_disk_opens_clean", async () => {

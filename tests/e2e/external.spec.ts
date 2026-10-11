@@ -206,3 +206,47 @@ test("a resolveRelative answered after its view closed leaves no token, even for
   await page.locator(".tab", { hasText: "a.txt" }).click();
   await expect.poll(() => page.evaluate(() => window.__tote.backend.data.tokens)).toEqual({});
 });
+
+test("a draft whose file changed on disk opens with the conflict banner", async ({ page }) => {
+  await start(page, {
+    files: { "/x/a.sh": fakeFile("v1") },
+    drafts: { "/x/a.sh": { base: fakeFile("v0"), data: fakeFile("mine") } },
+    picks: ["/x/a.sh"],
+  });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("mine");
+  const banner = page.locator(".banner");
+  await expect(banner.locator(".banner-text")).toHaveText(
+    "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?",
+  );
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+  await banner.getByRole("button", { name: "디스크 버전" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("v1");
+  await expect(banner).toBeHidden();
+  await expect(page.locator(".tab.active")).not.toHaveClass(/dirty/);
+  expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});
+});
+
+test("an external file edited elsewhere while clean is reread", async ({ page }) => {
+  await start(page, { files: { "/x/a.sh": fakeFile("v1") }, picks: ["/x/a.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("v1");
+  // The tab asked to be told about the file.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.watched))
+    .toEqual({ "/x/a.sh": 1 });
+  await page.evaluate(
+    ([data]) => {
+      const backend = window.__tote.backend;
+      backend.data.files["/x/a.sh"] = data;
+      backend.outside({ kind: "external", path: "/x/a.sh", state: "modified" });
+    },
+    [fakeFile("v2")] as const,
+  );
+  await expect(page.locator(".cm-content")).toHaveText("v2");
+  await expect(page.locator(".banner")).toBeHidden();
+  await expect(page.locator(".tab.active")).not.toHaveClass(/dirty/);
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.watched)).toEqual({});
+});

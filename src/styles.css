@@ -204,9 +204,46 @@ body {
   visibility: visible;
 }
 
+.surface {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-height: 0;
+}
+
+/* Row 2 even while the banner is hidden: `display: none` takes it out of the grid, and in the
+ * `auto` row the area would be as tall as its content — none, its panels being absolute. */
 .editor-area {
+  grid-row: 2;
   position: relative;
   min-height: 0;
+}
+
+.banner {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--border);
+  background: var(--panel-bg);
+}
+
+.banner[hidden] {
+  display: none;
+}
+
+.banner-conflict,
+.banner-deleted {
+  border-left: 3px solid var(--danger);
+}
+
+.banner-text {
+  flex: 1;
+  min-width: 0;
+}
+
+.banner-actions {
+  display: flex;
+  gap: 6px;
 }
 
 .editor-host {

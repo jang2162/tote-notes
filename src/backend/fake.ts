@@ -11,6 +11,7 @@ import {
   type FileKind,
   type FileSource,
   type MemoInfo,
+  type OutsideChange,
   type PendingOpen,
   type Settings,
   type SettingsPatch,
@@ -89,6 +90,10 @@ export interface FakeData {
   backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
   /** `revealBackups` calls. Absent in old seeds. */
   revealed?: number;
+  /** `backupNow` calls that went through. Absent in old seeds. */
+  backedUp?: number;
+  /** External path → how many `watchExternal` calls are not yet undone. Absent in old seeds. */
+  watched?: Record<string, number>;
 }
 
 export interface FakeStorage {
@@ -240,6 +245,7 @@ export class FakeBackend implements Backend {
     pending: [] as (() => void)[],
     drop: [] as ((paths: string[]) => void)[],
     config: [] as (() => void)[],
+    outside: [] as ((change: OutsideChange) => void)[],
   };
 
   constructor(private readonly storage: FakeStorage = memoryStorage()) {
@@ -273,6 +279,10 @@ export class FakeBackend implements Backend {
     this.data.pending.push({ kind: "notice", message });
     this.commit();
     this.poke();
+  }
+  /** Another app changed something, as the watcher reports it. The test changes `data` first. */
+  outside(change: OutsideChange): void {
+    for (const handler of this.handlers.outside) handler(change);
   }
   dropFiles(paths: string[]): void {
     for (const handler of this.handlers.drop) handler(paths);
@@ -420,8 +430,10 @@ export class FakeBackend implements Backend {
     };
   }
 
+  /** An open file without a draft takes what was read as its base, as the Rust side does. */
   async readExternal(path: string) {
     const data = this.data.files[path];
+    if (path in this.bases && !this.data.drafts[path]) this.bases[path] = data ?? null;
     return data === undefined ? new Uint8Array() : fromBase64(data);
   }
 
@@ -447,6 +459,20 @@ export class FakeBackend implements Backend {
     this.data.files[path] = data;
     delete this.data.drafts[path];
     this.bases[path] = data;
+    this.commit();
+  }
+
+  async watchExternal(path: string) {
+    const watched = (this.data.watched ??= {});
+    watched[path] = (watched[path] ?? 0) + 1;
+    this.commit();
+  }
+
+  async unwatchExternal(path: string) {
+    const watched = (this.data.watched ??= {});
+    if (!watched[path]) return;
+    watched[path] -= 1;
+    if (watched[path] === 0) delete watched[path];
     this.commit();
   }
 
@@ -499,6 +525,11 @@ export class FakeBackend implements Backend {
 
   async revealBackups() {
     this.data.revealed = (this.data.revealed ?? 0) + 1;
+    this.commit();
+  }
+
+  async backupNow() {
+    this.data.backedUp = (this.data.backedUp ?? 0) + 1;
     this.commit();
   }
 
@@ -722,6 +753,9 @@ export class FakeBackend implements Backend {
   }
   onFileDrop(handler: (paths: string[]) => void) {
     this.handlers.drop.push(handler);
+  }
+  onOutsideChange(handler: (change: OutsideChange) => void) {
+    this.handlers.outside.push(handler);
   }
 
   private memo(id: string): FakeMemo {
