@@ -1,3 +1,4 @@
+import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import { defaultFakeData, FakeBackend, memoryStorage } from "../backend/fake";
@@ -10,6 +11,7 @@ function host(): DocHost {
   return {
     backend,
     writes: new WriteScheduler(() => {}),
+    view: { state: EditorState.create(), dispatch: () => {} },
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,

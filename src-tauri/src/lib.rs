@@ -8,9 +8,14 @@ pub mod persist;
 pub mod session;
 pub mod workspace;
 
-use tauri::{Manager, RunEvent};
+use std::collections::HashSet;
+use std::io;
+use std::time::Duration;
 
-use app::{commands, menu, requests, windows, AppCore};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, RunEvent};
+
+use app::{commands, menu, requests, windows, AppCore, PendingOpen};
+use backup::SnapshotName;
 use cli::CliRequest;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -61,6 +66,7 @@ pub fn run() {
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
+            start_backups(app.handle().clone());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -103,6 +109,9 @@ pub fn run() {
             commands::scan_text,
             commands::search_text,
             commands::cancel_text_search,
+            commands::list_versions,
+            commands::read_version,
+            commands::reveal_backups,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");
@@ -119,4 +128,55 @@ pub fn run() {
         } => windows::open_latest(app),
         _ => {}
     });
+}
+
+/// Backup rounds on a thread of their own (spec 「백업」): the first one an interval after launch,
+/// since nothing has changed before it, and none at quit, which must stay quick.
+fn start_backups(app: AppHandle) {
+    let interval = backup_interval();
+    std::thread::spawn(move || {
+        // Windows whose last round failed: told once, then quietly retried every round until one
+        // goes through.
+        let mut failing = HashSet::new();
+        loop {
+            std::thread::sleep(interval);
+            let core = app.state::<AppCore>();
+            for (label, result) in core.backup_tick(SnapshotName::now()) {
+                match result {
+                    Ok(_) => {
+                        failing.remove(&label);
+                    }
+                    // The same name again (the same second, or a repeated daylight-saving hour):
+                    // the next round takes it under a new one.
+                    Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(err) => {
+                        eprintln!("tote: backup of {label} failed: {err}");
+                        if failing.insert(label.clone()) {
+                            core.push_pending(
+                                &label,
+                                PendingOpen::Notice {
+                                    message: format!("백업하지 못했습니다: {err}"),
+                                },
+                            );
+                            let _ = app.emit_to(
+                                EventTarget::webview_window(&label),
+                                "tote://pending",
+                                (),
+                            );
+                        }
+                    }
+                }
+            }
+        }
+    });
+}
+
+/// `backup::INTERVAL`; debug builds take `TOTE_BACKUP_INTERVAL_SECS` instead, so an agent's smoke
+/// check need not wait ten minutes.
+fn backup_interval() -> Duration {
+    let secs = std::env::var("TOTE_BACKUP_INTERVAL_SECS")
+        .ok()
+        .and_then(|secs| secs.parse::<u64>().ok())
+        .filter(|&secs| cfg!(debug_assertions) && secs > 0);
+    secs.map_or(backup::INTERVAL, Duration::from_secs)
 }

@@ -424,6 +424,45 @@ button.danger {
   background: var(--active-bg);
 }
 
+.modal.versions {
+  width: min(760px, 90vw);
+  max-width: none;
+}
+
+.versions-body {
+  display: grid;
+  grid-template-columns: 180px 1fr;
+  gap: 12px;
+  height: min(420px, 60vh);
+}
+
+.version-list {
+  max-height: none;
+  margin: 0;
+}
+
+.version-list li.current {
+  background: var(--active-bg);
+}
+
+.version-preview {
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--panel-bg);
+  font-family: var(--editor-font);
+  font-size: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.version-preview.error {
+  color: var(--danger);
+  font-family: inherit;
+}
+
 .modal.settings {
   width: min(720px, 90vw);
   max-width: none;

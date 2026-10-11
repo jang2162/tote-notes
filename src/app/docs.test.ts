@@ -1,3 +1,4 @@
+import { EditorState } from "@codemirror/state";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import {
@@ -36,6 +37,8 @@ function setup(seed: Partial<FakeData> = {}) {
     writes: new WriteScheduler((_key, error) => {
       throw error;
     }),
+    // A state no document has: these documents are never on show.
+    view: { state: EditorState.create(), dispatch: () => {} },
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,

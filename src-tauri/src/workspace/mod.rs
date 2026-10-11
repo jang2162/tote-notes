@@ -49,6 +49,8 @@ pub struct Workspace {
     root: PathBuf,
     id: String,
     index: MemoIndex,
+    /// A write since the last backup took it (`take_changed`).
+    changed: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -104,6 +106,7 @@ impl Workspace {
             root,
             id: meta.id,
             index,
+            changed: false,
         })
     }
 
@@ -135,6 +138,18 @@ impl Workspace {
 
     pub fn root(&self) -> &Path {
         &self.root
+    }
+
+    /// Something in the workspace is about to be written: the next backup round snapshots it.
+    /// Marked before the disk is touched, so a write that fails half way still counts.
+    pub fn mark_changed(&mut self) {
+        self.changed = true;
+    }
+
+    /// Whether anything was written since the last call; clears the mark. A round that could not
+    /// take everything marks it again.
+    pub fn take_changed(&mut self) -> bool {
+        std::mem::take(&mut self.changed)
     }
 
     pub fn name(&self) -> String {

@@ -2,6 +2,7 @@ import type { Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
 import type { Backend, LanguageInfo, MemoInfo, ViewerInfo } from "../backend/types";
+import { decodeText } from "../core/codec";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
@@ -30,6 +31,7 @@ import { MemoList } from "../ui/memo-list";
 import { openSettings } from "../ui/settings";
 import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
+import { openVersions } from "../ui/versions";
 import { ViewerHost } from "../viewer/host";
 import { LargeTextViewer } from "../viewer/large-text";
 import {
@@ -60,6 +62,8 @@ function extensionSignature(registry: Registry): string {
 const SESSION_DELAY_MS = 1000;
 
 export const NOT_OPENABLE = "열 수 없음";
+export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
+export const NO_VERSIONS = "이전 버전이 없습니다";
 export const OPEN_AS_TEXT = "텍스트로 열기";
 
 const PROBLEM_TEXT: Record<Problem, string> = {
@@ -94,6 +98,7 @@ export class AppController implements DocHost {
   );
   /** Open settings screens listen here: the backend takes one config handler per window. */
   private settingsOpen = false;
+  private versionsOpen = false;
   /** `extensionSignature` of the registry the caches were filled from. */
   private extensionSet = "";
   private readonly configListeners = new Set<() => void>();
@@ -650,6 +655,10 @@ export class AppController implements DocHost {
           return await this.showPicker();
         case "settings":
           return await this.showSettings();
+        case "versions":
+          return await this.showVersions();
+        case "reveal-backups":
+          return await this.backend.revealBackups();
       }
     } catch (error) {
       this.report(error);
@@ -749,6 +758,42 @@ export class AppController implements DocHost {
     // Escape closes the screen without its unsubscribe.
     for (const handler of subscribers) this.configListeners.delete(handler);
     this.settingsOpen = false;
+    if (this.tabs.active) this.view.focus();
+  }
+
+  /** 「이전 버전…」 (spec 「백업」 복원): the active memo's backed-up versions. The one picked
+   * replaces the text as a single edit — ⌘Z takes it back — and saves like any edit. */
+  async showVersions(): Promise<void> {
+    // The native menu works under a modal: a second pick must not stack a second dialog.
+    if (this.versionsOpen) return;
+    const doc = this.tabs.active;
+    if (doc) await doc.ensureLoaded();
+    if (!(doc instanceof MemoDoc) || doc !== this.tabs.active || !doc.state || doc.problem) {
+      this.statusBar.setMessage(VERSIONS_ONLY_IN_MEMOS);
+      return;
+    }
+    const versions = await this.backend.listVersions(doc.info.id);
+    if (!versions.length) {
+      this.statusBar.setMessage(NO_VERSIONS);
+      return;
+    }
+    this.versionsOpen = true;
+    try {
+      const picked = await openVersions(versions, async (version) => {
+        const bytes = await this.backend.readVersion(version.snapshot, version.file);
+        const decoded = decodeText(bytes);
+        if (!decoded) throw new Error("텍스트로 읽을 수 없는 버전입니다");
+        return decoded.text;
+      });
+      // The tab may have closed while the dialog was open: its text goes nowhere then.
+      if (picked && this.tabs.byId(doc.tabId) === doc) {
+        doc.restoreText(picked.text);
+        // A preview shows the text it was given; give it the restored one.
+        if (doc === this.tabs.active && doc.mode === "preview") this.show(doc);
+      }
+    } finally {
+      this.versionsOpen = false;
+    }
     if (this.tabs.active) this.view.focus();
   }
 

@@ -52,6 +52,9 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .item(&item(app, "import", "워크스페이스로 가져오기", None)?)
         .item(&item(app, "rename", "이름 바꾸기…", None)?)
         .separator()
+        .item(&item(app, "versions", "이전 버전…", None)?)
+        .item(&item(app, "reveal-backups", "백업 폴더 열기", None)?)
+        .separator()
         .item(&item(app, "close-tab", "탭 닫기", Some("CmdOrCtrl+W"))?)
         .item(&item(
             app,

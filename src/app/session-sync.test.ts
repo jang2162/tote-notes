@@ -1,3 +1,4 @@
+import { EditorState } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
 import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "../backend/fake";
@@ -20,6 +21,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const host: DocHost = {
     backend,
     writes: new WriteScheduler(() => {}),
+    view: { state: EditorState.create(), dispatch: () => {} },
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,
@@ -121,6 +123,7 @@ describe("SessionSync.build and sessionTab", () => {
         {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
+          view: { state: EditorState.create(), dispatch: () => {} },
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,
@@ -136,6 +139,7 @@ describe("SessionSync.build and sessionTab", () => {
         {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
+          view: { state: EditorState.create(), dispatch: () => {} },
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,

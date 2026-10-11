@@ -19,6 +19,8 @@ use std::sync::{Arc, Mutex, MutexGuard};
 use serde::Serialize;
 
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
+use crate::backup::snapshot::{self, Taken};
+use crate::backup::{retention, BackupDir, SnapshotName};
 use crate::extensions::registry::{self, Registry};
 use crate::extensions::{ExtensionStore, Scan};
 use crate::files::TokenStore;
@@ -403,6 +405,52 @@ impl AppCore {
         self.save_launch(&inner.launch);
     }
 
+    /// One backup round (spec 「백업」): each open window's workspace that changed since the last
+    /// round is snapshotted under `now`, then its old snapshots are pruned. Returns what each
+    /// snapshotted window got: the new folder, `None` when there was nothing to put in, or why the
+    /// round failed for it.
+    ///
+    /// The workspace lock is held only to read the mark, not while copying: saves go on during a
+    /// snapshot, which skips a file changed under it (`SkipReason::Changed`). A failed round, or one
+    /// that skipped such a file, leaves the workspace marked so the next round takes it.
+    pub fn backup_tick(&self, now: SnapshotName) -> Vec<(String, io::Result<Option<PathBuf>>)> {
+        let windows: Vec<(String, Arc<Mutex<Workspace>>)> = lock(&self.inner)
+            .windows
+            .iter()
+            .map(|(label, window)| (label.clone(), window.workspace.clone()))
+            .collect();
+        let mut ticked = Vec::new();
+        for (label, workspace) in windows {
+            let (root, id) = {
+                let mut workspace = lock(&workspace);
+                if !workspace.take_changed() {
+                    continue;
+                }
+                (workspace.root().to_path_buf(), workspace.id().to_string())
+            };
+            let dir = BackupDir::new(&self.paths.backups_dir(), &id);
+            // Left by an app that died mid-snapshot; this thread is the only one making them.
+            if let Err(err) = dir.remove_leftovers() {
+                eprintln!("tote: could not remove a half-made snapshot of {id}: {err}");
+            }
+            let result = snapshot::take(&root, &dir, now);
+            if !matches!(result, Ok(Taken { deferred: 0, .. })) {
+                lock(&workspace).mark_changed();
+            }
+            if let Ok(Taken {
+                folder: Some(_), ..
+            }) = result
+            {
+                // The snapshot stands either way; what will not go now goes next round.
+                if let Err(err) = retention::prune(&dir, now) {
+                    eprintln!("tote: could not prune the backups of {id}: {err}");
+                }
+            }
+            ticked.push((label, result.map(|taken| taken.folder)));
+        }
+        ticked
+    }
+
     pub fn is_quitting(&self) -> bool {
         lock(&self.inner).quitting
     }
@@ -450,6 +498,64 @@ mod tests {
 
     fn saved(core: &AppCore) -> LaunchState {
         LaunchState::load(&core.paths.launch_file()).unwrap()
+    }
+
+    #[test]
+    fn a_tick_snapshots_only_changed_workspaces_and_prunes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        let a_ws = core.workspace(&a).unwrap();
+        let a_id = lock(&a_ws).id().to_string();
+        let b_id = lock(&core.workspace(&b).unwrap()).id().to_string();
+        lock(&a_ws).create_memo("md", "메모".as_bytes()).unwrap();
+        // Over a month old: the round's pruning removes it.
+        let a_backups = BackupDir::new(&core.paths.backups_dir(), &a_id);
+        let old = SnapshotName::parse("20260901-120000").unwrap();
+        fs::create_dir_all(a_backups.path_of(old)).unwrap();
+
+        let now = SnapshotName::parse("20261012-120000").unwrap();
+        let ticked = core.backup_tick(now);
+        assert_eq!(ticked.len(), 1, "only the changed workspace");
+        assert_eq!(ticked[0].0, a);
+        assert_eq!(
+            ticked[0].1.as_ref().unwrap().as_deref(),
+            Some(a_backups.path_of(now).as_path())
+        );
+        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
+        let b_backups = BackupDir::new(&core.paths.backups_dir(), &b_id);
+        assert_eq!(b_backups.snapshots().unwrap(), vec![]);
+
+        let later = SnapshotName::parse("20261012-121000").unwrap();
+        assert!(core.backup_tick(later).is_empty(), "nothing changed since");
+        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
+    }
+
+    #[test]
+    fn a_failed_tick_keeps_the_workspace_marked_for_the_next() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let a_ws = core.workspace(&a).unwrap();
+        lock(&a_ws).create_memo("md", "메모".as_bytes()).unwrap();
+        let a_backups = BackupDir::new(&core.paths.backups_dir(), lock(&a_ws).id());
+        // The name is taken (the same second twice): this round makes nothing.
+        let now = SnapshotName::parse("20261012-120000").unwrap();
+        fs::create_dir_all(a_backups.path_of(now)).unwrap();
+        let ticked = core.backup_tick(now);
+        assert_eq!(ticked.len(), 1);
+        assert_eq!(
+            ticked[0].1.as_ref().unwrap_err().kind(),
+            io::ErrorKind::AlreadyExists
+        );
+
+        let later = SnapshotName::parse("20261012-121000").unwrap();
+        let ticked = core.backup_tick(later);
+        assert_eq!(
+            ticked[0].1.as_ref().unwrap().as_deref(),
+            Some(a_backups.path_of(later).as_path())
+        );
     }
 
     #[test]

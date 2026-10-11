@@ -1,4 +1,12 @@
-import { EditorState, type EditorSelection, type Extension, type Text } from "@codemirror/state";
+import { isolateHistory } from "@codemirror/commands";
+import {
+  EditorState,
+  type EditorSelection,
+  type Extension,
+  type Text,
+  type TransactionSpec,
+} from "@codemirror/state";
+import type { EditorView } from "@codemirror/view";
 
 import {
   errorCode,
@@ -51,6 +59,8 @@ export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 export interface DocHost {
   backend: Backend;
   writes: WriteScheduler;
+  /** The window's editor. It shows the active tab's state, and its listener calls `doc.update`. */
+  view: Pick<EditorView, "state" | "dispatch">;
   /** Editor extensions for a state of `doc` holding `text`, including the listener that calls
    * `doc.update`. */
   extensions(doc: Doc, options: { wrap: boolean; text: string }): Extension[];
@@ -415,6 +425,26 @@ export class MemoDoc extends Doc {
 
   private get unsaved(): boolean {
     return this.state !== null && this.state.doc !== this.savedText;
+  }
+
+  /** 「이 버전으로 되돌리기」 (spec 「백업」 복원): the whole text becomes `text` in one transaction,
+   * so one ⌘Z brings back what was there, and it saves as typing does. */
+  restoreText(text: string): void {
+    const start = this.state;
+    if (!start) return;
+    const spec: TransactionSpec = {
+      changes: { from: 0, to: start.doc.length, insert: text },
+      userEvent: "input.restore",
+      selection: { anchor: 0 },
+      // An undo step of its own: typing just before or after must not join it.
+      annotations: isolateHistory.of("full"),
+    };
+    if (this.host.view.state === start) {
+      this.host.view.dispatch(spec);
+      return;
+    }
+    const tr = start.update(spec);
+    this.update({ state: tr.state, startState: start, docChanged: true, selectionSet: true });
   }
 
   /** Applies the automatic title (spec 「제목 자동 생성」). Cheap to call often: the backend is

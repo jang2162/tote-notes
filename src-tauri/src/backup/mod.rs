@@ -4,6 +4,7 @@
 
 pub mod retention;
 pub mod snapshot;
+pub mod versions;
 
 use std::fs;
 use std::io;

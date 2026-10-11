@@ -16,8 +16,8 @@ use crate::workspace::TOTE_DIR;
 
 /// `.tote/manifest.json` inside a snapshot: what each copy holds, so the next snapshot can tell
 /// what is unchanged without reading it, and 「이전 버전」 can tell adjacent snapshots apart.
-const MANIFEST_FILE: &str = "manifest.json";
-const INDEX_FILE: &str = "index.json";
+pub(super) const MANIFEST_FILE: &str = "manifest.json";
+pub(super) const INDEX_FILE: &str = "index.json";
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]

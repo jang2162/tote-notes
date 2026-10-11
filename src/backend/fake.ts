@@ -16,6 +16,7 @@ import {
   type SettingsPatch,
   type TextMatch,
   type TextQuery,
+  type Version,
   type ViewerInfo,
   type WindowFrame,
   type WorkspaceInfo,
@@ -83,6 +84,11 @@ export interface FakeData {
   failListMemos?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
   failWrites?: number;
+  /** Memo ID → its versions in the backups, in any order. `listVersions` lists them newest first
+   * and does not compare neighbours: a seed lists only versions that differ. Absent in old seeds. */
+  backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
+  /** `revealBackups` calls. Absent in old seeds. */
+  revealed?: number;
 }
 
 export interface FakeStorage {
@@ -136,6 +142,13 @@ export function toBase64(bytes: Uint8Array): string {
     binary += String.fromCharCode(...bytes.subarray(i, i + 0x8000));
   }
   return btoa(binary);
+}
+
+async function sha256(text: string): Promise<string> {
+  const digest = new Uint8Array(
+    await crypto.subtle.digest("SHA-256", new TextEncoder().encode(text)),
+  );
+  return Array.from(digest, (byte) => byte.toString(16).padStart(2, "0")).join("");
 }
 
 export function fromBase64(data: string): Uint8Array {
@@ -461,6 +474,31 @@ export class FakeBackend implements Backend {
     this.data.relocations.push({ from, to });
     const item = this.data.workspaces.find((w) => w.path === from);
     if (item) Object.assign(item, { path: to, open: true, missing: false });
+    this.commit();
+  }
+
+  async listVersions(id: string): Promise<Version[]> {
+    const versions = [...(this.data.backups?.[id] ?? [])].sort((a, b) =>
+      a.snapshot < b.snapshot ? 1 : a.snapshot > b.snapshot ? -1 : 0,
+    );
+    return Promise.all(
+      versions.map(async ({ snapshot, file, text }) => {
+        const size = new TextEncoder().encode(text).length;
+        return { snapshot, file, size, sha256: await sha256(text) };
+      }),
+    );
+  }
+
+  async readVersion(snapshot: string, file: string) {
+    const version = Object.values(this.data.backups ?? {})
+      .flat()
+      .find((v) => v.snapshot === snapshot && v.file === file);
+    if (!version) throw new BackendError("not-found", `${snapshot}/${file}`);
+    return new TextEncoder().encode(version.text);
+  }
+
+  async revealBackups() {
+    this.data.revealed = (this.data.revealed ?? 0) + 1;
     this.commit();
   }
 

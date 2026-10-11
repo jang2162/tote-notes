@@ -13,6 +13,8 @@ use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
+use crate::backup::versions::{self, Version};
+use crate::backup::BackupDir;
 use crate::extensions::file_inside;
 use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
@@ -254,6 +256,40 @@ pub async fn import_file(
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).import_file(&path)?;
     Ok(info)
+}
+
+/// The backups of the window's workspace (`backups/<workspace id>/`).
+fn backup_dir(core: &AppCore, window: &WebviewWindow) -> CmdResult<BackupDir> {
+    let workspace = workspace_of(core, window)?;
+    let id = lock(&workspace).id().to_string();
+    Ok(BackupDir::new(&core.paths.backups_dir(), &id))
+}
+
+#[tauri::command]
+pub async fn list_versions(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<Vec<Version>> {
+    let dir = backup_dir(&core, &window)?;
+    blocking(move || Ok(versions::list(&dir, &id)?)).await
+}
+
+#[tauri::command]
+pub async fn read_version(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    snapshot: String,
+    file: String,
+) -> CmdResult<Response> {
+    let dir = backup_dir(&core, &window)?;
+    Ok(Response::new(versions::read(&dir, &snapshot, &file)?))
+}
+
+#[tauri::command]
+pub async fn reveal_backups(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<()> {
+    let dir = backup_dir(&core, &window)?;
+    Ok(versions::reveal(&dir)?)
 }
 
 #[tauri::command]

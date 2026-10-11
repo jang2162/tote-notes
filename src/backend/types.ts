@@ -170,6 +170,15 @@ export interface WorkspaceListItem {
   missing: boolean;
 }
 
+/** A memo's copy in a backup snapshot (`Version` in src-tauri/src/backup/versions.rs).
+ * `snapshot` is the folder name, `YYYYMMDD-HHMMSS` in local time. */
+export interface Version {
+  snapshot: string;
+  file: string;
+  size: number;
+  sha256: string;
+}
+
 export interface WindowFrame {
   x: number;
   y: number;
@@ -238,6 +247,13 @@ export interface Backend {
   /** The workspace listed at `from` now lives at `to`; opens it. `not-a-workspace` when `to` is
    * not one. */
   relocateWorkspace(from: string, to: string): Promise<void>;
+
+  /** The memo's earlier versions in this workspace's backups, newest first, only where the text
+   * differs from the next older one (spec 「백업」 복원). */
+  listVersions(id: string): Promise<Version[]>;
+  readVersion(snapshot: string, file: string): Promise<Uint8Array>;
+  /** Shows this workspace's backup folder in Finder. */
+  revealBackups(): Promise<void>;
 
   /** Where this window is, for the session; `null` where there is no native window. */
   windowFrame(): Promise<WindowFrame | null>;

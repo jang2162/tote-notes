@@ -19,6 +19,7 @@ import {
   type TextQuery,
   type TextScan,
   type TextSearch,
+  type Version,
   type WindowFrame,
   type WorkspaceInfo,
   type WorkspaceListItem,
@@ -127,6 +128,16 @@ export class TauriBackend implements Backend {
   }
   openWorkspace(path: string) {
     return call<void>("open_workspace", { path });
+  }
+
+  listVersions(id: string) {
+    return call<Version[]>("list_versions", { id });
+  }
+  async readVersion(snapshot: string, file: string) {
+    return bytesOf(await call<ArrayBuffer>("read_version", { snapshot, file }));
+  }
+  revealBackups() {
+    return call<void>("reveal_backups");
   }
 
   async windowFrame(): Promise<WindowFrame> {

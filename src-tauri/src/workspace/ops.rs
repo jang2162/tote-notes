@@ -29,6 +29,7 @@ impl Workspace {
     /// copy there is.
     pub fn write_memo(&mut self, id: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        self.mark_changed();
         atomic_write(&self.root.join(file), contents)?;
         self.memo_info(id)
     }
@@ -82,6 +83,7 @@ impl Workspace {
             }
             self.free_name(stem, ext, Some(&entry.file))
         };
+        self.mark_changed();
         if file != entry.file {
             fs::rename(self.root.join(&entry.file), self.root.join(&file))?;
         }
@@ -95,6 +97,7 @@ impl Workspace {
 
     pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        self.mark_changed();
         match fs::remove_file(self.root.join(file)) {
             Ok(()) => {}
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -136,6 +139,7 @@ impl Workspace {
         auto_title: bool,
         contents: &[u8],
     ) -> Result<MemoInfo, WorkspaceError> {
+        self.mark_changed();
         atomic_write(&self.root.join(&file), contents)?;
         let id = uuid::Uuid::new_v4().to_string();
         self.index.insert(
@@ -167,6 +171,7 @@ impl Workspace {
         {
             return self.memo_info(id);
         }
+        self.mark_changed();
         if from != to {
             fs::rename(self.root.join(from), self.root.join(&to))?;
         }
@@ -230,6 +235,41 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn every_write_marks_the_workspace_changed() {
+        let (root, mut ws) = workspace();
+        assert!(!ws.take_changed(), "opening is not a change");
+        let check = |ws: &mut Workspace, what: &str| {
+            assert!(ws.take_changed(), "{what}");
+            assert!(!ws.take_changed(), "{what}, asked again");
+        };
+        let memo = ws.create_memo("md", b"").unwrap();
+        check(&mut ws, "create");
+        ws.write_memo(&memo.id, b"# memo\n").unwrap();
+        check(&mut ws, "write");
+        ws.retitle_memo(&memo.id, "제목").unwrap();
+        check(&mut ws, "retitle");
+        ws.rename_memo(&memo.id, "이름.md").unwrap();
+        check(&mut ws, "rename");
+        ws.set_language(&memo.id, "python", "py").unwrap();
+        check(&mut ws, "language");
+        ws.import_memo("b.sh", b"echo").unwrap();
+        check(&mut ws, "import");
+        let outside = root.path().join("c.txt");
+        fs::write(&outside, "c").unwrap();
+        ws.import_file(&outside).unwrap();
+        check(&mut ws, "import file");
+        ws.delete_memo(&memo.id).unwrap();
+        check(&mut ws, "delete");
+
+        let other = ws.import_memo("d.md", b"d").unwrap();
+        assert!(ws.take_changed());
+        ws.read_memo(&other.id).unwrap();
+        ws.list_memos().unwrap();
+        ws.memo_info(&other.id).unwrap();
+        assert!(!ws.take_changed(), "reads change nothing");
     }
 
     #[test]
