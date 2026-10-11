@@ -52,6 +52,9 @@ impl Workspace {
     /// Every memo, most recently modified first. Picks up files other apps added or removed.
     pub fn list_memos(&mut self) -> Result<Vec<MemoInfo>, WorkspaceError> {
         if self.index.reconcile(&self.root)? {
+            // Before saving: a file found here must be followable through a rename even if the
+            // save fails.
+            self.resync_files();
             self.index.save()?;
         }
         let mut list: Vec<MemoInfo> = self
