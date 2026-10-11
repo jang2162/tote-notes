@@ -1,6 +1,6 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
-import { LONG_LINE_LIMIT } from "../../src/app/docs";
+import { LONG_LINE_LIMIT, RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import { menu, ready, start } from "./helpers";
 
@@ -132,6 +132,22 @@ test("a memo gone from disk says so, without 텍스트로 열기", async ({ page
   await page.locator(".tab", { hasText: "나" }).click();
   await expect(page.locator(".editor-placeholder p")).toHaveText("파일을 찾을 수 없습니다");
   await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
+});
+
+test("recovering a vanished memo moves the sidebar highlight to the new memo", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".memo-row.active")).toHaveCount(1);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  // Deleted in Finder while the tab was open: the next save makes a new memo of the text.
+  await page.evaluate(() => delete window.__tote.backend.data.memos.a);
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText(" 둘");
+  await expect(page.locator(".status-message")).toHaveText(RECOVERED_NOTICE);
+  // Coming back to the window lists the folder again: only the new memo is left in it.
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(page.locator(".memo-row .memo-name")).toHaveText(["가"]);
+  await expect(page.locator(".memo-row.active")).toHaveCount(1);
 });
 
 type SlowCall = "readMemo" | "openExternal" | "scanText" | "issueFileToken";

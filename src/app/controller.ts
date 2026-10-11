@@ -104,6 +104,9 @@ export class AppController implements DocHost {
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
   private restoring = true;
+  /** A memo listing has come through. The session is restored only after one: without the memos
+   * its memo tabs have nothing to stand for, and a session written then would drop them. */
+  private memosLoaded = false;
   private readonly memoList = new MemoList((id) => void this.openMemo(id));
   private readonly tabBar = new TabBar({
     select: (id) => void this.activateTab(id),
@@ -161,7 +164,11 @@ export class AppController implements DocHost {
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll();
     });
+    // Restores the session if it lists the memos; else the next listing that does (focus).
     await this.refreshMemos();
+  }
+
+  private async restoreSession(): Promise<void> {
     const first = await this.session.restore();
     if (first) await this.activate(first);
     else this.renderTabs();
@@ -261,6 +268,8 @@ export class AppController implements DocHost {
     const active = doc === this.tabs.active;
     if (doc instanceof MemoDoc && (change === "info" || change === "language"))
       this.memoList.upsert(doc.info);
+    // A save that recovered a vanished memo gave the tab a new memo.
+    if (active && doc instanceof MemoDoc && change === "info") this.memoList.setActive(doc.info.id);
     if (doc instanceof MemoDoc && change === "deleted") this.memoList.remove(doc.info.id);
     if (change === "language") {
       this.reconfigureLanguage(doc);
@@ -330,7 +339,7 @@ export class AppController implements DocHost {
     await Promise.all(
       this.tabs.list.map((doc) => doc.flush().catch((error: unknown) => this.report(error))),
     );
-    if (!this.restoring) await this.saveSessionNow();
+    await this.saveSessionNow();
   }
 
   private async onFlush(id: number): Promise<void> {
@@ -581,6 +590,7 @@ export class AppController implements DocHost {
   }
 
   private async saveSessionNow(): Promise<void> {
+    if (this.restoring) return;
     this.writes.schedule("session", 0, () => this.writeSession());
     await this.writes.flush("session");
   }
@@ -598,8 +608,10 @@ export class AppController implements DocHost {
       if (open.kind === "memo") {
         await this.refreshMemos();
         await this.openMemo(open.id);
-      } else {
+      } else if (open.kind === "external") {
         await this.openExternal(open.path);
+      } else {
+        this.statusBar.setMessage(open.message, "error");
       }
     }
   }
@@ -760,7 +772,11 @@ export class AppController implements DocHost {
       this.memoList.setMemos(await this.backend.listMemos());
     } catch (error) {
       this.report(error);
+      return;
     }
+    if (this.memosLoaded) return;
+    this.memosLoaded = true;
+    await this.restoreSession();
   }
 
   private report(error: unknown): void {

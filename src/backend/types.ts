@@ -30,7 +30,11 @@ export interface ExternalInfo {
   draft: { diskChanged: boolean } | null;
 }
 
-export type PendingOpen = { kind: "memo"; id: string } | { kind: "external"; path: string };
+/** What a `tote` request left for this window: something to open, or why it failed. */
+export type PendingOpen =
+  | { kind: "memo"; id: string }
+  | { kind: "external"; path: string }
+  | { kind: "notice"; message: string };
 
 /** A file a viewer or the large text viewer reads, named the way the tabs name them. */
 export type FileSource = { kind: "memo"; id: string } | { kind: "external"; path: string };

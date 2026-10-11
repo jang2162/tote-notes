@@ -35,13 +35,21 @@ pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
         .unwrap_or_else(|poisoned| poisoned.into_inner())
 }
 
-/// What a window's frontend should open when it next asks (`take_pending_opens`): the window may
-/// still be loading when a `tote` command arrives.
+/// What a window's frontend should open — or say — when it next asks (`take_pending_opens`): the
+/// window may still be loading when a `tote` command arrives.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
 pub enum PendingOpen {
-    Memo { id: String },
-    External { path: PathBuf },
+    Memo {
+        id: String,
+    },
+    External {
+        path: PathBuf,
+    },
+    /// Why a `tote` request failed, for the status bar.
+    Notice {
+        message: String,
+    },
 }
 
 pub struct AppCore {
@@ -645,6 +653,13 @@ mod tests {
         assert_eq!(
             serde_json::to_string(&PendingOpen::Memo { id: "m".into() }).unwrap(),
             r#"{"kind":"memo","id":"m"}"#
+        );
+        assert_eq!(
+            serde_json::to_string(&PendingOpen::Notice {
+                message: "워크스페이스가 없습니다: 없는곳".into()
+            })
+            .unwrap(),
+            r#"{"kind":"notice","message":"워크스페이스가 없습니다: 없는곳"}"#
         );
     }
 

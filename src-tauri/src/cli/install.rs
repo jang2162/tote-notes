@@ -1,5 +1,6 @@
 //! 「셸 명령 설치」: a `tote` symlink to the script inside the app bundle (spec 「`tote` CLI」).
 
+use std::ffi::OsStr;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -61,10 +62,26 @@ fn link(script: &Path, at: &Path) -> io::Result<()> {
     }
 }
 
-/// A link we made: it points at this script, or at the script of a tote.app in its old place.
+/// A link we made: it points at this script, or at the script of an app of the same bundle name in
+/// its old place. A `tote-dev.app` install leaves `tote.app`'s link alone, and the other way round;
+/// a script outside a bundle (a dev binary) owns only a link to itself.
 fn is_tote_link(script: &Path, at: &Path) -> bool {
-    fs::read_link(at)
-        .is_ok_and(|target| target == script || target.ends_with("Contents/Resources/bin/tote"))
+    fs::read_link(at).is_ok_and(|target| {
+        target == script
+            || app_bundle_name(script).is_some_and(|name| app_bundle_name(&target) == Some(name))
+    })
+}
+
+/// `<name>.app` of the script inside an app bundle, `…/<name>.app/Contents/Resources/bin/tote`.
+fn app_bundle_name(script: &Path) -> Option<&OsStr> {
+    if !script.ends_with("Contents/Resources/bin/tote") {
+        return None;
+    }
+    let name = script.ancestors().nth(4)?.file_name()?;
+    Path::new(name)
+        .extension()
+        .is_some_and(|ext| ext == "app")
+        .then_some(name)
 }
 
 #[cfg(all(test, unix))]
@@ -72,10 +89,16 @@ mod tests {
     use super::*;
     use std::os::unix::fs::PermissionsExt;
 
-    fn script(dir: &Path) -> PathBuf {
-        let script = dir.join("bin-tote");
+    /// The script inside `<dir>/<bundle>`, as an installed app has it.
+    fn bundled_script(dir: &Path, bundle: &str) -> PathBuf {
+        let script = dir.join(bundle).join("Contents/Resources/bin/tote");
+        fs::create_dir_all(script.parent().unwrap()).unwrap();
         fs::write(&script, "#!/bin/sh\n").unwrap();
         script
+    }
+
+    fn script(dir: &Path) -> PathBuf {
+        bundled_script(dir, "tote.app")
     }
 
     #[test]
@@ -131,5 +154,26 @@ mod tests {
         fs::write(bin.join("tote"), "someone else's").unwrap();
         let err = install(&script, &bin, &dir.path().join("fb")).unwrap_err();
         assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+    }
+
+    #[test]
+    fn a_link_of_another_bundle_name_is_not_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let script = bundled_script(dir.path(), "tote-dev.app");
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let release = Path::new("/Applications/tote.app/Contents/Resources/bin/tote");
+        std::os::unix::fs::symlink(release, bin.join("tote")).unwrap();
+        let err = install(&script, &bin, &dir.path().join("fb")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        assert_eq!(fs::read_link(bin.join("tote")).unwrap(), release);
+        fs::remove_file(bin.join("tote")).unwrap();
+        std::os::unix::fs::symlink(
+            "/Old/tote-dev.app/Contents/Resources/bin/tote",
+            bin.join("tote"),
+        )
+        .unwrap();
+        install(&script, &bin, &dir.path().join("fb")).unwrap();
+        assert_eq!(fs::read_link(bin.join("tote")).unwrap(), script);
     }
 }

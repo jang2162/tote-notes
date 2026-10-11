@@ -75,6 +75,8 @@ export interface FakeData {
   tokens: Record<string, string[]>;
   /** `cancelTextSearch` calls; the fake's searches finish at once, so tests count the asks. */
   textSearchCancelled: number;
+  /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
+  failListMemos?: number;
 }
 
 export interface FakeStorage {
@@ -245,6 +247,12 @@ export class FakeBackend implements Backend {
   poke(): void {
     for (const handler of this.handlers.pending) handler();
   }
+  /** A `tote` request that failed, as the native side queues it for this window. */
+  notice(message: string): void {
+    this.data.pending.push({ kind: "notice", message });
+    this.commit();
+    this.poke();
+  }
   dropFiles(paths: string[]): void {
     for (const handler of this.handlers.drop) handler(paths);
   }
@@ -268,6 +276,11 @@ export class FakeBackend implements Backend {
   }
 
   async listMemos() {
+    if (this.data.failListMemos) {
+      this.data.failListMemos -= 1;
+      this.commit();
+      throw new BackendError("io", "the workspace could not be read");
+    }
     return Object.entries(this.data.memos)
       .map(([id, memo]) => this.info(id, memo))
       .sort(

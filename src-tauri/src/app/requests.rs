@@ -14,8 +14,11 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
     let core = app.state::<AppCore>();
     let label = match &request.workspace {
         Some(name) => match workspace_dir(&core.workspace_root(), name) {
-            Some(dir) => windows::show(app, &dir).map_err(|e| e.message),
-            None => Err(format!("workspace name is not usable: {name}")),
+            Some(dir) => windows::show(app, &dir).map_err(|e| match e.code {
+                "not-found" => format!("워크스페이스가 없습니다: {name}"),
+                _ => format!("워크스페이스를 열지 못했습니다: {name}: {}", e.message),
+            }),
+            None => Err(format!("워크스페이스가 없습니다: {name}")),
         },
         None => match core.latest_window() {
             Some(label) => {
@@ -33,6 +36,11 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
         Ok(label) => label,
         Err(message) => {
             eprintln!("tote: {message}");
+            // No window was meant: the one the person used last says it, if there is one.
+            if let Some(label) = core.latest_window() {
+                notify(app, &label, message);
+                poke(app, &label);
+            }
             return;
         }
     };
@@ -46,7 +54,14 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
         }
         match lock(&workspace).import_file(path) {
             Ok(info) => core.push_pending(&label, PendingOpen::Memo { id: info.id }),
-            Err(err) => eprintln!("tote: {}: {err}", path.display()),
+            Err(err) => {
+                eprintln!("tote: {}: {err}", path.display());
+                notify(
+                    app,
+                    &label,
+                    format!("{} 를 가져오지 못했습니다: {err}", path.display()),
+                );
+            }
         }
     }
     if let Some(file) = &request.stdin_file {
@@ -54,6 +69,7 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
         // inbox is read and removed, never an arbitrary file of the person's.
         if !is_inbox_file(&core.paths.inbox_dir(), file) {
             eprintln!("tote: inbox 밖의 파일은 받지 않습니다: {}", file.display());
+            notify(app, &label, STDIN_FAILED.to_string());
         } else {
             let created = fs::read(file)
                 .map_err(WorkspaceError::from)
@@ -64,16 +80,28 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
                     core.push_pending(&label, PendingOpen::Memo { id: info.id });
                     let _ = fs::remove_file(file);
                 }
-                Err(err) => eprintln!("tote: {}: {err}", file.display()),
+                Err(err) => {
+                    eprintln!("tote: {}: {err}", file.display());
+                    notify(app, &label, STDIN_FAILED.to_string());
+                }
             }
         }
     }
-    // The frontend picks these up now, or when it finishes loading if the window is new.
-    let _ = app.emit_to(
-        EventTarget::webview_window(label.as_str()),
-        "tote://pending",
-        (),
-    );
+    poke(app, &label);
+}
+
+const STDIN_FAILED: &str = "표준 입력을 받지 못했습니다";
+
+/// Tells window `label` why a request failed. Queued like the opens, not emitted: a window that
+/// `windows::show` just made has no listener yet. The callers print the details to stderr too.
+fn notify(app: &AppHandle, label: &str, message: String) {
+    app.state::<AppCore>()
+        .push_pending(label, PendingOpen::Notice { message });
+}
+
+/// The frontend picks the queue up now, or when it finishes loading if the window is new.
+fn poke(app: &AppHandle, label: &str) {
+    let _ = app.emit_to(EventTarget::webview_window(label), "tote://pending", ());
 }
 
 /// The folder of workspace `name` under `root`. `--tote-request` can be given by any process, so
