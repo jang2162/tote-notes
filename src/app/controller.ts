@@ -764,8 +764,19 @@ export class AppController implements DocHost {
   /** 「이전 버전…」 (spec 「백업」 복원): the active memo's backed-up versions. The one picked
    * replaces the text as a single edit — ⌘Z takes it back — and saves like any edit. */
   async showVersions(): Promise<void> {
-    // The native menu works under a modal: a second pick must not stack a second dialog.
+    // The native menu works under a modal: a second pick must not stack a second dialog, nor
+    // start one while the first is still listing.
     if (this.versionsOpen) return;
+    this.versionsOpen = true;
+    try {
+      await this.pickVersion();
+    } finally {
+      this.versionsOpen = false;
+    }
+    if (this.tabs.active) this.view.focus();
+  }
+
+  private async pickVersion(): Promise<void> {
     const doc = this.tabs.active;
     if (doc) await doc.ensureLoaded();
     if (!(doc instanceof MemoDoc) || doc !== this.tabs.active || !doc.state || doc.problem) {
@@ -777,24 +788,17 @@ export class AppController implements DocHost {
       this.statusBar.setMessage(NO_VERSIONS);
       return;
     }
-    this.versionsOpen = true;
-    try {
-      const picked = await openVersions(versions, async (version) => {
-        const bytes = await this.backend.readVersion(version.snapshot, version.file);
-        const decoded = decodeText(bytes);
-        if (!decoded) throw new Error("텍스트로 읽을 수 없는 버전입니다");
-        return decoded.text;
-      });
-      // The tab may have closed while the dialog was open: its text goes nowhere then.
-      if (picked && this.tabs.byId(doc.tabId) === doc) {
-        doc.restoreText(picked.text);
-        // A preview shows the text it was given; give it the restored one.
-        if (doc === this.tabs.active && doc.mode === "preview") this.show(doc);
-      }
-    } finally {
-      this.versionsOpen = false;
-    }
-    if (this.tabs.active) this.view.focus();
+    const picked = await openVersions(versions, async (version) => {
+      const bytes = await this.backend.readVersion(version.snapshot, version.file);
+      const decoded = decodeText(bytes);
+      if (!decoded) throw new Error("텍스트로 읽을 수 없는 버전입니다");
+      return decoded.text;
+    });
+    // The tab may have closed while the dialog was open: its text goes nowhere then.
+    if (!picked || this.tabs.byId(doc.tabId) !== doc) return;
+    doc.restoreText(picked.text);
+    // A preview shows the text it was given; give it the restored one.
+    if (doc === this.tabs.active && doc.mode === "preview") this.show(doc);
   }
 
   private reconfigureLanguage(doc: Doc): void {
