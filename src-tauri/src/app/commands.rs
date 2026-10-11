@@ -3,7 +3,7 @@
 
 use std::borrow::Cow;
 use std::io;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use percent_encoding::percent_decode_str;
@@ -325,19 +325,25 @@ pub struct WorkspaceListItem {
     name: String,
     path: PathBuf,
     open: bool,
+    /// In the recent list, but its folder or `.tote/workspace.json` is gone.
+    missing: bool,
 }
 
-#[tauri::command]
-pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<WorkspaceListItem>> {
-    let recent = core.recent();
-    let mut list: Vec<WorkspaceListItem> = Workspace::list(&core.workspace_root())
+/// The workspaces under `root`, most recently used first, then the recent ones that vanished.
+fn workspace_items(
+    root: &Path,
+    recent: &[PathBuf],
+    is_open: impl Fn(&Path) -> bool,
+) -> Vec<WorkspaceListItem> {
+    let mut list: Vec<WorkspaceListItem> = Workspace::list(root)
         .into_iter()
         .map(|summary| {
             let path = std::fs::canonicalize(&summary.path).unwrap_or(summary.path);
             WorkspaceListItem {
-                open: core.is_open_path(&path),
+                open: is_open(&path),
                 name: summary.name,
                 path,
+                missing: false,
             }
         })
         .collect();
@@ -348,7 +354,52 @@ pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<Workspac
             .position(|p| *p == item.path)
             .unwrap_or(usize::MAX)
     });
-    Ok(list)
+    let gone = recent
+        .iter()
+        .filter(|path| !Workspace::is_workspace(path) && !list.iter().any(|i| i.path == **path))
+        .map(|path| WorkspaceListItem {
+            name: path
+                .file_name()
+                .map_or_else(|| path.to_string_lossy(), |n| n.to_string_lossy())
+                .into_owned(),
+            path: path.clone(),
+            open: false,
+            missing: true,
+        })
+        .collect::<Vec<_>>();
+    list.extend(gone);
+    list
+}
+
+#[tauri::command]
+pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<WorkspaceListItem>> {
+    Ok(workspace_items(
+        &core.workspace_root(),
+        &core.recent(),
+        |path| core.is_open_path(path),
+    ))
+}
+
+/// The workspace that was at `from` is now at `to`: the recent list and the windows to reopen
+/// follow it, and it opens.
+#[tauri::command]
+pub async fn relocate_workspace(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    from: String,
+    to: String,
+) -> CmdResult<()> {
+    let from = absolute_path(&from)?;
+    let to = std::fs::canonicalize(absolute_path(&to)?)?;
+    if !Workspace::is_workspace(&to) {
+        return Err(CommandError::new(
+            "not-a-workspace",
+            format!("{} is not a tote workspace", to.display()),
+        ));
+    }
+    core.relocate(&from, &to);
+    windows::show(&app, &to)?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -596,4 +647,42 @@ pub async fn search_text(
 #[tauri::command]
 pub fn cancel_text_search(core: State<'_, AppCore>, window: WebviewWindow) {
     core.begin_search(window.label(), 0);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_recent_workspace_whose_folder_is_gone_is_listed_as_missing() {
+        let root = tempfile::tempdir().unwrap();
+        let kept = Workspace::create(root.path(), "있는 곳").unwrap();
+        let kept_path = std::fs::canonicalize(kept.root()).unwrap();
+        // A folder without `.tote/workspace.json` is as gone as one that does not exist.
+        let hollow = root.path().join("텅 빈");
+        std::fs::create_dir(&hollow).unwrap();
+        // A workspace that lives outside the root is fine, not missing.
+        let elsewhere = tempfile::tempdir().unwrap();
+        let outside = Workspace::create(elsewhere.path(), "밖").unwrap();
+        let recent = vec![
+            outside.root().to_path_buf(),
+            PathBuf::from("/gone/옛"),
+            kept_path.clone(),
+            hollow.clone(),
+        ];
+        let items = workspace_items(root.path(), &recent, |p| p == kept_path);
+        let view: Vec<_> = items
+            .iter()
+            .map(|i| (i.name.as_str(), i.open, i.missing))
+            .collect();
+        assert_eq!(
+            view,
+            vec![
+                ("있는 곳", true, false),
+                ("옛", false, true),
+                ("텅 빈", false, true)
+            ]
+        );
+        assert_eq!(items[1].path, PathBuf::from("/gone/옛"));
+    }
 }

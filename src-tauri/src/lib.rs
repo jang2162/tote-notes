@@ -85,6 +85,7 @@ pub fn run() {
             commands::save_external,
             commands::list_workspaces,
             commands::create_workspace,
+            commands::relocate_workspace,
             commands::open_workspace,
             commands::flush_done,
             commands::close_window,

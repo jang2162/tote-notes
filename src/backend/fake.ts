@@ -48,6 +48,8 @@ export interface FakeData {
   workspaces: WorkspaceListItem[];
   /** What the next 「파일 열기」 dialog returns. */
   picks: string[];
+  /** Every `relocateWorkspace` call, in order. */
+  relocations: { from: string; to: string }[];
   clock: number;
   /** `readMemo` calls per memo ID — lets tests check that a restore loads lazily. */
   reads: Record<string, number>;
@@ -104,8 +106,9 @@ export function defaultFakeData(): FakeData {
     files: {},
     drafts: {},
     pending: [],
-    workspaces: [{ name: "메모", path: "/fake/메모", open: true }],
+    workspaces: [{ name: "메모", path: "/fake/메모", open: true, missing: false }],
     picks: [],
+    relocations: [],
     clock: 1000,
     reads: {},
     flushed: [],
@@ -439,13 +442,20 @@ export class FakeBackend implements Backend {
     if (!validName(name)) throw new BackendError("invalid-name", name);
     if (this.data.workspaces.some((w) => sameName(w.name, name)))
       throw new BackendError("already-exists", name);
-    this.data.workspaces.push({ name, path: `/fake/${name}`, open: true });
+    this.data.workspaces.push({ name, path: `/fake/${name}`, open: true, missing: false });
     this.commit();
   }
 
   async openWorkspace(path: string) {
     const workspace = this.data.workspaces.find((w) => w.path === path);
     if (workspace) workspace.open = true;
+    this.commit();
+  }
+
+  async relocateWorkspace(from: string, to: string) {
+    this.data.relocations.push({ from, to });
+    const item = this.data.workspaces.find((w) => w.path === from);
+    if (item) Object.assign(item, { path: to, open: true, missing: false });
     this.commit();
   }
 

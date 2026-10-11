@@ -166,6 +166,8 @@ export interface WorkspaceListItem {
   name: string;
   path: string;
   open: boolean;
+  /** In the recent list, but its folder or `.tote/workspace.json` is gone. */
+  missing: boolean;
 }
 
 export interface WindowFrame {
@@ -233,6 +235,9 @@ export interface Backend {
   listWorkspaces(): Promise<WorkspaceListItem[]>;
   createWorkspace(name: string): Promise<void>;
   openWorkspace(path: string): Promise<void>;
+  /** The workspace listed at `from` now lives at `to`; opens it. `not-a-workspace` when `to` is
+   * not one. */
+  relocateWorkspace(from: string, to: string): Promise<void>;
 
   /** Where this window is, for the session; `null` where there is no native window. */
   windowFrame(): Promise<WindowFrame | null>;

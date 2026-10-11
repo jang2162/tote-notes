@@ -1,5 +1,7 @@
 import { expect, test } from "@playwright/test";
 
+import { menu, start } from "./helpers";
+
 test.beforeEach(async ({ page }) => {
   await page.goto("/tests/e2e/pages/dialogs.html");
 });
@@ -42,8 +44,9 @@ test("Enter that finishes a composition does not submit", async ({ page }) => {
 test("the workspace picker shows why a name was refused", async ({ page }) => {
   await page.evaluate(
     () =>
-      void window.workspacePicker([{ name: "메모", path: "/w/메모", open: true }], {
+      void window.workspacePicker([{ name: "메모", path: "/w/메모", open: true, missing: false }], {
         open: () => {},
+        relocate: async () => null,
         create: async (name) => (name === "" ? "쓸 수 없는 이름입니다" : null),
       }),
   );
@@ -59,6 +62,7 @@ test("the workspace picker shows why a name was refused", async ({ page }) => {
     window.result = 0;
     void window.workspacePicker([], {
       open: () => {},
+      relocate: async () => null,
       create: () => {
         window.result = (window.result as number) + 1;
         return new Promise(() => {});
@@ -76,6 +80,7 @@ test("the workspace picker shows why a name was refused", async ({ page }) => {
     () =>
       void window.workspacePicker([], {
         open: () => {},
+        relocate: async () => null,
         create: () => Promise.reject(new Error("<b>디스크가 가득 찼습니다</b>")),
       }),
   );
@@ -93,6 +98,7 @@ test("a modal closed twice leaves the one under it able to take Escape", async (
     (window as unknown as { finish: () => void }).finish = () => {};
     void window.workspacePicker([], {
       open: () => {},
+      relocate: async () => null,
       create: () =>
         new Promise((resolve) => {
           (window as unknown as { finish: () => void }).finish = () => resolve(null);
@@ -106,4 +112,38 @@ test("a modal closed twice leaves the one under it able to take Escape", async (
   await page.evaluate(() => (window as unknown as { finish: () => void }).finish());
   await page.keyboard.press("Escape");
   await expect(page.locator(".modal")).toHaveCount(0);
+});
+
+test("a missing workspace offers to relocate", async ({ page }) => {
+  await start(page, {
+    workspaces: [
+      { name: "메모", path: "/fake/메모", open: true, missing: false },
+      { name: "옛", path: "/gone/옛", open: false, missing: true },
+    ],
+    picks: ["/new/옛"],
+  });
+  await menu(page, "open-workspace");
+  const row = page.locator(".picker-list li", { hasText: "옛" });
+  await expect(row).toHaveText("옛 (찾을 수 없음)");
+  await row.click();
+  await expect(page.locator(".modal")).toHaveCount(0);
+  const relocations = () => page.evaluate(() => window.__tote.backend.data.relocations);
+  expect(await relocations()).toEqual([{ from: "/gone/옛", to: "/new/옛" }]);
+});
+
+test("cancelling the folder dialog keeps the picker open with nothing relocated", async ({
+  page,
+}) => {
+  await page.goto("/tests/e2e/pages/dialogs.html");
+  await page.evaluate(
+    () =>
+      void window.workspacePicker([{ name: "옛", path: "/gone/옛", open: false, missing: true }], {
+        open: () => {},
+        create: async () => null,
+        relocate: async () => "",
+      }),
+  );
+  await page.locator(".picker-list li").click();
+  await expect(page.locator(".modal")).toHaveCount(1);
+  await expect(page.locator(".modal-error")).toHaveText("");
 });

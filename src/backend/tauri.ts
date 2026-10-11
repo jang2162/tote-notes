@@ -122,6 +122,9 @@ export class TauriBackend implements Backend {
   createWorkspace(name: string) {
     return call<void>("create_workspace", { name });
   }
+  relocateWorkspace(from: string, to: string) {
+    return call<void>("relocate_workspace", { from, to });
+  }
   openWorkspace(path: string) {
     return call<void>("open_workspace", { path });
   }

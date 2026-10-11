@@ -296,6 +296,26 @@ impl LaunchState {
     pub fn remove_open(&mut self, workspace: &Path) {
         self.open_windows.retain(|p| p != workspace);
     }
+
+    /// The workspace at `from` now lives at `to`: every mention follows it. A `to` that is already
+    /// listed keeps one entry, at the place `from` had in `recent`.
+    pub fn relocate(&mut self, from: &Path, to: &Path) {
+        for list in [&mut self.recent, &mut self.open_windows] {
+            let mut seen_to = false;
+            let mut moved = Vec::with_capacity(list.len());
+            for path in list.drain(..) {
+                let path = if path == from { to.to_path_buf() } else { path };
+                if path == to {
+                    if seen_to {
+                        continue;
+                    }
+                    seen_to = true;
+                }
+                moved.push(path);
+            }
+            *list = moved;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -570,5 +590,30 @@ mod tests {
         let loaded = LaunchState::load(&file).unwrap();
         assert_eq!(loaded.open_windows, vec![PathBuf::from("/w/업무")]);
         assert!(fs::read_to_string(&file).unwrap().contains("openWindows"));
+    }
+
+    #[test]
+    fn relocate_moves_every_mention_of_the_path() {
+        let mut launch = LaunchState {
+            recent: vec!["/w/a".into(), "/gone/옛".into(), "/w/b".into()],
+            open_windows: vec!["/gone/옛".into(), "/w/b".into()],
+        };
+        launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
+        assert_eq!(
+            launch.recent,
+            vec![
+                PathBuf::from("/w/a"),
+                PathBuf::from("/new/옛"),
+                PathBuf::from("/w/b")
+            ]
+        );
+        assert_eq!(
+            launch.open_windows,
+            vec![PathBuf::from("/new/옛"), PathBuf::from("/w/b")]
+        );
+        // The target already listed: one entry stays.
+        launch.recent = vec!["/new/옛".into(), "/gone/옛".into()];
+        launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
+        assert_eq!(launch.recent, vec![PathBuf::from("/new/옛")]);
     }
 }

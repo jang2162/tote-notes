@@ -715,6 +715,16 @@ export class AppController implements DocHost {
           return describeError(error);
         }
       },
+      relocate: async (from) => {
+        try {
+          const to = await this.backend.pickFolder();
+          if (to === null) return "";
+          await this.backend.relocateWorkspace(from, to);
+          return null;
+        } catch (error) {
+          return describeError(error);
+        }
+      },
     });
     if (this.tabs.active) this.view.focus();
   }

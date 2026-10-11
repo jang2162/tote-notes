@@ -121,6 +121,9 @@ export interface PickerActions {
   open(path: string): void;
   /** Resolves with the reason a name was refused, or `null` when the workspace was made. */
   create(name: string): Promise<string | null>;
+  /** Asks where the vanished workspace at `from` went. Resolves with `null` when it was pointed
+   * at a new place, the reason it was not, or `""` when the person cancelled (nothing to show). */
+  relocate(from: string): Promise<string | null>;
 }
 
 export async function workspacePicker(
@@ -133,12 +136,19 @@ export async function workspacePicker(
       { class: "picker-list" },
       ...items.map((item) => {
         const li = h("li", {
-          textContent: item.open ? `${item.name} (열림)` : item.name,
+          textContent: item.missing
+            ? `${item.name} (찾을 수 없음)`
+            : item.open
+              ? `${item.name} (열림)`
+              : item.name,
           title: item.path,
         });
         li.addEventListener("click", () => {
-          actions.open(item.path);
-          close(true);
+          if (item.missing) void relocate(item.path);
+          else {
+            actions.open(item.path);
+            close(true);
+          }
         });
         return li;
       }),
@@ -146,6 +156,20 @@ export async function workspacePicker(
     const input = h("input", { placeholder: "새 워크스페이스 이름" });
     input.spellcheck = false;
     const error = h("p", { class: "modal-error" });
+    let relocating = false;
+    const relocate = async (from: string) => {
+      if (relocating) return;
+      relocating = true;
+      try {
+        const problem = await actions.relocate(from);
+        if (problem === null) close(true);
+        else error.textContent = problem;
+      } catch (e) {
+        error.textContent = e instanceof Error ? e.message : String(e);
+      } finally {
+        relocating = false;
+      }
+    };
     let creating = false;
     const create = async () => {
       if (creating) return;

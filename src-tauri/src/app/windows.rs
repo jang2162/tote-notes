@@ -75,6 +75,8 @@ pub fn focus(app: &AppHandle, label: &str) {
 pub fn restore(app: &AppHandle, request: Option<CliRequest>) {
     let core = app.state::<AppCore>();
     let mut shown = 0;
+    // A folder that is gone stays in the recent list, so the picker offers it as 「찾을 수 없음」
+    // and the person can point tote at the place it moved to.
     for path in core.take_open_windows() {
         match show(app, &path) {
             Ok(_) => shown += 1,
