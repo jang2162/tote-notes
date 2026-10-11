@@ -1,5 +1,6 @@
 pub mod app;
 pub mod appdata;
+pub mod backup;
 pub mod cli;
 pub mod extensions;
 pub mod files;

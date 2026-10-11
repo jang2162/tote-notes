@@ -82,6 +82,15 @@ pub fn content_hash(bytes: &[u8]) -> String {
         .collect()
 }
 
+/// How far into a file a NUL byte makes it binary. The same value as `BINARY_PROBE_BYTES` in
+/// `src/core/codec.ts`, so backup, search and the editor agree on what is text.
+pub const BINARY_PROBE_BYTES: usize = 8192;
+
+/// Whether `bytes` are binary: a NUL within the first `BINARY_PROBE_BYTES` (spec 「백업」).
+pub fn is_binary(bytes: &[u8]) -> bool {
+    memchr::memchr(0, &bytes[..bytes.len().min(BINARY_PROBE_BYTES)]).is_some()
+}
+
 /// Reads JSON from `path`. Missing is `Ok(None)`. A file that does not parse as `T` is moved aside
 /// to `<name>.corrupt-<unix ms>` and also reads as `Ok(None)`: the caller starts over without
 /// destroying what was there (spec 「오류 처리」).
@@ -239,6 +248,19 @@ mod tests {
     #[derive(Debug, PartialEq, serde::Serialize, serde::Deserialize)]
     struct Sample {
         name: String,
+    }
+
+    #[test]
+    fn binary_means_a_nul_within_the_probe() {
+        assert!(!is_binary(b""));
+        assert!(!is_binary("한글 메모\n".as_bytes()));
+        assert!(is_binary(b"PNG\0"));
+        let mut late = vec![b'a'; BINARY_PROBE_BYTES];
+        late[BINARY_PROBE_BYTES - 1] = 0;
+        assert!(is_binary(&late));
+        late[BINARY_PROBE_BYTES - 1] = b'a';
+        late.push(0);
+        assert!(!is_binary(&late));
     }
 
     #[test]

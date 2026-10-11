@@ -77,6 +77,11 @@ impl AppPaths {
     pub fn inbox_dir(&self) -> PathBuf {
         self.data_dir.join("inbox")
     }
+
+    /// Workspace snapshots, one folder per workspace ID (spec 「백업」).
+    pub fn backups_dir(&self) -> PathBuf {
+        self.data_dir.join("backups")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -343,6 +348,7 @@ mod tests {
         assert_eq!(paths.buffers_dir(), PathBuf::from("/tmp/t/buffers"));
         assert_eq!(paths.extensions_dir(), PathBuf::from("/tmp/t/extensions"));
         assert_eq!(paths.inbox_dir(), PathBuf::from("/tmp/t/inbox"));
+        assert_eq!(paths.backups_dir(), PathBuf::from("/tmp/t/backups"));
     }
 
     #[test]

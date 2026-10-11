@@ -26,6 +26,8 @@ percent-encoding = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 regex = "1"
 memchr = "2"
+# Snapshot folders are named in local time (src/backup).
+time = { version = "0.3", features = ["local-offset", "formatting", "parsing", "macros"] }
 
 # Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs). The versions tao already pulls in.
 [target.'cfg(target_os = "macos")'.dependencies]
@@ -38,6 +40,7 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 
 [dev-dependencies]
 tempfile = "3"
+filetime = "0.2"
 
 # No `panic = "abort"`: with unwinding a panicking command fails alone, while abort would take the
 # whole app — and every unsaved edit in it — down with it.
