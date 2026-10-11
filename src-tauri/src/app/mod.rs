@@ -317,6 +317,10 @@ impl AppCore {
         inner.flush.window_gone(label)
     }
 
+    pub fn has_windows(&self) -> bool {
+        !lock(&self.inner).windows.is_empty()
+    }
+
     pub fn latest_window(&self) -> Option<String> {
         lock(&self.inner).focus.first().cloned()
     }
@@ -474,6 +478,20 @@ mod tests {
         core.start_quit();
         core.closed(&b);
         assert_eq!(saved(&core).open_windows, vec![b_path]);
+    }
+
+    #[test]
+    fn has_windows_follows_register_and_closed() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        assert!(!core.has_windows());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        assert!(core.has_windows());
+        core.closed(&a);
+        assert!(core.has_windows());
+        core.closed(&b);
+        assert!(!core.has_windows());
     }
 
     #[test]

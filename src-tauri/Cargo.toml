@@ -27,6 +27,15 @@ zip = { version = "9", default-features = false, features = ["deflate"] }
 regex = "1"
 memchr = "2"
 
+# Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs). The versions tao already pulls in.
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2 = "0.6"
+objc2-app-kit = { version = "0.3", default-features = false, features = [
+  "std",
+  "NSApplication",
+  "NSResponder",
+] }
+
 [dev-dependencies]
 tempfile = "3"
 

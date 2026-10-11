@@ -57,6 +57,8 @@ pub fn run() {
             app.manage(AppCore::load(
                 app.path().resource_dir()?.join("extensions"),
             )?);
+            #[cfg(target_os = "macos")]
+            app::lifecycle::hook_system_quit(app.handle());
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
             Ok(())
         })

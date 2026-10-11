@@ -3893,6 +3893,8 @@ version = "0.1.0"
 dependencies = [
  "dirs",
  "memchr",
+ "objc2",
+ "objc2-app-kit",
  "percent-encoding",
  "regex",
  "serde",

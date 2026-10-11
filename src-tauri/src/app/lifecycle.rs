@@ -83,6 +83,9 @@ pub fn resolve_blocked(app: &AppHandle, id: u64, goal: FlushGoal, anyway: bool) 
     app.state::<AppCore>().cancel_flush(id);
     if anyway {
         finish(app, goal);
+    } else if goal == FlushGoal::Quit {
+        #[cfg(target_os = "macos")]
+        system_quit::answer(app, false);
     }
 }
 
@@ -95,7 +98,101 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
         }
         FlushGoal::Quit => {
             app.state::<AppCore>().start_quit();
+            // macOS asked first (the Dock, a logout): answering it, not `exit`, lets a logout go
+            // on once tote is gone.
+            #[cfg(target_os = "macos")]
+            if system_quit::answer(app, true) {
+                return;
+            }
             app.exit(0);
         }
+    }
+}
+
+/// The Dock's 「종료」, a logout and a restart quit through `terminate:`, never through the menu's
+/// 「tote 종료」, and tao does not answer macOS's 「may it quit?」 — tote would go at once without
+/// writing anything. This adds that answer to tao's app delegate: 「later」, then the same
+/// write-then-close round as ⌘Q. Call once, from `setup`.
+#[cfg(target_os = "macos")]
+pub fn hook_system_quit(app: &AppHandle) {
+    system_quit::install(app);
+}
+
+#[cfg(target_os = "macos")]
+mod system_quit {
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::OnceLock;
+
+    use objc2::ffi::class_addMethod;
+    use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
+    use objc2::{sel, MainThreadMarker};
+    use objc2_app_kit::{NSApplication, NSApplicationTerminateReply};
+    use tauri::{AppHandle, Manager};
+
+    use super::super::flush::FlushGoal;
+    use super::super::AppCore;
+
+    type ShouldTerminate =
+        extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject) -> NSApplicationTerminateReply;
+
+    static APP: OnceLock<AppHandle> = OnceLock::new();
+    /// macOS was told 「later」 and waits for `replyToApplicationShouldTerminate:`.
+    static WAITING: AtomicBool = AtomicBool::new(false);
+
+    pub fn install(app: &AppHandle) {
+        let _ = APP.set(app.clone());
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        let Some(delegate) = NSApplication::sharedApplication(mtm).delegate() else {
+            return;
+        };
+        let class: &AnyClass = AsRef::<AnyObject>::as_ref(&*delegate).class();
+        let method: ShouldTerminate = should_terminate;
+        // SAFETY: the class is tao's own, registered at runtime without this selector, and the
+        // function matches the encoding: returns NSUInteger (`Q`), takes self, _cmd and the sender.
+        let added = unsafe {
+            class_addMethod(
+                class as *const AnyClass as *mut AnyClass,
+                sel!(applicationShouldTerminate:),
+                std::mem::transmute::<ShouldTerminate, Imp>(method),
+                c"Q@:@".as_ptr(),
+            )
+        };
+        if !added.as_bool() {
+            eprintln!("tote: could not answer macOS's quit; the Dock's quit will not write first");
+        }
+    }
+
+    extern "C-unwind" fn should_terminate(
+        _: &AnyObject,
+        _: Sel,
+        _: *mut AnyObject,
+    ) -> NSApplicationTerminateReply {
+        let Some(app) = APP.get() else {
+            return NSApplicationTerminateReply::TerminateNow;
+        };
+        let core = app.state::<AppCore>();
+        // No window has anything to write; and once tote is going, it goes.
+        if !core.has_windows() || core.is_quitting() {
+            return NSApplicationTerminateReply::TerminateNow;
+        }
+        WAITING.store(true, Ordering::SeqCst);
+        super::begin(app, FlushGoal::Quit);
+        NSApplicationTerminateReply::TerminateLater
+    }
+
+    /// Tells a waiting macOS whether tote quits. False when macOS is not waiting — the quit came
+    /// from tote's own menu, and tote exits by itself.
+    pub fn answer(app: &AppHandle, quit: bool) -> bool {
+        if !WAITING.swap(false, Ordering::SeqCst) {
+            return false;
+        }
+        let _ = app.run_on_main_thread(move || {
+            if let Some(mtm) = MainThreadMarker::new() {
+                NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(quit);
+            }
+        });
+        true
     }
 }
