@@ -76,6 +76,9 @@ pub struct AppCore {
     rescans: AtomicU64,
     /// Window label → the number of its latest large-text search.
     searches: Mutex<HashMap<String, u64>>,
+    /// Window label → the number of its latest workspace search. Apart from `searches`: the
+    /// search panel and a large text viewer each run their own.
+    workspace_searches: Mutex<HashMap<String, u64>>,
     /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
     watcher: OnceLock<Watcher>,
     inner: Mutex<Inner>,
@@ -145,6 +148,7 @@ impl AppCore {
             }),
             rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
+            workspace_searches: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
@@ -392,11 +396,22 @@ impl AppCore {
         lock(&self.searches).get(window) == Some(&request_id)
     }
 
+    /// A new workspace search from `window`: the earlier one of that window stops at its next
+    /// check.
+    pub fn begin_workspace_search(&self, window: &str, request_id: u64) {
+        lock(&self.workspace_searches).insert(window.to_string(), request_id);
+    }
+
+    pub fn workspace_search_is_live(&self, window: &str, request_id: u64) -> bool {
+        lock(&self.workspace_searches).get(window) == Some(&request_id)
+    }
+
     /// A window is gone. Returns the flush rounds it was the last one to wait for, by id.
     pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);
+        lock(&self.workspace_searches).remove(label);
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
         }
@@ -1012,5 +1027,25 @@ mod tests {
         assert!(core.search_is_live("ws-1", 2));
         core.begin_search("ws-2", 1);
         assert!(core.search_is_live("ws-2", 1) && core.search_is_live("ws-1", 2));
+    }
+
+    #[test]
+    fn workspace_searches_are_separate_from_text_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.begin_workspace_search("ws-1", 1);
+        core.begin_search("ws-1", 7);
+        // A large-text search does not cancel the panel's, nor the other way round.
+        assert!(core.workspace_search_is_live("ws-1", 1));
+        core.begin_workspace_search("ws-1", 2);
+        assert!(core.search_is_live("ws-1", 7));
+        assert!(!core.workspace_search_is_live("ws-1", 1));
+        assert!(core.workspace_search_is_live("ws-1", 2));
+        // The panel's cancel: 0, a number the frontend never uses.
+        core.begin_workspace_search("ws-1", 0);
+        assert!(!core.workspace_search_is_live("ws-1", 2));
+        core.begin_workspace_search("ws-2", 1);
+        core.closed("ws-2");
+        assert!(!core.workspace_search_is_live("ws-2", 1));
     }
 }

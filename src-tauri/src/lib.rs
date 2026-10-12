@@ -5,6 +5,7 @@ pub mod cli;
 pub mod extensions;
 pub mod files;
 pub mod persist;
+pub mod search;
 pub mod session;
 pub mod watch;
 pub mod workspace;
@@ -113,6 +114,8 @@ pub fn run() {
             commands::scan_text,
             commands::search_text,
             commands::cancel_text_search,
+            commands::search_workspace,
+            commands::cancel_workspace_search,
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,

@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
-use tauri::ipc::{InvokeBody, Request, Response};
+use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
@@ -21,6 +21,7 @@ use crate::extensions::registry::{ExtensionSummary, Registry};
 use crate::files::text::{self, SearchError, TextQuery, TextScan, TextSearch};
 use crate::files::{self, FileSource};
 use crate::persist::external::ExternalInfo;
+use crate::search::{self, SearchEvent, SearchQuery};
 use crate::session;
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
 
@@ -716,6 +717,49 @@ pub async fn search_text(
 #[tauri::command]
 pub fn cancel_text_search(core: State<'_, AppCore>, window: WebviewWindow) {
     core.begin_search(window.label(), 0);
+}
+
+/// Searches the window's workspace (spec 「워크스페이스 검색」), each file's matches sent on
+/// `on_event` as soon as it is done, then `Done`. A newer `request_id` from the window, or
+/// `cancel_workspace_search`, stops this one at its next file. `bad-request`: not a valid regex.
+#[tauri::command]
+pub async fn search_workspace(
+    core: State<'_, AppCore>,
+    app: AppHandle,
+    window: WebviewWindow,
+    query: SearchQuery,
+    request_id: u64,
+    on_event: Channel<SearchEvent>,
+) -> CmdResult<()> {
+    let workspace = workspace_of(&core, &window)?;
+    let label = window.label().to_string();
+    // Before the blocking pool, as in `search_text`.
+    core.begin_workspace_search(&label, request_id);
+    blocking(move || {
+        let core = app.state::<AppCore>();
+        // Only the list under the lock: a save or a watch batch waits for that, not the search.
+        let (root, files) = {
+            let mut workspace = lock(&workspace);
+            let files: Vec<(String, String)> = workspace
+                .list_memos()?
+                .into_iter()
+                .map(|memo| (memo.id, memo.file))
+                .collect();
+            (workspace.root().to_path_buf(), files)
+        };
+        let cancelled = || !core.workspace_search_is_live(&label, request_id);
+        // A send fails only once the window's page is gone; the search ends with it anyway.
+        let emit = |event| drop(on_event.send(event));
+        Ok(search::search(&root, &files, &query, &cancelled, &emit)?)
+    })
+    .await
+}
+
+/// The search panel closed: its search, if one is running, stops at its next file. The
+/// frontend numbers searches from 1, so 0 is live for no search.
+#[tauri::command]
+pub fn cancel_workspace_search(core: State<'_, AppCore>, window: WebviewWindow) {
+    core.begin_workspace_search(window.label(), 0);
 }
 
 #[cfg(test)]

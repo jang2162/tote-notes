@@ -81,6 +81,9 @@ export interface FakeData {
   tokens: Record<string, string[]>;
   /** `cancelTextSearch` calls; the fake's searches finish at once, so tests count the asks. */
   textSearchCancelled: number;
+  /** Workspace searches stopped before they finished, so tests can count them. Absent in old
+   * seeds. */
+  workspaceSearchCancelled?: number;
   /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
   failListMemos?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
@@ -710,6 +713,11 @@ export class FakeBackend implements Backend {
 
   async cancelTextSearch() {
     this.data.textSearchCancelled++;
+    this.commit();
+  }
+
+  async cancelWorkspaceSearch() {
+    this.data.workspaceSearchCancelled = (this.data.workspaceSearchCancelled ?? 0) + 1;
     this.commit();
   }
 

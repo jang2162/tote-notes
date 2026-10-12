@@ -207,6 +207,9 @@ export class TauriBackend implements Backend {
   cancelTextSearch() {
     return call<void>("cancel_text_search");
   }
+  cancelWorkspaceSearch() {
+    return call<void>("cancel_workspace_search");
+  }
   async pickExtensionPackage() {
     const picked = await open({
       multiple: false,
