@@ -76,6 +76,12 @@ export interface PerfSearch {
   regex: boolean;
 }
 
+/** `enabled`: the app runs with `TOTE_PERF=1`, so marks are kept — otherwise none are sent. */
+export interface PerfConfig {
+  enabled: boolean;
+  search: PerfSearch | null;
+}
+
 /** A matching line (`Match`). A line with several matches is one, at the first. */
 export interface SearchMatch {
   /** 0-based. */
@@ -356,8 +362,9 @@ export interface Backend {
   /** A timing mark for the performance measurement (tests/measure/perf.md); kept only when the
    * app runs with `TOTE_PERF=1`. Fire and forget. */
   perfMark(name: string): void;
-  /** The workspace search a measurement run asks for once the window is ready, if any. */
-  perfSearch(): Promise<PerfSearch | null>;
+  /** Whether marks are kept, and the workspace search a measurement run asks for once the window
+   * is ready. */
+  perfConfig(): Promise<PerfConfig>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
   pickExtensionPackage(): Promise<string | null>;
   pickFolder(): Promise<string | null>;

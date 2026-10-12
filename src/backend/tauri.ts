@@ -15,7 +15,7 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
-  type PerfSearch,
+  type PerfConfig,
   type SearchEvent,
   type SearchQuery,
   type Settings,
@@ -224,8 +224,8 @@ export class TauriBackend implements Backend {
     // A mark must never be what fails a window.
     void call<void>("perf_mark", { name }).catch(() => {});
   }
-  perfSearch() {
-    return call<PerfSearch | null>("perf_search");
+  perfConfig() {
+    return call<PerfConfig>("perf_config");
   }
   async pickExtensionPackage() {
     const picked = await open({

@@ -22,18 +22,37 @@ pub fn start() {
     START.get_or_init(Instant::now);
 }
 
-/// Adds the mark `name`, when marks are on.
-pub fn mark(name: &str) {
-    let log = LOG.get_or_init(|| {
+fn log() -> Option<&'static PerfLog> {
+    LOG.get_or_init(|| {
         let path = AppPaths::resolve()?.perf_log();
         PerfLog::open(
             std::env::var_os("TOTE_PERF"),
             &path,
             *START.get_or_init(Instant::now),
         )
-    });
-    if let Some(log) = log {
+    })
+    .as_ref()
+}
+
+/// Adds the mark `name`, when marks are on.
+pub fn mark(name: &str) {
+    if let Some(log) = log() {
         log.mark(name);
+    }
+}
+
+/// What a window asks once as it starts: whether to send marks at all, so a run without
+/// `TOTE_PERF=1` costs no IPC per tab, and the search a measurement run wants.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct PerfConfig {
+    pub enabled: bool,
+    pub search: Option<PerfSearch>,
+}
+
+pub fn config() -> PerfConfig {
+    PerfConfig {
+        enabled: log().is_some(),
+        search: PerfSearch::from_env(),
     }
 }
 

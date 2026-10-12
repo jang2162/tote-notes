@@ -122,7 +122,7 @@ pub fn run() {
             commands::read_version,
             commands::reveal_backups,
             commands::perf_mark,
-            commands::perf_search,
+            commands::perf_config,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");

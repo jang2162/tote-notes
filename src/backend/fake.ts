@@ -829,8 +829,8 @@ export class FakeBackend implements Backend {
   /** The measurement runs against the app only. */
   perfMark(_name: string) {}
 
-  async perfSearch() {
-    return null;
+  async perfConfig() {
+    return { enabled: false, search: null };
   }
 
   private issue(owner: string, name: string, data: string): string {

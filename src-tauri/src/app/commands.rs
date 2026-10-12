@@ -20,7 +20,7 @@ use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
 use crate::files::text::{self, SearchError, TextQuery, TextScan, TextSearch};
 use crate::files::{self, FileSource};
-use crate::perf::{self, PerfSearch};
+use crate::perf::{self, PerfConfig};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
 use crate::session;
@@ -769,10 +769,11 @@ pub fn perf_mark(name: String) {
     perf::mark(&name);
 }
 
-/// The workspace search a measurement run asks the window to run once it is ready, if any.
+/// Whether the window sends timing marks, and the workspace search a measurement run asks it to
+/// run once it is ready, if any.
 #[tauri::command]
-pub fn perf_search() -> Option<PerfSearch> {
-    PerfSearch::from_env()
+pub fn perf_config() -> PerfConfig {
+    perf::config()
 }
 
 #[cfg(test)]

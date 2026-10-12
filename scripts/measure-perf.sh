@@ -1,5 +1,12 @@
 #!/usr/bin/env bash
 : "${TOTE_DATA_DIR:?TOTE_DATA_DIR must name an empty scratch folder: the measured app keeps all its data there}"
+# The scenario folders under TOTE_DATA_DIR are deleted and made again, so only an empty folder, or
+# one an earlier run of this script marked as its own, is taken.
+MARKER="$TOTE_DATA_DIR/.tote-perf-measure"
+if [ -d "$TOTE_DATA_DIR" ] && [ -n "$(ls -A "$TOTE_DATA_DIR")" ] && [ ! -f "$MARKER" ]; then
+  echo "TOTE_DATA_DIR is neither empty nor a folder of this script's: $TOTE_DATA_DIR" >&2
+  exit 2
+fi
 # The performance measurement of tests/measure/perf.md, by its pre-registered rules:
 #   TOTE_DATA_DIR=$(mktemp -d) pnpm perf:measure <fixtures dir from pnpm perf:fixtures>
 # Builds the `perf` bundle (release optimisation, tote's own debug assertions on so
@@ -20,6 +27,8 @@ case "$TOTE_DATA_DIR" in
   /*) ;;
   *) echo "TOTE_DATA_DIR must be absolute" >&2; exit 2 ;;
 esac
+mkdir -p "$TOTE_DATA_DIR"
+touch "$MARKER"
 FIXTURES=${1:?usage: TOTE_DATA_DIR=<scratch> pnpm perf:measure <fixtures dir>}
 FIXTURES=$(cd "$FIXTURES" && pwd)
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -32,10 +41,20 @@ LOAD_WAIT_MAX_SECS=${PERF_LOAD_WAIT_MAX_SECS:-1800}
 
 say() { printf '[perf %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
-# Another tote-dev would take the requests (single-instance goes by identifier) and the quit.
-if pgrep -f 'tote-dev.app/Contents/MacOS/' >/dev/null; then
-  echo "a tote-dev is running; quit it first:" >&2
-  pgrep -fl 'tote-dev.app/Contents/MacOS/' >&2
+# Single-instance goes by identifier, not by binary: any app with dev.tote.note.dev — a tote-dev
+# bundle, `pnpm app:dev` (target/debug/tote), another worktree's — would take the measured app's
+# requests and open the fixtures in its own window, on the person's screen. Its socket is
+# /tmp/dev_tote_note_dev_si.sock (the plugin's `socket_path`). Never connect to it to check: a
+# running app takes any connection as a `tote` request and comes to the front.
+socket_owners() {
+  lsof -U 2>/dev/null | awk '$NF ~ /^\/tmp\/dev_tote_note_dev.*_si\.sock$/ {print $2}' | sort -u
+}
+tote_dev_processes() {
+  pgrep -fl 'tote-dev\.app/Contents/MacOS/|/target/(debug|release|perf)/tote( |$)' || true
+}
+if [ -n "$(socket_owners)" ] || [ -n "$(tote_dev_processes)" ]; then
+  echo "a tote-dev (a bundle or pnpm app:dev) is running; quit it first:" >&2
+  tote_dev_processes >&2
   exit 1
 fi
 
@@ -79,6 +98,11 @@ fi
 launch() {
   local data=$1
   shift
+  # Started by someone else since the last run: stop rather than hand it our requests.
+  if [ -n "$(socket_owners)" ]; then
+    echo "another dev.tote.note.dev app took the single-instance socket; stopping" >&2
+    exit 1
+  fi
   env TOTE_DATA_DIR="$data" TOTE_PERF=1 ${BACKGROUND[@]+"${BACKGROUND[@]}"} "$@" "$BIN" \
     >>"$data/app.log" 2>&1 &
   APP_PID=$!
@@ -102,17 +126,24 @@ wait_mark() {
 # request to the running app and exits, and must not add marks of its own.
 open_file() {
   local data=$1 file=$2
+  # Only to the app this script started: the request goes to whoever holds the socket.
+  if [ "$(socket_owners)" != "$APP_PID" ]; then
+    say "the single-instance socket is not the measured app's ($APP_PID); not sending $file"
+    return
+  fi
   env TOTE_DATA_DIR="$data" ${BACKGROUND[@]+"${BACKGROUND[@]}"} "$BIN" \
     "--tote-request={\"files\":[\"$file\"]}" >>"$data/app.log" 2>&1
 }
 
+# By process ID, never by name: another tote-dev may be a person's or another agent's. SIGTERM
+# ends it at once (no flush round), which no metric includes; the data folder is the script's.
 quit_app() {
-  osascript -e 'quit app "tote-dev"' >/dev/null 2>&1 || true
+  kill -TERM "$APP_PID" 2>/dev/null || true
   local waited=0
   while kill -0 "$APP_PID" 2>/dev/null; do
     if [ "$waited" -ge 300 ]; then
-      say "tote-dev did not quit in 30s; killing it"
-      kill "$APP_PID" 2>/dev/null || true
+      say "tote-dev did not end in 30s; killing it"
+      kill -KILL "$APP_PID" 2>/dev/null || true
       sleep 1
       break
     fi

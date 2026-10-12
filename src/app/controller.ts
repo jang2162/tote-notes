@@ -1,7 +1,14 @@
 import type { Extension } from "@codemirror/state";
 import { EditorView, type ViewUpdate } from "@codemirror/view";
 
-import type { Backend, LanguageInfo, MemoInfo, OutsideChange, ViewerInfo } from "../backend/types";
+import type {
+  Backend,
+  LanguageInfo,
+  MemoInfo,
+  OutsideChange,
+  PerfConfig,
+  ViewerInfo,
+} from "../backend/types";
 import { decodeText } from "../core/codec";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
@@ -124,7 +131,7 @@ export class AppController implements DocHost {
     open: (id, line, column) =>
       void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
     onEscape: () => this.closeSearch(),
-    mark: (name) => this.backend.perfMark(name),
+    mark: (name) => this.mark(name),
   });
   private readonly sidebar = new Sidebar(this.memoList, this.searchPanel);
   private readonly tabBar = new TabBar({
@@ -148,6 +155,8 @@ export class AppController implements DocHost {
    * have had their first colours (`open-first-tokens`) — timing marks, tests/measure/perf.md. */
   private painting: string | null = null;
   private readonly coloured = new Set<string>();
+  /** Marks are sent only when the app keeps them (`TOTE_PERF=1`); asked once as the window starts. */
+  private perf: PerfConfig = { enabled: false, search: null };
 
   constructor(
     root: HTMLElement,
@@ -163,7 +172,12 @@ export class AppController implements DocHost {
   }
 
   async start(): Promise<void> {
-    const info = await this.backend.workspaceInfo();
+    const [info, perf] = await Promise.all([
+      this.backend.workspaceInfo(),
+      // A mark must never be what fails a window.
+      this.backend.perfConfig().catch(() => this.perf),
+    ]);
+    this.perf = perf;
     this.deviceId = info.deviceId;
     document.title = info.name;
     await this.loadRegistry();
@@ -199,12 +213,12 @@ export class AppController implements DocHost {
     // Memos are markdown: the first ⌘N then finds its grammars in the worker already.
     const markdown = this.registry.language("markdown");
     if (markdown) this.highlight.preload(markdown);
-    this.backend.perfMark("app-ready");
+    this.mark("app-ready");
     // A measurement run's search (TOTE_PERF_SEARCH), run as if typed into the panel.
-    const perfSearch = await this.backend.perfSearch().catch(() => null);
-    if (perfSearch) {
+    const search = this.perf.search;
+    if (search) {
       this.sidebar.show("search");
-      this.searchPanel.run(perfSearch.query, perfSearch.regex);
+      this.searchPanel.run(search.query, search.regex);
     }
   }
 
@@ -213,7 +227,7 @@ export class AppController implements DocHost {
     if (first) await this.activate(first);
     else this.renderTabs();
     this.restoring = false;
-    requestAnimationFrame(() => this.backend.perfMark("restore-done"));
+    this.markNextFrame("restore-done");
   }
 
   private async loadRegistry(): Promise<void> {
@@ -265,9 +279,9 @@ export class AppController implements DocHost {
     this.dropHighlight(doc);
     if (!lang || !key) return [];
     const highlighting = workerHighlighting(this.highlight, lang, () => {
-      if (this.coloured.has(doc.tabId)) return;
+      if (!this.perf.enabled || this.coloured.has(doc.tabId)) return;
       this.coloured.add(doc.tabId);
-      this.backend.perfMark(`open-first-tokens:${doc.tabId}`);
+      this.mark(`open-first-tokens:${doc.tabId}`);
     });
     this.highlights.set(doc, { key, highlighting });
     if (doc === this.tabs.active) this.syncHighlightVisibility();
@@ -382,6 +396,7 @@ export class AppController implements DocHost {
     if (this.panel?.doc === doc) this.closePanel();
     const next = this.tabs.remove(doc);
     this.dropHighlight(doc);
+    this.coloured.delete(doc.tabId);
     if (wasActive) {
       if (next) await this.activate(next);
       else this.showEmpty();
@@ -427,7 +442,7 @@ export class AppController implements DocHost {
   private async activate(doc: Doc): Promise<void> {
     const previous = this.tabs.active;
     if (previous === doc) return;
-    this.backend.perfMark(`open-start:${doc.tabId}`);
+    this.mark(`open-start:${doc.tabId}`);
     this.painting = doc.tabId;
     if (!(doc instanceof MemoDoc) || doc.info.id !== this.pendingLine?.memoId)
       this.pendingLine = null;
@@ -636,7 +651,15 @@ export class AppController implements DocHost {
   private markPainted(doc: Doc): void {
     if (this.painting !== doc.tabId) return;
     this.painting = null;
-    requestAnimationFrame(() => this.backend.perfMark(`open-first-paint:${doc.tabId}`));
+    this.markNextFrame(`open-first-paint:${doc.tabId}`);
+  }
+
+  private mark(name: string): void {
+    if (this.perf.enabled) this.backend.perfMark(name);
+  }
+
+  private markNextFrame(name: string): void {
+    if (this.perf.enabled) requestAnimationFrame(() => this.backend.perfMark(name));
   }
 
   private closePanel(): void {
