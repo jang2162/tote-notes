@@ -1,5 +1,6 @@
 import { expect, test, type Page } from "@playwright/test";
 
+import { LONG_LINE_LIMIT } from "../../src/app/docs";
 import { fakeMemo } from "../../src/backend/fake";
 import { menu, start } from "./helpers";
 
@@ -90,6 +91,86 @@ test("typing again cancels the previous search", async ({ page }) => {
   expect(
     await page.evaluate(() => window.__tote.backend.data.workspaceSearchCancelled ?? 0),
   ).toBeGreaterThanOrEqual(1);
+});
+
+test("a cancelled search's late results stay out of the new one", async ({ page }) => {
+  // As in the app: the memo a search had taken when the next one came is still sent.
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "fox"), b: fakeMemo("나.md", "foo") },
+    searchDelayMs: 300,
+    searchFinishesTakenMemo: true,
+  });
+  await openSearch(page);
+  await page.keyboard.type("fo");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.workspaceSearchCalls?.length), {
+      intervals: [10],
+    })
+    .toBe(1);
+  await page.keyboard.type("o");
+  await expect(page.locator(".search-status")).toHaveText("1개 파일에서 1개");
+  await expect(page.locator(".search-file-title")).toHaveText(["나"]);
+  // The first search did send 가 after the second began; the panel left it out.
+  expect(await page.evaluate(() => window.__tote.backend.data.workspaceSearchLateFiles ?? 0)).toBe(
+    1,
+  );
+});
+
+test("a result opens from the keyboard", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "foo one"), c: fakeMemo("다.txt", "x\n  foo end") },
+  });
+  await openSearch(page);
+  await page.keyboard.type("foo");
+  const row = page.locator(".search-file").nth(1).locator(".search-match");
+  await expect(row).toHaveAttribute("role", "button");
+  await row.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다.txt");
+  await expect(page.locator(".status-position")).toHaveText("줄 2, 열 3");
+});
+
+test("a result in a memo shown in preview puts the cursor there for ⇧⌘V", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "# 제목\n\n둘째 foo") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await menu(page, "toggle-preview");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  await openSearch(page);
+  await page.keyboard.type("foo");
+  await page.locator(".search-match").click();
+  // The preview stays; the editor opens at the match.
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  await menu(page, "toggle-preview");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  await expect(page.locator(".status-position")).toHaveText("줄 3, 열 4");
+});
+
+test("a result in a memo the large text viewer shows opens at its line", async ({ page }) => {
+  const rows = Array.from({ length: 300 }, (_, i) => `row ${i}`).join("\n");
+  await start(page, {
+    memos: { a: fakeMemo("long.txt", `${"L".repeat(LONG_LINE_LIMIT + 1)}\n${rows}\nneedle here`) },
+  });
+  await openSearch(page);
+  await page.keyboard.type("needle");
+  const result = page.locator(".search-match");
+  // The viewer opens after the click is handled, as in the app where a scan takes its time: the
+  // line waits for it.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const scan = backend.scanText.bind(backend);
+    backend.scanText = async (source) => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      return scan(source);
+    };
+  });
+  await result.click();
+  const current = page.locator(".large-text .large-text-line.current");
+  await expect(current).toHaveText("needle here");
+  // Already on show, the viewer moves at once.
+  await page.evaluate(() => window.__tote.app.largeText!.viewer.goToLine(0));
+  await expect(current).not.toHaveText("needle here");
+  await result.click();
+  await expect(current).toHaveText("needle here");
 });
 
 test("a bad regex says so and the next keystroke searches again", async ({ page }) => {

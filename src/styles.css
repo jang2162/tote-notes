@@ -227,6 +227,11 @@ body {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
 }
 
+.search-match:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
 .search-line {
   display: flex;
   gap: 8px;

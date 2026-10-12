@@ -215,12 +215,19 @@ export class SearchPanel {
     const first = match.line - match.before.length;
     const row = h(
       "div",
-      { class: "search-match" },
+      { class: "search-match", tabIndex: 0 },
       ...match.before.map((text, i) => resultLine(first + i, text, "context")),
       resultLine(match.line, match.text, "hit"),
       ...match.after.map((text, i) => resultLine(match.line + 1 + i, text, "context")),
     );
-    row.addEventListener("click", () => this.options.open(memoId, match.line, match.column));
+    row.setAttribute("role", "button");
+    const open = () => this.options.open(memoId, match.line, match.column);
+    row.addEventListener("click", open);
+    row.addEventListener("keydown", (event) => {
+      if (event.key !== "Enter" && event.key !== " ") return;
+      event.preventDefault();
+      open();
+    });
     return row;
   }
 }

@@ -92,6 +92,13 @@ export interface FakeData {
   /** How long a workspace search waits before each memo, so a test can start another meanwhile;
    * without it each memo waits a microtask. Absent in old seeds. */
   searchDelayMs?: number;
+  /** A workspace search checks for a cancel before it takes a memo, not after the wait: a memo
+   * taken just before a newer search came is still searched and sent, as the app's threads do
+   * with the file in hand. Absent in old seeds. */
+  searchFinishesTakenMemo?: boolean;
+  /** `file` events a workspace search sent after a newer one or a cancel had stopped it. Absent
+   * in old seeds. */
+  workspaceSearchLateFiles?: number;
   /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
   failListMemos?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
@@ -753,16 +760,20 @@ export class FakeBackend implements Backend {
     let total = 0;
     let truncated = false;
     let cancelled = false;
+    const stopped = () => {
+      if (this.liveWorkspaceSearch === requestId) return false;
+      cancelled = true;
+      this.data.workspaceSearchCancelled = (this.data.workspaceSearchCancelled ?? 0) + 1;
+      this.commit();
+      return true;
+    };
+    const takeFirst = this.data.searchFinishesTakenMemo === true;
     for (const [memoId, memo] of query.query ? Object.entries(this.data.memos) : []) {
+      if (takeFirst && stopped()) break;
       await (this.data.searchDelayMs
         ? new Promise((resolve) => setTimeout(resolve, this.data.searchDelayMs))
         : new Promise<void>((resolve) => queueMicrotask(resolve)));
-      if (this.liveWorkspaceSearch !== requestId) {
-        cancelled = true;
-        this.data.workspaceSearchCancelled = (this.data.workspaceSearchCancelled ?? 0) + 1;
-        this.commit();
-        break;
-      }
+      if (!takeFirst && stopped()) break;
       const bytes = fromBase64(memo.data);
       if (bytes.length > SEARCH_MAX_FILE_BYTES || bytes.subarray(0, 8192).includes(0)) continue;
       searched++;
@@ -797,7 +808,13 @@ export class FakeBackend implements Backend {
         });
         sent = line;
       }
-      if (matches.length) onEvent({ kind: "file", memoId, file: memo.file, matches });
+      if (matches.length) {
+        if (this.liveWorkspaceSearch !== requestId) {
+          this.data.workspaceSearchLateFiles = (this.data.workspaceSearchLateFiles ?? 0) + 1;
+          this.commit();
+        }
+        onEvent({ kind: "file", memoId, file: memo.file, matches });
+      }
       // A match past the search's limit ends it; one past a file's only ends the file.
       if (total === SEARCH_MAX_MATCHES && truncated) break;
     }

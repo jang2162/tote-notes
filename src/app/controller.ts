@@ -140,6 +140,9 @@ export class AppController implements DocHost {
   /** Numbers the workspace searches of this window, apart from `searches`: the backend keeps one
    * of each running. Starts at 1 — 0 is `cancelWorkspaceSearch`'s. */
   private workspaceSearches = 0;
+  /** A search result's line in a memo the large text viewer shows, for the viewer to go to once
+   * it is open: it opens on its own time, after the click is handled. */
+  private pendingLine: { memoId: string; line: number } | null = null;
 
   constructor(
     root: HTMLElement,
@@ -396,6 +399,8 @@ export class AppController implements DocHost {
   private async activate(doc: Doc): Promise<void> {
     const previous = this.tabs.active;
     if (previous === doc) return;
+    if (!(doc instanceof MemoDoc) || doc.info.id !== this.pendingLine?.memoId)
+      this.pendingLine = null;
     if (previous) {
       this.capture(previous);
       void previous.leave();
@@ -580,7 +585,11 @@ export class AppController implements DocHost {
       this.panel = { doc, owner, host: viewer };
       this.surface.showPanel(viewer.el);
       this.statusBar.setMessage("읽기 전용 · 대용량 텍스트 뷰어");
+      this.takePendingLine(doc);
     } catch (error) {
+      // The viewer is not coming: the line must not wait for the next time the tab opens.
+      if (doc instanceof MemoDoc && this.pendingLine?.memoId === doc.info.id)
+        this.pendingLine = null;
       this.revoke(owner);
       if (stale()) return;
       this.report(error);
@@ -729,11 +738,18 @@ export class AppController implements DocHost {
 
   /** A search result (spec 「워크스페이스 검색」): the memo's tab, its cursor on the match. */
   private async openMatch(id: string, line: number, column: number): Promise<void> {
+    // Set before the tab opens: its viewer may be on show before `openMemo` returns.
+    this.pendingLine = { memoId: id, line };
     await this.openMemo(id);
     const doc = this.tabs.memo(id);
     if (!doc) return;
     await doc.ensureLoaded();
-    if (doc !== this.tabs.active || !doc.state || doc.problem) return;
+    if (doc !== this.tabs.active) return;
+    // A viewer already on show takes the line now; one on its way, in `openLargeText`.
+    if (this.largeText?.doc === doc) this.takePendingLine(doc);
+    if (doc.problem === "too-large" || doc.problem === "long-line") return;
+    this.pendingLine = null;
+    if (!doc.state || doc.problem) return;
     const spec = { selection: { anchor: doc.positionOf(line, column) }, scrollIntoView: true };
     if (this.view.state === doc.state) {
       this.view.dispatch(spec);
@@ -745,6 +761,15 @@ export class AppController implements DocHost {
     const { state } = start.update(spec);
     doc.update({ state, startState: start, docChanged: false, selectionSet: true });
     doc.scrollAnchor = state.doc.lineAt(state.selection.main.head).from;
+  }
+
+  private takePendingLine(doc: Doc): void {
+    const pending = this.pendingLine;
+    const open = this.largeText;
+    if (!pending || !open || open.doc !== doc) return;
+    if (!(doc instanceof MemoDoc) || doc.info.id !== pending.memoId) return;
+    this.pendingLine = null;
+    open.viewer.goToLine(pending.line);
   }
 
   /** ⇧⌘V (spec 「마크다운 미리보기」): per tab, with the text as it is right now. */
