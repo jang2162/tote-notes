@@ -30,8 +30,11 @@ memchr = "2"
 time = { version = "0.3", features = ["local-offset", "formatting", "parsing", "macros"] }
 # Outside changes to open workspaces and external files (src/watch).
 notify = "8"
-# Workspace search (src/search): ripgrep's searcher and regex matcher.
-grep = "0.4"
+# Workspace search (src/search): ripgrep's searcher and regex matcher, without the rest of
+# the `grep` umbrella crate (printer, CLI helpers).
+grep-matcher = "0.1"
+grep-regex = "0.1"
+grep-searcher = "0.1"
 
 # Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs). The versions tao already pulls in.
 [target.'cfg(target_os = "macos")'.dependencies]

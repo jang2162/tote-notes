@@ -9,9 +9,9 @@ use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::sync::{Mutex, PoisonError};
 use std::thread;
 
-use grep::matcher::Matcher;
-use grep::regex::{RegexMatcher, RegexMatcherBuilder};
-use grep::searcher::{
+use grep_matcher::Matcher;
+use grep_regex::{RegexMatcher, RegexMatcherBuilder};
+use grep_searcher::{
     BinaryDetection, Searcher, SearcherBuilder, Sink, SinkContext, SinkContextKind, SinkMatch,
 };
 use serde::Serialize;
@@ -27,6 +27,13 @@ pub const MAX_MATCHES: usize = 2000;
 pub const MAX_MATCHES_PER_FILE: usize = 200;
 /// Lines shown before and after each match.
 pub const CONTEXT_LINES: usize = 1;
+/// Characters of a line sent at most — of the matching line and of each context line — so a
+/// minified file's one 5MB line does not cross the channel thousands of times. A cut end is
+/// marked with `…`. 160 fills the widest search panel twice over; the worst case, 2,000 matches
+/// with two context lines each, all Hangul, stays under 3MB.
+pub const MAX_LINE_CHARS: usize = 160;
+/// Of those, how many come before the match when the matching line has to be cut.
+pub const MATCH_LEAD_CHARS: usize = 40;
 
 /// The same shape as the large text viewer's query.
 pub type SearchQuery = TextQuery;
@@ -57,11 +64,13 @@ pub enum SearchEvent {
 pub struct Match {
     /// 0-based.
     pub line: u64,
-    /// Characters before the match, not bytes. CodeMirror counts UTF-16 units: the same for
-    /// Hangul and the rest of the BMP, one short for each emoji or other astral character before
-    /// the match — the frontend clamps to the line.
+    /// Characters before the match in the whole line, not bytes and not in `text`. CodeMirror
+    /// counts UTF-16 units: the same for Hangul and the rest of the BMP, one short for each
+    /// emoji or other astral character before the match — the frontend clamps to the line.
     pub column: u64,
-    /// The line without its line ending.
+    /// The line without its line ending, cut to `MAX_LINE_CHARS` around the match; a cut end
+    /// is marked with `…`. `before` and `after` are cut to their first `MAX_LINE_CHARS` the same
+    /// way.
     pub text: String,
     pub before: Vec<String>,
     pub after: Vec<String>,
@@ -234,10 +243,11 @@ impl Sink for FileSink<'_> {
             .ok()
             .flatten()
             .map_or(0, |m| m.start());
+        let column = String::from_utf8_lossy(&line[..start]).chars().count();
         self.matches.push(Match {
             line: mat.line_number().map_or(0, |n| n - 1),
-            column: String::from_utf8_lossy(&line[..start]).chars().count() as u64,
-            text: String::from_utf8_lossy(line).into_owned(),
+            column: column as u64,
+            text: excerpt(line, column),
             before: std::mem::take(&mut self.before),
             after: Vec::new(),
         });
@@ -245,7 +255,7 @@ impl Sink for FileSink<'_> {
     }
 
     fn context(&mut self, _: &Searcher, context: &SinkContext<'_>) -> io::Result<bool> {
-        let text = String::from_utf8_lossy(without_line_ending(context.bytes())).into_owned();
+        let text = excerpt(without_line_ending(context.bytes()), 0);
         match context.kind() {
             SinkContextKind::Before => self.before.push(text),
             SinkContextKind::After => {
@@ -257,6 +267,28 @@ impl Sink for FileSink<'_> {
         }
         Ok(true)
     }
+}
+
+/// `line` as text, cut to `MAX_LINE_CHARS` characters keeping `MATCH_LEAD_CHARS` before the
+/// character at `column` where it can; `…` marks each end that was cut.
+fn excerpt(line: &[u8], column: usize) -> String {
+    let text = String::from_utf8_lossy(line);
+    let len = text.chars().count();
+    if len <= MAX_LINE_CHARS {
+        return text.into_owned();
+    }
+    let start = column
+        .saturating_sub(MATCH_LEAD_CHARS)
+        .min(len - MAX_LINE_CHARS);
+    let mut cut = String::new();
+    if start > 0 {
+        cut.push('…');
+    }
+    cut.extend(text.chars().skip(start).take(MAX_LINE_CHARS));
+    if start + MAX_LINE_CHARS < len {
+        cut.push('…');
+    }
+    cut
 }
 
 fn without_line_ending(line: &[u8]) -> &[u8] {
@@ -384,6 +416,46 @@ mod tests {
             e,
             SearchEvent::File { memo_id, file, .. } if memo_id == "m-a.md" && file == "a.md"
         )));
+    }
+
+    #[test]
+    fn long_lines_are_cut_around_the_match() {
+        let a = "a".repeat(1000);
+        let b = "b".repeat(1000);
+        let x = "가".repeat(500);
+        let short = "c".repeat(MAX_LINE_CHARS - 3);
+        let contents = format!("{x}\n{a}foo{b}\n{x}\n\n{a}foo\n\n{short}foo\n");
+        let (dir, files) = workspace(&[("a.md", contents.as_bytes())]);
+        let events = run(dir.path(), &files, &query("foo", false, false));
+        let matches = &found(&events)[0].1;
+        let cut = |s: &str| format!("{}…", &s[..s.char_indices().nth(MAX_LINE_CHARS).unwrap().0]);
+
+        // In the middle: MATCH_LEAD_CHARS before it, the rest after, both ends marked.
+        assert_eq!(
+            matches[0].column, 1000,
+            "the column counts in the whole line"
+        );
+        assert_eq!(
+            matches[0].text,
+            format!(
+                "…{}foo{}…",
+                &a[..MATCH_LEAD_CHARS],
+                &b[..MAX_LINE_CHARS - MATCH_LEAD_CHARS - 3]
+            )
+        );
+        assert_eq!(
+            matches[0].before,
+            vec![cut(&x)],
+            "Hangul is cut by characters"
+        );
+        assert_eq!(matches[0].after, vec![cut(&x)]);
+
+        // At the end of the line: the last MAX_LINE_CHARS characters, only the start marked.
+        assert_eq!(matches[1].column, 1000);
+        assert_eq!(matches[1].text, format!("…{}foo", &a[..MAX_LINE_CHARS - 3]));
+
+        // Exactly MAX_LINE_CHARS is not cut.
+        assert_eq!(matches[2].text, format!("{short}foo"));
     }
 
     #[test]
