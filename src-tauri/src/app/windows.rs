@@ -56,6 +56,7 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
         core.release(&label);
         return Err(err.into());
     }
+    crate::perf::mark("window-shown");
     core.opened(&label);
     Ok(label)
 }

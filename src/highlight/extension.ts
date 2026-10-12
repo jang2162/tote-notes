@@ -55,10 +55,11 @@ export interface WorkerHighlighting {
  * have not reached yet come as a guess, asked for again once they have. The document
  * stays in the worker until `close`, not as long as a view plugin: the view rebuilds its plugins
  * on every tab switch, and a document closed with them would send its whole text again and lose
- * its line states each time. */
+ * its line states each time. `onTokens` hears of every set of colours put on the view. */
 export function workerHighlighting(
   client: HighlightClient,
   lang: LanguageInfo,
+  onTokens?: () => void,
 ): WorkerHighlighting {
   const docId = client.nextDocId();
   let open: Promise<boolean> | null = null;
@@ -153,6 +154,7 @@ export function workerHighlighting(
         // Tokens for an older document would land on the wrong characters; ask again instead.
         if (version !== this.version) return this.schedule();
         this.view.dispatch({ effects: setHighlight.of(this.build(first, answer.lines)) });
+        onTokens?.();
         // A guess: the exact colours replace it once the worker has caught up to these lines.
         if (answer.ready) void answer.ready.then(() => this.schedule());
       }

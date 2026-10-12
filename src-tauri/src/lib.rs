@@ -4,6 +4,7 @@ pub mod backup;
 pub mod cli;
 pub mod extensions;
 pub mod files;
+pub mod perf;
 pub mod persist;
 pub mod search;
 pub mod session;
@@ -65,6 +66,7 @@ pub fn run() {
             app.manage(AppCore::load(
                 app.path().resource_dir()?.join("extensions"),
             )?);
+            perf::mark("core-loaded");
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());
             start_watching(app.handle().clone());
@@ -119,6 +121,8 @@ pub fn run() {
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,
+            commands::perf_mark,
+            commands::perf_search,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tote");
@@ -143,7 +147,11 @@ fn start_watching(app: AppHandle) {
     let handle = app.clone();
     let watching = app.state::<AppCore>().start_watching(move |target, batch| {
         let core = handle.state::<AppCore>();
-        if let Some((label, change)) = core.on_batch(target, batch) {
+        // How long a batch keeps the workspace locked, which a save waits out (tests/measure/perf.md).
+        perf::mark("watch-batch-start");
+        let outside = core.on_batch(target, batch);
+        perf::mark("watch-batch-done");
+        if let Some((label, change)) = outside {
             let _ = handle.emit_to(
                 EventTarget::webview_window(&label),
                 "tote://outside",

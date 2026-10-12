@@ -826,6 +826,13 @@ export class FakeBackend implements Backend {
     this.liveWorkspaceSearch = 0;
   }
 
+  /** The measurement runs against the app only. */
+  perfMark(_name: string) {}
+
+  async perfSearch() {
+    return null;
+  }
+
   private issue(owner: string, name: string, data: string): string {
     (this.data.tokens[owner] ??= []).push(name);
     this.commit();

@@ -82,6 +82,11 @@ impl AppPaths {
     pub fn backups_dir(&self) -> PathBuf {
         self.data_dir.join("backups")
     }
+
+    /// Timing marks of a measurement run (`TOTE_PERF=1`, src/perf.rs).
+    pub fn perf_log(&self) -> PathBuf {
+        self.data_dir.join("perf.jsonl")
+    }
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

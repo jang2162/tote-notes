@@ -51,6 +51,8 @@ export interface SearchPanelOptions {
   /** `line` is 0-based; `column` counts characters in the whole line. */
   open(memoId: string, line: number, column: number): void;
   onEscape(): void;
+  /** Timing marks `search-start:<n>` and `search-done:<n>` (tests/measure/perf.md). */
+  mark?(name: string): void;
 }
 
 function toggle(label: string, title: string, name: string): HTMLButtonElement {
@@ -123,6 +125,13 @@ export class SearchPanel {
     });
   }
 
+  /** Searches `query` at once, as typed with the regex toggle set to `regex`. */
+  run(query: string, regex: boolean): void {
+    this.input.value = query;
+    this.regexToggle.setAttribute("aria-pressed", String(regex));
+    this.searchNow();
+  }
+
   focus(): void {
     this.input.focus();
     this.input.select();
@@ -153,9 +162,12 @@ export class SearchPanel {
     }
     this.searching = true;
     this.status.textContent = SEARCHING;
+    this.options.mark?.(`search-start:${run}`);
     this.options
       .search(query, (event) => {
-        if (run === this.runs) this.receive(event);
+        if (run !== this.runs) return;
+        this.receive(event);
+        if (event.kind === "done") this.options.mark?.(`search-done:${run}`);
       })
       .catch((error: unknown) => {
         if (run !== this.runs) return;

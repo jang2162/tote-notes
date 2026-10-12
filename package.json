@@ -17,7 +17,9 @@
     "tauri": "tauri",
     "app:dev": "tauri dev --config src-tauri/tauri.dev.conf.json",
     "test:e2e": "playwright test",
-    "measure:long-line": "playwright test --config playwright.measure.config.ts"
+    "measure:long-line": "playwright test --config playwright.measure.config.ts",
+    "perf:fixtures": "node scripts/perf-fixtures.ts",
+    "perf:measure": "bash scripts/measure-perf.sh"
   },
   "dependencies": {
     "@codemirror/autocomplete": "^6.20.3",

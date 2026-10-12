@@ -56,3 +56,14 @@ codegen-units = 1
 lto = true
 opt-level = 3
 strip = true
+
+# The build the performance measurement runs (scripts/measure-perf.sh, tests/measure/perf.md):
+# release optimisation, with tote's own `cfg!(debug_assertions)` on so `TOTE_BACKGROUND` and the
+# `tote-dev` data folders apply. Dependencies keep theirs off — tauri, wry and tao have debug-only
+# branches that would make it something other than the release build.
+[profile.perf]
+inherits = "release"
+debug-assertions = true
+
+[profile.perf.package."*"]
+debug-assertions = false

@@ -20,6 +20,7 @@ use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
 use crate::files::text::{self, SearchError, TextQuery, TextScan, TextSearch};
 use crate::files::{self, FileSource};
+use crate::perf::{self, PerfSearch};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
 use crate::session;
@@ -760,6 +761,18 @@ pub async fn search_workspace(
 #[tauri::command]
 pub fn cancel_workspace_search(core: State<'_, AppCore>, window: WebviewWindow) {
     core.begin_workspace_search(window.label(), 0);
+}
+
+/// A timing mark of the frontend's (src/perf.rs); nothing unless the app runs with `TOTE_PERF=1`.
+#[tauri::command]
+pub fn perf_mark(name: String) {
+    perf::mark(&name);
+}
+
+/// The workspace search a measurement run asks the window to run once it is ready, if any.
+#[tauri::command]
+pub fn perf_search() -> Option<PerfSearch> {
+    PerfSearch::from_env()
 }
 
 #[cfg(test)]

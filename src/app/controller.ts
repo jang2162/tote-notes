@@ -124,6 +124,7 @@ export class AppController implements DocHost {
     open: (id, line, column) =>
       void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
     onEscape: () => this.closeSearch(),
+    mark: (name) => this.backend.perfMark(name),
   });
   private readonly sidebar = new Sidebar(this.memoList, this.searchPanel);
   private readonly tabBar = new TabBar({
@@ -143,6 +144,10 @@ export class AppController implements DocHost {
   /** A search result's line in a memo the large text viewer shows, for the viewer to go to once
    * it is open: it opens on its own time, after the click is handled. */
   private pendingLine: { memoId: string; line: number } | null = null;
+  /** The tab whose activation waits for its first frame (`open-first-paint`), and the tabs that
+   * have had their first colours (`open-first-tokens`) — timing marks, tests/measure/perf.md. */
+  private painting: string | null = null;
+  private readonly coloured = new Set<string>();
 
   constructor(
     root: HTMLElement,
@@ -194,6 +199,13 @@ export class AppController implements DocHost {
     // Memos are markdown: the first ⌘N then finds its grammars in the worker already.
     const markdown = this.registry.language("markdown");
     if (markdown) this.highlight.preload(markdown);
+    this.backend.perfMark("app-ready");
+    // A measurement run's search (TOTE_PERF_SEARCH), run as if typed into the panel.
+    const perfSearch = await this.backend.perfSearch().catch(() => null);
+    if (perfSearch) {
+      this.sidebar.show("search");
+      this.searchPanel.run(perfSearch.query, perfSearch.regex);
+    }
   }
 
   private async restoreSession(): Promise<void> {
@@ -201,6 +213,7 @@ export class AppController implements DocHost {
     if (first) await this.activate(first);
     else this.renderTabs();
     this.restoring = false;
+    requestAnimationFrame(() => this.backend.perfMark("restore-done"));
   }
 
   private async loadRegistry(): Promise<void> {
@@ -251,7 +264,11 @@ export class AppController implements DocHost {
     if (current && current.key === key) return current.highlighting.extension;
     this.dropHighlight(doc);
     if (!lang || !key) return [];
-    const highlighting = workerHighlighting(this.highlight, lang);
+    const highlighting = workerHighlighting(this.highlight, lang, () => {
+      if (this.coloured.has(doc.tabId)) return;
+      this.coloured.add(doc.tabId);
+      this.backend.perfMark(`open-first-tokens:${doc.tabId}`);
+    });
     this.highlights.set(doc, { key, highlighting });
     if (doc === this.tabs.active) this.syncHighlightVisibility();
     return highlighting.extension;
@@ -410,6 +427,8 @@ export class AppController implements DocHost {
   private async activate(doc: Doc): Promise<void> {
     const previous = this.tabs.active;
     if (previous === doc) return;
+    this.backend.perfMark(`open-start:${doc.tabId}`);
+    this.painting = doc.tabId;
     if (!(doc instanceof MemoDoc) || doc.info.id !== this.pendingLine?.memoId)
       this.pendingLine = null;
     if (previous) {
@@ -476,6 +495,7 @@ export class AppController implements DocHost {
       // The language may have changed under a preview (detection on leaving), taking its viewer.
       doc.mode = "edit";
       this.surface.showEditor(state, doc.scrollAnchor);
+      this.markPainted(doc);
       this.statusBar.setPosition(this.view.state);
       return;
     }
@@ -550,6 +570,7 @@ export class AppController implements DocHost {
     const panel: TokenPanel = { doc, owner, host };
     this.panel = panel;
     this.surface.showPanel(host.el);
+    this.markPainted(doc);
     const base = {
       fileName: doc.fileName,
       extension: splitName(doc.fileName).ext.toLowerCase(),
@@ -596,6 +617,7 @@ export class AppController implements DocHost {
       });
       this.panel = { doc, owner, host: viewer };
       this.surface.showPanel(viewer.el);
+      this.markPainted(doc);
       this.statusBar.setMessage("읽기 전용 · 대용량 텍스트 뷰어");
       this.takePendingLine(doc);
     } catch (error) {
@@ -607,6 +629,14 @@ export class AppController implements DocHost {
       this.report(error);
       this.showProblem(doc);
     }
+  }
+
+  /** `open-first-paint`: the frame after the tab being activated first shows its editor or
+   * panel. */
+  private markPainted(doc: Doc): void {
+    if (this.painting !== doc.tabId) return;
+    this.painting = null;
+    requestAnimationFrame(() => this.backend.perfMark(`open-first-paint:${doc.tabId}`));
   }
 
   private closePanel(): void {
