@@ -53,6 +53,8 @@ export class HighlightClient {
   private readonly themeListeners = new Set<() => void>();
   private readonly sent = new Set<string>();
   private readonly loading = new Map<string, Promise<boolean>>();
+  /** Goes up with every `forgetGrammars`: a language collected across one is not sent. */
+  private generation = 0;
 
   constructor(
     private readonly worker: Worker,
@@ -88,6 +90,7 @@ export class HighlightClient {
    * so the next open of a language reads and sends its files again. Documents already open keep
    * the grammar they were opened with. */
   forgetGrammars(): void {
+    this.generation++;
     this.sent.clear();
     this.loading.clear();
     this.send({ type: "forget-grammars" });
@@ -160,10 +163,13 @@ export class HighlightClient {
     this.send({ type: "visible", docs });
   }
 
-  /** How far the worker's line states reach. Null when the request failed. */
-  async stats(doc: number): Promise<{ cachedLines: number } | null> {
+  /** How far the worker's line states reach, and whether it is still working ahead. Null when
+   * the request failed. */
+  async stats(doc: number): Promise<{ cachedLines: number; advancing: boolean } | null> {
     const answer = await this.ask((req) => ({ type: "stats", doc, req }));
-    return answer?.type === "stats" ? { cachedLines: answer.cachedLines } : null;
+    return answer?.type === "stats"
+      ? { cachedLines: answer.cachedLines, advancing: answer.advancing }
+      : null;
   }
 
   close(doc: number): void {
@@ -184,24 +190,26 @@ export class HighlightClient {
   private ensureGrammar(lang: LanguageInfo): Promise<boolean> {
     const key = `${lang.extension}:${lang.id}`;
     if (this.sent.has(key)) return Promise.resolve(true);
-    let pending = this.loading.get(key);
-    if (!pending) {
-      pending = collectGrammars(this.registry(), lang, this.read, (batch) =>
-        this.sendGrammars(batch),
-      )
-        .then((sent) => {
-          if (sent.length === 0) return false;
-          this.sent.add(key);
-          return true;
-        })
-        .catch((error: unknown) => {
-          console.warn(`grammar for ${lang.id} could not be loaded`, error);
-          return false;
-        })
-        .finally(() => this.loading.delete(key));
-      this.loading.set(key, pending);
-    }
-    return pending;
+    const pending = this.loading.get(key);
+    if (pending) return pending;
+    const generation = this.generation;
+    const loading: Promise<boolean> = collectGrammars(this.registry(), lang, this.read, (batch) =>
+      this.sendGrammars(batch),
+    )
+      .then((sent) => {
+        // Forgotten meanwhile: the worker dropped the grammars of the earlier round trips.
+        if (sent.length === 0 || generation !== this.generation) return false;
+        this.sent.add(key);
+        return true;
+      })
+      .catch((error: unknown) => {
+        console.warn(`grammar for ${lang.id} could not be loaded`, error);
+        return false;
+      })
+      // Only its own entry: one started after a forget may stand there now.
+      .finally(() => this.loading.get(key) === loading && this.loading.delete(key));
+    this.loading.set(key, loading);
+    return loading;
   }
 
   /** Resolves with the includes the worker still lacks after parsing `grammars`. */

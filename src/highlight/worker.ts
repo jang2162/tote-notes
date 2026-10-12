@@ -187,7 +187,12 @@ function handle(registry: Registry, request: WorkerRequest): Registry | void {
     case "stats": {
       const doc = docs.get(request.doc);
       if (!doc) throw new Error("stats requested for a document that is not open");
-      reply({ type: "stats", req: request.req, cachedLines: doc.tokenizer.cachedLines });
+      reply({
+        type: "stats",
+        req: request.req,
+        cachedLines: doc.tokenizer.cachedLines,
+        advancing,
+      });
       return;
     }
     case "close":
@@ -220,7 +225,10 @@ function scheduleAdvance(): void {
 }
 
 function target(id: number, doc: OpenDoc): number {
-  return visible.includes(id) ? doc.tokenizer.lineCount : doc.shownTo;
+  const { lineCount } = doc.tokenizer;
+  // `shownTo` never comes down: a deletion can leave the document shorter than that, and a
+  // target past its end would never be reached.
+  return visible.includes(id) ? lineCount : Math.min(doc.shownTo, lineCount);
 }
 
 function nextToAdvance(): [number, OpenDoc] | undefined {

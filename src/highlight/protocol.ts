@@ -43,5 +43,6 @@ export type WorkerReply =
       pending?: boolean;
     }
   | { type: "ready"; doc: number; from: number }
-  | { type: "stats"; req: number; cachedLines: number }
+  /** `advancing`: background tokenization is still scheduled, for any document. */
+  | { type: "stats"; req: number; cachedLines: number; advancing: boolean }
   | { type: "error"; doc?: number; req?: number; message: string };

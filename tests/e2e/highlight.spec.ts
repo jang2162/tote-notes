@@ -285,3 +285,30 @@ test("hidden documents stop advancing where they were last shown", async ({ page
   // The worker was not idle meanwhile: it went through the document now shown.
   expect(counts.other).toBe(10);
 });
+
+// A hidden document goes as far as it was shown; once a deletion leaves it shorter than that,
+// it must still count as done, or the worker spins on it and the documents after it wait.
+test("a hidden document that shrank does not keep the worker busy", async ({ page }) => {
+  await open(page, "echo hi", "run.sh");
+  await expect(coloured(page).first()).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const client = window.highlightClient;
+    const lang = window.highlightLang;
+    const lines = (n: number) => Array.from({ length: n }, (_, i) => `echo ${i}`).join("\n");
+    const shrunk = client.nextDocId();
+    await client.open(shrunk, lang, () => lines(50));
+    // Shown to its end, then its last two lines become one.
+    await (await client.cachedTokens(shrunk, 40, 50))!.ready;
+    client.edit(shrunk, 48, 50, ["echo last"]);
+    client.setVisible([]);
+    const other = client.nextDocId();
+    await client.open(other, lang, () => lines(2000));
+    const far = (await client.cachedTokens(other, 1500, 1510))!.ready!;
+    const timeout = new Promise<boolean>((resolve) => setTimeout(() => resolve(false), 3000));
+    const ready = await Promise.race([far.then(() => true), timeout]);
+    await new Promise((resolve) => setTimeout(resolve, 200));
+    return { ready, advancing: (await client.stats(shrunk))!.advancing };
+  });
+  expect(result.ready).toBe(true);
+  expect(result.advancing).toBe(false);
+});

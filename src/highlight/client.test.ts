@@ -34,9 +34,11 @@ const files: Record<string, string> = {
 };
 
 /** A worker that answers `grammars` the way the real one does (the includes it does not hold
- * yet, here given per scope) and lets a test answer everything else. */
-function setup(includes: Record<string, string[]> = {}) {
+ * yet, here given per scope) and lets a test answer everything else. With `hold`, the answers to
+ * `grammars` wait for `release()`. */
+function setup(includes: Record<string, string[]> = {}, { hold = false } = {}) {
   const sent: WorkerRequest[] = [];
+  const held: (() => void)[] = [];
   let listener: (event: MessageEvent<WorkerReply>) => void = () => {};
   const answer = (reply: WorkerReply) => listener({ data: reply } as MessageEvent<WorkerReply>);
   const worker = {
@@ -44,7 +46,9 @@ function setup(includes: Record<string, string[]> = {}) {
       sent.push(request);
       if (request.type === "grammars") {
         const found = request.grammars.flatMap((g) => includes[g.scopeName] ?? []);
-        queueMicrotask(() => answer({ type: "grammars-ready", includes: found }));
+        const reply = () => answer({ type: "grammars-ready", includes: found });
+        if (hold) held.push(reply);
+        else queueMicrotask(reply);
       }
     },
     addEventListener: (type: string, fn: typeof listener) => {
@@ -62,7 +66,18 @@ function setup(includes: Record<string, string[]> = {}) {
   const grammarMessages = () => ofType("grammars").length;
   const forgets = () => ofType("forget-grammars").length;
   const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
-  return { client, sent, ofType, answer, grammarMessages, forgets, reads: () => reads, settle };
+  const release = () => held.splice(0).forEach((reply) => reply());
+  return {
+    client,
+    sent,
+    ofType,
+    answer,
+    release,
+    grammarMessages,
+    forgets,
+    reads: () => reads,
+    settle,
+  };
 }
 
 afterEach(() => {
@@ -99,6 +114,34 @@ describe("HighlightClient grammar cache", () => {
       [{ scopeName: "source.b", text: files["b.json"] }],
     ]);
     // The document opens once no include is missing.
+    expect(ofType("open")).toHaveLength(1);
+  });
+
+  // The grammars of a language can take several round trips; forgetting them in between drops
+  // the ones already sent from the worker, so the language must not count as sent afterwards.
+  it("grammars collected across a forget are not taken as sent", async () => {
+    const { client, release, grammarMessages, ofType, settle } = setup(
+      { "source.a": ["source.b"] },
+      { hold: true },
+    );
+    const opened = client.open(1, lang, () => "x");
+    await settle();
+    release(); // source.a answered: source.b is read and sent
+    await settle();
+    expect(grammarMessages()).toBe(2);
+    client.forgetGrammars();
+    release(); // source.b answered after the worker forgot source.a
+    await settle();
+    expect(ofType("open")).toHaveLength(0);
+    expect(await opened).toBe(false);
+    // The next document of the language sends its grammars again.
+    void client.open(2, lang, () => "x");
+    await settle();
+    expect(grammarMessages()).toBe(3);
+    release();
+    await settle();
+    release();
+    await settle();
     expect(ofType("open")).toHaveLength(1);
   });
 
@@ -158,8 +201,8 @@ describe("HighlightClient viewport tokens", () => {
     const { client, ofType, answer } = setup();
     const stats = client.stats(3);
     const [request] = ofType("stats");
-    answer({ type: "stats", req: request.req, cachedLines: 42 });
-    expect(await stats).toEqual({ cachedLines: 42 });
+    answer({ type: "stats", req: request.req, cachedLines: 42, advancing: true });
+    expect(await stats).toEqual({ cachedLines: 42, advancing: true });
   });
 
   it("setVisible names the documents shown", () => {
