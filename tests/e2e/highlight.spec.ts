@@ -195,3 +195,93 @@ test("a document opened after the grammars were forgotten follows the replaced g
   expect(second).toContain(4);
   expect(second).not.toContain(3);
 });
+
+/** 200,000 lines of TypeScript: tokenizing them all takes the worker several seconds. */
+async function openBig(page: Page, extra = "") {
+  await page.goto(`/tests/e2e/pages/editor.html?highlight=1&file=big.ts&lines=200000${extra}`);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(coloured(page).first()).toBeVisible();
+}
+
+test("a far jump colours the viewport without waiting for everything before it", async ({
+  page,
+}) => {
+  await openBig(page);
+  await page.keyboard.press("Meta+ArrowDown");
+  const last = page.locator(".cm-line").last();
+  await expect(last).toHaveText('const v199999 = f(199999) + "text";');
+  await expect(last.locator("span[class*='tm-c']").first()).toBeVisible({ timeout: 3000 });
+});
+
+// The far viewport is first coloured from a guess (the grammar's initial state, as VS Code does),
+// which cannot know a comment opened above it; the exact colours replace it once the worker's
+// line states reach the viewport.
+test("a far jump into a block comment shows guessed colours, then the comment's", async ({
+  page,
+}) => {
+  test.setTimeout(90_000);
+  await openBig(page, "&commenttail=300");
+  await page.keyboard.press("Meta+ArrowDown");
+  const last = page.locator(".cm-line").last().locator("span[class*='tm-c']").first();
+  await expect(last).toHaveCSS("color", DARK_PLUS_STORAGE, { timeout: 3000 });
+  await expect(last).toHaveCSS("color", DARK_PLUS_COMMENT, { timeout: 60_000 });
+});
+
+test("the first keystroke after opening a markdown memo is not delayed by grammar parsing", async ({
+  page,
+}) => {
+  await open(page, "# title", "note.md");
+  await expect(coloured(page).first()).toBeVisible();
+  const result = await page.evaluate(async () => {
+    const lang = window.highlightLang;
+    const path = lang.grammar!.path;
+    const original = await (await fetch(`/extensions/${lang.extension}/${path}`)).text();
+    // Marked, so a parse of this grammar's text on this thread shows in `parsedOnMain`.
+    window.fileOverride[path] = original.replace("{", '{"tote-grammar-mark":1,');
+    const client = window.highlightClient;
+    client.forgetGrammars();
+    window.workerLog.length = 0;
+    const doc = client.nextDocId();
+    const ok = await client.open(doc, lang, () => "# typed");
+    const lines = await client.tokens(doc, 0, 1);
+    return {
+      ok,
+      log: window.workerLog.map((m) => m.type),
+      parsed: window.parsedOnMain,
+      tokens: lines?.[0].length ?? 0,
+    };
+  });
+  expect(result.ok).toBe(true);
+  expect(result.tokens).toBeGreaterThan(0);
+  // The grammar reaches the worker before the document it colours, as text: the main thread,
+  // which takes the keystrokes, never parses it.
+  expect(result.log.indexOf("grammars")).toBeGreaterThan(-1);
+  expect(result.log.indexOf("grammars")).toBeLessThan(result.log.indexOf("open"));
+  expect(result.parsed).toBe(0);
+});
+
+test("hidden documents stop advancing where they were last shown", async ({ page }) => {
+  await openBig(page);
+  const counts = await page.evaluate(async () => {
+    const client = window.highlightClient;
+    const shown = window.highlightDoc;
+    // Small, so the worker is done with it at once and free to go on with a hidden one.
+    const other = client.nextDocId();
+    const text = Array.from({ length: 10 }, (_, i) => `let x${i} = ${i};`).join("\n");
+    await client.open(other, window.highlightLang, () => text);
+    client.setVisible([other]);
+    const before = await client.stats(shown);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    return {
+      before: before!.cachedLines,
+      after: (await client.stats(shown))!.cachedLines,
+      other: (await client.stats(other))!.cachedLines,
+    };
+  });
+  // The page's document was shown and worked ahead; hidden now, it stays where it was.
+  expect(counts.before).toBeGreaterThan(0);
+  expect(counts.before).toBeLessThan(200_000);
+  expect(counts.after).toBe(counts.before);
+  // The worker was not idle meanwhile: it went through the document now shown.
+  expect(counts.other).toBe(10);
+});

@@ -66,25 +66,49 @@ export class LineTokenizer {
     return out;
   }
 
-  /** Tokenizes ahead for about `budgetMs`, whole lines only. True once every line is cached. */
-  advance(budgetMs: number): boolean {
-    const until = performance.now() + budgetMs;
-    while (this.cachedLines < this.lines.length) {
-      this.tokenizeLine(this.cachedLines);
-      if (performance.now() >= until) break;
+  /** Tokens of lines [from, to), or null when the state at the start of `from` is not known
+   * yet: answers from the cache without catching up to `from`. */
+  tokensIfCached(from: number, to: number): Uint32Array[] | null {
+    return from <= this.cachedLines ? this.tokens(from, to) : null;
+  }
+
+  /** Tokens of lines [from, to) from the grammar's initial state, the cache left alone: a guess
+   * for lines the cache has not reached, as VS Code colours a far viewport before its states
+   * catch up. Wrong inside anything opened above `from` (a block comment, a template string)
+   * until the exact tokens replace it. */
+  guessTokens(from: number, to: number): Uint32Array[] {
+    const out: Uint32Array[] = [];
+    let state = INITIAL;
+    for (let i = from; i < Math.min(to, this.lines.length); i++) {
+      const result = this.tokenize(i, state);
+      state = result.state;
+      out.push(result.tokens);
     }
-    return this.cachedLines >= this.lines.length;
+    return out;
+  }
+
+  /** Tokenizes ahead for about `budgetMs`, whole lines only, up to line `until`. True once every
+   * line before `until` is cached. */
+  advance(budgetMs: number, until = this.lines.length): boolean {
+    const end = Math.min(until, this.lines.length);
+    const stop = performance.now() + budgetMs;
+    while (this.cachedLines < end) {
+      this.tokenizeLine(this.cachedLines);
+      if (performance.now() >= stop) break;
+    }
+    return this.cachedLines >= end;
   }
 
   private tokenizeLine(i: number): Uint32Array {
+    const { tokens, state } = this.tokenize(i, this.states[i]);
+    this.states[i + 1] = state;
+    return tokens;
+  }
+
+  private tokenize(i: number, state: StateStack): { tokens: Uint32Array; state: StateStack } {
     const text = this.lines[i];
-    const state = this.states[i];
-    if (text.length > MAX_TOKENIZED_LINE_LENGTH) {
-      this.states[i + 1] = state;
-      return new Uint32Array();
-    }
+    if (text.length > MAX_TOKENIZED_LINE_LENGTH) return { tokens: new Uint32Array(), state };
     const result = this.grammar.tokenizeLine2(text, state, 0);
-    this.states[i + 1] = result.ruleStack;
-    return encodeLine(result.tokens);
+    return { tokens: encodeLine(result.tokens), state: result.ruleStack };
   }
 }

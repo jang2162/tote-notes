@@ -15,6 +15,17 @@ import type { WorkerRequest } from "../../../src/highlight/protocol";
 import { loadTheme, tokenTheme } from "../../../src/theme/vscode-theme";
 
 const params = new URLSearchParams(location.search);
+
+// Grammars are parsed in the worker. A spec marks a grammar's text (through `fileOverride`) and
+// counts the parses of it on this thread: `parseJsonc` tries `JSON.parse` first on every path, so
+// watching `JSON.parse` sees it.
+let parsedOnMain = 0;
+const jsonParse = JSON.parse;
+JSON.parse = (text: string, reviver?: Parameters<typeof JSON.parse>[1]) => {
+  if (typeof text === "string" && text.includes("tote-grammar-mark")) parsedOnMain++;
+  return jsonParse(text, reviver);
+};
+Object.defineProperty(window, "parsedOnMain", { get: () => parsedOnMain });
 const fileName = params.get("file") ?? "note.md";
 // The dev server serves the bundled extensions under /extensions/, so no fake backend is needed.
 const lang = new Registry(fakeRegistry as ExtensionRegistry).languageForFile(fileName);
@@ -74,17 +85,27 @@ if (params.get("highlight")) {
     const highlighting = workerHighlighting(client, lang);
     highlight = highlighting.extension;
     closeHighlight = () => highlighting.close();
+    // On screen, as the app's active tab is.
+    client.setVisible([highlighting.doc]);
+    Object.assign(window, { highlightDoc: highlighting.doc });
   }
 }
 
 // `?longline=<n>` is one line of n characters and `?lines=<n>` n lines of code: a URL cannot carry
 // megabytes, so the long documents of the boundary measurement (tests/measure) are built here.
+// `&commenttail=<n>` opens a block comment that never closes before the last n of those lines.
 const longLine = Number(params.get("longline") ?? 0);
 const lines = Number(params.get("lines") ?? 0);
+const commentTail = Number(params.get("commenttail") ?? 0);
+function codeLines(): string {
+  const code = Array.from({ length: lines }, (_, i) => `const v${i} = f(${i}) + "text";`);
+  if (commentTail) code.splice(lines - commentTail, 0, "/*");
+  return code.join("\n");
+}
 const doc = longLine
   ? "x".repeat(longLine)
   : lines
-    ? Array.from({ length: lines }, (_, i) => `const v${i} = f(${i}) + "text";`).join("\n")
+    ? codeLines()
     : (params.get("doc") ?? new URLSearchParams(location.hash.slice(1)).get("doc") ?? "");
 
 const view = new EditorView({

@@ -7,6 +7,8 @@ import {
   type IRawTheme,
 } from "@shikijs/vscode-textmate";
 
+import { parseJsonc } from "../core/jsonc";
+import { collectIncludes } from "./grammars";
 import type { WorkerReply, WorkerRequest } from "./protocol";
 import { LineTokenizer } from "./tokenizer";
 
@@ -14,9 +16,22 @@ import { LineTokenizer } from "./tokenizer";
  * the main thread asks for the tokens of the lines it shows. Requests are handled in order so
  * an edit can never interleave with the tokens of the document it changes. */
 
+/** How long one background slice tokenizes before the worker answers its messages again. */
+const SLICE_MS = 15;
+
+interface OpenDoc {
+  tokenizer: LineTokenizer;
+  /** The end of the farthest viewport asked for: as far as the document goes while hidden. */
+  shownTo: number;
+  /** First lines of guesses whose `ready` has not gone yet. */
+  guessed: Set<number>;
+}
+
 const grammars = new Map<string, IRawGrammar>();
 const loaded = new Map<string, IGrammar | null>();
-const docs = new Map<number, LineTokenizer>();
+const docs = new Map<number, OpenDoc>();
+/** The documents on screen, from the last `visible`. */
+let visible: number[] = [];
 let advancing = false;
 
 let onigLib: IOnigLib;
@@ -62,11 +77,12 @@ self.addEventListener("message", (event: MessageEvent<WorkerRequest>) => {
 function failure(request: WorkerRequest, message: string): WorkerReply {
   console.warn(`highlight worker: ${request.type} failed`, message);
   if (request.type === "theme") return { type: "theme-ready", colorMap: [] };
+  if (request.type === "grammars") return { type: "grammars-ready", includes: [] };
   if (request.type === "open") return { type: "opened", doc: request.doc, ok: false, message };
   return {
     type: "error",
     doc: "doc" in request ? request.doc : undefined,
-    req: request.type === "tokens" ? request.req : undefined,
+    req: "req" in request ? request.req : undefined,
     message,
   };
 }
@@ -78,15 +94,30 @@ function handle(registry: Registry, request: WorkerRequest): Registry | void {
       lastTheme = request.theme;
       registry.setTheme(request.theme);
       // Colour ids changed with the theme: every cached state is stale.
-      for (const doc of docs.values()) doc.reset();
+      for (const doc of docs.values()) doc.tokenizer.reset();
       reply({ type: "theme-ready", colorMap: registry.getColorMap() });
+      scheduleAdvance();
       return;
-    case "grammars":
+    case "grammars": {
+      // Parsed here, not on the main thread (the keystrokes' thread). A grammar that does not
+      // parse is left out: a document of its language then opens uncoloured.
+      const includes = new Set<string>();
       for (const source of request.grammars) {
-        grammars.set(source.scopeName, source.grammar);
-        loaded.delete(source.scopeName);
+        try {
+          const grammar = parseJsonc<IRawGrammar>(source.text);
+          grammars.set(source.scopeName, grammar);
+          loaded.delete(source.scopeName);
+          for (const scope of collectIncludes(grammar)) includes.add(scope);
+        } catch (error) {
+          console.warn(`grammar ${source.scopeName} could not be parsed`, error);
+        }
       }
+      reply({
+        type: "grammars-ready",
+        includes: [...includes].filter((scope) => !grammars.has(scope)),
+      });
       return;
+    }
     case "forget-grammars": {
       // A vscode-textmate registry never asks again for a scope it has loaded, so a replaced
       // grammar is only used by a new registry. Documents already open keep their own grammar;
@@ -108,25 +139,55 @@ function handle(registry: Registry, request: WorkerRequest): Registry | void {
         });
         return;
       }
-      docs.set(request.doc, new LineTokenizer(grammar, request.text));
+      docs.set(request.doc, {
+        tokenizer: new LineTokenizer(grammar, request.text),
+        shownTo: 0,
+        guessed: new Set(),
+      });
       reply({ type: "opened", doc: request.doc, ok: true });
       scheduleAdvance();
       return;
     }
     case "edit":
-      docs.get(request.doc)?.edit(request.fromLine, request.toLine, request.insert);
+      docs.get(request.doc)?.tokenizer.edit(request.fromLine, request.toLine, request.insert);
       scheduleAdvance();
       return;
     case "tokens": {
       const doc = docs.get(request.doc);
       if (!doc) throw new Error("tokens requested for a document that is not open");
+      const { doc: id, req, from, to } = request;
+      if (request.mode !== "cached") {
+        reply({ type: "tokens", doc: id, req, from, lines: doc.tokenizer.tokens(from, to) });
+        return;
+      }
+      doc.shownTo = Math.max(doc.shownTo, to);
+      const lines = doc.tokenizer.tokensIfCached(from, to);
+      if (lines) {
+        reply({ type: "tokens", doc: id, req, from, lines });
+        return;
+      }
+      // Catching up to a far viewport takes as long as tokenizing everything above it (seconds
+      // on a big file), so it goes on in slices and a guess colours the viewport meanwhile.
+      doc.guessed.add(from);
       reply({
         type: "tokens",
-        doc: request.doc,
-        req: request.req,
-        from: request.from,
-        lines: doc.tokens(request.from, request.to),
+        doc: id,
+        req,
+        from,
+        lines: doc.tokenizer.guessTokens(from, to),
+        pending: true,
       });
+      scheduleAdvance();
+      return;
+    }
+    case "visible":
+      visible = request.docs;
+      scheduleAdvance();
+      return;
+    case "stats": {
+      const doc = docs.get(request.doc);
+      if (!doc) throw new Error("stats requested for a document that is not open");
+      reply({ type: "stats", req: request.req, cachedLines: doc.tokenizer.cachedLines });
       return;
     }
     case "close":
@@ -148,7 +209,9 @@ function grammarFor(registry: Registry, scopeName: string): IGrammar | null {
 }
 
 /** Background tokenization (spec 「크기별 단계」: files up to the highlight limit are tokenized
- * from the top in slices, so a far jump finds its states ready). Each slice yields to the
+ * from the top in slices, so a far jump finds its states ready). One slice at a time goes to one
+ * document — those on screen first, to their end; the hidden ones only as far as they were ever
+ * shown, so ten big tabs in the background do not take the CPU — and each slice yields to the
  * message queue, which keeps edits and viewport requests prompt. */
 function scheduleAdvance(): void {
   if (advancing) return;
@@ -156,11 +219,35 @@ function scheduleAdvance(): void {
   setTimeout(advanceSlice, 0);
 }
 
+function target(id: number, doc: OpenDoc): number {
+  return visible.includes(id) ? doc.tokenizer.lineCount : doc.shownTo;
+}
+
+function nextToAdvance(): [number, OpenDoc] | undefined {
+  const behind = ([id, doc]: [number, OpenDoc]) => doc.tokenizer.cachedLines < target(id, doc);
+  const open = [...docs];
+  return (
+    open.find((entry) => visible.includes(entry[0]) && behind(entry)) ??
+    open.find((entry) => behind(entry))
+  );
+}
+
 function advanceSlice(): void {
-  let pending = false;
-  for (const doc of docs.values()) {
-    if (!doc.advance(15)) pending = true;
-  }
-  if (pending) setTimeout(advanceSlice, 0);
+  const next = nextToAdvance();
+  if (next) next[1].tokenizer.advance(SLICE_MS, target(...next));
+  announceReady();
+  if (nextToAdvance()) setTimeout(advanceSlice, 0);
   else advancing = false;
+}
+
+/** Tells the main thread which guesses can now be replaced by exact tokens. */
+function announceReady(): void {
+  for (const [id, doc] of docs) {
+    const { cachedLines, lineCount } = doc.tokenizer;
+    for (const from of doc.guessed) {
+      if (from > cachedLines && cachedLines < lineCount) continue;
+      doc.guessed.delete(from);
+      reply({ type: "ready", doc: id, from });
+    }
+  }
 }

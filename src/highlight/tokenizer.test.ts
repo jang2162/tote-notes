@@ -119,6 +119,39 @@ describe("LineTokenizer", () => {
     expect(t.cachedLines).toBe(0);
   });
 
+  it("tokensIfCached answers only from the cache", () => {
+    const t = new LineTokenizer(
+      grammar,
+      Array.from({ length: 200 }, (_, i) => `let v${i} = 1`).join("\n"),
+    );
+    expect(t.tokensIfCached(100, 110)).toBeNull();
+    // Asking did not catch up from the end of the cache.
+    expect(t.cachedLines).toBe(0);
+    t.advance(1000, 100);
+    const lines = t.tokensIfCached(100, 110);
+    expect(lines).toHaveLength(10);
+    expect(decode(lines![0])[0]).toEqual([0, KEYWORD, false]);
+    expect(t.cachedLines).toBe(110);
+  });
+
+  it("advance stops at the line it is given", () => {
+    const t = new LineTokenizer(grammar, Array.from({ length: 50 }, () => "let x").join("\n"));
+    expect(t.advance(1000, 20)).toBe(true);
+    expect(t.cachedLines).toBe(20);
+    expect(t.advance(1000)).toBe(true);
+    expect(t.cachedLines).toBe(50);
+  });
+
+  it("guessTokens starts from the initial state and leaves the cache alone", () => {
+    const t = new LineTokenizer(grammar, '"open\nstill string" fn\nfn');
+    // Line 1 really starts inside the string; a guess from the initial state cannot know that.
+    const guess = t.guessTokens(1, 2);
+    expect(guess).toHaveLength(1);
+    expect(decode(guess[0])[0][1]).not.toBe(STRING);
+    expect(t.cachedLines).toBe(0);
+    expect(decode(t.tokens(1, 2)[0])[0][1]).toBe(STRING);
+  });
+
   it("an empty document has one empty line, with one token at its start", () => {
     const t = new LineTokenizer(grammar, "");
     expect(t.lineCount).toBe(1);

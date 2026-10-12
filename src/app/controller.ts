@@ -191,6 +191,9 @@ export class AppController implements DocHost {
     });
     // Restores the session if it lists the memos; else the next listing that does (focus).
     await this.refreshMemos();
+    // Memos are markdown: the first ⌘N then finds its grammars in the worker already.
+    const markdown = this.registry.language("markdown");
+    if (markdown) this.highlight.preload(markdown);
   }
 
   private async restoreSession(): Promise<void> {
@@ -250,7 +253,15 @@ export class AppController implements DocHost {
     if (!lang || !key) return [];
     const highlighting = workerHighlighting(this.highlight, lang);
     this.highlights.set(doc, { key, highlighting });
+    if (doc === this.tabs.active) this.syncHighlightVisibility();
     return highlighting.extension;
+  }
+
+  /** Tells the worker which document is on screen: it works on that one first, and the hidden
+   * tabs' documents only as far as they were shown. */
+  private syncHighlightVisibility(): void {
+    const active = this.tabs.active && this.highlights.get(this.tabs.active);
+    this.highlight.setVisible(active ? [active.highlighting.doc] : []);
   }
 
   private dropHighlight(doc: Doc): void {
@@ -406,6 +417,7 @@ export class AppController implements DocHost {
       void previous.leave();
     }
     this.tabs.active = doc;
+    this.syncHighlightVisibility();
     this.renderTabs();
     // The switch lets go of the tab left at once, whatever the new tab shows and however long it
     // takes to come (a read, a token, a scan): keys typed meanwhile are dropped, not saved there.

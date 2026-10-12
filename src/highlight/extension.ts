@@ -42,6 +42,8 @@ function mark(foreground: number, fontStyle: number): Decoration {
 
 /** TextMate colours for one document in one language. */
 export interface WorkerHighlighting {
+  /** The document's number in the worker (`HighlightClient.setVisible`). */
+  readonly doc: number;
   /** For the document's editor state; keep the same value while the language stays. */
   readonly extension: Extension;
   /** Takes the document out of the worker: the tab closed, or its language or text was replaced. */
@@ -49,7 +51,8 @@ export interface WorkerHighlighting {
 }
 
 /** The worker gets the text when the extension is first shown, every change as a line
- * replacement, and a request for the visible lines after each change or scroll. The document
+ * replacement, and a request for the visible lines after each change or scroll; lines its states
+ * have not reached yet come as a guess, asked for again once they have. The document
  * stays in the worker until `close`, not as long as a view plugin: the view rebuilds its plugins
  * on every tab switch, and a document closed with them would send its whole text again and lose
  * its line states each time. */
@@ -145,11 +148,13 @@ export function workerHighlighting(
         const { from, to } = this.view.viewport;
         const doc = this.view.state.doc;
         const first = doc.lineAt(from).number - 1;
-        const lines = await client.tokens(docId, first, doc.lineAt(to).number);
-        if (!lines || this.destroyed || closed) return;
+        const answer = await client.cachedTokens(docId, first, doc.lineAt(to).number);
+        if (!answer || this.destroyed || closed) return;
         // Tokens for an older document would land on the wrong characters; ask again instead.
         if (version !== this.version) return this.schedule();
-        this.view.dispatch({ effects: setHighlight.of(this.build(first, lines)) });
+        this.view.dispatch({ effects: setHighlight.of(this.build(first, answer.lines)) });
+        // A guess: the exact colours replace it once the worker has caught up to these lines.
+        if (answer.ready) void answer.ready.then(() => this.schedule());
       }
 
       private build(first: number, lines: Uint32Array[]): DecorationSet {
@@ -171,6 +176,7 @@ export function workerHighlighting(
     },
   );
   return {
+    doc: docId,
     extension: [highlightField, plugin],
     close() {
       if (closed) return;

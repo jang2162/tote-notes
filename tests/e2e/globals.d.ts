@@ -36,6 +36,10 @@ declare global {
     highlightClient: HighlightClient;
     fileOverride: Record<string, string>;
     highlightLang: LanguageInfo;
+    /** Editor page with `?highlight=1`: the worker's number for the page's own document. */
+    highlightDoc: number;
+    /** Editor page: grammar texts carrying `tote-grammar-mark` that this thread parsed. */
+    parsedOnMain: number;
     askUnsaved: typeof askUnsaved;
     promptText: typeof promptText;
     workspacePicker: typeof workspacePicker;
