@@ -13,6 +13,9 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
+  type SearchEvent,
+  type SearchMatch,
+  type SearchQuery,
   type Settings,
   type SettingsPatch,
   type TextMatch,
@@ -81,9 +84,14 @@ export interface FakeData {
   tokens: Record<string, string[]>;
   /** `cancelTextSearch` calls; the fake's searches finish at once, so tests count the asks. */
   textSearchCancelled: number;
-  /** Workspace searches stopped before they finished, so tests can count them. Absent in old
-   * seeds. */
+  /** Workspace searches stopped before they finished — by a newer one or by
+   * `cancelWorkspaceSearch` — so tests can count them. Absent in old seeds. */
   workspaceSearchCancelled?: number;
+  /** Every `searchWorkspace` call, in order. Absent in old seeds. */
+  workspaceSearchCalls?: { query: SearchQuery; requestId: number }[];
+  /** How long a workspace search waits before each memo, so a test can start another meanwhile;
+   * without it each memo waits a microtask. Absent in old seeds. */
+  searchDelayMs?: number;
   /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
   failListMemos?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
@@ -236,10 +244,29 @@ const dataUrl = (name: string, data: string) =>
 
 const decode = (data: string) => new TextDecoder().decode(fromBase64(data));
 
+/** `query` as a JS regex, `bad-request` when it is not one. */
+function searchPattern(query: TextQuery, flags: string): RegExp {
+  try {
+    return new RegExp(
+      query.regex ? query.query : query.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
+      query.caseSensitive ? flags : `${flags}i`,
+    );
+  } catch (error) {
+    throw new BackendError("bad-request", String(error));
+  }
+}
+
+// The limits of src-tauri/src/search/mod.rs.
+const SEARCH_MAX_FILE_BYTES = 5 * 1024 * 1024;
+const SEARCH_MAX_MATCHES = 2000;
+const SEARCH_MAX_MATCHES_PER_FILE = 200;
+
 export class FakeBackend implements Backend {
   data: FakeData;
   /** The base of each opened external file, held in memory like the Rust side does. */
   private bases: Record<string, string | null> = {};
+  /** The number of the workspace search allowed to go on; 0 for none. */
+  private liveWorkspaceSearch = 0;
   private readonly handlers = {
     menu: [] as ((id: string) => void)[],
     flush: [] as ((id: number) => void)[],
@@ -687,15 +714,7 @@ export class FakeBackend implements Backend {
     const found = this.sourceBytes(source);
     if (!found) throw new BackendError("not-found", JSON.stringify(source));
     const lines = new TextDecoder().decode(fromBase64(found.data)).split("\n");
-    let pattern: RegExp;
-    try {
-      pattern = new RegExp(
-        query.regex ? query.query : query.query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"),
-        query.caseSensitive ? "g" : "gi",
-      );
-    } catch (error) {
-      throw new BackendError("bad-request", String(error));
-    }
+    const pattern = searchPattern(query, "g");
     const matches: TextMatch[] = [];
     if (query.query) {
       for (let line = fromLine; line < lines.length; line++) {
@@ -716,9 +735,78 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
-  async cancelWorkspaceSearch() {
-    this.data.workspaceSearchCancelled = (this.data.workspaceSearchCancelled ?? 0) + 1;
+  /** As `search_workspace` does, one memo after another in seed order: a newer `requestId` or
+   * `cancelWorkspaceSearch` stops it before its next memo, the same limits truncate it, and
+   * context lines follow the searcher's rule — a line between two close matches is only in the
+   * earlier one's `after`. Lines are not cut to 160 characters. */
+  async searchWorkspace(
+    query: SearchQuery,
+    requestId: number,
+    onEvent: (event: SearchEvent) => void,
+  ): Promise<void> {
+    (this.data.workspaceSearchCalls ??= []).push({ query, requestId });
     this.commit();
+    // Before the pattern is checked, as in Rust: even a bad one cancels the search before it.
+    this.liveWorkspaceSearch = requestId;
+    const pattern = searchPattern(query, "");
+    let searched = 0;
+    let total = 0;
+    let truncated = false;
+    let cancelled = false;
+    for (const [memoId, memo] of query.query ? Object.entries(this.data.memos) : []) {
+      await (this.data.searchDelayMs
+        ? new Promise((resolve) => setTimeout(resolve, this.data.searchDelayMs))
+        : new Promise<void>((resolve) => queueMicrotask(resolve)));
+      if (this.liveWorkspaceSearch !== requestId) {
+        cancelled = true;
+        this.data.workspaceSearchCancelled = (this.data.workspaceSearchCancelled ?? 0) + 1;
+        this.commit();
+        break;
+      }
+      const bytes = fromBase64(memo.data);
+      if (bytes.length > SEARCH_MAX_FILE_BYTES || bytes.subarray(0, 8192).includes(0)) continue;
+      searched++;
+      const lines = new TextDecoder().decode(bytes).split("\n");
+      const matches: SearchMatch[] = [];
+      // The last line already sent, as a match or as context.
+      let sent = -1;
+      for (let line = 0; line < lines.length; line++) {
+        const text = lines[line].replace(/\r$/, "");
+        const found = pattern.exec(text);
+        const last = matches.at(-1);
+        if (!found) {
+          if (last && last.line === line - 1) {
+            last.after.push(text);
+            sent = line;
+          }
+          continue;
+        }
+        if (matches.length === SEARCH_MAX_MATCHES_PER_FILE || total === SEARCH_MAX_MATCHES) {
+          truncated = true;
+          break;
+        }
+        total++;
+        const before = line > 0 && line - 1 > sent ? [lines[line - 1].replace(/\r$/, "")] : [];
+        matches.push({
+          line,
+          // Characters, as Rust counts them — not UTF-16 units.
+          column: Array.from(text.slice(0, found.index)).length,
+          text,
+          before,
+          after: [],
+        });
+        sent = line;
+      }
+      if (matches.length) onEvent({ kind: "file", memoId, file: memo.file, matches });
+      // A match past the search's limit ends it; one past a file's only ends the file.
+      if (total === SEARCH_MAX_MATCHES && truncated) break;
+    }
+    onEvent({ kind: "done", filesSearched: searched, truncated, cancelled });
+  }
+
+  async cancelWorkspaceSearch() {
+    // 0 is no search's number: the running one stops before its next memo and counts itself.
+    this.liveWorkspaceSearch = 0;
   }
 
   private issue(owner: string, name: string, data: string): string {

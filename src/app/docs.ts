@@ -579,6 +579,18 @@ export class MemoDoc extends Doc {
     this.clearSaveFailed();
   }
 
+  /** Where a search match is (`line` 0-based, `column` in characters): clamped to the end of the
+   * line, or of the text, if they are shorter now than when the search read the file. The search
+   * counts characters and CodeMirror UTF-16 units — the same in the BMP, Hangul included; each
+   * emoji or other astral character before the match puts this one short. */
+  positionOf(line: number, column: number): number {
+    const text = this.state?.doc;
+    if (!text) return 0;
+    if (line >= text.lines) return text.length;
+    const at = text.line(line + 1);
+    return Math.min(at.from + column, at.to);
+  }
+
   /** 「이 버전으로 되돌리기」 (spec 「백업」 복원): the whole text becomes `text` in one transaction,
    * so one ⌘Z brings back what was there, and it saves as typing does. */
   restoreText(text: string): void {

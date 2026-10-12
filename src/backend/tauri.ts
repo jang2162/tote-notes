@@ -1,4 +1,4 @@
-import { invoke, type InvokeArgs } from "@tauri-apps/api/core";
+import { Channel, invoke, type InvokeArgs } from "@tauri-apps/api/core";
 import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
@@ -15,6 +15,8 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
+  type SearchEvent,
+  type SearchQuery,
   type Settings,
   type SettingsPatch,
   type TextQuery,
@@ -206,6 +208,13 @@ export class TauriBackend implements Backend {
   }
   cancelTextSearch() {
     return call<void>("cancel_text_search");
+  }
+  searchWorkspace(query: SearchQuery, requestId: number, onEvent: (event: SearchEvent) => void) {
+    return call<void>("search_workspace", {
+      query,
+      requestId,
+      onEvent: new Channel<SearchEvent>(onEvent),
+    });
   }
   cancelWorkspaceSearch() {
     return call<void>("cancel_workspace_search");

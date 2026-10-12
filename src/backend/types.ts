@@ -65,6 +65,30 @@ export interface TextSearch {
   cancelled: boolean;
 }
 
+// --- Workspace search (src-tauri/src/search/mod.rs) ------------------------------------------
+
+/** The same shape as the large text viewer's query. */
+export type SearchQuery = TextQuery;
+
+/** A matching line (`Match`). A line with several matches is one, at the first. */
+export interface SearchMatch {
+  /** 0-based. */
+  line: number;
+  /** Characters before the match in the whole line — not in `text`, which may be cut. */
+  column: number;
+  /** At most 160 characters around the match; a cut end is marked with `…`. */
+  text: string;
+  /** Context lines, cut the same way. A line between two close matches is only in the earlier
+   * one's `after`. */
+  before: string[];
+  after: string[];
+}
+
+/** One file's matches as soon as it is done, in no fixed order, then one `done`. */
+export type SearchEvent =
+  | { kind: "file"; memoId: string; file: string; matches: SearchMatch[] }
+  | { kind: "done"; filesSearched: number; truncated: boolean; cancelled: boolean };
+
 // --- Extensions (src-tauri/src/extensions/registry.rs) ---------------------------------------
 
 export interface ExtensionSummary {
@@ -311,6 +335,16 @@ export interface Backend {
   ): Promise<TextSearch>;
   /** Stops this window's running `searchText`, as a newer one would. */
   cancelTextSearch(): Promise<void>;
+  /** Searches the workspace's memos (spec 「워크스페이스 검색」), each file's matches handed to
+   * `onEvent` as they come, then `done`. Settles when the search ends, which in the app may be
+   * before the last events arrive (they come on a channel, not with the answer): what a search
+   * found is read from its events. A newer `requestId` from this window cancels older ones.
+   * `bad-request` when the pattern is not a valid regex. */
+  searchWorkspace(
+    query: SearchQuery,
+    requestId: number,
+    onEvent: (event: SearchEvent) => void,
+  ): Promise<void>;
   /** Stops this window's running workspace search, as a newer one would. */
   cancelWorkspaceSearch(): Promise<void>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */

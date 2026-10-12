@@ -5,8 +5,13 @@ import { BackendError } from "./types";
 
 // Only invoke is under test; the window, webview and dialog modules reach the native side, so
 // they are stubbed.
-const { invoke } = vi.hoisted(() => ({ invoke: vi.fn() }));
-vi.mock("@tauri-apps/api/core", () => ({ invoke }));
+const { invoke, Channel } = vi.hoisted(() => ({
+  invoke: vi.fn(),
+  Channel: class {
+    constructor(readonly onmessage: (message: unknown) => void) {}
+  },
+}));
+vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel }));
 vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({}) }));
 vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({}) }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -127,6 +132,20 @@ describe("TauriBackend", () => {
       await run();
       expect(invoke).toHaveBeenCalledWith(command, args, undefined);
     }
+  });
+
+  it("hands the workspace search a channel that passes its events on", async () => {
+    const events: unknown[] = [];
+    const query = { query: "q", caseSensitive: true, regex: false };
+    await backend.searchWorkspace(query, 4, (event) => events.push(event));
+    const [command, args] = invoke.mock.lastCall!;
+    expect(command).toBe("search_workspace");
+    expect(args).toMatchObject({ query, requestId: 4 });
+    const done = { kind: "done", filesSearched: 0, truncated: false, cancelled: false };
+    args.onEvent.onmessage(done);
+    expect(events).toEqual([done]);
+    await backend.cancelWorkspaceSearch();
+    expect(invoke).toHaveBeenLastCalledWith("cancel_workspace_search", undefined, undefined);
   });
 
   it("sends contents as raw bytes and names in percent-encoded headers", async () => {

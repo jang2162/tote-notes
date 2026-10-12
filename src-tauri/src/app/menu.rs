@@ -88,6 +88,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let view = SubmenuBuilder::new(app, "보기")
         .item(&item(
             app,
+            "search-workspace",
+            "워크스페이스 검색",
+            Some("CmdOrCtrl+Shift+F"),
+        )?)
+        .separator()
+        .item(&item(
+            app,
             "next-tab",
             "다음 탭",
             Some("CmdOrCtrl+Shift+]"),

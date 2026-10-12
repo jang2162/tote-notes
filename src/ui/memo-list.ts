@@ -26,7 +26,7 @@ export function visibleRows(scrollTop: number, height: number, count: number): [
   return [start, end];
 }
 
-/** The sidebar: every memo, newest first, filtered by name (spec 「메모 목록」). */
+/** The sidebar's memo pane: every memo, newest first, filtered by name (spec 「메모 목록」). */
 export class MemoList {
   private readonly filter = h("input", {
     type: "search",
@@ -35,7 +35,7 @@ export class MemoList {
   });
   private readonly rows = h("div", { class: "memo-rows" });
   private readonly scroller = h("div", { class: "memo-scroller" }, this.rows);
-  readonly el = h("nav", { class: "sidebar" }, this.filter, this.scroller);
+  readonly el = h("div", { class: "memo-pane" }, this.filter, this.scroller);
   private memos: MemoInfo[] = [];
   private shown: MemoInfo[] = [];
   private activeId: string | null = null;

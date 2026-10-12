@@ -68,6 +68,16 @@ beforeEach(() => vi.useFakeTimers());
 afterEach(() => vi.useRealTimers());
 
 describe("MemoDoc", () => {
+  it("positionOf puts a search match in the text, clamped where the text has since got shorter", async () => {
+    const { backend, host } = setup({ memos: { a: fakeMemo("a.md", "첫 줄\n  둘째 foo") } });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    // Hangul is one UTF-16 unit a character, as the search counts it.
+    expect(doc.positionOf(1, 5)).toBe("첫 줄\n  둘째 ".length);
+    expect(doc.positionOf(0, 99)).toBe("첫 줄".length);
+    expect(doc.positionOf(7, 0)).toBe(doc.state!.doc.length);
+  });
+
   it("recovers under untitled.md when neither its own name nor untitled.<ext> can be made", async () => {
     // A file Finder named `a.b?` has the extension `b?`, which tote cannot write; the third
     // candidate is the only one left.

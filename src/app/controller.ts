@@ -28,7 +28,9 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
+import { SearchPanel } from "../ui/search-panel";
 import { openSettings } from "../ui/settings";
+import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
 import { TabBar } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
@@ -114,6 +116,16 @@ export class AppController implements DocHost {
    * its memo tabs have nothing to stand for, and a session written then would drop them. */
   private memosLoaded = false;
   private readonly memoList = new MemoList((id) => void this.openMemo(id));
+  private readonly searchPanel = new SearchPanel({
+    search: (query, onEvent) =>
+      this.backend.searchWorkspace(query, ++this.workspaceSearches, onEvent),
+    cancel: () =>
+      void this.backend.cancelWorkspaceSearch().catch((error: unknown) => console.warn(error)),
+    open: (id, line, column) =>
+      void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
+    onEscape: () => this.closeSearch(),
+  });
+  private readonly sidebar = new Sidebar(this.memoList, this.searchPanel);
   private readonly tabBar = new TabBar({
     select: (id) => void this.activateTab(id),
     close: (id) => void this.closeTab(id),
@@ -125,6 +137,9 @@ export class AppController implements DocHost {
   /** Numbers the large text searches of this window: the backend keeps only the latest one
    * running, so two viewers in one window must not reuse a number. */
   private searches = 0;
+  /** Numbers the workspace searches of this window, apart from `searches`: the backend keeps one
+   * of each running. Starts at 1 — 0 is `cancelWorkspaceSearch`'s. */
+  private workspaceSearches = 0;
 
   constructor(
     root: HTMLElement,
@@ -133,7 +148,7 @@ export class AppController implements DocHost {
     // Not a field initializer: those run before the `backend` parameter property is assigned.
     this.theme = new ThemeManager(backend, () => this.registry);
     root.replaceChildren(
-      this.memoList.el,
+      this.sidebar.el,
       h("main", { class: "main" }, this.tabBar.el, this.surface.el, this.statusBar.el),
     );
     this.view.scrollDOM.addEventListener("scroll", () => this.saveSessionSoon(), { passive: true });
@@ -697,10 +712,39 @@ export class AppController implements DocHost {
           return await this.showVersions();
         case "reveal-backups":
           return await this.backend.revealBackups();
+        case "search-workspace":
+          this.sidebar.show("search");
+          return this.searchPanel.focus();
       }
     } catch (error) {
       this.report(error);
     }
+  }
+
+  /** The search panel's Escape: back to the memo list and the tab. */
+  private closeSearch(): void {
+    this.sidebar.show("memos");
+    if (this.tabs.active) this.view.focus();
+  }
+
+  /** A search result (spec 「워크스페이스 검색」): the memo's tab, its cursor on the match. */
+  private async openMatch(id: string, line: number, column: number): Promise<void> {
+    await this.openMemo(id);
+    const doc = this.tabs.memo(id);
+    if (!doc) return;
+    await doc.ensureLoaded();
+    if (doc !== this.tabs.active || !doc.state || doc.problem) return;
+    const spec = { selection: { anchor: doc.positionOf(line, column) }, scrollIntoView: true };
+    if (this.view.state === doc.state) {
+      this.view.dispatch(spec);
+      this.view.focus();
+      return;
+    }
+    // A Markdown preview on show: the editor takes up from there on ⇧⌘V.
+    const start = doc.state;
+    const { state } = start.update(spec);
+    doc.update({ state, startState: start, docChanged: false, selectionSet: true });
+    doc.scrollAnchor = state.doc.lineAt(state.selection.main.head).from;
   }
 
   /** ⇧⌘V (spec 「마크다운 미리보기」): per tab, with the text as it is right now. */
