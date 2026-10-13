@@ -1,7 +1,10 @@
 {
   "version": 2,
   "form": "ruler",
-  "agents": ["claude", "codex"],
+  "agents": [
+    "claude",
+    "codex"
+  ],
   "sources": {
     "default": {
       "server": "https://guideline.develma.com",
@@ -22,6 +25,9 @@
         "rules/base/11-docs-layout.md",
         "rules/base/12-handoff-docs.md",
         "rules/base/SETUP.md",
+        "rules/codegraph/00-index.md",
+        "rules/codegraph/01-orca-setup.md",
+        "rules/codegraph/SETUP.md",
         "rules/lefthook/00-toolchain.md",
         "rules/lefthook/01-pre-push.md",
         "rules/lefthook/02-post-checkout.md",

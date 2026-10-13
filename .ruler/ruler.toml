@@ -7,9 +7,11 @@ nested = false
 enabled = true
 
 [mcp_servers.codegraph]
+type = "stdio"
 command = "npx"
 args = ["-y", "@colbymchenry/codegraph", "serve", "--mcp"]
 
 [mcp_servers.context7]
+type = "stdio"
 command = "npx"
 args = ["-y", "@upstash/context7-mcp"]

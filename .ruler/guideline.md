@@ -7,8 +7,9 @@
 - 지침을 최신으로 맞출 때는 `guideline status` 로 보고 `guideline update` 를 쓴다(에이전트는 `guideline-sync` 스킬).
 - 프로젝트를 세팅할 때(그 스택을 처음 받았을 때, 새로 클론했을 때, 세팅이 맞는지 의심될 때)는 아래 문서를 읽고 따른다. 스택을 고른 것은 그 기술을 이 프로젝트에 들이기로 한 결정이다. 프로젝트가 아직 그 기술을 쓰지 않는다는 이유로 세팅을 건너뛰지 않는다 — 세팅이 바로 그 기술을 들이는 단계다. 세팅할 수 없으면(권한, 사람이 앱에서 해야 하는 설정 등) 건너뛰지 말고 사용자에게 알린다.
 
-| 스택 | 세팅 문서                      |
-| ---- | ------------------------------ |
+| 스택 | 세팅 문서 |
+| --- | --- |
 | base | `docs/guideline/base/SETUP.md` |
+| codegraph | `docs/guideline/codegraph/SETUP.md` |
 | mise | `docs/guideline/mise/SETUP.md` |
 | orca | `docs/guideline/orca/SETUP.md` |

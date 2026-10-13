@@ -4,6 +4,8 @@
     "default": 19
   },
   "sources": {
+    "default:mcp/codegraph": "01d216780214053bd3728391bbb87db603034af0d566ca43dc52bc228378cc00",
+    "default:mcp/context7": "8f182786a2622ee518d5fe624bb4725715b0337962923d51c73d16ef3ba2044f",
     "default:rules/base/00-agent.md": "8769ce88bbe59ad56fb00ab23e4b303befafc1d73f764be15033b245ff66bb89",
     "default:rules/base/01-git.md": "a6c05de86c1758ba1a3da5454a520c54b81573947fb56c527b323286aa299972",
     "default:rules/base/02-delegation.md": "eef0e640070a54f161d3807e14af6c52231bbca488bd38d0552cf00be637676e",
@@ -18,6 +20,9 @@
     "default:rules/base/11-docs-layout.md": "8def8e3594ee2bad6e268e1bc64b01bb337228cdd0d3d2771abe033c08bb4bd2",
     "default:rules/base/12-handoff-docs.md": "af802bc8c52903064076d2973d2da191bfcc8f6c849917ede35394cab9ac48a2",
     "default:rules/base/SETUP.md": "a77b269479829fadbb5958a3337e42bae48d4cda4376cda1eded9df524e0ac8f",
+    "default:rules/codegraph/00-index.md": "dfb04e418ad4e592a161c6cc0d895ba534c7191106b3945d91f4c29dde211f8e",
+    "default:rules/codegraph/01-orca-setup.md": "02b018ad80d5b31cf8269fde51afdafdf34e9a4d07a5d0e32d69e0498d10a5b6",
+    "default:rules/codegraph/SETUP.md": "3ce9d694c54a14d50a99af943df5764dc228fc2f3d5a5e61358bc6143d808d96",
     "default:rules/lefthook/00-toolchain.md": "1b778edb3d410653acc7c23acc3967268125e08da90522289fd6386d2af21589",
     "default:rules/lefthook/01-pre-push.md": "abacc327081e93b49348ff865cae466c25ff2a2fd4c3a1330a0c94ea51d943c3",
     "default:rules/lefthook/02-post-checkout.md": "b1ae4b5a5c77b92d6b1614d37d8ae1f31c6fb774e88b093d3bdc6e0b8ada91e0",
@@ -37,32 +42,45 @@
     "default:rules/rust/01-toolchain.md": "1248f6c80854e07cd09b591e9c1c8cac1e1359f646d43b1443a7445ee5d8ff86",
     "default:rules/tiergear/00-switch.md": "f07c95ca2a29356b6e42f3a1f156872c37df7d89c521539adfd27c06d838a907",
     "default:rules/tiergear/01-launch.md": "0c9ac57eb259330694b7175f4da76373e111d83f0e6b665492cf6413964b2fc0",
-    "default:rules/tiergear/02-orca-spawn.md": "150896fe165ccb4508c6d302f01962c521ff5aa93ad1fecb4a8b7aa7d8255551"
+    "default:rules/tiergear/02-orca-spawn.md": "150896fe165ccb4508c6d302f01962c521ff5aa93ad1fecb4a8b7aa7d8255551",
+    "default:skills/guideline-export": "7f7ee8d777638cfa7ec07583d730d74c93038aa28ce17d090200f70d9ec80940",
+    "default:skills/guideline-sync": "853f8c2d3688e5ddce2b6a43c1ada349639f9177619a1b32ef58683ee0494dec",
+    "default:skills/orca-worker": "21c16400cced87f4d35cee13adf38f62def59244408ba41aa5dc00c1074d6568"
   },
   "outputs": [
     {
       "path": ".ruler/base/00-agent.md",
-      "items": ["default:rules/base/00-agent.md"],
+      "items": [
+        "default:rules/base/00-agent.md"
+      ],
       "hash": "61a41651671762bf0ba2f28e76243a5fda8b826fc36e33ba815d327d314f416b"
     },
     {
       "path": ".ruler/base/01-git.md",
-      "items": ["default:rules/base/01-git.md"],
+      "items": [
+        "default:rules/base/01-git.md"
+      ],
       "hash": "5df380ecf5c57e0d90c52a428b8189314c7f13955a5fcff956eb2c70a0fe7953"
     },
     {
       "path": ".ruler/base/02-delegation.md",
-      "items": ["default:rules/base/02-delegation.md"],
+      "items": [
+        "default:rules/base/02-delegation.md"
+      ],
       "hash": "fadfae756797dc36afd37bc4ffb0c5b65f4af3e714b337ea351e5a538f658c8e"
     },
     {
       "path": ".ruler/base/05-verification.md",
-      "items": ["default:rules/base/05-verification.md"],
+      "items": [
+        "default:rules/base/05-verification.md"
+      ],
       "hash": "4dcca613ea8e6a805a374c2db9ad7952e66c6a1d44fb94e620e3d41f45db38b6"
     },
     {
       "path": ".ruler/base/10-package-manager.md",
-      "items": ["default:rules/base/10-package-manager.md"],
+      "items": [
+        "default:rules/base/10-package-manager.md"
+      ],
       "hash": "ba6bb1c11815ad9721fc42f18519f55f850623c7db27a03cd17f68407ff0d161"
     },
     {
@@ -71,9 +89,14 @@
       "hash": "151b74b4da8f97bcd1cab781cb6939e17a6a929af4371c87f8fe2ed3a47836fe"
     },
     {
+      "path": ".ruler/codegraph/99-reference.md",
+      "items": [],
+      "hash": "47844b2dd5a5d68b161eb86cec7032fef17a8ed0ccdb4ddf938d628c4b3e8e10"
+    },
+    {
       "path": ".ruler/guideline.md",
       "items": [],
-      "hash": "fb41e36f81f30278a8b5abf3bf92775e41cb1c2c4476a6229e09f63ca9065027"
+      "hash": "7d82524cfeab042c3105a4bc214556a39a3845878ccff94ad4a595adaddd0410"
     },
     {
       "path": ".ruler/lefthook/99-reference.md",
@@ -87,7 +110,9 @@
     },
     {
       "path": ".ruler/orca/05-switch.md",
-      "items": ["default:rules/orca/05-switch.md"],
+      "items": [
+        "default:rules/orca/05-switch.md"
+      ],
       "hash": "28db3be5a38d1c74ed8bc06ddc7aa27c317eedaa96062a4fb075c07e3bcc35f5"
     },
     {
@@ -97,7 +122,9 @@
     },
     {
       "path": ".ruler/oxc/01-formatting.md",
-      "items": ["default:rules/oxc/01-formatting.md"],
+      "items": [
+        "default:rules/oxc/01-formatting.md"
+      ],
       "hash": "01a189377f5555ede244df22cccdc83372132a59d3073b754243262ef29ab337"
     },
     {
@@ -106,8 +133,26 @@
       "hash": "eb0f95e02a6d6ee4ea1f0028cd145a745213a9b62f4afbc34b7f54a531a0bfa7"
     },
     {
+      "path": ".ruler/ruler.toml",
+      "key": "mcp_servers.codegraph",
+      "items": [
+        "default:mcp/codegraph"
+      ],
+      "hash": "0424909a0bfee00df5c1096081b2cca87876d0e649b1c2bdc80f9fe82616429c"
+    },
+    {
+      "path": ".ruler/ruler.toml",
+      "key": "mcp_servers.context7",
+      "items": [
+        "default:mcp/context7"
+      ],
+      "hash": "08125221e5acb223ca37f9da6a86b34830c3acda280b83b221b22eeb34b62c93"
+    },
+    {
       "path": ".ruler/ruler/00-sources.md",
-      "items": ["default:rules/ruler/00-sources.md"],
+      "items": [
+        "default:rules/ruler/00-sources.md"
+      ],
       "hash": "776b0d8f4e78eee9dc76ec88f0bb6916532138ff39587b41e12df4648851e7f8"
     },
     {
@@ -117,7 +162,9 @@
     },
     {
       "path": ".ruler/rust/00-fmt-lint.md",
-      "items": ["default:rules/rust/00-fmt-lint.md"],
+      "items": [
+        "default:rules/rust/00-fmt-lint.md"
+      ],
       "hash": "7b771088d9e42990f6537769b2d088220421a8d63b84f52b8754435c4f8d0890"
     },
     {
@@ -126,23 +173,66 @@
       "hash": "0a40689103ea6c39a0d980c9fa341d7010547e2fe4c698aa8dcdff0d227bb4ad"
     },
     {
+      "path": ".ruler/skills/guideline-export/SKILL.md",
+      "items": [
+        "default:skills/guideline-export"
+      ],
+      "hash": "3b3890349c16fab379dc6f756993264675a1a3e6320128489d2464e5961e9dc8"
+    },
+    {
+      "path": ".ruler/skills/guideline-sync/SKILL.md",
+      "items": [
+        "default:skills/guideline-sync"
+      ],
+      "hash": "efd2ffda9c44a6413eb528ece1c52b67ea394c4b47118bff33d7be91e03a5c1b"
+    },
+    {
+      "path": ".ruler/skills/orca-worker/SKILL.md",
+      "items": [
+        "default:skills/orca-worker"
+      ],
+      "hash": "86d6d3971e98a0d900a9a2a364904707e33c86aa790fa15aeb467c40e63c0b64"
+    },
+    {
+      "path": ".ruler/skills/orca-worker/cleanup.md",
+      "items": [
+        "default:skills/orca-worker"
+      ],
+      "hash": "9e688e3c2cc920fb776984b2d091447b72e245519ec2a7bb02daae9fb401f492"
+    },
+    {
       "path": ".ruler/skills/orca-worker/delivery.md",
-      "items": ["default:skills/orca-worker"],
+      "items": [
+        "default:skills/orca-worker"
+      ],
       "hash": "719e38dc7ba8e514ef9cefcda02286fcd2cb135904bbc8fd3201cd4eb83f3836"
     },
     {
       "path": ".ruler/skills/orca-worker/dispatch.md",
-      "items": ["default:skills/orca-worker"],
+      "items": [
+        "default:skills/orca-worker"
+      ],
       "hash": "b6ea2f4f042f042562e3f01b9a07208b95e7215dfd9b4764d5b1f055393be578"
     },
     {
       "path": ".ruler/skills/orca-worker/worker-start.md",
-      "items": ["default:skills/orca-worker"],
+      "items": [
+        "default:skills/orca-worker"
+      ],
       "hash": "6e4e081657b9729aad776cce237c739d3444bb56f373462b33e05915fc121f1d"
     },
     {
+      "path": ".ruler/skills/orca-worker/worktree.md",
+      "items": [
+        "default:skills/orca-worker"
+      ],
+      "hash": "84715e3b693649831cd757ba544d2d6a6bf66c11a9bb1b38bca0d7b6d0e69a89"
+    },
+    {
       "path": ".ruler/tiergear/00-switch.md",
-      "items": ["default:rules/tiergear/00-switch.md"],
+      "items": [
+        "default:rules/tiergear/00-switch.md"
+      ],
       "hash": "2cce393bb6224de79242619219807fe3a6208589a86a782281a54e5046561a1f"
     },
     {
@@ -157,122 +247,191 @@
     },
     {
       "path": "docs/guideline/base/03-comments.md",
-      "items": ["default:rules/base/03-comments.md"],
+      "items": [
+        "default:rules/base/03-comments.md"
+      ],
       "hash": "c536a05c4a0765b2d313109b15d36379a3d104e726a3198f8b653c087794de37"
     },
     {
       "path": "docs/guideline/base/04-citation.md",
-      "items": ["default:rules/base/04-citation.md"],
+      "items": [
+        "default:rules/base/04-citation.md"
+      ],
       "hash": "4f9352eb322414119eb4edbf98c9eafa441a566dc2acaf1a894218866f41e1d9"
     },
     {
       "path": "docs/guideline/base/06-worktree-setup.md",
-      "items": ["default:rules/base/06-worktree-setup.md"],
+      "items": [
+        "default:rules/base/06-worktree-setup.md"
+      ],
       "hash": "467713d3ed417405ff357cc6c225416729356657825baf2bcde638dcdf1ed2c5"
     },
     {
       "path": "docs/guideline/base/07-worktree-cleanup.md",
-      "items": ["default:rules/base/07-worktree-cleanup.md"],
+      "items": [
+        "default:rules/base/07-worktree-cleanup.md"
+      ],
       "hash": "d16a098164002372b51b96c303ce70eea1d4ff5ec4d849abfcbd324b161115f0"
     },
     {
       "path": "docs/guideline/base/08-shared-resources.md",
-      "items": ["default:rules/base/08-shared-resources.md"],
+      "items": [
+        "default:rules/base/08-shared-resources.md"
+      ],
       "hash": "1669f1ed97b43f6adbbabe58fa0c94e32f8e86c6e4b2f9ee2719be0eb9e611ef"
     },
     {
       "path": "docs/guideline/base/09-worker-brief.md",
-      "items": ["default:rules/base/09-worker-brief.md"],
+      "items": [
+        "default:rules/base/09-worker-brief.md"
+      ],
       "hash": "5a7b994686018909dfd6220f7eaadcd92acbecfccf65f9f21cb8b06efa909124"
     },
     {
       "path": "docs/guideline/base/11-docs-layout.md",
-      "items": ["default:rules/base/11-docs-layout.md"],
+      "items": [
+        "default:rules/base/11-docs-layout.md"
+      ],
       "hash": "e9d75cad62a3efde7cf6bec9262ca7bc047be245609b167fd8e494e57744387f"
     },
     {
       "path": "docs/guideline/base/12-handoff-docs.md",
-      "items": ["default:rules/base/12-handoff-docs.md"],
+      "items": [
+        "default:rules/base/12-handoff-docs.md"
+      ],
       "hash": "d197b597ce4601d51098d92b39114c2536892aa2ec103aa7c76f6991af8a9c61"
     },
     {
       "path": "docs/guideline/base/SETUP.md",
-      "items": ["default:rules/base/SETUP.md"],
+      "items": [
+        "default:rules/base/SETUP.md"
+      ],
       "hash": "a77b269479829fadbb5958a3337e42bae48d4cda4376cda1eded9df524e0ac8f"
     },
     {
+      "path": "docs/guideline/codegraph/00-index.md",
+      "items": [
+        "default:rules/codegraph/00-index.md"
+      ],
+      "hash": "39ecf3d50fb4c01657ff29bb359407bc1064104a7e9ce3dfb68c786b95882672"
+    },
+    {
+      "path": "docs/guideline/codegraph/01-orca-setup.md",
+      "items": [
+        "default:rules/codegraph/01-orca-setup.md"
+      ],
+      "hash": "1bc0adc0ee3dd54cb10421a11e4772f2b11bfca7c5ab65670179e25f2f1c2f70"
+    },
+    {
+      "path": "docs/guideline/codegraph/SETUP.md",
+      "items": [
+        "default:rules/codegraph/SETUP.md"
+      ],
+      "hash": "3ce9d694c54a14d50a99af943df5764dc228fc2f3d5a5e61358bc6143d808d96"
+    },
+    {
       "path": "docs/guideline/lefthook/00-toolchain.md",
-      "items": ["default:rules/lefthook/00-toolchain.md"],
+      "items": [
+        "default:rules/lefthook/00-toolchain.md"
+      ],
       "hash": "1296ed5cab9034e92284fd3d6ddbc33284ca709d03d9f57848d7f8b6162eba12"
     },
     {
       "path": "docs/guideline/lefthook/01-pre-push.md",
-      "items": ["default:rules/lefthook/01-pre-push.md"],
+      "items": [
+        "default:rules/lefthook/01-pre-push.md"
+      ],
       "hash": "98660f979422b488cb14df946a0f150b16e11201c5ae2a5d06bdd9966c416eac"
     },
     {
       "path": "docs/guideline/lefthook/02-post-checkout.md",
-      "items": ["default:rules/lefthook/02-post-checkout.md"],
+      "items": [
+        "default:rules/lefthook/02-post-checkout.md"
+      ],
       "hash": "3e470fa35bfd4919ac0e6ceaa1f03d772dd5811e7bdde969dad4eff341f3c983"
     },
     {
       "path": "docs/guideline/mise/00-source.md",
-      "items": ["default:rules/mise/00-source.md"],
+      "items": [
+        "default:rules/mise/00-source.md"
+      ],
       "hash": "72b6bedeba1e493b438b6b78d1ce73e2fc57c5e905068b35e423793aa6f61084"
     },
     {
       "path": "docs/guideline/mise/01-path.md",
-      "items": ["default:rules/mise/01-path.md"],
+      "items": [
+        "default:rules/mise/01-path.md"
+      ],
       "hash": "c3b3a81166002a24c1385c7960d108ed4daccadc4a2cd37fcb239f07e0083259"
     },
     {
       "path": "docs/guideline/mise/02-pnpm.md",
-      "items": ["default:rules/mise/02-pnpm.md"],
+      "items": [
+        "default:rules/mise/02-pnpm.md"
+      ],
       "hash": "2695a6e5a2011222024ed90c598534d39e82d3dc150a7681e9c5724a01ef049b"
     },
     {
       "path": "docs/guideline/mise/SETUP.md",
-      "items": ["default:rules/mise/SETUP.md"],
+      "items": [
+        "default:rules/mise/SETUP.md"
+      ],
       "hash": "a212d06bc337ab23c04d4da3a4c8acc864ede892fddd4f8ad8c23d79234b4e75"
     },
     {
       "path": "docs/guideline/orca/06-orca-yaml.md",
-      "items": ["default:rules/orca/06-orca-yaml.md"],
+      "items": [
+        "default:rules/orca/06-orca-yaml.md"
+      ],
       "hash": "3e438a5b60397b79ec36a240a8be3eb4c16833c7a4de1f79f344676ea4d2e0e7"
     },
     {
       "path": "docs/guideline/orca/SETUP.md",
-      "items": ["default:rules/orca/SETUP.md"],
+      "items": [
+        "default:rules/orca/SETUP.md"
+      ],
       "hash": "cb49f07b7fb192f376ff40672866ee878cec64e5d73d1829b91cc8ac32944cd3"
     },
     {
       "path": "docs/guideline/oxc/00-version.md",
-      "items": ["default:rules/oxc/00-version.md"],
+      "items": [
+        "default:rules/oxc/00-version.md"
+      ],
       "hash": "28744fcab50656e1c085094349dc31f43f92927bb8742d8acd45b5d7c7ff3728"
     },
     {
       "path": "docs/guideline/ruler/01-nested.md",
-      "items": ["default:rules/ruler/01-nested.md"],
+      "items": [
+        "default:rules/ruler/01-nested.md"
+      ],
       "hash": "c36f8a1b07994792f0324ef85d5a93a5548307421f932858e2b7f5743224516c"
     },
     {
       "path": "docs/guideline/ruler/02-documents.md",
-      "items": ["default:rules/ruler/02-documents.md"],
+      "items": [
+        "default:rules/ruler/02-documents.md"
+      ],
       "hash": "774daf294c636b65e069bb21e920af0c5ce24e82bdecd1dcb3d532889ff4b922"
     },
     {
       "path": "docs/guideline/rust/01-toolchain.md",
-      "items": ["default:rules/rust/01-toolchain.md"],
+      "items": [
+        "default:rules/rust/01-toolchain.md"
+      ],
       "hash": "ce1da0b970f9e5684ad556f07971ee0e9eef9e6528cf49381e0ceb8958dde3b0"
     },
     {
       "path": "docs/guideline/tiergear/01-launch.md",
-      "items": ["default:rules/tiergear/01-launch.md"],
+      "items": [
+        "default:rules/tiergear/01-launch.md"
+      ],
       "hash": "081913ec78898ec180adfad31395e4520fb662264fb11f5fd022021fd9410a8c"
     },
     {
       "path": "docs/guideline/tiergear/02-orca-spawn.md",
-      "items": ["default:rules/tiergear/02-orca-spawn.md"],
+      "items": [
+        "default:rules/tiergear/02-orca-spawn.md"
+      ],
       "hash": "6520268c514405d76e39de0a8f41a32deb0580d25e1a6bf8194e396152849f19"
     }
   ]
