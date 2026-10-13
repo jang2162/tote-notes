@@ -17,6 +17,8 @@ node_modules/
 .worktrees/
 # 에이전트 전달 문서와 세션 스크래치
 .superpowers/
+# codegraph 인덱스 — 작업 트리마다 다시 만드는 생성물
+.codegraph/
 # Orca 개인용 이슈 명령
 /.orca/issue-command
 /dist/
