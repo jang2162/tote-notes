@@ -1,0 +1,10 @@
+# 새 경로라 mise.toml 신뢰가 이어지지 않으므로 trust 부터 한다.
+# 셋업 셸에 mise 가 활성화돼 있지 않을 수 있어, 설치는 mise exec 로 mise.toml 의 런타임을 잡고 돈다.
+# pnpm install 의 prepare 가 ruler apply(지침 생성물)와 lefthook install 까지 한다.
+scripts:
+  setup: |
+    set -e
+    mise trust --quiet
+    mise install
+    mise exec -- pnpm install
+setupAgentStartupPolicy: wait-for-setup

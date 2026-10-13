@@ -15,6 +15,10 @@ node_modules/
 # END Ruler Generated Files
 
 .worktrees/
+# 에이전트 전달 문서와 세션 스크래치
+.superpowers/
+# Orca 개인용 이슈 명령
+/.orca/issue-command
 /dist/
 /test-results/
 /playwright-report/
