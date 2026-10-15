@@ -62,7 +62,8 @@ export const CHOOSE_VERSION_FIRST = "먼저 디스크 버전과 내 버전 중 �
 /** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
  * were read as text and are not UTF-8 (or hold a NUL). */
 export type Problem = "binary" | "not-utf8" | "too-large" | "long-line" | "missing" | "unreadable";
-/** `reloaded`: the text was read again after another app changed the file, as a new state. */
+/** `reloaded`: the text was read again after another app changed the file, as a new state.
+ * `recovered`: a failed write went through on a retry, so the error it reported is stale. */
 export type Change =
   | "info"
   | "language"
@@ -72,7 +73,8 @@ export type Change =
   | "notice"
   | "error"
   | "banner"
-  | "reloaded";
+  | "reloaded"
+  | "recovered";
 export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 
 /** What a document needs from the window around it. */
@@ -908,7 +910,12 @@ export class ExternalDoc extends Doc {
     } catch (error) {
       return this.failSave(error, this.draftKey, () => this.keepDraft());
     }
+    const retried = this.saveFailed;
     this.clearSaveFailed();
+    if (retried) {
+      this.error = null;
+      this.host.changed(this, "recovered");
+    }
   }
 
   /** ⌘S. Returns whether the file was written. */

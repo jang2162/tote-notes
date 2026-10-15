@@ -350,6 +350,9 @@ export class AppController implements DocHost {
     // A memo that saved after a failed save no longer has the error to show.
     if (active && change === "saved" && doc instanceof MemoDoc && this.statusBar.showsError)
       this.statusBar.setMessage("");
+    // A draft kept on a retry: the failure's message is no longer true either.
+    if (active && change === "recovered" && this.statusBar.showsError)
+      this.statusBar.setMessage("");
     if (change === "error") this.report(doc.error);
     this.renderTabs();
   }

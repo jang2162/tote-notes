@@ -804,6 +804,27 @@ describe("ExternalDoc", () => {
     expect(backend.data.drafts["/x/a.sh"]).toBeDefined();
   });
 
+  it("a draft kept on the second try takes the failure it reported with it", async () => {
+    const { backend, host, changes } = setup({ files: { "/x/a.sh": fakeFile("echo hi\n") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    const keep = backend.keepExternalDraft.bind(backend);
+    let broken = true;
+    vi.spyOn(backend, "keepExternalDraft").mockImplementation((path, bytes) =>
+      broken ? Promise.reject(new Error("no space")) : keep(path, bytes),
+    );
+    type(doc, "# 수정");
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(doc.saveFailed).toBe(true);
+    expect(doc.error).not.toBeNull();
+    broken = false;
+    changes.length = 0;
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(doc.saveFailed).toBe(false);
+    expect(doc.error).toBeNull();
+    expect(changes).toContain("recovered");
+  });
+
   it("⌘S writes the file, drops the draft and clears the mark", async () => {
     const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("old") } });
     const doc = new ExternalDoc(host, "/x/a.sh");

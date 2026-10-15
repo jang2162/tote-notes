@@ -61,6 +61,8 @@ declare global {
     lineText(line: number): string;
     /** Set by src/main.ts when it runs on the fake backend. */
     __tote: { app: AppController; backend: FakeBackend; ready: boolean };
+    /** save-failure.spec.ts: while true the patched `keepExternalDraft` rejects. */
+    __toteBroken: boolean;
   }
 }
 

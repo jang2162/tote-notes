@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { fakeMemo } from "../../src/backend/fake";
-import { quietErrors, start } from "./helpers";
+import { fakeFile, fakeMemo } from "../../src/backend/fake";
+import { menu, quietErrors, start } from "./helpers";
 
 const WRITE_FAILED = "no space left on device";
 
@@ -55,4 +55,28 @@ test("a flush with everything saved answers without a reason", async ({ page }) 
     .toEqual([{ id: 7 }]);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("우유 계란");
   await expect(page.locator(".tab.active")).not.toHaveClass(/\bfailed\b/);
+});
+
+test("an external draft kept on a retry takes its error off the status bar", async ({ page }) => {
+  await quietErrors(page, WRITE_FAILED);
+  await start(page, { files: { "/x/a.sh": fakeFile("echo hi\n") }, picks: ["/x/a.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toContainText("echo hi");
+  await page.evaluate((message) => {
+    const backend = window.__tote.backend;
+    const keep = backend.keepExternalDraft.bind(backend);
+    backend.keepExternalDraft = (path, bytes) =>
+      window.__toteBroken ? Promise.reject(new Error(message)) : keep(path, bytes);
+    window.__toteBroken = true;
+  }, WRITE_FAILED);
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type("echo more");
+  const message = page.locator(".status-message");
+  await expect(page.locator(".tab.active")).toHaveClass(/\bfailed\b/);
+  await expect(message).toHaveText(`오류: ${WRITE_FAILED}`);
+  await page.evaluate(() => {
+    window.__toteBroken = false;
+  });
+  await expect(page.locator(".tab.active")).not.toHaveClass(/\bfailed\b/, { timeout: 10_000 });
+  await expect(message).toHaveText("");
 });
