@@ -10,3 +10,5 @@
 | 워크트리를 지우거나 회수할 때 | `docs/guideline/base/07-worktree-cleanup.md` |
 | 워크트리에서 개발 서버·컨테이너처럼 포트를 잡는 것을 띄울 때 | `docs/guideline/base/08-shared-resources.md` |
 | 워커에게 브리프를 쓰거나 보내거나, 워커의 결과를 병합할 때 | `docs/guideline/base/09-worker-brief.md` |
+| 문서를 새로 만들거나 옮길 때, README 나 지침에서 문서를 가리킬 때 | `docs/guideline/base/11-docs-layout.md` |
+| 워커나 다른 에이전트에게 문서를 경로로 넘기거나, 넘겨받은 문서를 읽을 때 | `docs/guideline/base/12-handoff-docs.md` |
