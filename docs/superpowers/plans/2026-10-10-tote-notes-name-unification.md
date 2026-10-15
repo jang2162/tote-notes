@@ -8,7 +8,7 @@
 
 **Tech Stack:** pnpm, Cargo, ruler(`pnpm exec ruler apply`), Vitest, `cargo test`.
 
-**Spec:** 별도 스펙 없음. 결정 근거는 자매 저장소 `keyring-notes` 의 `docs/naming-decision.md`(시리즈로 묶는다는 전제에서 복수형 통일을 권한 판단). 실행자는 `docs/development.md` 를 먼저 읽는다(테스트·툴체인 규칙).
+**Spec:** 별도 스펙 없음. 결정 근거는 자매 저장소 `keyring-notes` 의 `docs/naming-decision.md`(시리즈로 묶는다는 전제에서 복수형 통일을 권한 판단). 실행자는 `docs/guides/development.md` 를 먼저 읽는다(테스트·툴체인 규칙).
 
 ## Global Constraints
 
@@ -70,11 +70,11 @@ Expected: 추적 파일 변경이 Step 2~5 의 4개 파일뿐이다(생성물은
 - [ ] **Step 7: 슬러그가 남은 곳을 다시 센다 — 두 방법으로**
 
 Run: `grep -rIoE 'tote-note([^s]|$)' --exclude-dir=node_modules --exclude-dir=.git --exclude-dir=.worktrees --exclude-dir=target --exclude-dir=docs --exclude-dir=.idea . | wc -l`
-Expected: `0`. 다른 방법으로 `git grep -nE 'tote-note([^s]|$)' -- . ':!docs/superpowers'` 도 돌려 `docs/superpowers` 밖에서 남은 곳이 없는지 확인하고, `docs/` 안 날짜 없는 문서(`docs/development.md`, `docs/guideline/`)에 남은 곳이 있으면 목록으로 보고한다.
+Expected: `0`. 다른 방법으로 `git grep -nE 'tote-note([^s]|$)' -- . ':!docs/superpowers'` 도 돌려 `docs/superpowers` 밖에서 남은 곳이 없는지 확인하고, `docs/` 안 날짜 없는 문서(`docs/guides/development.md`, `docs/guideline/`)에 남은 곳이 있으면 목록으로 보고한다.
 
 - [ ] **Step 8: 빌드·테스트가 그대로 도는지 확인한다**
 
-Run: `docs/development.md` 에 적힌 프론트 테스트·타입체크·`cargo test` 명령.
+Run: `docs/guides/development.md` 에 적힌 프론트 테스트·타입체크·`cargo test` 명령.
 Expected: 통과. 출력에서 **실제 실행 개수**가 0 이 아닌지 확인해 보고에 적는다.
 
 - [ ] **Step 9: 커밋한다**
