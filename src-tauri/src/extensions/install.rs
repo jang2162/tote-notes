@@ -81,7 +81,8 @@ fn stage_and_place(
     }
     // The old versions are moved aside, not deleted, until the new one is in place: a rename
     // that fails puts them back, so a failed replace leaves the extension as it was. Trash left
-    // by a crash in between is removed at the next start (`ExtensionStore::remove_leftovers`).
+    // by a crash in between is put back or removed at the next start
+    // (`ExtensionStore::remove_leftovers`).
     let mut trashed: Vec<(PathBuf, PathBuf)> = Vec::new();
     for (folder, _) in &existing {
         let trash = store
@@ -133,7 +134,7 @@ pub fn remove(store: &ExtensionStore, id: &str) -> Result<(), InstallError> {
 /// The user folders of `id` with their versions, by name. Only folders named `<id>@<version>`
 /// count: the id of a folder named otherwise is not known without reading its manifest, and
 /// such folders were not made by this installer.
-fn installed_folders(user_dir: &Path, id: &str) -> io::Result<Vec<(PathBuf, String)>> {
+pub(super) fn installed_folders(user_dir: &Path, id: &str) -> io::Result<Vec<(PathBuf, String)>> {
     let mut found = Vec::new();
     let Ok(entries) = fs::read_dir(user_dir) else {
         return Ok(found);

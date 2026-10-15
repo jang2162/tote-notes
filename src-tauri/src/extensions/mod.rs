@@ -71,21 +71,53 @@ impl ExtensionStore {
     }
 
     /// Removes what an install cut short leaves in the user folder: a staging folder, or the old
-    /// versions moved aside during a replace. Only at start: during a run another window may be
-    /// installing, and its staging folder is in use.
+    /// versions moved aside during a replace. A trashed extension whose id has no folder left is
+    /// put back as it was: the crash fell between the two renames of a replace, and deleting it
+    /// would lose the extension. Only at start: during a run another window may be installing,
+    /// and its staging folder is in use.
     pub fn remove_leftovers(&self) {
         let Ok(entries) = fs::read_dir(&self.user_dir) else {
             return;
         };
+        let mut trash = Vec::new();
         for entry in entries.flatten() {
             let name = entry.file_name();
             let name = name.to_string_lossy();
-            if (name.starts_with(".staging-") || name.starts_with(".trash-"))
-                && entry.file_type().is_ok_and(|kind| kind.is_dir())
-            {
+            if !entry.file_type().is_ok_and(|kind| kind.is_dir()) {
+                continue;
+            }
+            if name.starts_with(".staging-") {
                 let _ = fs::remove_dir_all(entry.path());
+            } else if name.starts_with(".trash-") {
+                trash.push(entry.path());
             }
         }
+        trash.sort();
+        for folder in trash {
+            if !self.put_back(&folder) {
+                let _ = fs::remove_dir_all(&folder);
+            }
+        }
+    }
+
+    /// Whether `trash` went back to `<id>@<version>`: only when its manifest reads and no folder of
+    /// that id is in the user folder.
+    fn put_back(&self, trash: &Path) -> bool {
+        let Ok(text) = fs::read_to_string(trash.join("package.json")) else {
+            return false;
+        };
+        let Ok(manifest) = Manifest::parse(&text) else {
+            return false;
+        };
+        let id = manifest.id();
+        if install::installed_folders(&self.user_dir, &id).is_ok_and(|found| !found.is_empty()) {
+            return false;
+        }
+        fs::rename(
+            trash,
+            self.user_dir.join(format!("{id}@{}", manifest.version)),
+        )
+        .is_ok()
     }
 
     pub fn find(&self, id: &str) -> Option<Installed> {
@@ -226,7 +258,7 @@ pub(crate) mod tests {
         write_extension(
             &user,
             ".trash-2",
-            r#"{"name": "b", "publisher": "p", "version": "1"}"#,
+            r#"{"name": "c", "publisher": "p", "version": "0.9"}"#,
         );
         write_extension(
             &user,
@@ -244,6 +276,41 @@ pub(crate) mod tests {
         left.sort();
         assert_eq!(left, vec![".DS_Store", "p.c@1"]);
         ExtensionStore::new(dir.path().join("bundled"), dir.path().join("none")).remove_leftovers();
+    }
+
+    #[test]
+    fn an_extension_left_only_in_the_trash_is_put_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user");
+        write_extension(
+            &user,
+            ".trash-1",
+            r#"{"name": "night", "publisher": "someone", "version": "1.0.0"}"#,
+        );
+        write_extension(
+            &user,
+            ".staging-2",
+            r#"{"name": "night", "publisher": "someone", "version": "2.0.0"}"#,
+        );
+        let store = ExtensionStore::new(dir.path().join("bundled"), user.clone());
+        store.remove_leftovers();
+        let mut left: Vec<String> = fs::read_dir(&user)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        left.sort();
+        assert_eq!(left, vec!["someone.night@1.0.0"]);
+        assert_eq!(store.scan().extensions.len(), 1);
+    }
+
+    #[test]
+    fn trash_with_a_broken_manifest_is_removed_not_put_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let user = dir.path().join("user");
+        write_extension(&user, ".trash-1", "not json");
+        ExtensionStore::new(dir.path().join("bundled"), user.clone()).remove_leftovers();
+        assert_eq!(fs::read_dir(&user).unwrap().count(), 0);
     }
 
     #[test]
