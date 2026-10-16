@@ -258,7 +258,17 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onReveal((tab) => void this.reveal(tab));
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
-    window.addEventListener("blur", () => void this.focused.tabs.active?.leave());
+    window.addEventListener("blur", () => {
+      void this.focused.tabs.active?.leave();
+      // A click in a viewer's frame sends no mousedown here, only the focus into the frame: the
+      // pane holding the frame becomes the focused one. The frame has the focus a tick later.
+      setTimeout(() => {
+        const frame = document.activeElement;
+        if (!(frame instanceof HTMLIFrameElement)) return;
+        const pane = this.panes.find((each) => each.el.contains(frame));
+        if (pane) void this.focusOn(pane);
+      }, 0);
+    });
     window.addEventListener("focus", () => void this.refreshMemos());
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll(false);
@@ -643,7 +653,7 @@ export class AppController implements DocHost, PaneHost {
     this.focused = pane;
     for (const each of this.panes) each.el.classList.toggle("focused", each === pane);
     pane.showStatus();
-    if (pane.surface.showsEditor) pane.view.focus();
+    pane.takeKeys();
     this.saveSessionSoon();
   }
 

@@ -73,7 +73,13 @@ export class Pane {
     select: (id) => void this.activateTab(id),
     close: (id) => void this.host.closeTab(id),
   });
-  readonly el: HTMLElement = h("div", { class: "pane" }, this.tabBar.el, this.surface.el);
+  /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
+  readonly el: HTMLElement = h(
+    "div",
+    { class: "pane", tabIndex: -1 },
+    this.tabBar.el,
+    this.surface.el,
+  );
   /** A search result's line in a memo the large text viewer shows, for the viewer to go to once
    * it is open: it opens on its own time, after the click is handled. */
   pendingLine: { memoId: string; line: number } | null = null;
@@ -153,6 +159,7 @@ export class Pane {
         doc.mode === "preview" ? this.host.registry.viewerFor(doc.fileName, "preview") : undefined;
       if (preview) {
         this.openViewer(doc, preview, state.doc.toString());
+        this.keepKeys();
         status?.setPosition(null);
         // A notice of the document (a restored draft) is not to be hidden by the mode's hint.
         if (!doc.notice) status?.setMessage(PREVIEW_HINT);
@@ -166,6 +173,7 @@ export class Pane {
       return;
     }
     status?.setPosition(null);
+    this.keepKeys();
     if (doc.problem === "too-large" || doc.problem === "long-line") {
       void this.openLargeText(doc);
       return;
@@ -182,10 +190,27 @@ export class Pane {
     this.closePanel();
     this.surface.banner.hide();
     this.showEmptyText();
+    this.keepKeys();
     this.host.showing(this, null);
     const status = this.host.statusOf(this);
     status?.setPosition(null);
     status?.setMessage("");
+  }
+
+  /** Gives this pane the keys: its editor when it shows one, else the pane itself, so that no
+   * other pane's editor goes on typing into a memo the person is not looking at. A viewer frame of
+   * this pane keeps them: it was clicked to be used. */
+  takeKeys(): void {
+    if (this.surface.showsEditor) return this.view.focus();
+    const active = document.activeElement;
+    if (active instanceof HTMLIFrameElement && this.el.contains(active)) return;
+    this.el.focus({ preventScroll: true });
+  }
+
+  /** The focused pane has stopped showing an editor: keys that were in a pane come here. Keys in
+   * the sidebar or a dialog stay there. */
+  private keepKeys(): void {
+    if (this.host.focused === this && document.activeElement?.closest(".pane")) this.takeKeys();
   }
 
   /** The placeholder of a pane with no tabs, whose sentence depends on whether the window has

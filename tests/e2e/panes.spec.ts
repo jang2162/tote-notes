@@ -69,6 +69,15 @@ async function sessionWidths(page: Page, count: number): Promise<number[]> {
   return widths;
 }
 
+/** The first pane's editor has let go of the keys: typing reaches neither it nor memo a. */
+async function expectKeysStayOut(page: Page): Promise<void> {
+  await expect(editor(page, 0)).not.toBeFocused();
+  await page.keyboard.type("XYZ");
+  await expect(editor(page, 0)).toHaveText("첫째");
+  await page.evaluate(() => window.__tote.app.flushAll());
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째");
+}
+
 function expectClose(actual: number[], expected: number[], digits = 2): void {
   expect(actual).toHaveLength(expected.length);
   expected.forEach((value, index) => expect(actual[index]).toBeCloseTo(value, digits));
@@ -100,6 +109,7 @@ test("⌘\\ with one tab opens an empty pane and focuses it", async ({ page }) =
   await expect(pane(page, 1).locator(".editor-placeholder")).toHaveText(EMPTY_PANE);
   await expect(titles(page, 1)).toHaveCount(0);
   await expect(titles(page, 0)).toHaveText(["가"]);
+  await expectKeysStayOut(page);
 });
 
 test("⌘\\ in a narrow window says so and does nothing", async ({ page }) => {
@@ -266,6 +276,38 @@ test("leaving a pane retitles its memo", async ({ page }) => {
   await expect(activeTitle(page, 1)).toHaveText("장보기");
 });
 
+test("keys after ⌥⌘→ into a preview pane do not reach the pane left", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("회의.md", "# 회의 준비\n") },
+    session: session([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
+  });
+  await expect(editor(page, 0)).toBeFocused();
+  await expect(pane(page, 1).locator("iframe.viewer-frame")).toHaveCount(1);
+  await menu(page, "focus-pane-right");
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await expectKeysStayOut(page);
+});
+
+test("a click inside a pane's preview focuses that pane", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("회의.md", "# 회의 준비\n") },
+    session: session([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
+  });
+  await expect(editor(page, 0)).toBeFocused();
+  const frame = pane(page, 1).locator("iframe.viewer-frame");
+  await expect(frame).toHaveCount(1);
+  await expect(pane(page, 1).frameLocator("iframe.viewer-frame").locator("h1")).toHaveText(
+    "회의 준비",
+  );
+  const box = (await frame.boundingBox())!;
+  await page.mouse.click(box.x + box.width / 2, box.y + 40);
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  // ⌘W closes the tab looked at, not the other pane's.
+  await menu(page, "close-tab");
+  await expect(panes(page)).toHaveCount(1);
+  await expect(titles(page, 0)).toHaveText(["가"]);
+});
+
 test("each pane keeps its own banner and preview mode", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("회의.md", "# 회의 준비\n"), b: fakeMemo("나.md", "둘째") },
@@ -274,6 +316,8 @@ test("each pane keeps its own banner and preview mode", async ({ page }) => {
   await expect(editor(page, 0)).toBeFocused();
   await menu(page, "toggle-preview");
   await expect(pane(page, 0).locator("iframe.viewer-frame")).toHaveCount(1);
+  // The pane took the keys from its hidden editor.
+  await expect(pane(page, 0)).toBeFocused();
   const removed: OutsideChange = {
     kind: "workspace",
     changes: [{ kind: "removed", id: "b", file: "나.md" }],

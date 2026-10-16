@@ -278,6 +278,11 @@ body {
   min-height: 0;
 }
 
+/* Focused only to hold the keys while it shows no editor; the marked tab says which pane it is. */
+.pane:focus {
+  outline: none;
+}
+
 .pane-divider {
   position: relative;
   z-index: 1;
