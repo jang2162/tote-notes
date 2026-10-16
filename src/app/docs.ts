@@ -55,9 +55,16 @@ export const DELETED_TEXT = "파일이 지워졌습니다. 다시 저장하거�
 export const DISK_VERSION = "디스크 버전";
 export const MY_VERSION = "내 버전";
 export const RESAVE = "다시 저장";
-export const CONFLICT_KEPT_NOTICE =
-  "다른 앱이 바꾼 파일은 그대로 두고 내 버전을 새 메모로 저장했습니다";
+export const OPEN_ORIGINAL = "원래 메모 열기";
+export const DISMISS = "닫기";
 export const CHOOSE_VERSION_FIRST = "먼저 디스크 버전과 내 버전 중 하나를 고르세요";
+
+/** The banner on the memo that took 「내 버전」 when a conflict was left open; `original` is the
+ * name of the memo that kept the other app's text, `null` when it is not in the list. */
+export function conflictKeptText(original: string | null): string {
+  const where = original === null ? "원래 메모" : `원래 메모 「${original}」`;
+  return `내 버전은 이 메모로 따로 저장했습니다. 다른 앱이 바꾼 버전은 ${where}에 있습니다.`;
+}
 
 /** `binary`: the kind (by file name) is not text, so the bytes were not read; `not-utf8`: they
  * were read as text and are not UTF-8 (or hold a NUL). */
@@ -91,6 +98,10 @@ export interface DocHost {
   languageOf(doc: Doc): LanguageInfo | undefined;
   /** Every language the registry knows, one per id (the picker's list). */
   languages(): LanguageInfo[];
+  /** The listing's entry for memo `id`, if it has one. */
+  memoInfo(id: string): MemoInfo | undefined;
+  /** Opens memo `id` in a tab and shows it. */
+  openMemo(id: string): void;
   /** Something the tab bar, memo list or status bar shows about `doc` changed. */
   changed(doc: Doc, change: Change): void;
 }
@@ -290,7 +301,7 @@ export abstract class Doc {
   }
 
   /** A banner button: the click does not wait, and a failure is reported like any other. */
-  private action(label: string, run: () => Promise<unknown>): BannerAction {
+  protected action(label: string, run: () => Promise<unknown>): BannerAction {
     return { label, run: () => void run().catch((error: unknown) => this.fail(error)) };
   }
 
@@ -378,6 +389,9 @@ export abstract class Doc {
 export class MemoDoc extends Doc {
   readonly kind = "memo" as const;
   private savedText: Text | null = null;
+  /** Set while the banner says 「내 버전」 was saved as this memo; `memoId` is the memo that kept
+   * the other app's text. Ends with the tab: the session carries it, a reopened memo has none. */
+  conflictKept: { memoId: string } | null = null;
   private retitling: Promise<void> | null = null;
   private detecting: Promise<void> | null = null;
 
@@ -553,7 +567,8 @@ export class MemoDoc extends Doc {
     // Typed while it was read: that text must not be replaced.
     if (this.unsaved) return this.raiseConflict();
     this.reload(bytes);
-    if (this.banner) this.setBanner(null);
+    // The kept-conflict banner is about another memo; only a question about this file is answered.
+    if (this.banner && this.banner.kind !== "info") this.setBanner(null);
   }
 
   private raiseConflict(): void {
@@ -690,18 +705,43 @@ export class MemoDoc extends Doc {
   async flush(): Promise<void> {
     if (this.banner?.kind === "conflict" && this.state) {
       const text = this.state.doc;
+      const original = this.info;
       try {
         this.setInfo(await this.recover(this.encode(text)));
       } catch (error) {
         return this.failSave(error, this.saveKey, () => this.save());
       }
       this.savedText = text;
-      this.notice = CONFLICT_KEPT_NOTICE;
-      this.host.changed(this, "notice");
-      this.setBanner(null);
+      this.keepConflict(original.id, original);
       this.clearSaveFailed();
     }
     return this.leave();
+  }
+
+  /** The info banner of a kept conflict. `known` names the original when the listing does not. */
+  keepConflict(memoId: string, known?: MemoInfo): void {
+    this.conflictKept = { memoId };
+    const listed = this.host.memoInfo(memoId);
+    const name = listed ?? known;
+    const actions: BannerAction[] = [];
+    if (listed) actions.push(this.action(OPEN_ORIGINAL, async () => this.host.openMemo(memoId)));
+    actions.push(this.action(DISMISS, async () => this.dismissConflictKept()));
+    this.setBanner({
+      kind: "info",
+      text: conflictKeptText(name ? displayName(name.file) : null),
+      actions,
+    });
+  }
+
+  /** A question about this file takes the banner's place, and the kept-conflict note goes with it. */
+  protected setBanner(banner: BannerState | null): void {
+    if (banner?.kind !== "info") this.conflictKept = null;
+    super.setBanner(banner);
+  }
+
+  private dismissConflictKept(): void {
+    this.conflictKept = null;
+    this.setBanner(null);
   }
 
   async close(): Promise<boolean> {

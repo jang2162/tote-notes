@@ -27,6 +27,9 @@ interface TabPlace {
   scrollAnchor?: number;
   /** Edit or preview (spec 「세션」); left out when editing. */
   mode?: ViewMode;
+  /** Memo tabs only: the tab holds 「내 버전」 of a conflict left open, and `memoId` is the memo
+   * that kept the other app's text. The banner stays until the person closes it. */
+  conflictKept?: { memoId: string };
 }
 
 export type SessionTab =
@@ -73,6 +76,9 @@ function parseTab(value: unknown): SessionTab | null {
   if (isNumber(value.scrollAnchor)) place.scrollAnchor = value.scrollAnchor;
   if (value.mode === "preview") place.mode = "preview";
   if (value.kind === "memo" && typeof value.memoId === "string") {
+    if (isObject(value.conflictKept) && typeof value.conflictKept.memoId === "string") {
+      place.conflictKept = { memoId: value.conflictKept.memoId };
+    }
     return { kind: "memo", memoId: value.memoId, ...place };
   }
   if (

@@ -346,6 +346,10 @@ body {
   border-left: 3px solid var(--danger);
 }
 
+.banner-info {
+  border-left: 3px solid var(--accent);
+}
+
 .banner-text {
   flex: 1;
   min-width: 0;

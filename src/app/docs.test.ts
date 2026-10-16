@@ -11,12 +11,12 @@ import {
   type FakeData,
 } from "../backend/fake";
 import fakeRegistry from "../backend/fake-registry.json";
-import { BackendError, type ExtensionRegistry } from "../backend/types";
+import { BackendError, type ExtensionRegistry, type MemoInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import { WriteScheduler } from "../core/scheduler";
 import {
-  CONFLICT_KEPT_NOTICE,
   CONFLICT_TEXT,
+  conflictKeptText,
   DELETED_TEXT,
   ExternalDoc,
   importExternal,
@@ -35,6 +35,7 @@ const fakeLanguages = (fakeRegistry as ExtensionRegistry).languages;
 function setup(seed: Partial<FakeData> = {}) {
   const backend = new FakeBackend(memoryStorage(JSON.stringify({ ...defaultFakeData(), ...seed })));
   const changes: Change[] = [];
+  const listing: MemoInfo[] = [];
   const host: DocHost = {
     backend,
     writes: new WriteScheduler((_key, error) => {
@@ -47,8 +48,10 @@ function setup(seed: Partial<FakeData> = {}) {
     languageOf: () => undefined,
     languages: () => fakeLanguages,
     changed: (_doc, change) => void changes.push(change),
+    memoInfo: (id) => listing.find((memo) => memo.id === id),
+    openMemo: () => {},
   };
-  return { backend, host, changes };
+  return { backend, host, changes, listing };
 }
 
 /** Types `insert` at `at` (default: the end) and moves the cursor behind it, as the editor would. */
@@ -530,8 +533,14 @@ describe("MemoDoc outside changes", () => {
     expect(doc.info.id).not.toBe("a");
     expect(doc.info.file).toBe("a 2.md");
     expect(backend.memoText(doc.info.id)).toBe("원래 내 글");
-    expect(doc.notice).toBe(CONFLICT_KEPT_NOTICE);
+    expect(doc.notice).toBeNull();
+    expect(doc.banner?.kind).toBe("info");
+    expect(doc.banner?.text).toBe(conflictKeptText("a"));
+    expect(doc.conflictKept?.memoId).toBe("a");
+    // 「닫기」 ends the note.
+    doc.banner!.actions.at(-1)!.run();
     expect(doc.banner).toBeNull();
+    expect(doc.conflictKept).toBeNull();
     // From here the tab is the new memo: typing saves there, the file stays the other app's.
     type(doc, "!");
     await vi.runAllTimersAsync();
@@ -551,7 +560,7 @@ describe("MemoDoc outside changes", () => {
     await doc.flush();
     expect(backend.memoText("a")).toBe("다른 앱");
     expect(backend.memoTextByFile("a 2.md")).toBe("원래");
-    expect(doc.banner).toBeNull();
+    expect(doc.banner?.kind).toBe("info");
   });
 
   it("a close or quit whose new memo cannot be written leaves the save failed", async () => {

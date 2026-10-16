@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { start } from "./helpers";
+import { ready, start } from "./helpers";
 
 /** What another app does to memo `id`: new contents, stamped later than anything seeded. */
 async function writeElsewhere(page: Page, id: string, text: string): Promise<void> {
@@ -194,10 +194,54 @@ test("closing the window with two conflicts keeps every file as the other app le
   expect(await text("할 일.md")).toBe("설거지");
   expect(await text("장보기 2.md")).toBe("우유 계란");
   expect(await text("할 일 2.md")).toBe("청소 빨래");
+  // Each new memo's tab says so; the status bar stays quiet.
+  await expect(banner(page)).toBeVisible();
+  await expect(page.locator(".status-message")).toHaveText("");
+});
+
+/** A conflict left open on 장보기 and a flush: the tab is now the new memo with the info banner. */
+async function keepConflict(page: Page): Promise<void> {
+  await typeInto(page);
+  await writeElsewhere(page, "a", "두유");
+  await outside(page, { kind: "modified", id: "a" });
+  await expect(banner(page)).toBeVisible();
+  await page.evaluate(() => window.__tote.backend.requestFlush(3));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 3 }]);
+}
+
+const KEPT =
+  "내 버전은 이 메모로 따로 저장했습니다. 다른 앱이 바꾼 버전은 원래 메모 「장보기」에 있습니다.";
+
+test("the conflict-kept banner survives a restart", async ({ page }) => {
+  await keepConflict(page);
+  await expect(banner(page)).toHaveText(new RegExp(KEPT));
+  // The flush wrote the session after the banner went up.
+  const session = await page.evaluate(() => JSON.parse(window.__tote.backend.data.session!));
+  const tab = session.tabs[session.activeTab];
+  expect(tab.conflictKept).toEqual({ memoId: "a" });
+  expect(tab.memoId).not.toBe("a");
+
+  // Start again from that session, as after quitting the app.
+  await page.reload();
+  await ready(page);
+  await expect(banner(page)).toBeVisible();
+  await expect(banner(page).locator(".banner-text")).toHaveText(KEPT);
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+  await banner(page).getByRole("button", { name: "원래 메모 열기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("두유");
+  await expect(page.locator(".tab")).toHaveCount(2);
+});
+
+test("the conflict-kept banner ends with its tab", async ({ page }) => {
+  await keepConflict(page);
+  await expect(banner(page)).toBeVisible();
+  await page.evaluate(() => window.__tote.backend.menu("close-tab"));
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await page.locator(".memo-row", { hasText: "장보기 2" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
   await expect(banner(page)).toBeHidden();
-  await expect(page.locator(".status-message")).toHaveText(
-    "다른 앱이 바꾼 파일은 그대로 두고 내 버전을 새 메모로 저장했습니다",
-  );
 });
 
 test("⌘W on a memo with the conflict open keeps the tab and says what to do", async ({ page }) => {

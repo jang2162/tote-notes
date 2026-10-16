@@ -17,6 +17,8 @@ function host(): DocHost {
     languageOf: () => undefined,
     languages: () => [],
     changed: () => {},
+    memoInfo: () => undefined,
+    openMemo: () => {},
   };
 }
 

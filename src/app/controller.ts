@@ -344,6 +344,8 @@ export class AppController implements DocHost {
     }
     if (active && change === "notice") this.statusBar.setMessage(doc.notice ?? "");
     if (active && change === "banner") this.surface.banner.render(doc.banner);
+    // The kept-conflict banner is in the session until the person closes it.
+    if (change === "banner" && doc instanceof MemoDoc) this.saveSessionSoon();
     if (active && change === "reloaded") this.showReloaded(doc);
     if (active && change === "saved" && doc instanceof ExternalDoc)
       this.statusBar.setMessage("저장됨");
@@ -355,6 +357,10 @@ export class AppController implements DocHost {
       this.statusBar.setMessage("");
     if (change === "error") this.report(doc.error);
     this.renderTabs();
+  }
+
+  memoInfo(id: string): MemoInfo | undefined {
+    return this.memoList.get(id);
   }
 
   async openMemo(id: string): Promise<void> {

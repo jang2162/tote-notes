@@ -28,6 +28,25 @@ describe("parseSession", () => {
     expect(session.tabs[3]).toEqual({ kind: "external", deviceId: "d", path: "/y" });
   });
 
+  it("reads the conflict-kept banner of a memo tab and drops what is not one", () => {
+    const session = parseSession(
+      JSON.stringify({
+        version: 1,
+        activeTab: 0,
+        tabs: [
+          { kind: "memo", memoId: "n", conflictKept: { memoId: "m1" } },
+          { kind: "memo", memoId: "o", conflictKept: { memoId: 3 } },
+          { kind: "memo", memoId: "p", conflictKept: "m1" },
+          { kind: "external", deviceId: "d", path: "/x", conflictKept: { memoId: "m1" } },
+        ],
+      }),
+    );
+    expect(session.tabs[0]).toEqual({ kind: "memo", memoId: "n", conflictKept: { memoId: "m1" } });
+    expect(session.tabs[1]).toEqual({ kind: "memo", memoId: "o" });
+    expect(session.tabs[2]).toEqual({ kind: "memo", memoId: "p" });
+    expect(session.tabs[3]).toEqual({ kind: "external", deviceId: "d", path: "/x" });
+  });
+
   it("starts empty without a file or with a broken one", () => {
     for (const text of [null, "", "{ broken", "[1]", '{"tabs":"x"}']) {
       expect(parseSession(text)).toEqual({ version: 1, activeTab: -1, tabs: [] });

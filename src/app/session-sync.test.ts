@@ -4,7 +4,7 @@ import { describe, expect, it } from "vitest";
 import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "../backend/fake";
 import type { MemoInfo } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
-import { ExternalDoc, MemoDoc, type DocHost } from "./docs";
+import { conflictKeptText, ExternalDoc, MemoDoc, type DocHost } from "./docs";
 import { SessionSync, sessionTab } from "./session-sync";
 import { Tabs } from "./tabs";
 
@@ -18,6 +18,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
       }),
     ),
   );
+  const opened: string[] = [];
   const host: DocHost = {
     backend,
     writes: new WriteScheduler(() => {}),
@@ -27,6 +28,8 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
     languageOf: () => undefined,
     languages: () => [],
     changed: () => {},
+    memoInfo: (id) => infos.get(id),
+    openMemo: (id) => void opened.push(id),
   };
   const infos = new Map<string, MemoInfo>();
   for (const [id, memo] of Object.entries(memos)) {
@@ -48,7 +51,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
     (info) => new MemoDoc(host, info),
     (path) => new ExternalDoc(host, path),
   );
-  return { backend, tabs, sync };
+  return { backend, tabs, sync, host, opened };
 }
 
 describe("SessionSync.restore", () => {
@@ -115,6 +118,66 @@ describe("SessionSync.restore", () => {
   });
 });
 
+describe("conflict-kept banner in the session", () => {
+  it("writes the conflict-kept banner with its tab", () => {
+    const { host } = setup(null, { a: fakeMemo("가.md", "") });
+    const info = {
+      id: "n",
+      file: "가 2.md",
+      autoTitle: false,
+      modifiedMs: 0,
+      size: 0,
+      kind: "text" as const,
+    };
+    const doc = new MemoDoc(host, info);
+    expect(sessionTab(doc, "device-1")).not.toHaveProperty("conflictKept");
+    doc.keepConflict("a");
+    expect(sessionTab(doc, "device-1")).toMatchObject({
+      kind: "memo",
+      memoId: "n",
+      conflictKept: { memoId: "a" },
+    });
+  });
+
+  it("brings back the conflict-kept banner", async () => {
+    const { tabs, sync, opened } = setup(
+      {
+        version: 1,
+        activeTab: 0,
+        tabs: [{ kind: "memo", memoId: "n", conflictKept: { memoId: "a" } }],
+      },
+      { a: fakeMemo("장보기.md", "다른 앱"), n: fakeMemo("장보기 2.md", "내 글") },
+    );
+    await sync.restore();
+    const doc = tabs.list[0] as MemoDoc;
+    expect(doc.banner?.kind).toBe("info");
+    expect(doc.banner?.text).toBe(conflictKeptText("장보기"));
+    expect(doc.banner?.actions.map((a) => a.label)).toEqual(["원래 메모 열기", "닫기"]);
+    doc.banner!.actions[0].run();
+    expect(opened).toEqual(["a"]);
+    // Opening the original leaves the banner up; closing it ends the note.
+    expect(doc.banner).not.toBeNull();
+    doc.banner!.actions[1].run();
+    expect(doc.banner).toBeNull();
+    expect(doc.conflictKept).toBeNull();
+  });
+
+  it("names no memo when the original is not in the list, and offers only 닫기", async () => {
+    const { tabs, sync } = setup(
+      {
+        version: 1,
+        activeTab: 0,
+        tabs: [{ kind: "memo", memoId: "n", conflictKept: { memoId: "gone" } }],
+      },
+      { n: fakeMemo("장보기 2.md", "내 글") },
+    );
+    await sync.restore();
+    const doc = tabs.list[0] as MemoDoc;
+    expect(doc.banner?.text).toBe(conflictKeptText(null));
+    expect(doc.banner?.actions.map((a) => a.label)).toEqual(["닫기"]);
+  });
+});
+
 describe("SessionSync.build and sessionTab", () => {
   it("writes mode and language only when they differ from the default", async () => {
     const { tabs, sync } = setup(null, { a: fakeMemo("가.md", "") });
@@ -129,6 +192,8 @@ describe("SessionSync.build and sessionTab", () => {
           languageOf: () => undefined,
           languages: () => [],
           changed: () => {},
+          memoInfo: () => undefined,
+          openMemo: () => {},
         },
         { id: "a", file: "가.md", autoTitle: false, modifiedMs: 0, size: 0, kind: "text" },
       ),
@@ -145,6 +210,8 @@ describe("SessionSync.build and sessionTab", () => {
           languageOf: () => undefined,
           languages: () => [],
           changed: () => {},
+          memoInfo: () => undefined,
+          openMemo: () => {},
         },
         "/x/a.sh",
       ),

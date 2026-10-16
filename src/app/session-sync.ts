@@ -11,7 +11,11 @@ export function sessionTab(doc: Doc, deviceId: string): SessionTab {
   };
   if (doc.selectionJSON) place.selection = doc.selectionJSON;
   if (doc.mode === "preview") place.mode = "preview";
-  if (doc instanceof MemoDoc) return { kind: "memo", memoId: doc.info.id, ...place };
+  if (doc instanceof MemoDoc) {
+    const tab: SessionTab = { kind: "memo", memoId: doc.info.id, ...place };
+    if (doc.conflictKept) tab.conflictKept = { memoId: doc.conflictKept.memoId };
+    return tab;
+  }
   const external = doc as ExternalDoc;
   // Spec 「동기화 대비」: external entries always carry the device they belong to.
   const tab: SessionTab = { kind: "external", deviceId, path: external.path, ...place };
@@ -41,6 +45,8 @@ export class SessionSync {
       doc.restoreSelection = tab.selection;
       doc.scrollAnchor = tab.scrollAnchor ?? 0;
       doc.mode = tab.mode ?? "edit";
+      if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
+        doc.keepConflict(tab.conflictKept.memoId);
       this.tabs.push(doc);
       if (index === session.activeTab) active = doc;
     }
