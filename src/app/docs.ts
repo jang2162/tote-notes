@@ -15,6 +15,7 @@ import {
   type FileSource,
   type LanguageInfo,
   type MemoInfo,
+  type TabRef,
   type WorkspaceChange,
 } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
@@ -182,6 +183,8 @@ export abstract class Doc {
 
   abstract get fileName(): string;
   abstract get source(): FileSource;
+  /** The tab's place among every window's tabs (`Backend.claimTabs`). */
+  abstract get tabRef(): TabRef;
   abstract get title(): string;
   abstract get hint(): string;
   abstract get dirty(): boolean;
@@ -409,6 +412,9 @@ export class MemoDoc extends Doc {
     return this.info.file;
   }
   get source(): FileSource {
+    return { kind: "memo", id: this.info.id };
+  }
+  get tabRef(): TabRef {
     return { kind: "memo", id: this.info.id };
   }
   get title() {
@@ -803,6 +809,9 @@ export class ExternalDoc extends Doc {
     return basename(this.path);
   }
   get source(): FileSource {
+    return { kind: "external", path: this.path };
+  }
+  get tabRef(): TabRef {
     return { kind: "external", path: this.path };
   }
   get title() {

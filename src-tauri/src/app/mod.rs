@@ -7,6 +7,7 @@ pub mod commands;
 pub mod flush;
 pub mod lifecycle;
 pub mod menu;
+pub mod places;
 pub mod requests;
 pub mod windows;
 
@@ -34,6 +35,7 @@ use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
 use crate::workspace::{Change, Workspace};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
+use places::{Places, TabKey, TabRef};
 
 /// A poisoned lock only means another command panicked; the data is still the best there is.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -111,6 +113,9 @@ struct Inner {
     focus: Vec<String>,
     /// The `serial` of the next window registered.
     serials: u64,
+    /// Which window holds each open tab: under this lock with `windows`, so a window's claims go
+    /// with it.
+    places: Places,
     launch: LaunchState,
     flush: FlushCoordinator,
     quitting: bool,
@@ -158,6 +163,16 @@ impl Inner {
             .iter()
             .filter_map(|label| self.windows.get(label)?.layout.clone())
             .collect()
+    }
+
+    fn key_for(&self, label: &str, tab: &TabRef) -> Option<TabKey> {
+        Some(match tab {
+            TabRef::Memo { id } => TabKey::Memo {
+                workspace: self.windows.get(label)?.path.clone(),
+                id: id.clone(),
+            },
+            TabRef::External { path } => TabKey::External { path: path.clone() },
+        })
     }
 
     /// Closes the workspace at `path` once no window shows it and none is being opened for it.
@@ -219,6 +234,7 @@ impl AppCore {
                 reserved: HashMap::new(),
                 focus: Vec::new(),
                 serials: 0,
+                places: Places::default(),
                 launch,
                 flush: FlushCoordinator::default(),
                 quitting: false,
@@ -650,6 +666,7 @@ impl AppCore {
             let mut inner = lock(&self.inner);
             let removed = inner.windows.remove(label);
             inner.focus.retain(|l| l != label);
+            inner.places.release_window(label);
             let closed = removed
                 .as_ref()
                 .and_then(|window| inner.close_if_unused(&window.path));
@@ -677,6 +694,35 @@ impl AppCore {
             watcher.unwatch_workspace(&key);
         }
         rounds
+    }
+
+    /// The key of `tab` as window `label` names it; `None` for a memo of a window not registered.
+    pub fn key_for(&self, label: &str, tab: &TabRef) -> Option<TabKey> {
+        lock(&self.inner).key_for(label, tab)
+    }
+
+    /// Claims `tabs` for window `label`, each `Err(owner)` when another window holds it. A window
+    /// not registered (closed meanwhile) gets every one and holds none: a claim it left behind
+    /// would never be freed.
+    pub fn claim_tabs(&self, label: &str, tabs: &[TabRef]) -> Vec<Result<(), String>> {
+        let mut inner = lock(&self.inner);
+        if !inner.windows.contains_key(label) {
+            return tabs.iter().map(|_| Ok(())).collect();
+        }
+        tabs.iter()
+            .map(|tab| match inner.key_for(label, tab) {
+                Some(key) => inner.places.claim(label, key),
+                None => Ok(()),
+            })
+            .collect()
+    }
+
+    /// Window `label` closed the tab: another window may open it now.
+    pub fn release_tab(&self, label: &str, tab: &TabRef) {
+        let mut inner = lock(&self.inner);
+        if let Some(key) = inner.key_for(label, tab) {
+            inner.places.release(label, &key);
+        }
     }
 
     /// The window is being closed: from now on a quit neither waits on it nor reopens it. A window
@@ -1822,5 +1868,26 @@ mod tests {
         core.begin_workspace_search("ws-2", 1);
         core.closed("ws-2");
         assert!(!core.workspace_search_is_live("ws-2", 1));
+    }
+
+    #[test]
+    fn closing_a_window_frees_its_places() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let tabs = [
+            TabRef::Memo { id: "a".into() },
+            TabRef::External {
+                path: PathBuf::from("/tmp/a.sh"),
+            },
+        ];
+        assert_eq!(core.claim_tabs(&w1, &tabs), vec![Ok(()), Ok(())]);
+        assert_eq!(
+            core.claim_tabs(&w2, &tabs),
+            vec![Err(w1.clone()), Err(w1.clone())]
+        );
+        core.closed(&w1);
+        assert_eq!(core.claim_tabs(&w2, &tabs), vec![Ok(()), Ok(())]);
     }
 }

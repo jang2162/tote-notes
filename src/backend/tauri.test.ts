@@ -44,6 +44,16 @@ describe("TauriBackend", () => {
       [() => backend.readWindowLayout(), "read_window_layout", undefined],
       [() => backend.writeWindowLayout("{}"), "write_window_layout", { json: "{}" }],
       [() => backend.takePendingOpens(), "take_pending_opens", undefined],
+      [
+        () => backend.claimTabs([{ kind: "memo", id: "m" }], true),
+        "claim_tabs",
+        { tabs: [{ kind: "memo", id: "m" }], reveal: true },
+      ],
+      [
+        () => backend.releaseTab({ kind: "external", path: "/a.sh" }),
+        "release_tab",
+        { tab: { kind: "external", path: "/a.sh" } },
+      ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
       [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],

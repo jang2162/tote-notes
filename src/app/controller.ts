@@ -7,6 +7,7 @@ import type {
   MemoInfo,
   OutsideChange,
   PerfConfig,
+  TabRef,
   ViewerInfo,
 } from "../backend/types";
 import { decodeText } from "../core/codec";
@@ -87,6 +88,11 @@ const PROBLEM_TEXT: Record<Problem, string> = {
   unreadable: "파일을 읽지 못했습니다",
 };
 
+const sameTab = (a: TabRef, b: TabRef) =>
+  a.kind === "memo"
+    ? b.kind === "memo" && a.id === b.id
+    : b.kind === "external" && a.path === b.path;
+
 /** A panel on show that reads its file through tokens issued to `owner`; closing it revokes them. */
 interface TokenPanel {
   doc: Doc;
@@ -117,6 +123,9 @@ export class AppController implements DocHost {
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
   private readonly highlights = new Map<Doc, { key: string; highlighting: WorkerHighlighting }>();
+  /** The place each open tab holds among every window's tabs (`Backend.claimTabs`): what it was
+   * claimed as, which a memo saved under a new ID no longer is. */
+  private readonly held = new Map<Doc, TabRef>();
   private session!: SessionSync;
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
@@ -206,6 +215,7 @@ export class AppController implements DocHost {
     this.backend.onFileDrop((paths) => void this.openExternals(paths));
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
+    this.backend.onReveal((tab) => void this.reveal(tab));
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => void this.tabs.active?.leave());
@@ -229,6 +239,7 @@ export class AppController implements DocHost {
 
   private async restoreSession(): Promise<void> {
     const first = await this.session.restore();
+    for (const doc of this.tabs.list) this.held.set(doc, doc.tabRef);
     if (first) await this.activate(first);
     else this.renderTabs();
     this.restoring = false;
@@ -342,6 +353,7 @@ export class AppController implements DocHost {
     // A save that recovered a vanished memo gave the tab a new memo.
     if (active && doc instanceof MemoDoc && change === "info") this.memoList.setActive(doc.info.id);
     if (doc instanceof MemoDoc && change === "deleted") this.memoList.remove(doc.info.id);
+    if (change === "info") this.followPlace(doc);
     if (change === "language") {
       this.reconfigureLanguage(doc);
       // An external file's pick lives in the session only.
@@ -377,21 +389,27 @@ export class AppController implements DocHost {
         info = this.memoList.get(id);
       }
       if (!info) return this.report(new Error("메모를 찾을 수 없습니다"));
-      doc = this.tabs.insertAfterActive(new MemoDoc(this, info));
+      if (!(await this.claim({ kind: "memo", id }))) return;
+      // Another request may have opened it while the claim was on its way.
+      doc = this.tabs.memo(id) ?? this.insertClaimed(new MemoDoc(this, info));
     }
     await this.activate(doc);
   }
 
   async openExternal(path: string): Promise<void> {
-    await this.activate(
-      this.tabs.external(path) ?? this.tabs.insertAfterActive(new ExternalDoc(this, path)),
-    );
+    let doc: Doc | undefined = this.tabs.external(path);
+    if (!doc) {
+      if (!(await this.claim({ kind: "external", path }))) return;
+      doc = this.tabs.external(path) ?? this.insertClaimed(new ExternalDoc(this, path));
+    }
+    await this.activate(doc);
   }
 
   async newMemo(): Promise<void> {
     const info = await this.backend.createMemo();
     this.memoList.upsert(info);
-    const doc = this.tabs.insertAfterActive(new MemoDoc(this, info));
+    if (!(await this.claim({ kind: "memo", id: info.id }))) return;
+    const doc = this.insertClaimed(new MemoDoc(this, info));
     doc.startEmpty();
     await this.activate(doc);
   }
@@ -409,6 +427,7 @@ export class AppController implements DocHost {
     const wasActive = doc === this.tabs.active;
     if (this.panel?.doc === doc) this.closePanel();
     const next = this.tabs.remove(doc);
+    this.release(doc);
     this.dropHighlight(doc);
     this.coloured.delete(doc.tabId);
     if (wasActive) {
@@ -417,6 +436,45 @@ export class AppController implements DocHost {
     }
     this.renderTabs();
     this.saveSessionSoon();
+  }
+
+  /** Claims `tab` for this window before a tab is made for it. False when another window holds
+   * it: the backend has brought that window forward to show it, and nothing opens here. */
+  private async claim(tab: TabRef): Promise<boolean> {
+    const [claimed] = await this.backend.claimTabs([tab], true);
+    return claimed;
+  }
+
+  private insertClaimed<D extends Doc>(doc: D): D {
+    this.held.set(doc, doc.tabRef);
+    return this.tabs.insertAfterActive(doc);
+  }
+
+  /** `doc` took a tab over under a name of its own (an import): the place goes with the name. */
+  private hold(doc: Doc): void {
+    this.held.set(doc, doc.tabRef);
+    void this.backend.claimTabs([doc.tabRef], false).catch((error: unknown) => console.warn(error));
+  }
+
+  private release(doc: Doc): void {
+    const held = this.held.get(doc);
+    if (!held) return;
+    this.held.delete(doc);
+    void this.backend.releaseTab(held).catch((error: unknown) => console.warn(error));
+  }
+
+  /** A save that recovered a vanished memo gave the tab a new memo ID: its place follows. */
+  private followPlace(doc: Doc): void {
+    const held = this.held.get(doc);
+    if (!held || sameTab(held, doc.tabRef)) return;
+    this.release(doc);
+    this.hold(doc);
+  }
+
+  /** Another window asked for a tab this window holds. */
+  private async reveal(tab: TabRef): Promise<void> {
+    const doc = tab.kind === "memo" ? this.tabs.memo(tab.id) : this.tabs.external(tab.path);
+    if (doc) await this.activate(doc);
   }
 
   /** Everything written now — tab edits, titles and the session. `closing` (the window closes or
@@ -879,6 +937,8 @@ export class AppController implements DocHost {
     this.capture(doc);
     const memo = await importExternal(doc, this);
     this.tabs.replace(doc, memo);
+    this.release(doc);
+    this.hold(memo);
     this.dropHighlight(doc);
     this.memoList.upsert(memo.info);
     this.tabs.active = null;

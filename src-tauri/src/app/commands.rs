@@ -11,6 +11,7 @@ use serde::Serialize;
 use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
+use super::places::TabRef;
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
@@ -361,6 +362,33 @@ fn layout_from_json(json: &str) -> CmdResult<serde_json::Value> {
             "a window layout is a JSON object",
         )),
     }
+}
+
+/// Claims `tabs` for this window before it shows them, one answer each: false when another
+/// window has the tab. With `reveal`, that window comes forward and shows the tab
+/// (`tote://reveal`).
+#[tauri::command]
+pub fn claim_tabs(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    tabs: Vec<TabRef>,
+    reveal: bool,
+) -> Vec<bool> {
+    let claims = core.claim_tabs(window.label(), &tabs);
+    for (tab, claim) in tabs.iter().zip(&claims) {
+        if let (Err(owner), true) = (claim, reveal) {
+            windows::focus(&app, owner);
+            let _ = app.emit_to(EventTarget::webview_window(owner), "tote://reveal", tab);
+        }
+    }
+    claims.iter().map(Result::is_ok).collect()
+}
+
+/// This window closed the tab: another may open it.
+#[tauri::command]
+pub fn release_tab(core: State<'_, AppCore>, window: WebviewWindow, tab: TabRef) {
+    core.release_tab(window.label(), &tab);
 }
 
 #[tauri::command]

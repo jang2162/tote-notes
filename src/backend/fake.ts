@@ -14,6 +14,7 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
+  type TabRef,
   type SearchEvent,
   type SearchMatch,
   type SearchQuery,
@@ -33,6 +34,10 @@ import {
  * their base — and keeps everything in one JSON blob, so reloading the page acts as a restart. */
 
 export const FAKE_STORAGE_KEY = "tote-fake";
+/** The label of the window the page stands for. */
+export const FAKE_LABEL = "ws-1";
+
+const placeKey = (tab: TabRef) => (tab.kind === "memo" ? `memo:${tab.id}` : `external:${tab.path}`);
 
 export interface FakeMemo {
   file: string;
@@ -114,6 +119,12 @@ export interface FakeData {
   revealed?: number;
   /** External path → how many `watchExternal` calls are not yet undone. Absent in old seeds. */
   watched?: Record<string, number>;
+  /** The place registry: `memo:<id>` or `external:<path>` → the label of the window holding the
+   * tab. This page is window `FAKE_LABEL`; a test seeds another label for a tab open elsewhere.
+   * Absent in old seeds. */
+  places?: Record<string, string>;
+  /** The reveals `claimTabs` asked of other windows, in order. Absent in old seeds. */
+  reveals?: { label: string; tab: TabRef }[];
 }
 
 export interface FakeStorage {
@@ -292,6 +303,7 @@ export class FakeBackend implements Backend {
     config: [] as (() => void)[],
     outside: [] as ((change: OutsideChange) => void)[],
     memos: [] as (() => void)[],
+    reveal: [] as ((tab: TabRef) => void)[],
   };
 
   constructor(private readonly storage: FakeStorage = memoryStorage()) {
@@ -332,6 +344,10 @@ export class FakeBackend implements Backend {
   }
   /** Another window changed the memo list, as the native side tells this one. The test changes
    * `data` first. */
+  /** Another window asked for a tab this one holds. */
+  reveal(tab: TabRef): void {
+    for (const handler of this.handlers.reveal) handler(tab);
+  }
   memosChanged(): void {
     for (const handler of this.handlers.memos) handler();
   }
@@ -469,6 +485,28 @@ export class FakeBackend implements Backend {
     this.data.pending = [];
     this.commit();
     return pending;
+  }
+
+  async claimTabs(tabs: TabRef[], reveal: boolean) {
+    const places = (this.data.places ??= {});
+    const claims = tabs.map((tab) => {
+      const owner = places[placeKey(tab)];
+      if (owner === undefined || owner === FAKE_LABEL) {
+        places[placeKey(tab)] = FAKE_LABEL;
+        return true;
+      }
+      if (reveal) (this.data.reveals ??= []).push({ label: owner, tab });
+      return false;
+    });
+    this.commit();
+    return claims;
+  }
+
+  async releaseTab(tab: TabRef) {
+    const places = this.data.places ?? {};
+    if (places[placeKey(tab)] !== FAKE_LABEL) return;
+    delete places[placeKey(tab)];
+    this.commit();
   }
 
   async openExternal(path: string): Promise<ExternalInfo> {
@@ -907,6 +945,9 @@ export class FakeBackend implements Backend {
   }
   onMemosChanged(handler: () => void) {
     this.handlers.memos.push(handler);
+  }
+  onReveal(handler: (tab: TabRef) => void) {
+    this.handlers.reveal.push(handler);
   }
 
   private memo(id: string): FakeMemo {

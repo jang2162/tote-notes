@@ -35,14 +35,25 @@ export class SessionSync {
   ) {}
 
   /** Fills `tabs` (which must be empty) from the window's first pane and returns the tab to
-   * activate: the pane's active tab, else the last one, else null. Nothing is read from disk here
-   * (spec 「세션」 — lazy). */
+   * activate: the pane's active tab, else the last one, else null. A tab another window holds is
+   * left out; the places are claimed in one call, so fifty tabs are not fifty round trips. Nothing
+   * is read from disk here (spec 「세션」 — lazy). */
   async restore(): Promise<Doc | null> {
     const [pane] = parseWindowSession(parseJson(await this.backend.readWindowLayout())).panes;
-    let active: Doc | null = null;
+    const found: { doc: Doc; tab: SessionTab; index: number }[] = [];
     for (const [index, tab] of pane.tabs.entries()) {
-      const doc = this.docFor(tab);
-      if (!doc) continue;
+      const doc = this.docFor(tab, found);
+      if (doc) found.push({ doc, tab, index });
+    }
+    const claims = found.length
+      ? await this.backend.claimTabs(
+          found.map(({ doc }) => doc.tabRef),
+          false,
+        )
+      : [];
+    let active: Doc | null = null;
+    for (const [at, { doc, tab, index }] of found.entries()) {
+      if (!claims[at]) continue;
       doc.restoreSelection = tab.selection;
       doc.scrollAnchor = tab.scrollAnchor ?? 0;
       doc.mode = tab.mode ?? "edit";
@@ -71,13 +82,17 @@ export class SessionSync {
     return window;
   }
 
-  private docFor(tab: SessionTab): Doc | null {
+  /** The tab for `tab`, or null for one already among `found` or not to be shown here. */
+  private docFor(tab: SessionTab, found: readonly { doc: Doc }[]): Doc | null {
+    const open = (same: (doc: Doc) => boolean) => found.some(({ doc }) => same(doc));
     if (tab.kind === "memo") {
       const info = this.memoInfo(tab.memoId);
-      return info && !this.tabs.memo(info.id) ? this.makeMemo(info) : null;
+      if (!info || open((doc) => doc instanceof MemoDoc && doc.info.id === info.id)) return null;
+      return this.makeMemo(info);
     }
     // Another device's external file has no contents here; how to show it is the sync spec's call.
-    if (tab.deviceId !== this.deviceId || this.tabs.external(tab.path)) return null;
+    if (tab.deviceId !== this.deviceId) return null;
+    if (open((doc) => doc instanceof ExternalDoc && doc.path === tab.path)) return null;
     const doc = this.makeExternal(tab.path);
     doc.language = tab.language ?? null;
     return doc;

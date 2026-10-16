@@ -38,6 +38,10 @@ export type PendingOpen =
   | { kind: "external"; path: string }
   | { kind: "notice"; message: string };
 
+/** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
+ * workspace, or an external file. */
+export type TabRef = { kind: "memo"; id: string } | { kind: "external"; path: string };
+
 /** A file a viewer or the large text viewer reads, named the way the tabs name them. */
 export type FileSource = { kind: "memo"; id: string } | { kind: "external"; path: string };
 
@@ -294,6 +298,12 @@ export interface Backend {
    * workspace's other windows. */
   writeWindowLayout(json: string): Promise<void>;
   takePendingOpens(): Promise<PendingOpen[]>;
+  /** Claims `tabs` for this window before it shows them (one memo or file in one place), one
+   * answer each: false when another window has the tab. With `reveal`, that window comes forward
+   * and shows it. */
+  claimTabs(tabs: TabRef[], reveal: boolean): Promise<boolean[]>;
+  /** This window closed the tab: another window may open it. */
+  releaseTab(tab: TabRef): Promise<void>;
 
   openExternal(path: string): Promise<ExternalInfo>;
   readExternal(path: string): Promise<Uint8Array>;
@@ -388,4 +398,6 @@ export interface Backend {
   onOutsideChange(handler: (change: OutsideChange) => void): void;
   /** Another window changed the memo list of this window's workspace. */
   onMemosChanged(handler: () => void): void;
+  /** Another window asked for a tab this window holds: show it. */
+  onReveal(handler: (tab: TabRef) => void): void;
 }

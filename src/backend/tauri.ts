@@ -15,6 +15,7 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
+  type TabRef,
   type PerfConfig,
   type SearchEvent,
   type SearchQuery,
@@ -100,6 +101,12 @@ export class TauriBackend implements Backend {
   }
   takePendingOpens() {
     return call<PendingOpen[]>("take_pending_opens");
+  }
+  claimTabs(tabs: TabRef[], reveal: boolean) {
+    return call<boolean[]>("claim_tabs", { tabs, reveal });
+  }
+  releaseTab(tab: TabRef) {
+    return call<void>("release_tab", { tab });
   }
 
   openExternal(path: string) {
@@ -257,6 +264,9 @@ export class TauriBackend implements Backend {
   }
   onMemosChanged(handler: () => void) {
     void this.window.listen("tote://memos", () => handler());
+  }
+  onReveal(handler: (tab: TabRef) => void) {
+    void this.window.listen<TabRef>("tote://reveal", (event) => handler(event.payload));
   }
   onFileDrop(handler: (paths: string[]) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {

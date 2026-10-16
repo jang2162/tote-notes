@@ -90,6 +90,8 @@ pub fn run() {
             commands::import_file,
             commands::read_window_layout,
             commands::write_window_layout,
+            commands::claim_tabs,
+            commands::release_tab,
             commands::take_pending_opens,
             commands::open_external,
             commands::read_external,
