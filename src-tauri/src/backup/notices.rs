@@ -1,0 +1,92 @@
+//! When a failing backup is worth telling the person about (spec 「오류 처리」): once per window,
+//! again a day later if it keeps failing, and again after the window was closed and reopened.
+
+use std::collections::{HashMap, HashSet};
+use std::time::{Duration, Instant};
+
+/// A failure that goes on is told again this often.
+pub const RENOTIFY: Duration = Duration::from_secs(24 * 60 * 60);
+
+#[derive(Default)]
+pub struct FailureNotices {
+    /// Window label -> when it was last told.
+    told: HashMap<String, Instant>,
+}
+
+impl FailureNotices {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// True when the person should be told about this failure now.
+    pub fn failed(&mut self, label: &str, now: Instant) -> bool {
+        match self.told.get(label) {
+            Some(&last) if now.saturating_duration_since(last) < RENOTIFY => false,
+            _ => {
+                self.told.insert(label.to_string(), now);
+                true
+            }
+        }
+    }
+
+    pub fn succeeded(&mut self, label: &str) {
+        self.told.remove(label);
+    }
+
+    /// Forget windows that are no longer open.
+    pub fn retain_open(&mut self, open: &HashSet<String>) {
+        self.told.retain(|label, _| open.contains(label));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    const MINUTE: Duration = Duration::from_secs(60);
+
+    #[test]
+    fn the_first_failure_is_told() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        assert!(!notices.failed("a", t + 10 * MINUTE));
+    }
+
+    #[test]
+    fn a_continuing_failure_is_told_again_after_a_day() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        assert!(notices.failed("a", t + RENOTIFY));
+        assert!(!notices.failed("a", t + RENOTIFY + MINUTE));
+    }
+
+    #[test]
+    fn a_success_resets_it() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        notices.succeeded("a");
+        assert!(notices.failed("a", t + MINUTE));
+    }
+
+    #[test]
+    fn a_reopened_window_is_told_again() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        notices.retain_open(&HashSet::new());
+        assert!(notices.failed("a", t + MINUTE));
+    }
+
+    #[test]
+    fn other_windows_are_kept() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        assert!(notices.failed("b", t));
+        notices.retain_open(&HashSet::from(["b".to_string()]));
+        assert!(!notices.failed("b", t + MINUTE));
+    }
+}

@@ -2,6 +2,7 @@
 //! folders Finder can open, hard-linked to the previous snapshot where nothing changed, and pruned
 //! to every snapshot of the last day plus one a day for a month.
 
+pub mod notices;
 pub mod retention;
 pub mod snapshot;
 pub mod versions;

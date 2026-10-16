@@ -19,6 +19,7 @@ use std::time::{Duration, Instant};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, RunEvent};
 
 use app::{commands, menu, requests, windows, AppCore, PendingOpen};
+use backup::notices::FailureNotices;
 use backup::SnapshotName;
 use cli::CliRequest;
 
@@ -176,13 +177,13 @@ fn start_backups(app: AppHandle) {
     let (waker, woken) = mpsc::channel();
     app.state::<AppCore>().set_backup_waker(waker);
     std::thread::spawn(move || {
-        // Windows whose last round failed: told once, then quietly retried every round until one
-        // goes through.
-        let mut failing = HashSet::new();
+        // A failing window is told once, then again a day later if it keeps failing; every round
+        // retries quietly meanwhile.
+        let mut notices = FailureNotices::new();
         let mut deadline = Instant::now();
         loop {
-            let only = if Instant::now() >= deadline {
-                deadline += interval;
+            let periodic = Instant::now() >= deadline;
+            let only = if periodic {
                 None
             } else {
                 match woken.recv_timeout(deadline - Instant::now()) {
@@ -196,17 +197,16 @@ fn start_backups(app: AppHandle) {
                 }
             };
             let core = app.state::<AppCore>();
+            notices.retain_open(&core.window_labels());
             for (label, result) in core.backup_tick(SnapshotName::now(), only.as_ref()) {
                 match result {
-                    Ok(_) => {
-                        failing.remove(&label);
-                    }
+                    Ok(_) => notices.succeeded(&label),
                     // The same name again (the same second, or a repeated daylight-saving hour):
                     // the next round takes it under a new one.
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(err) => {
                         eprintln!("tote: backup of {label} failed: {err}");
-                        if failing.insert(label.clone()) {
+                        if notices.failed(&label, Instant::now()) {
                             core.push_pending(
                                 &label,
                                 PendingOpen::Notice {
@@ -221,6 +221,11 @@ fn start_backups(app: AppHandle) {
                         }
                     }
                 }
+            }
+            if periodic {
+                // A round that ran long or a machine that slept leaves the mark in the past; start
+                // over from now instead of firing the missed rounds back to back.
+                deadline = (deadline + interval).max(Instant::now());
             }
         }
     });
