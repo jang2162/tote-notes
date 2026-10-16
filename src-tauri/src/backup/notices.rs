@@ -33,6 +33,12 @@ impl FailureNotices {
         self.told.remove(label);
     }
 
+    /// A window was just opened. Its label comes from its path, so one closed and reopened between
+    /// two rounds looks open throughout; forget it here so a failing backup is told again.
+    pub fn opened(&mut self, label: &str) {
+        self.told.remove(label);
+    }
+
     /// Forget windows that are no longer open.
     pub fn retain_open(&mut self, open: &HashSet<String>) {
         self.told.retain(|label, _| open.contains(label));
@@ -77,6 +83,15 @@ mod tests {
         let t = Instant::now();
         assert!(notices.failed("a", t));
         notices.retain_open(&HashSet::new());
+        assert!(notices.failed("a", t + MINUTE));
+    }
+
+    #[test]
+    fn a_window_reopened_between_ticks_is_told_again() {
+        let mut notices = FailureNotices::new();
+        let t = Instant::now();
+        assert!(notices.failed("a", t));
+        notices.opened("a");
         assert!(notices.failed("a", t + MINUTE));
     }
 

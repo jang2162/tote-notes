@@ -198,6 +198,10 @@ fn start_backups(app: AppHandle) {
             };
             let core = app.state::<AppCore>();
             notices.retain_open(&core.window_labels());
+            // A window opened since the last round is new even if its label was open before.
+            for label in only.iter().flatten() {
+                notices.opened(label);
+            }
             for (label, result) in core.backup_tick(SnapshotName::now(), only.as_ref()) {
                 match result {
                     Ok(_) => notices.succeeded(&label),
