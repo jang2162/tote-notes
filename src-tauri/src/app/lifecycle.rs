@@ -14,6 +14,43 @@ use super::AppCore;
 /// from closing.
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
+/// What the end of a round or the answer to its question calls for, in order. Kept apart from
+/// carrying it out so the tests can check that every path answers a waiting macOS (Dock quit,
+/// logout): it waits until told, and a path that never tells it stops the logout for good.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Step {
+    Finish(FlushGoal),
+    BeginQuit,
+    /// Tell a waiting macOS 「no」 (Dock quit, logout). Does nothing when macOS is not waiting.
+    RefuseSystemQuit,
+    Ask {
+        goal: FlushGoal,
+        reasons: Vec<String>,
+    },
+}
+
+pub fn steps_for_ack(ack: Ack) -> Vec<Step> {
+    match ack {
+        Ack::Pending => vec![],
+        Ack::Done(goal) => vec![Step::Finish(goal)],
+        Ack::DoneThenQuit(goal) => vec![Step::Finish(goal), Step::BeginQuit],
+        Ack::Blocked { goal, reasons } => vec![Step::Ask { goal, reasons }],
+    }
+}
+
+/// The question about a round was answered: 「그래도」 when `anyway`. `quit_waiting`: a quit
+/// joined the round, so its answer goes for the quit too.
+pub fn steps_for_answer(goal: FlushGoal, anyway: bool, quit_waiting: bool) -> Vec<Step> {
+    match (goal, anyway) {
+        (FlushGoal::Quit, true) => vec![Step::Finish(FlushGoal::Quit)],
+        (FlushGoal::Quit, false) => vec![Step::RefuseSystemQuit],
+        (close, true) if quit_waiting => vec![Step::Finish(close), Step::BeginQuit],
+        (close, true) => vec![Step::Finish(close)],
+        (_, false) if quit_waiting => vec![Step::RefuseSystemQuit],
+        (_, false) => vec![],
+    }
+}
+
 pub fn begin(app: &AppHandle, goal: FlushGoal) {
     let round = app.state::<AppCore>().begin_flush(goal);
     run(app, round);
@@ -51,10 +88,21 @@ pub fn ack(app: &AppHandle, id: u64, label: &str, blocked: Option<String>) {
 
 /// Carries out what the end of round `id` calls for.
 pub fn settle(app: &AppHandle, id: u64, ack: Ack) {
-    match ack {
-        Ack::Pending => {}
-        Ack::Done(goal) => finish(app, goal),
-        Ack::Blocked { goal, reasons } => ask_blocked(app, id, goal, &reasons),
+    run_steps(app, id, steps_for_ack(ack));
+}
+
+fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
+    for step in steps {
+        match step {
+            Step::Finish(goal) => finish(app, goal),
+            // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
+            Step::BeginQuit => begin(app, FlushGoal::Quit),
+            Step::RefuseSystemQuit => {
+                #[cfg(target_os = "macos")]
+                system_quit::answer(app, false);
+            }
+            Step::Ask { goal, reasons } => ask_blocked(app, id, goal, &reasons),
+        }
     }
 }
 
@@ -86,22 +134,15 @@ fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
 /// carries the goal out. A quit that joined a close's question goes the same way as the close.
 pub fn resolve_blocked(app: &AppHandle, id: u64, goal: FlushGoal, anyway: bool) {
     let quit_waiting = app.state::<AppCore>().cancel_flush(id);
-    if anyway {
-        let close = matches!(goal, FlushGoal::CloseWindow(_));
-        finish(app, goal);
-        // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
-        if close && quit_waiting {
-            begin(app, FlushGoal::Quit);
-        }
-    } else if goal == FlushGoal::Quit || quit_waiting {
-        #[cfg(target_os = "macos")]
-        system_quit::answer(app, false);
-    }
+    run_steps(app, id, steps_for_answer(goal, anyway, quit_waiting));
 }
 
 pub fn finish(app: &AppHandle, goal: FlushGoal) {
     match goal {
         FlushGoal::CloseWindow(label) => {
+            // `closed` comes only once the window is gone: a quit begun right after this (a
+            // joined quit's `BeginQuit`) must neither wait on the window nor reopen it.
+            app.state::<AppCore>().closing(&label);
             if let Some(window) = app.get_webview_window(&label) {
                 let _ = window.destroy();
             }
@@ -255,5 +296,73 @@ mod system_quit {
                 NSApplicationTerminateReply::TerminateNow
             );
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn close() -> FlushGoal {
+        FlushGoal::CloseWindow("a".into())
+    }
+
+    #[test]
+    fn every_answer_settles_a_waiting_system_quit() {
+        let table = [
+            // `finish` answers macOS 「yes」.
+            (
+                FlushGoal::Quit,
+                true,
+                false,
+                vec![Step::Finish(FlushGoal::Quit)],
+            ),
+            // Refused here.
+            (FlushGoal::Quit, false, false, vec![Step::RefuseSystemQuit]),
+            // No quit joined: macOS is not waiting on this round.
+            (close(), true, false, vec![Step::Finish(close())]),
+            // No quit joined: macOS is not waiting on this round.
+            (close(), false, false, vec![]),
+            // The new quit round answers when it ends.
+            (
+                close(),
+                true,
+                true,
+                vec![Step::Finish(close()), Step::BeginQuit],
+            ),
+            // Refused here.
+            (close(), false, true, vec![Step::RefuseSystemQuit]),
+        ];
+        for (goal, anyway, quit_waiting, steps) in table {
+            assert_eq!(
+                steps_for_answer(goal.clone(), anyway, quit_waiting),
+                steps,
+                "{goal:?}, anyway {anyway}, quit waiting {quit_waiting}"
+            );
+        }
+    }
+
+    #[test]
+    fn every_ack_carries_its_goal_out_or_asks() {
+        let reasons = vec!["저장하지 못한 메모 1개".to_string()];
+        assert_eq!(steps_for_ack(Ack::Pending), vec![]);
+        assert_eq!(
+            steps_for_ack(Ack::Done(close())),
+            vec![Step::Finish(close())]
+        );
+        assert_eq!(
+            steps_for_ack(Ack::DoneThenQuit(close())),
+            vec![Step::Finish(close()), Step::BeginQuit]
+        );
+        assert_eq!(
+            steps_for_ack(Ack::Blocked {
+                goal: close(),
+                reasons: reasons.clone(),
+            }),
+            vec![Step::Ask {
+                goal: close(),
+                reasons,
+            }]
+        );
     }
 }

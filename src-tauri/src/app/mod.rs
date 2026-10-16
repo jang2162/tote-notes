@@ -110,6 +110,9 @@ struct OpenWindow {
     path: PathBuf,
     workspace: Arc<Mutex<Workspace>>,
     pending: Vec<PendingOpen>,
+    /// Set by `closing`. On the window, not in a list of labels, so it goes with the window: a
+    /// mark left behind would keep a window reopened under the same label out of the next quit.
+    closing: bool,
 }
 
 impl AppCore {
@@ -274,6 +277,7 @@ impl AppCore {
             path: root.clone(),
             workspace: Arc::new(Mutex::new(workspace)),
             pending: Vec::new(),
+            closing: false,
         };
         {
             let mut inner = lock(&self.inner);
@@ -431,6 +435,14 @@ impl AppCore {
         inner.flush.window_gone(label)
     }
 
+    /// The window is being closed: from now on a quit neither waits on it nor reopens it. A window
+    /// already gone is not marked.
+    pub fn closing(&self, label: &str) {
+        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+            window.closing = true;
+        }
+    }
+
     pub fn has_windows(&self) -> bool {
         !lock(&self.inner).windows.is_empty()
     }
@@ -478,7 +490,12 @@ impl AppCore {
             // at the timeout.
             FlushGoal::CloseWindow(label) if !inner.windows.contains_key(label) => vec![],
             FlushGoal::CloseWindow(label) => vec![label.clone()],
-            FlushGoal::Quit => inner.windows.keys().cloned().collect(),
+            FlushGoal::Quit => inner
+                .windows
+                .iter()
+                .filter(|(_, window)| !window.closing)
+                .map(|(label, _)| label.clone())
+                .collect(),
         };
         inner.flush.begin(goal, windows)
     }
@@ -495,8 +512,8 @@ impl AppCore {
         lock(&self.inner).flush.cancel(id)
     }
 
-    /// Fixes what reopens at the next launch: every open window, the most recently focused last
-    /// so it ends up in front.
+    /// Fixes what reopens at the next launch: every open window but those being closed, the most
+    /// recently focused last so it ends up in front.
     pub fn start_quit(&self) {
         let mut inner = lock(&self.inner);
         inner.quitting = true;
@@ -504,7 +521,9 @@ impl AppCore {
             .focus
             .iter()
             .rev()
-            .filter_map(|label| inner.windows.get(label).map(|w| w.path.clone()))
+            .filter_map(|label| inner.windows.get(label))
+            .filter(|window| !window.closing)
+            .map(|window| window.path.clone())
             .collect();
         inner.launch.open_windows = order;
         self.save_launch(&inner.launch);
@@ -1086,6 +1105,38 @@ mod tests {
             core.begin_flush(FlushGoal::CloseWindow("gone".into())),
             Begin::Done(FlushGoal::CloseWindow("gone".into()))
         );
+    }
+
+    #[test]
+    fn a_window_being_closed_is_left_out_of_a_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        core.closing(&a);
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { windows, .. } if windows == vec![b.clone()]
+        ));
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![core.path_of(&b).unwrap()]);
+    }
+
+    #[test]
+    fn closing_a_window_already_gone_marks_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let path = core.path_of(&a).unwrap();
+        core.closed(&a);
+        core.closing(&a);
+        // The same folder opened again in this run gets the same label.
+        core.register(&a, Workspace::open(&path).unwrap());
+        core.opened(&a);
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { windows, .. } if windows == vec![a.clone()]
+        ));
     }
 
     #[test]
