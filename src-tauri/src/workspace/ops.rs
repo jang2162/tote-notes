@@ -279,7 +279,7 @@ mod tests {
     #[test]
     fn every_write_marks_the_workspace_changed() {
         let (root, mut ws) = workspace();
-        assert!(!ws.take_changed(), "opening is not a change");
+        assert!(ws.take_changed(), "opening marks it for the first backup");
         let check = |ws: &mut Workspace, what: &str| {
             assert!(ws.take_changed(), "{what}");
             assert!(!ws.take_changed(), "{what}, asked again");

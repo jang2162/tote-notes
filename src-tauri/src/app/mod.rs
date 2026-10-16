@@ -14,6 +14,7 @@ use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use serde::Serialize;
@@ -81,6 +82,9 @@ pub struct AppCore {
     workspace_searches: Mutex<HashMap<String, u64>>,
     /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
     watcher: OnceLock<Watcher>,
+    /// Wakes the backup thread with a window label (`request_backup`); unset until
+    /// `start_backups` runs, so tests and early windows ask nothing.
+    backup_waker: Mutex<Option<Sender<String>>>,
     inner: Mutex<Inner>,
 }
 
@@ -150,6 +154,7 @@ impl AppCore {
             searches: Mutex::new(HashMap::new()),
             workspace_searches: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
+            backup_waker: Mutex::new(None),
             inner: Mutex::new(Inner {
                 windows: HashMap::new(),
                 reserved: HashSet::new(),
@@ -505,18 +510,43 @@ impl AppCore {
         self.save_launch(&inner.launch);
     }
 
+    /// Hands the backup thread's wake-up channel to the core (`request_backup`).
+    pub fn set_backup_waker(&self, waker: Sender<String>) {
+        *lock(&self.backup_waker) = Some(waker);
+    }
+
+    /// Asks the backup thread to snapshot the window `label` now rather than at the next regular
+    /// round — a window just opened is marked changed (`Workspace::open`). Does nothing without a
+    /// waker, or when the thread is gone.
+    pub fn request_backup(&self, label: &str) {
+        if let Some(waker) = lock(&self.backup_waker).as_ref() {
+            let _ = waker.send(label.to_string());
+        }
+    }
+
+    /// The labels of the open windows.
+    pub fn window_labels(&self) -> HashSet<String> {
+        lock(&self.inner).windows.keys().cloned().collect()
+    }
+
     /// One backup round (spec 「백업」): each open window's workspace that changed since the last
-    /// round is snapshotted under `now`, then its old snapshots are pruned. Returns what each
+    /// round is snapshotted under `now`, then its old snapshots are pruned. With `only`, just the
+    /// windows with those labels are looked at; the others keep their marks. Returns what each
     /// snapshotted window got: the new folder, `None` when there was nothing to put in, or why the
     /// round failed for it.
     ///
     /// The workspace lock is held only to read the mark, not while copying: saves go on during a
     /// snapshot, which skips a file changed under it (`SkipReason::Changed`). A failed round, or one
     /// that skipped such a file, leaves the workspace marked so the next round takes it.
-    pub fn backup_tick(&self, now: SnapshotName) -> Vec<(String, io::Result<Option<PathBuf>>)> {
+    pub fn backup_tick(
+        &self,
+        now: SnapshotName,
+        only: Option<&HashSet<String>>,
+    ) -> Vec<(String, io::Result<Option<PathBuf>>)> {
         let windows: Vec<(String, Arc<Mutex<Workspace>>)> = lock(&self.inner)
             .windows
             .iter()
+            .filter(|(label, _)| only.is_none_or(|only| only.contains(*label)))
             .map(|(label, window)| (label.clone(), window.workspace.clone()))
             .collect();
         let mut ticked = Vec::new();
@@ -614,22 +644,96 @@ mod tests {
         let a_backups = BackupDir::new(&core.paths.backups_dir(), &a_id);
         let old = SnapshotName::parse("20260901-120000").unwrap();
         fs::create_dir_all(a_backups.path_of(old)).unwrap();
+        let b_backups = BackupDir::new(&core.paths.backups_dir(), &b_id);
+        fs::write(
+            core.path_of(&b).unwrap().join("나.md"),
+            "나의 메모".as_bytes(),
+        )
+        .unwrap();
 
+        // Both were opened just now, so the first round takes both.
         let now = SnapshotName::parse("20261012-120000").unwrap();
-        let ticked = core.backup_tick(now);
+        let ticked = core.backup_tick(now, None);
+        assert_eq!(ticked.len(), 2, "a window just opened is changed");
+        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
+        assert_eq!(b_backups.snapshots().unwrap(), vec![now]);
+
+        // Then only the one written to is taken.
+        lock(&a_ws).create_memo("md", "또 메모".as_bytes()).unwrap();
+        let later = SnapshotName::parse("20261012-121000").unwrap();
+        let ticked = core.backup_tick(later, None);
         assert_eq!(ticked.len(), 1, "only the changed workspace");
         assert_eq!(ticked[0].0, a);
         assert_eq!(
             ticked[0].1.as_ref().unwrap().as_deref(),
-            Some(a_backups.path_of(now).as_path())
+            Some(a_backups.path_of(later).as_path())
         );
-        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
-        let b_backups = BackupDir::new(&core.paths.backups_dir(), &b_id);
-        assert_eq!(b_backups.snapshots().unwrap(), vec![]);
+        assert_eq!(a_backups.snapshots().unwrap(), vec![now, later]);
+        assert_eq!(b_backups.snapshots().unwrap(), vec![now]);
 
-        let later = SnapshotName::parse("20261012-121000").unwrap();
-        assert!(core.backup_tick(later).is_empty(), "nothing changed since");
-        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
+        let last = SnapshotName::parse("20261012-122000").unwrap();
+        assert!(
+            core.backup_tick(last, None).is_empty(),
+            "nothing changed since"
+        );
+    }
+
+    #[test]
+    fn a_wake_snapshots_only_the_woken_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        let a_ws = core.workspace(&a).unwrap();
+        let b_ws = core.workspace(&b).unwrap();
+        let a_id = lock(&a_ws).id().to_string();
+        let b_id = lock(&b_ws).id().to_string();
+        let first = SnapshotName::parse("20261012-120000").unwrap();
+        core.backup_tick(first, None);
+
+        lock(&a_ws)
+            .create_memo("md", "가의 메모".as_bytes())
+            .unwrap();
+        lock(&b_ws)
+            .create_memo("md", "나의 메모".as_bytes())
+            .unwrap();
+        let a_backups = BackupDir::new(&core.paths.backups_dir(), &a_id);
+        let b_backups = BackupDir::new(&core.paths.backups_dir(), &b_id);
+
+        let wake = SnapshotName::parse("20261012-120500").unwrap();
+        let ticked = core.backup_tick(wake, Some(&HashSet::from([a.clone()])));
+        assert_eq!(ticked.len(), 1);
+        assert_eq!(ticked[0].0, a);
+        assert_eq!(a_backups.snapshots().unwrap().last(), Some(&wake));
+        assert!(b_backups
+            .snapshots()
+            .unwrap()
+            .iter()
+            .all(|&name| name < wake));
+
+        // 나 stays marked: the next regular round takes it.
+        let regular = SnapshotName::parse("20261012-121000").unwrap();
+        let ticked = core.backup_tick(regular, None);
+        assert_eq!(ticked.len(), 1);
+        assert_eq!(ticked[0].0, b);
+        assert_eq!(b_backups.snapshots().unwrap().last(), Some(&regular));
+    }
+
+    #[test]
+    fn request_backup_without_a_waker_does_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.request_backup("any-label");
+    }
+
+    #[test]
+    fn request_backup_sends_the_label_to_the_waker() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (waker, woken) = std::sync::mpsc::channel();
+        core.set_backup_waker(waker);
+        core.request_backup("w-1");
+        assert_eq!(woken.try_recv().unwrap(), "w-1");
     }
 
     #[test]
@@ -643,7 +747,7 @@ mod tests {
         // The name is taken (the same second twice): this round makes nothing.
         let now = SnapshotName::parse("20261012-120000").unwrap();
         fs::create_dir_all(a_backups.path_of(now)).unwrap();
-        let ticked = core.backup_tick(now);
+        let ticked = core.backup_tick(now, None);
         assert_eq!(ticked.len(), 1);
         assert_eq!(
             ticked[0].1.as_ref().unwrap_err().kind(),
@@ -651,7 +755,7 @@ mod tests {
         );
 
         let later = SnapshotName::parse("20261012-121000").unwrap();
-        let ticked = core.backup_tick(later);
+        let ticked = core.backup_tick(later, None);
         assert_eq!(
             ticked[0].1.as_ref().unwrap().as_deref(),
             Some(a_backups.path_of(later).as_path())

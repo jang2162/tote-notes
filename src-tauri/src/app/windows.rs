@@ -58,6 +58,8 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
     }
     crate::perf::mark("window-shown");
     core.opened(&label);
+    // Opened windows are marked changed; have the backup thread take them now.
+    core.request_backup(&label);
     Ok(label)
 }
 

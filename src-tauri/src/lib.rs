@@ -13,7 +13,8 @@ pub mod workspace;
 
 use std::collections::HashSet;
 use std::io;
-use std::time::Duration;
+use std::sync::mpsc::{self, RecvTimeoutError};
+use std::time::{Duration, Instant};
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager, RunEvent};
 
@@ -164,18 +165,38 @@ fn start_watching(app: AppHandle) {
     }
 }
 
-/// Backup rounds on a thread of their own (spec 「백업」): the first one an interval after launch,
-/// since nothing has changed before it, and none at quit, which must stay quick.
+/// Backup rounds on a thread of their own (spec 「백업」): one right away, for the windows the
+/// start-up restore has already opened, then one every interval, and one for a window as it
+/// opens (`AppCore::request_backup`). None at quit, which must stay quick.
+///
+/// One thread takes every snapshot, in turn: `remove_leftovers` would delete the `.tmp-*` of a
+/// snapshot another thread is still building.
 fn start_backups(app: AppHandle) {
     let interval = backup_interval();
+    let (waker, woken) = mpsc::channel();
+    app.state::<AppCore>().set_backup_waker(waker);
     std::thread::spawn(move || {
         // Windows whose last round failed: told once, then quietly retried every round until one
         // goes through.
         let mut failing = HashSet::new();
+        let mut deadline = Instant::now();
         loop {
-            std::thread::sleep(interval);
+            let only = if Instant::now() >= deadline {
+                deadline += interval;
+                None
+            } else {
+                match woken.recv_timeout(deadline - Instant::now()) {
+                    Ok(label) => {
+                        let mut labels = HashSet::from([label]);
+                        labels.extend(woken.try_iter());
+                        Some(labels)
+                    }
+                    Err(RecvTimeoutError::Timeout) => continue,
+                    Err(RecvTimeoutError::Disconnected) => return,
+                }
+            };
             let core = app.state::<AppCore>();
-            for (label, result) in core.backup_tick(SnapshotName::now()) {
+            for (label, result) in core.backup_tick(SnapshotName::now(), only.as_ref()) {
                 match result {
                     Ok(_) => {
                         failing.remove(&label);

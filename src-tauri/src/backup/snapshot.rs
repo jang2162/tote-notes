@@ -55,8 +55,9 @@ pub enum SkipReason {
 /// What one `take` did.
 #[derive(Debug, PartialEq)]
 pub struct Taken {
-    /// The new snapshot. `None` when no file went in: the workspace has no memo files, or every
-    /// one was binary, too large, or changed while being read.
+    /// The new snapshot. `None` when no file went in (the workspace has no memo files, or every
+    /// one was binary, too large, or changed while being read), or when it would have been the
+    /// same as the previous snapshot: same files, same contents, same index.
     pub folder: Option<PathBuf>,
     /// Files that changed while being read (`SkipReason::Changed`). The next round must take
     /// them, so while this is not zero the workspace stays marked as changed — with a folder or
@@ -65,6 +66,8 @@ pub struct Taken {
 }
 
 /// Snapshots the workspace at `workspace_root` into `dir` under the name `now`.
+///
+/// Nothing is made either when the workspace is the same as in the previous snapshot (`Taken`).
 ///
 /// An error means no snapshot was made, so the caller keeps the workspace marked as changed: the
 /// name was already taken (see `take_with`), or writing into the backup failed — a full disk, say
@@ -112,7 +115,7 @@ pub fn take_with(
     }
     let result = fill(workspace_root, &tmp, previous.as_ref(), &read).and_then(|filled| {
         let deferred = filled.deferred;
-        if !filled.kept {
+        if !filled.kept || same_as_previous(&tmp, &filled.manifest, previous.as_ref()) {
             return Ok(Taken {
                 folder: None,
                 deferred,
@@ -140,6 +143,33 @@ struct Filled {
     /// Whether any memo file went in.
     kept: bool,
     deferred: usize,
+    manifest: Manifest,
+}
+
+/// Whether the snapshot just built in `tmp` holds what the previous one holds: the same files
+/// with the same hashes, and the same `.tote/index.json`. Judged on the manifest already made, so
+/// no workspace file is read again.
+fn same_as_previous(
+    tmp: &Path,
+    manifest: &Manifest,
+    previous: Option<&(PathBuf, Manifest)>,
+) -> bool {
+    let Some((earlier, earlier_manifest)) = previous else {
+        return false;
+    };
+    let same_files = manifest.files.len() == earlier_manifest.files.len()
+        && manifest.files.iter().all(|(file, record)| {
+            earlier_manifest
+                .files
+                .get(file)
+                .is_some_and(|earlier| earlier.sha256 == record.sha256)
+        });
+    same_files && read_index(tmp) == read_index(earlier)
+}
+
+/// The snapshot's copy of the index; `None` when there is none or it cannot be read.
+fn read_index(snapshot: &Path) -> Option<Vec<u8>> {
+    fs::read(snapshot.join(TOTE_DIR).join(INDEX_FILE)).ok()
 }
 
 /// Copies or links every memo file into `into`, then the index and the manifest.
@@ -184,6 +214,7 @@ fn fill(
         return Ok(Filled {
             kept: false,
             deferred,
+            manifest,
         });
     }
     let index = workspace_root.join(TOTE_DIR).join(INDEX_FILE);
@@ -195,6 +226,7 @@ fn fill(
     Ok(Filled {
         kept: true,
         deferred,
+        manifest,
     })
 }
 
@@ -458,6 +490,8 @@ mod tests {
         // the hash still finds the previous copy.
         atomic_write(&a, "그대로\n".as_bytes()).unwrap();
         filetime::set_file_mtime(&a, FileTime::from_unix_time(2_000_000_000, 0)).unwrap();
+        // Another file changes too: a snapshot identical to the previous one would not be made.
+        fs::write(&b, "echo third\n").unwrap();
         let third = take(&s.workspace, &s.dir, at("20261012-152000"))
             .unwrap()
             .folder
@@ -496,10 +530,14 @@ mod tests {
         let s = setup();
         let a = s.workspace.join("a.md");
         fs::write(&a, "aaaa\n").unwrap();
+        let other = s.workspace.join("b.md");
+        fs::write(&other, "one\n").unwrap();
         let first = take(&s.workspace, &s.dir, at("20261012-150000"))
             .unwrap()
             .folder
             .unwrap();
+        // Another file changes too: a snapshot identical to the previous one would not be made.
+        fs::write(&other, "two\n").unwrap();
         let mtime = FileTime::from_last_modification_time(&fs::metadata(&a).unwrap());
         fs::write(&a, "bbbb\n").unwrap();
         filetime::set_file_mtime(&a, mtime).unwrap();
@@ -716,5 +754,51 @@ mod tests {
         assert_eq!(read(&first.join("a.md")), "first\n");
         assert_eq!(s.dir.snapshots().unwrap(), vec![name]);
         assert!(!s.dir.root.join(".tmp-20261012-150000").exists());
+    }
+
+    #[test]
+    fn a_snapshot_identical_to_the_previous_one_makes_no_folder() {
+        let s = setup();
+        fs::write(s.workspace.join("a.md"), "하나\n").unwrap();
+        fs::write(s.workspace.join("b.md"), "둘\n").unwrap();
+        take(&s.workspace, &s.dir, at("20261012-150000")).unwrap();
+
+        let taken = take(&s.workspace, &s.dir, at("20261012-151000")).unwrap();
+        assert_eq!(
+            taken,
+            Taken {
+                folder: None,
+                deferred: 0
+            }
+        );
+        assert_eq!(s.dir.snapshots().unwrap(), vec![at("20261012-150000")]);
+        assert!(!s.dir.root.join(".tmp-20261012-151000").exists());
+    }
+
+    #[test]
+    fn a_removed_file_makes_a_new_snapshot() {
+        let s = setup();
+        fs::write(s.workspace.join("a.md"), "하나\n").unwrap();
+        fs::write(s.workspace.join("b.md"), "둘\n").unwrap();
+        take(&s.workspace, &s.dir, at("20261012-150000")).unwrap();
+
+        fs::remove_file(s.workspace.join("b.md")).unwrap();
+        let taken = take(&s.workspace, &s.dir, at("20261012-151000")).unwrap();
+        assert!(taken.folder.is_some());
+    }
+
+    #[test]
+    fn index_json_alone_changing_makes_a_new_snapshot() {
+        let s = setup();
+        fs::write(s.workspace.join("a.md"), "하나\n").unwrap();
+        take(&s.workspace, &s.dir, at("20261012-150000")).unwrap();
+
+        fs::write(
+            s.workspace.join(TOTE_DIR).join("index.json"),
+            "{\"version\":1,\"memos\":{\"x\":{}}}\n",
+        )
+        .unwrap();
+        let taken = take(&s.workspace, &s.dir, at("20261012-151000")).unwrap();
+        assert!(taken.folder.is_some());
     }
 }

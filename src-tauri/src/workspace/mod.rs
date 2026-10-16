@@ -136,7 +136,9 @@ impl Workspace {
             root,
             id: meta.id,
             index,
-            changed: false,
+            // Opening counts as a change: the last stretch before the previous close may be in no
+            // snapshot, so the first round after opening takes this state.
+            changed: true,
             last_written: BTreeMap::new(),
             inodes,
         })
@@ -513,6 +515,13 @@ mod tests {
     }
 
     #[test]
+    fn an_opened_workspace_starts_changed() {
+        let (_root, mut ws) = workspace();
+        assert!(ws.take_changed(), "the first round after opening takes it");
+        assert!(!ws.take_changed());
+    }
+
+    #[test]
     fn a_change_that_hashes_like_our_last_write_is_ignored() {
         let (_root, mut ws) = workspace();
         let memo = ws.create_memo("md", b"").unwrap();
@@ -722,6 +731,7 @@ mod tests {
     #[test]
     fn tote_temp_files_and_dot_files_never_appear() {
         let (_root, mut ws) = workspace();
+        ws.take_changed();
         fs::write(ws.root().join(".tote-tmp-x"), "half").unwrap();
         fs::write(ws.root().join(".DS_Store"), "finder").unwrap();
         let seen = names(&[".tote-tmp-x", ".DS_Store", ".tote"]);
