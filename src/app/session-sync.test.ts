@@ -139,6 +139,23 @@ describe("conflict-kept banner in the session", () => {
     });
   });
 
+  it("keeps conflictKept in the session while another banner is up", async () => {
+    const { tabs, sync } = setup(
+      {
+        version: 1,
+        activeTab: 0,
+        tabs: [{ kind: "memo", memoId: "n", conflictKept: { memoId: "a" } }],
+      },
+      { a: fakeMemo("장보기.md", "다른 앱"), n: fakeMemo("장보기 2.md", "내 글") },
+    );
+    await sync.restore();
+    const doc = tabs.list[0] as MemoDoc;
+    await doc.ensureLoaded();
+    await doc.onOutside({ kind: "removed", id: "n", file: "장보기 2.md" });
+    expect(doc.banner?.kind).toBe("deleted");
+    expect(sessionTab(doc, "device-1")).toMatchObject({ conflictKept: { memoId: "a" } });
+  });
+
   it("brings back the conflict-kept banner", async () => {
     const { tabs, sync, opened } = setup(
       {

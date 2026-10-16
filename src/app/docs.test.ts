@@ -548,6 +548,56 @@ describe("MemoDoc outside changes", () => {
     expect(backend.memoText("a")).toBe("다른 앱");
   });
 
+  /** A memo that kept a conflict (`a` holds the other app's text), now its own memo. */
+  async function keptConflict() {
+    const ctx = await opened("원래");
+    type(ctx.doc, " 내 글");
+    ctx.backend.data.memos.a.data = fakeFile("다른 앱");
+    await ctx.doc.onOutside({ kind: "modified", id: "a" });
+    await ctx.doc.flush();
+    return { ...ctx, id: ctx.doc.info.id };
+  }
+
+  it("the conflict-kept banner comes back once a later banner is settled", async () => {
+    const { backend, doc, id } = await keptConflict();
+    const kept = { memoId: "a" };
+    expect(doc.conflictKept).toEqual(kept);
+
+    type(doc, "!");
+    backend.data.memos[id].data = fakeFile("또 다른 앱");
+    await doc.onOutside({ kind: "modified", id });
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.conflictKept).toEqual(kept);
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.banner?.kind).toBe("info");
+    expect(doc.banner?.text).toBe(conflictKeptText("a"));
+    expect(doc.conflictKept).toEqual(kept);
+
+    delete backend.data.memos[id];
+    await doc.onOutside({ kind: "removed", id, file: "a 2.md" });
+    expect(doc.banner?.kind).toBe("deleted");
+    expect(doc.conflictKept).toEqual(kept);
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.banner?.kind).toBe("info");
+    expect(doc.banner?.text).toBe(conflictKeptText("a"));
+    expect(doc.conflictKept).toEqual(kept);
+  });
+
+  it("only 닫기 ends the conflict-kept banner", async () => {
+    const { backend, doc, id } = await keptConflict();
+    doc.banner!.actions.at(-1)!.run();
+    expect(doc.banner).toBeNull();
+    expect(doc.conflictKept).toBeNull();
+    // A quiet re-read clears with `setBanner(null)`: nothing is left to bring back.
+    backend.data.memos[id].data = fakeFile("바깥 글");
+    await doc.onOutside({ kind: "modified", id });
+    expect(doc.state!.doc.toString()).toBe("바깥 글");
+    expect(doc.banner).toBeNull();
+    expect(doc.conflictKept).toBeNull();
+  });
+
   it("a conflict undone back to the saved text still keeps both at close or quit", async () => {
     const { backend, doc } = await opened("원래");
     const saved = doc.state!;

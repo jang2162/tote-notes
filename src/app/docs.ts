@@ -392,6 +392,8 @@ export class MemoDoc extends Doc {
   /** Set while the banner says 「내 버전」 was saved as this memo; `memoId` is the memo that kept
    * the other app's text. Ends with the tab: the session carries it, a reopened memo has none. */
   conflictKept: { memoId: string } | null = null;
+  /** The original's info when the listing did not have it, for raising the note again. */
+  private keptKnown: MemoInfo | undefined;
   private retitling: Promise<void> | null = null;
   private detecting: Promise<void> | null = null;
 
@@ -721,6 +723,7 @@ export class MemoDoc extends Doc {
   /** The info banner of a kept conflict. `known` names the original when the listing does not. */
   keepConflict(memoId: string, known?: MemoInfo): void {
     this.conflictKept = { memoId };
+    this.keptKnown = known;
     const listed = this.host.memoInfo(memoId);
     const name = listed ?? known;
     const actions: BannerAction[] = [];
@@ -733,14 +736,20 @@ export class MemoDoc extends Doc {
     });
   }
 
-  /** A question about this file takes the banner's place, and the kept-conflict note goes with it. */
+  /** A question about this file takes the banner's place for as long as it is open; the
+   * kept-conflict note stays in the session and comes back when the banner ends. */
   protected setBanner(banner: BannerState | null): void {
-    if (banner?.kind !== "info") this.conflictKept = null;
+    if (banner === null && this.conflictKept) {
+      this.keepConflict(this.conflictKept.memoId, this.keptKnown);
+      return;
+    }
     super.setBanner(banner);
   }
 
+  /** Only 「닫기」 ends the note. */
   private dismissConflictKept(): void {
     this.conflictKept = null;
+    this.keptKnown = undefined;
     this.setBanner(null);
   }
 
