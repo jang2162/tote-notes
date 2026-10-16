@@ -1,6 +1,7 @@
 import { basename, splitName } from "../core/names";
-import { parseSessionFile } from "../core/session";
+import { parseSessionFile, type SessionTab } from "../core/session";
 import { scanBytes } from "../viewer/large-text";
+import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   BackendError,
@@ -31,10 +32,12 @@ import {
 
 /** An in-memory `Backend` for the browser preview and the UI tests. It follows the Rust side's
  * rules where the UI depends on them — APFS-style name collisions, `autoTitle`, drafts that keep
- * their base — and keeps everything in one JSON blob, so reloading the page acts as a restart. */
+ * their base — and keeps everything in one JSON blob, so reloading the page acts as a restart.
+ * With a `FakeHub` (a page opened as `?window=ws-<n>`) the pages of a browser context are the
+ * windows of one workspace and share the blob. */
 
 export const FAKE_STORAGE_KEY = "tote-fake";
-/** The label of the window the page stands for. */
+/** The label of the window the page stands for, without a hub. */
 export const FAKE_LABEL = "ws-1";
 
 const placeKey = (tab: TabRef) => (tab.kind === "memo" ? `memo:${tab.id}` : `external:${tab.path}`);
@@ -125,11 +128,21 @@ export interface FakeData {
   places?: Record<string, string>;
   /** The reveals `claimTabs` asked of other windows, in order. Absent in old seeds. */
   reveals?: { label: string; tab: TabRef }[];
+  /** The tabs `tearOffTab` moved into new windows, in order. Absent in old seeds. */
+  tornOff?: { tab: SessionTab }[];
+  /** What a tab's context menu returns: the id of the item to pick, or null for none. */
+  tabMenuPick?: string | null;
+  /** The items of every tab context menu shown, in order. Absent in old seeds. */
+  tabMenus?: { id: string; text: string }[][];
+  /** The windows, with a hub (`FakeHub`). Absent without one. */
+  hub?: HubState;
 }
 
 export interface FakeStorage {
   load(): string | null;
   save(text: string): void;
+  /** Other pages write it too: it is read again before use. */
+  shared?: boolean;
 }
 
 export function memoryStorage(initial: string | null = null): FakeStorage {
@@ -290,7 +303,10 @@ const SEARCH_MAX_MATCHES = 2000;
 const SEARCH_MAX_MATCHES_PER_FILE = 200;
 
 export class FakeBackend implements Backend {
-  data: FakeData;
+  private current: FakeData;
+  /** The stored text `current` was read from or saved as: shared storage is read again only when
+   * another page has changed it. */
+  private stored: string | null;
   /** The base of each opened external file, held in memory like the Rust side does. */
   private bases: Record<string, string | null> = {};
   /** The number of the workspace search allowed to go on; 0 for none. */
@@ -305,10 +321,20 @@ export class FakeBackend implements Backend {
     memos: [] as (() => void)[],
     reveal: [] as ((tab: TabRef) => void)[],
   };
+  /** The window the page stands for. */
+  private readonly label: string;
 
-  constructor(private readonly storage: FakeStorage = memoryStorage()) {
-    const saved = storage.load();
-    this.data = saved ? (JSON.parse(saved) as FakeData) : defaultFakeData();
+  constructor(
+    private readonly storage: FakeStorage = memoryStorage(),
+    private readonly hub: FakeHub | null = null,
+  ) {
+    this.stored = storage.load();
+    this.current = this.stored ? (JSON.parse(this.stored) as FakeData) : defaultFakeData();
+    this.label = hub?.label ?? FAKE_LABEL;
+    if (!hub) return;
+    hub.register(this.data);
+    this.commit();
+    hub.listen((event) => this.heard(event));
   }
 
   static fromSessionStorage(): FakeBackend {
@@ -318,10 +344,47 @@ export class FakeBackend implements Backend {
     });
   }
 
+  /** The page of window `label` among the pages sharing `localStorage`. */
+  static fromHub(label: string): FakeBackend {
+    const storage: FakeStorage = {
+      load: () => localStorage.getItem(FAKE_STORAGE_KEY),
+      save: (text) => localStorage.setItem(FAKE_STORAGE_KEY, text),
+      shared: true,
+    };
+    return new FakeBackend(storage, new FakeHub(label));
+  }
+
+  get data(): FakeData {
+    if (this.storage.shared) {
+      const text = this.storage.load();
+      if (text !== null && text !== this.stored) {
+        this.current = JSON.parse(text) as FakeData;
+        this.stored = text;
+      }
+    }
+    return this.current;
+  }
+
   // What tests do as the native side.
 
   menu(id: string): void {
+    // ⌥⌘N is the native side's own: it opens the window.
+    if (id === "new-window" && this.hub) {
+      this.hub.open(this.hub.openFresh(this.data));
+      this.commit();
+      return;
+    }
     for (const handler of this.handlers.menu) handler(id);
+  }
+  /** What the native side does once this window is gone (with a hub). */
+  closed(): void {
+    this.hub?.closed(this.data);
+    this.commit();
+  }
+  /** What the native side does as the app quits (with a hub): every window's layout stays. */
+  quit(): void {
+    this.hub?.quit(this.data);
+    this.commit();
   }
   config(): void {
     for (const handler of this.handlers.config) handler();
@@ -350,6 +413,17 @@ export class FakeBackend implements Backend {
   }
   memosChanged(): void {
     for (const handler of this.handlers.memos) handler();
+  }
+  /** Another window's page told this one what the native side would. */
+  private heard(event: HubEvent): void {
+    if (event.type === "flush") this.requestFlush(event.id);
+    else if (event.type === "memos") this.memosChanged();
+    else if (event.type === "reveal") this.reveal(event.tab);
+    else if (event.type === "outside") this.outside(event.change);
+  }
+  /** The memo list changed: the other windows read it again, as the native side tells them. */
+  private memosTouched(): void {
+    this.hub?.send(this.hub.siblings(this.data), { type: "memos" });
   }
   dropFiles(paths: string[]): void {
     for (const handler of this.handlers.drop) handler(paths);
@@ -409,6 +483,7 @@ export class FakeBackend implements Backend {
     memo.data = toBase64(bytes);
     memo.modifiedMs = this.tick();
     this.commit();
+    this.memosTouched();
     return this.info(id, memo);
   }
 
@@ -419,6 +494,7 @@ export class FakeBackend implements Backend {
       if (!validName(ext ? `${stem}.${ext}` : stem)) throw new BackendError("invalid-name", stem);
       memo.file = this.freeName(stem, ext, id);
       this.commit();
+      this.memosTouched();
     }
     return this.info(id, memo);
   }
@@ -437,6 +513,7 @@ export class FakeBackend implements Backend {
     memo.file = file;
     memo.autoTitle = false;
     this.commit();
+    this.memosTouched();
     return this.info(id, memo);
   }
 
@@ -449,6 +526,7 @@ export class FakeBackend implements Backend {
     }
     memo.language = language;
     this.commit();
+    this.memosTouched();
     return this.info(id, memo);
   }
 
@@ -456,6 +534,7 @@ export class FakeBackend implements Backend {
     this.memo(id);
     delete this.data.memos[id];
     this.commit();
+    this.memosTouched();
   }
 
   async importMemo(fileName: string, bytes: Uint8Array) {
@@ -471,12 +550,17 @@ export class FakeBackend implements Backend {
   }
 
   async readWindowLayout() {
+    if (this.hub) {
+      const layout = this.hub.layout(this.data);
+      return layout === null ? null : JSON.stringify(layout);
+    }
     const [window] = parseSessionFile(this.data.session).windows;
     return window ? JSON.stringify(window) : null;
   }
 
   async writeWindowLayout(json: string) {
-    this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
+    if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
+    else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
     this.commit();
   }
 
@@ -491,11 +575,14 @@ export class FakeBackend implements Backend {
     const places = (this.data.places ??= {});
     const claims = tabs.map((tab) => {
       const owner = places[placeKey(tab)];
-      if (owner === undefined || owner === FAKE_LABEL) {
-        places[placeKey(tab)] = FAKE_LABEL;
+      if (owner === undefined || owner === this.label) {
+        places[placeKey(tab)] = this.label;
         return true;
       }
-      if (reveal) (this.data.reveals ??= []).push({ label: owner, tab });
+      if (reveal) {
+        (this.data.reveals ??= []).push({ label: owner, tab });
+        this.hub?.reveal(this.data, owner, tab);
+      }
       return false;
     });
     this.commit();
@@ -504,9 +591,33 @@ export class FakeBackend implements Backend {
 
   async releaseTab(tab: TabRef) {
     const places = this.data.places ?? {};
-    if (places[placeKey(tab)] !== FAKE_LABEL) return;
+    if (places[placeKey(tab)] !== this.label) return;
     delete places[placeKey(tab)];
     this.commit();
+  }
+
+  async tearOffTab(tab: string, ref: TabRef) {
+    const entry: unknown = JSON.parse(tab);
+    if (typeof entry !== "object" || entry === null || Array.isArray(entry))
+      throw new BackendError("bad-request", "a tab is a JSON object");
+    const places = (this.data.places ??= {});
+    if (places[placeKey(ref)] !== this.label)
+      throw new BackendError("io", `${this.label} does not hold the tab`);
+    (this.data.tornOff ??= []).push({ tab: entry as SessionTab });
+    if (this.hub) {
+      const label = this.hub.adopt(this.data, entry, ref);
+      this.commit();
+      this.hub.open(label);
+      return;
+    }
+    places[placeKey(ref)] = `ws-${this.data.tornOff.length + 1}`;
+    this.commit();
+  }
+
+  async showTabMenu(items: { id: string; text: string }[]) {
+    (this.data.tabMenus ??= []).push(items);
+    this.commit();
+    return this.data.tabMenuPick ?? null;
   }
 
   async openExternal(path: string): Promise<ExternalInfo> {
@@ -655,6 +766,9 @@ export class FakeBackend implements Backend {
   async closeWindow() {
     this.data.windowClosed = true;
     this.commit();
+    if (!this.hub) return;
+    this.closed();
+    window.close();
   }
 
   async extensionRegistry(): Promise<ExtensionRegistry> {
@@ -960,6 +1074,7 @@ export class FakeBackend implements Backend {
     const id = crypto.randomUUID();
     this.data.memos[id] = { file, autoTitle, data: toBase64(bytes), modifiedMs: this.tick() };
     this.commit();
+    this.memosTouched();
     return this.info(id, this.data.memos[id]);
   }
 
@@ -991,6 +1106,7 @@ export class FakeBackend implements Backend {
   }
 
   private commit(): void {
-    this.storage.save(JSON.stringify(this.data));
+    this.stored = JSON.stringify(this.current);
+    this.storage.save(this.stored);
   }
 }

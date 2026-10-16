@@ -195,6 +195,10 @@ export abstract class Doc {
   abstract flush(): Promise<void>;
   /** The tab is closing; `false` keeps it open. */
   abstract close(ask: CloseAsk): Promise<boolean>;
+  /** The tab is moving to another window, which reads it afresh: everything is written now.
+   * `false` when something would stay behind — text not written, or a banner still asking about
+   * the file — and the tab must stay. */
+  abstract handOver(): Promise<boolean>;
   protected abstract read(): Promise<Uint8Array | Problem>;
   protected abstract edited(): void;
   protected loaded(): void {}
@@ -761,6 +765,11 @@ export class MemoDoc extends Doc {
     this.setBanner(null);
   }
 
+  async handOver(): Promise<boolean> {
+    await this.saveNow();
+    return !this.unsaved && !this.saveFailed && !asksAboutFile(this.banner);
+  }
+
   async close(): Promise<boolean> {
     await this.saveNow();
     // Still unsaved: keep the tab, and the text in it, rather than lose what the error was about.
@@ -1032,6 +1041,12 @@ export class ExternalDoc extends Doc {
     await this.refreshLanguage();
   }
 
+  /** The edits go as the draft the other window opens. */
+  async handOver(): Promise<boolean> {
+    await this.leave();
+    return !this.saveFailed && !asksAboutFile(this.banner);
+  }
+
   async close(ask: CloseAsk): Promise<boolean> {
     const closed = await this.mayClose(ask);
     if (closed) this.stopWatching();
@@ -1054,6 +1069,11 @@ export class ExternalDoc extends Doc {
     this.host.writes.cancel(this.draftKey);
     await this.host.writes.flush(this.draftKey);
   }
+}
+
+/** A banner whose answer would be lost on the way: another window would read the file afresh. */
+function asksAboutFile(banner: BannerState | null): boolean {
+  return banner?.kind === "conflict" || banner?.kind === "deleted";
 }
 
 function sameBytes(a: Uint8Array, b: Uint8Array): boolean {

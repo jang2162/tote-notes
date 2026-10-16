@@ -304,6 +304,13 @@ export interface Backend {
   claimTabs(tabs: TabRef[], reveal: boolean): Promise<boolean[]>;
   /** This window closed the tab: another window may open it. */
   releaseTab(tab: TabRef): Promise<void>;
+  /** Moves the tab `ref` into a new window of this workspace, which opens with it alone: `tab` is
+   * its session entry (`SessionTab`, as JSON). The tab's place and its line in the session are the
+   * new window's before the window is made; when it cannot be made the tab stays here. */
+  tearOffTab(tab: string, ref: TabRef): Promise<void>;
+  /** A tab's context menu at the pointer: the `id` of the item picked, `null` when it closed
+   * without a pick. */
+  showTabMenu(items: { id: string; text: string }[]): Promise<string | null>;
 
   openExternal(path: string): Promise<ExternalInfo>;
   readExternal(path: string): Promise<Uint8Array>;

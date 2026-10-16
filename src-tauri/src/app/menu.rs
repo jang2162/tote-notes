@@ -1,15 +1,23 @@
-//! The menu bar. Edit uses the system items — in a WKWebView copy and paste only work through
-//! them. Tab actions go to the frontend of the focused window as `tote://menu`.
+//! The menu bar, and a tab's context menu. Edit uses the system items — in a WKWebView copy and
+//! paste only work through them. Tab actions go to the frontend of the focused window as
+//! `tote://menu`.
 
 use std::io;
 use std::path::Path;
+use std::sync::{mpsc, Mutex};
 
+use serde::Deserialize;
 use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
 
 use super::flush::FlushGoal;
-use super::{lifecycle, windows, AppCore};
+use super::windows::{frame_of, near_frame, WindowPlan};
+use super::{lifecycle, lock, windows, AppCore};
+
+/// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
+/// and never act as the menu bar's items of the same name.
+const TAB_MENU: &str = "tab-menu:";
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
 
@@ -46,6 +54,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .build()?;
     let file = SubmenuBuilder::new(app, "파일")
         .item(&item(app, "new-memo", "새 메모", Some("CmdOrCtrl+N"))?)
+        .item(&item(app, "new-window", "새 창", Some("Alt+CmdOrCtrl+N"))?)
         .item(&item(app, "open-file", "파일 열기…", Some("CmdOrCtrl+O"))?)
         .separator()
         .item(&item(app, "save", "저장", Some("CmdOrCtrl+S"))?)
@@ -133,6 +142,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .minimize()
         .maximize()
         .separator()
+        .item(&item(
+            app,
+            "move-tab-to-new-window",
+            "탭을 새 창으로 옮기기",
+            None,
+        )?)
+        .separator()
         .bring_all_to_front()
         .build()?;
     MenuBuilder::new(app)
@@ -140,10 +156,31 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         .build()
 }
 
+/// Where a menu event goes.
+#[derive(Debug, PartialEq)]
+enum Route<'a> {
+    /// An item of a tab's context menu, by the id `show_tab_menu` was given.
+    TabMenu(&'a str),
+    /// An item of the menu bar.
+    App(&'a str),
+}
+
+fn route(id: &str) -> Route<'_> {
+    match id.strip_prefix(TAB_MENU) {
+        Some(item) => Route::TabMenu(item),
+        None => Route::App(id),
+    }
+}
+
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
-    match event.id().as_ref() {
+    let id = match route(event.id().as_ref()) {
+        Route::TabMenu(item) => return app.state::<TabMenu>().record(item),
+        Route::App(id) => id,
+    };
+    match id {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
+        "new-window" => new_window(app),
         "close-window" => {
             if let Some(window) = target_window(app) {
                 let _ = window.close();
@@ -161,6 +198,79 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
             None => windows::open_latest(app),
         },
     }
+}
+
+/// ⌥⌘N: another window on the workspace of the window it is pressed in, empty, a little off it.
+fn new_window(app: &AppHandle) {
+    let Some(window) = target_window(app) else {
+        return windows::open_latest(app);
+    };
+    let Some(path) = app.state::<AppCore>().path_of(window.label()) else {
+        return;
+    };
+    let near = frame_of(&window).map(near_frame);
+    if let Err(err) = windows::open_window(app, &path, WindowPlan::Fresh { near }) {
+        eprintln!("tote: {}: {}", path.display(), err.message);
+    }
+}
+
+/// An item of a tab's context menu (`show_tab_menu`).
+#[derive(Debug, Deserialize)]
+pub struct TabMenuItem {
+    pub id: String,
+    pub text: String,
+}
+
+/// The item picked in the tab menu on show. One at a time: macOS shows one context menu at once.
+#[derive(Default)]
+pub struct TabMenu {
+    pick: Mutex<Option<String>>,
+}
+
+impl TabMenu {
+    /// A menu is about to show: nothing is picked in it yet, whatever an earlier one left.
+    fn begin(&self) {
+        *lock(&self.pick) = None;
+    }
+
+    fn record(&self, item: &str) {
+        *lock(&self.pick) = Some(item.to_string());
+    }
+
+    fn take(&self) -> Option<String> {
+        lock(&self.pick).take()
+    }
+}
+
+/// Shows `items` as a context menu at the pointer in `window` and returns the id of the one
+/// picked, `None` when the menu closed without a pick. Blocks until the menu closes: call it off
+/// the main thread.
+pub fn show_tab_menu(
+    app: &AppHandle,
+    window: &WebviewWindow,
+    items: &[TabMenuItem],
+) -> tauri::Result<Option<String>> {
+    let picks = app.state::<TabMenu>();
+    picks.begin();
+    let mut menu = MenuBuilder::new(app);
+    for each in items {
+        menu = menu.item(&item(
+            app,
+            &format!("{TAB_MENU}{}", each.id),
+            &each.text,
+            None,
+        )?);
+    }
+    // Returns once the menu has closed.
+    window.popup_menu(&menu.build()?)?;
+    // The pick's event was queued on the event loop while the menu was open, ahead of this task:
+    // once the task has run, `on_event` has recorded it.
+    let (done, ran) = mpsc::channel();
+    app.run_on_main_thread(move || {
+        let _ = done.send(());
+    })?;
+    let _ = ran.recv();
+    Ok(picks.take())
 }
 
 /// The window a menu item acts in: the focused one, else the one focused last — with every
@@ -211,4 +321,41 @@ fn link_cli(app: &AppHandle) -> io::Result<Installed> {
         Path::new("/usr/local/bin"),
         &home.join(".local/bin"),
     )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_tab_menu_item_does_not_reach_the_menu_bar_actions() {
+        assert_eq!(
+            route("tab-menu:move-tab-to-new-window"),
+            Route::TabMenu("move-tab-to-new-window")
+        );
+        assert_eq!(
+            route("move-tab-to-new-window"),
+            Route::App("move-tab-to-new-window")
+        );
+    }
+
+    #[test]
+    fn a_tab_menu_closed_without_a_pick_answers_none() {
+        let menu = TabMenu::default();
+        menu.begin();
+        assert_eq!(menu.take(), None);
+        menu.begin();
+        menu.record("move-tab-to-new-window");
+        assert_eq!(menu.take(), Some("move-tab-to-new-window".to_string()));
+        assert_eq!(menu.take(), None);
+    }
+
+    #[test]
+    fn a_pick_left_over_does_not_answer_the_next_tab_menu() {
+        let menu = TabMenu::default();
+        // A pick that came after its menu's answer was taken.
+        menu.record("move-tab-to-new-window");
+        menu.begin();
+        assert_eq!(menu.take(), None);
+    }
 }

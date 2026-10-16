@@ -12,7 +12,7 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
-use super::{lifecycle, lock, windows, AppCore, PendingOpen};
+use super::{lifecycle, lock, menu, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
 use crate::backup::BackupDir;
@@ -389,6 +389,56 @@ pub fn claim_tabs(
 #[tauri::command]
 pub fn release_tab(core: State<'_, AppCore>, window: WebviewWindow, tab: TabRef) {
     core.release_tab(window.label(), &tab);
+}
+
+/// Moves this window's tab `tab_ref` into a new window of the workspace, a little off this one.
+/// `tab` is its session entry (`SessionTab`), what the new window opens; `bad-request` when it is
+/// not a JSON object. The tab is in the session and its place is the new window's before the
+/// window is made; when it cannot be made the tab stays here.
+#[tauri::command]
+pub async fn tear_off_tab(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    tab: String,
+    tab_ref: TabRef,
+) -> CmdResult<()> {
+    let tab = match serde_json::from_str(&tab) {
+        Ok(tab @ serde_json::Value::Object(_)) => tab,
+        _ => return Err(CommandError::new("bad-request", "a tab is a JSON object")),
+    };
+    let label = window.label();
+    let (Some(path), Some(key)) = (core.path_of(label), core.key_for(label, &tab_ref)) else {
+        return Err(CommandError::new(
+            "no-workspace",
+            format!("{label} shows no workspace"),
+        ));
+    };
+    let near = windows::frame_of(&window).map(windows::near_frame);
+    let plan = windows::WindowPlan::Tab {
+        tab,
+        near,
+        from: label.to_string(),
+        key,
+    };
+    windows::open_window(&app, &path, plan)?;
+    Ok(())
+}
+
+/// Shows a tab's context menu at the pointer: the id of the item picked, `None` when it closed
+/// without a pick.
+#[tauri::command]
+pub async fn show_tab_menu(
+    app: AppHandle,
+    window: WebviewWindow,
+    items: Vec<menu::TabMenuItem>,
+) -> CmdResult<Option<String>> {
+    // The menu blocks its thread while it is open; not one of the async runtime's.
+    let picked =
+        tauri::async_runtime::spawn_blocking(move || menu::show_tab_menu(&app, &window, &items))
+            .await
+            .map_err(|err| CommandError::new("app", err.to_string()))??;
+    Ok(picked)
 }
 
 #[tauri::command]

@@ -4,10 +4,14 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
+use serde_json::Value;
+use tauri::{
+    AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
+};
 
 use super::commands::CommandError;
 use super::flush::FlushGoal;
+use super::places::TabKey;
 use super::{lifecycle, requests, AppCore};
 use crate::cli::CliRequest;
 use crate::session::{layout_frame, WindowFrame};
@@ -15,6 +19,8 @@ use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
 
 const DEFAULT_WIDTH: f64 = 1100.0;
 const DEFAULT_HEIGHT: f64 = 760.0;
+/// How far right and down a new window sits from the window it came from.
+const NEAR_OFFSET: f64 = 24.0;
 
 /// Debug builds started with `TOTE_BACKGROUND=1` — smoke checks run by agents — open windows
 /// without taking focus, so a check never pulls the person's screen away.
@@ -28,6 +34,37 @@ pub enum WindowPlan {
     Restore(usize),
     /// A window of its own, at `near` when given, else at the default size in the middle.
     Fresh { near: Option<WindowFrame> },
+    /// A window of its own for the tab `key` of window `from`, which `tab` (its session entry)
+    /// describes: the window starts with that tab alone (`AppCore::adopt_tab`). Placed as `Fresh`.
+    Tab {
+        tab: Value,
+        near: Option<WindowFrame>,
+        from: String,
+        key: TabKey,
+    },
+}
+
+/// Where a window opened from the window at `source` goes: a little right and down of it, at its
+/// size. The caller still checks it is on a monitor (`frame_visible`).
+pub fn near_frame(source: WindowFrame) -> WindowFrame {
+    WindowFrame {
+        x: source.x + NEAR_OFFSET,
+        y: source.y + NEAR_OFFSET,
+        ..source
+    }
+}
+
+/// Where `window` is, as the session keeps it: logical outer position and inner size.
+pub fn frame_of(window: &WebviewWindow) -> Option<WindowFrame> {
+    let scale = window.scale_factor().ok()?;
+    let position = window.outer_position().ok()?.to_logical::<f64>(scale);
+    let size = window.inner_size().ok()?.to_logical::<f64>(scale);
+    Some(WindowFrame {
+        x: position.x,
+        y: position.y,
+        width: size.width,
+        height: size.height,
+    })
 }
 
 /// Shows the workspace at `path`: its window focused most recently comes to the front, or a
@@ -43,37 +80,51 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
     open_window(app, &path, WindowPlan::Restore(0))
 }
 
-/// Opens a new window on the workspace at `path`, opening the workspace too when no window shows
-/// it yet. Returns the window's label.
+/// Opens a new window on the workspace at `path`. Reopening a saved window opens the workspace too
+/// when no window shows it yet; a window of its own (`Fresh`, `Tab`) joins a workspace a window
+/// shows. Returns the window's label.
 pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<String, CommandError> {
     let core = app.state::<AppCore>();
     let path = std::fs::canonicalize(path)?;
-    // Another request is opening a window on this folder right now: that window is the answer.
-    // Opening one here as well could run `Workspace::open` twice for one folder.
-    let label = match core.reserve(&path) {
-        Ok(label) => label,
-        Err(opening) => return Ok(opening),
-    };
-    let opened = if core.is_open_path(&path) {
-        None
-    } else {
-        match Workspace::open(&path) {
-            Ok(workspace) => Some(workspace),
-            Err(err) => {
+    let (label, fresh, frame, undo) = match plan {
+        WindowPlan::Restore(k) => {
+            // Another request is opening a window on this folder right now: that window is the
+            // answer. Opening one here as well could run `Workspace::open` twice for one folder.
+            let label = match core.reserve(&path) {
+                Ok(label) => label,
+                Err(opening) => return Ok(opening),
+            };
+            let opened = if core.is_open_path(&path) {
+                None
+            } else {
+                match Workspace::open(&path) {
+                    Ok(workspace) => Some(workspace),
+                    Err(err) => {
+                        core.release(&label);
+                        return Err(err.into());
+                    }
+                }
+            };
+            let fresh = opened.is_some();
+            core.register_window(&label, &path, opened, Some(k));
+            let frame = core.saved_layout(&path, k).as_ref().and_then(layout_frame);
+            (label, fresh, frame, Undo::Release)
+        }
+        WindowPlan::Fresh { near } => (join(&core, &path)?, false, near, Undo::Release),
+        WindowPlan::Tab {
+            tab,
+            near,
+            from,
+            key,
+        } => {
+            let label = join(&core, &path)?;
+            // In the session before the window exists: a quit while it loads keeps the tab.
+            if let Err(err) = core.adopt_tab(&label, &from, tab, key.clone()) {
                 core.release(&label);
                 return Err(err.into());
             }
+            (label, false, near, Undo::GiveBack { from, key })
         }
-    };
-    let fresh = opened.is_some();
-    let restored = match plan {
-        WindowPlan::Restore(k) => Some(k),
-        WindowPlan::Fresh { .. } => None,
-    };
-    core.register_window(&label, &path, opened, restored);
-    let frame = match plan {
-        WindowPlan::Restore(k) => core.saved_layout(&path, k).as_ref().and_then(layout_frame),
-        WindowPlan::Fresh { near } => near,
     };
     let title = title_of(&core, &path, &label);
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
@@ -85,7 +136,10 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
     };
     if let Err(err) = builder.build() {
-        core.release(&label);
+        match undo {
+            Undo::Release => core.release(&label),
+            Undo::GiveBack { from, key } => core.give_back(&label, &from, &key),
+        }
         return Err(err.into());
     }
     crate::perf::mark("window-shown");
@@ -97,6 +151,25 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         core.request_backup(&label);
     }
     Ok(label)
+}
+
+/// How `open_window` takes back a window it could not make.
+enum Undo {
+    Release,
+    /// The torn-off tab goes back to the window it came from.
+    GiveBack {
+        from: String,
+        key: TabKey,
+    },
+}
+
+fn join(core: &AppCore, path: &Path) -> Result<String, CommandError> {
+    core.join(path).ok_or_else(|| {
+        CommandError::new(
+            "no-workspace",
+            format!("no window shows {}", path.display()),
+        )
+    })
 }
 
 fn title_of(core: &AppCore, path: &Path, label: &str) -> String {
@@ -247,5 +320,24 @@ mod tests {
         assert!(frame_visible(&frame(-1800.0, 100.0), &monitors));
         assert!(!frame_visible(&frame(4000.0, 100.0), &monitors));
         assert!(!frame_visible(&frame(100.0, 50.0), &[]));
+    }
+
+    #[test]
+    fn a_new_window_sits_near_its_source() {
+        let source = WindowFrame {
+            x: 100.0,
+            y: 50.0,
+            width: 900.0,
+            height: 700.0,
+        };
+        assert_eq!(
+            near_frame(source),
+            WindowFrame {
+                x: 124.0,
+                y: 74.0,
+                width: 900.0,
+                height: 700.0
+            }
+        );
     }
 }

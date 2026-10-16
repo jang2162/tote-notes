@@ -59,6 +59,8 @@ export interface PaneHost {
   closeTab(tabId: string): Promise<void>;
   /** Tab `tabId` of a pane has started to be dragged: the window says where it may go. */
   dragTab(tabId: string): TabDrag;
+  /** Tab `tabId` of a pane was right-clicked: its context menu. */
+  tabMenu(tabId: string): Promise<void>;
   saveSessionSoon(): void;
   report(error: unknown): void;
   mark(name: string): void;
@@ -75,6 +77,7 @@ export class Pane {
     select: (id) => void this.activateTab(id),
     close: (id) => void this.host.closeTab(id),
     drag: (id) => this.host.dragTab(id),
+    menu: (id) => void this.host.tabMenu(id),
   });
   /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
   readonly el: HTMLElement = h(

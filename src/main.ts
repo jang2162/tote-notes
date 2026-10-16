@@ -6,9 +6,14 @@ async function chooseBackend(): Promise<{ backend: Backend; fake: boolean }> {
     const { TauriBackend } = await import("./backend/tauri");
     return { backend: new TauriBackend(), fake: false };
   }
-  // Outside the app — a browser on the Vite dev server, the UI tests — an in-memory stand-in.
+  // Outside the app — a browser on the Vite dev server, the UI tests — an in-memory stand-in. A page
+  // opened as `?window=ws-<n>` is one of several windows sharing it (`FakeHub`).
   const { FakeBackend } = await import("./backend/fake");
-  return { backend: FakeBackend.fromSessionStorage(), fake: true };
+  const label = new URLSearchParams(location.search).get("window");
+  return {
+    backend: label ? FakeBackend.fromHub(label) : FakeBackend.fromSessionStorage(),
+    fake: true,
+  };
 }
 
 void (async () => {

@@ -61,6 +61,7 @@ pub fn run() {
             let registry = ctx.app_handle().state::<AppCore>().registry();
             extensions::serve::respond(&registry, request.uri().path())
         })
+        .manage(menu::TabMenu::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
         .on_window_event(windows::on_event)
@@ -92,6 +93,8 @@ pub fn run() {
             commands::write_window_layout,
             commands::claim_tabs,
             commands::release_tab,
+            commands::tear_off_tab,
+            commands::show_tab_menu,
             commands::take_pending_opens,
             commands::open_external,
             commands::read_external,

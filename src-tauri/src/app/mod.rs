@@ -175,6 +175,22 @@ impl Inner {
         })
     }
 
+    /// Adds the window `label` on the workspace open at `path`, the newest in opening order.
+    fn add_window(&mut self, label: &str, path: &Path, layout: Option<Value>) {
+        self.serials += 1;
+        let serial = self.serials;
+        self.windows.insert(
+            label.to_string(),
+            OpenWindow {
+                path: path.to_path_buf(),
+                pending: Vec::new(),
+                serial,
+                closing: false,
+                layout,
+            },
+        );
+    }
+
     /// Closes the workspace at `path` once no window shows it and none is being opened for it.
     /// Returns its watch key when it closed.
     fn close_if_unused(&mut self, path: &Path) -> Option<String> {
@@ -409,19 +425,8 @@ impl AppCore {
                 eprintln!("tote: {label}: no workspace open at {}", path.display());
                 return;
             }
-            inner.serials += 1;
-            let serial = inner.serials;
             let layout = restored.and_then(|k| inner.workspaces[path].saved.get(k).cloned());
-            inner.windows.insert(
-                label.to_string(),
-                OpenWindow {
-                    path: path.to_path_buf(),
-                    pending: Vec::new(),
-                    serial,
-                    closing: false,
-                    layout,
-                },
-            );
+            inner.add_window(label, path, layout);
             watch
         };
         // An unwatched workspace still works; it only misses outside changes until reopened.
@@ -430,6 +435,91 @@ impl AppCore {
                 eprintln!("tote: cannot watch {} for changes: {err}", path.display());
             }
         }
+    }
+
+    /// Registers a new window of its own on the workspace open at `path` — ⌥⌘N, a torn-off tab —
+    /// and returns its label; `None` when no window shows the workspace. Always a new window, even
+    /// while a request is opening another on the folder (`reserve`), whose label would be the
+    /// answer there.
+    pub fn join(&self, path: &Path) -> Option<String> {
+        let mut inner = lock(&self.inner);
+        if !inner.workspaces.contains_key(path) {
+            return None;
+        }
+        let label = self.next_label();
+        inner.add_window(&label, path, None);
+        Some(label)
+    }
+
+    /// Window `from` hands the tab `key` (`tab`, its session entry) to the window `new_label`,
+    /// registered and not made yet: that window's layout becomes the one tab, the session file is
+    /// written with it, and the place is that window's. Called before the window is made, so a
+    /// quit or a crash while it loads keeps the tab. `Err`, changing nothing, when `from` does not
+    /// hold the tab, `new_label` is not registered, the app is quitting or the file cannot be
+    /// written.
+    pub fn adopt_tab(
+        &self,
+        new_label: &str,
+        from: &str,
+        tab: Value,
+        key: TabKey,
+    ) -> io::Result<()> {
+        let mut inner = lock(&self.inner);
+        if inner.quitting {
+            return Err(io::Error::other("the app is quitting"));
+        }
+        let Some(path) = inner.windows.get(new_label).map(|w| w.path.clone()) else {
+            return Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{new_label} is not open"),
+            ));
+        };
+        if !inner.places.transfer(&key, from, new_label) {
+            return Err(io::Error::other(format!("{from} does not hold the tab")));
+        }
+        let layout = serde_json::json!({
+            "panes": [{ "tabs": [tab], "activeTab": 0, "width": 1 }],
+            "focusedPane": 0,
+        });
+        set_window_layout(&mut inner, new_label, Some(layout));
+        if let Err(err) = self.write_session(&inner, &path) {
+            inner.places.transfer(&key, new_label, from);
+            set_window_layout(&mut inner, new_label, None);
+            return Err(err);
+        }
+        Ok(())
+    }
+
+    /// Undoes `adopt_tab` when the window `new_label` could not be made: the place goes back to
+    /// `from`, the window is forgotten, and the session file is written without it.
+    pub fn give_back(&self, new_label: &str, from: &str, key: &TabKey) {
+        let closed = {
+            let mut inner = lock(&self.inner);
+            inner.places.transfer(key, new_label, from);
+            let Some(window) = inner.windows.remove(new_label) else {
+                return;
+            };
+            inner.focus.retain(|l| l != new_label);
+            if !inner.quitting {
+                if let Err(err) = self.write_session(&inner, &window.path) {
+                    eprintln!(
+                        "tote: could not save the session of {}: {err}",
+                        window.path.display()
+                    );
+                }
+            }
+            inner.close_if_unused(&window.path)
+        };
+        if let (Some(key), Some(watcher)) = (closed, self.watcher.get()) {
+            watcher.unwatch_workspace(&key);
+        }
+    }
+
+    /// Writes the session file of the workspace at `path`: its open windows' layouts, in opening
+    /// order.
+    fn write_session(&self, inner: &Inner, path: &Path) -> io::Result<()> {
+        let labels = inner.windows_of(path);
+        write_layouts(path, &self.machine.device_id, &inner.layouts_of(&labels))
     }
 
     /// The windows showing the workspace at `path`, in the order they were opened.
@@ -466,8 +556,7 @@ impl AppCore {
             return Ok(());
         }
         // Written under the lock, so two windows' writes reach the file in the order they came.
-        let labels = inner.windows_of(&path);
-        write_layouts(&path, &self.machine.device_id, &inner.layouts_of(&labels))
+        self.write_session(&inner, &path)
     }
 
     /// The window on `path` focused most recently; one not focused yet counts as newest.
@@ -803,16 +892,23 @@ impl AppCore {
     }
 
     /// Fixes what reopens at the next launch: every open window but those being closed, the most
-    /// recently focused last so it ends up in front. Each workspace's session file is written in
-    /// the same order, so the `k`th window reopened on a folder gets the `k`th layout. A workspace
-    /// whose every window is being closed keeps its file: the last layout written stays.
+    /// recently focused last so it ends up in front, and a window still being made (never focused:
+    /// a torn-off tab's) first. Each workspace's session file is written in the same order, so the
+    /// `k`th window reopened on a folder gets the `k`th layout. A workspace whose every window is
+    /// being closed keeps its file: the last layout written stays.
     pub fn start_quit(&self) {
         let mut inner = lock(&self.inner);
         inner.quitting = true;
-        let order: Vec<(String, PathBuf)> = inner
-            .focus
+        let mut loading: Vec<(&String, &OpenWindow)> = inner
+            .windows
             .iter()
-            .rev()
+            .filter(|(label, _)| !inner.focus.contains(label))
+            .collect();
+        loading.sort_by_key(|(_, window)| window.serial);
+        let order: Vec<(String, PathBuf)> = loading
+            .into_iter()
+            .map(|(label, _)| label)
+            .chain(inner.focus.iter().rev())
             .filter_map(|label| Some((label, inner.windows.get(label)?)))
             .filter(|(_, window)| !window.closing)
             .map(|(label, window)| (label.clone(), window.path.clone()))
@@ -932,6 +1028,12 @@ pub fn window_title(name: &str, nth: usize) -> String {
     match nth {
         0 => name.to_string(),
         _ => format!("{name} — {}", nth + 1),
+    }
+}
+
+fn set_window_layout(inner: &mut Inner, label: &str, layout: Option<Value>) {
+    if let Some(window) = inner.windows.get_mut(label) {
+        window.layout = layout;
     }
 }
 
@@ -1889,5 +1991,96 @@ mod tests {
         );
         core.closed(&w1);
         assert_eq!(core.claim_tabs(&w2, &tabs), vec![Ok(()), Ok(())]);
+    }
+
+    /// A window `w1` on 「가」 whose layout holds the memo tabs `a` and `b`, both claimed by it.
+    fn two_tabs(core: &AppCore) -> (String, PathBuf, serde_json::Value) {
+        let w1 = open(core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let layout = json!({
+            "panes": [{ "tabs": [{ "kind": "memo", "memoId": "a" }, { "kind": "memo", "memoId": "b" }],
+                        "activeTab": 1, "width": 1 }],
+            "focusedPane": 0,
+        });
+        core.set_layout(&w1, layout.clone()).unwrap();
+        let tabs = [
+            TabRef::Memo { id: "a".into() },
+            TabRef::Memo { id: "b".into() },
+        ];
+        assert_eq!(core.claim_tabs(&w1, &tabs), vec![Ok(()), Ok(())]);
+        (w1, path, layout)
+    }
+
+    fn memo_b() -> TabRef {
+        TabRef::Memo { id: "b".into() }
+    }
+
+    #[test]
+    fn a_new_window_joins_its_workspace_even_while_another_is_being_opened() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        // A `tote` request is opening a window on the folder right now: ⌥⌘N still gets its own.
+        let opening = core.reserve(&path).unwrap();
+        let w2 = core.join(&path).unwrap();
+        assert_ne!(w2, opening);
+        assert_eq!(core.windows_of(&path), vec![w1, w2.clone()]);
+        assert_eq!(core.layout_of(&w2), None);
+        assert_eq!(core.join(&dir.path().join("없음")), None);
+    }
+
+    #[test]
+    fn a_torn_off_tab_is_in_the_session_before_its_window_loads() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, layout) = two_tabs(&core);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        let w2 = core.join(&path).unwrap();
+        let tab = json!({ "kind": "memo", "memoId": "b" });
+        core.adopt_tab(&w2, &w1, tab.clone(), key).unwrap();
+        // The new window has written nothing yet.
+        let alone = json!({
+            "panes": [{ "tabs": [tab], "activeTab": 0, "width": 1 }],
+            "focusedPane": 0,
+        });
+        assert_eq!(layouts(&core, &path), vec![layout.clone(), alone.clone()]);
+        assert_eq!(core.claim_tabs(&w1, &[memo_b()]), vec![Err(w2.clone())]);
+        // The app quits before the window is up: it reopens all the same.
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![path.clone(), path.clone()]);
+        assert_eq!(layouts(&core, &path), vec![alone, layout]);
+    }
+
+    #[test]
+    fn a_tear_off_of_a_tab_the_window_does_not_own_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, layout) = two_tabs(&core);
+        let other = attach(&core, &path);
+        let key = core.key_for(&other, &memo_b()).unwrap();
+        let w3 = core.join(&path).unwrap();
+        let tab = json!({ "kind": "memo", "memoId": "b" });
+        assert!(core.adopt_tab(&w3, &other, tab, key).is_err());
+        assert_eq!(layouts(&core, &path), vec![layout]);
+        assert_eq!(core.layout_of(&w3), None);
+        assert_eq!(core.claim_tabs(&other, &[memo_b()]), vec![Err(w1)]);
+    }
+
+    #[test]
+    fn a_tear_off_whose_window_fails_gives_the_tab_back() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, layout) = two_tabs(&core);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        let w2 = core.join(&path).unwrap();
+        let tab = json!({ "kind": "memo", "memoId": "b" });
+        core.adopt_tab(&w2, &w1, tab, key.clone()).unwrap();
+        core.give_back(&w2, &w1, &key);
+        assert_eq!(layouts(&core, &path), vec![layout]);
+        assert_eq!(core.windows_of(&path), vec![w1.clone()]);
+        assert_eq!(core.claim_tabs(&w1, &[memo_b()]), vec![Ok(())]);
+        let other = attach(&core, &path);
+        assert_eq!(core.claim_tabs(&other, &[memo_b()]), vec![Err(w1)]);
     }
 }

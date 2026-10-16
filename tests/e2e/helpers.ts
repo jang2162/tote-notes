@@ -1,4 +1,4 @@
-import type { Page } from "@playwright/test";
+import type { BrowserContext, Page } from "@playwright/test";
 
 import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
 import { parseSessionFile, type PaneSession } from "../../src/core/session";
@@ -15,6 +15,38 @@ export async function start(page: Page, patch: Partial<FakeData> = {}): Promise<
   );
   await page.goto("/");
   await ready(page);
+}
+
+/** Opens the app as windows of one workspace on the fake backend seeded with `patch` (`FakeHub`),
+ * and returns the first window. The seed is written once per context, so a window opened later
+ * — or after the others closed, as at a restart — shares the data. */
+export async function startWindows(
+  context: BrowserContext,
+  patch: Partial<FakeData> = {},
+): Promise<Page> {
+  const seed = JSON.stringify({ ...defaultFakeData(), ...patch });
+  await context.addInitScript(
+    ([key, json]) => {
+      if (!localStorage.getItem(key)) localStorage.setItem(key, json);
+    },
+    [FAKE_STORAGE_KEY, seed] as const,
+  );
+  return openWindow(context, "ws-1");
+}
+
+/** Opens window `label` as the app reopens one at launch. */
+export async function openWindow(context: BrowserContext, label: string): Promise<Page> {
+  const page = await context.newPage();
+  await page.goto(`/?window=${label}`);
+  await ready(page);
+  return page;
+}
+
+/** The window `page` opens next — a torn-off tab's, ⌥⌘N's — once it is ready. */
+export async function nextWindow(page: Page): Promise<Page> {
+  const popup = await page.waitForEvent("popup");
+  await ready(popup);
+  return popup;
 }
 
 export async function ready(page: Page): Promise<void> {

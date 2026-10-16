@@ -54,6 +54,16 @@ describe("TauriBackend", () => {
         "release_tab",
         { tab: { kind: "external", path: "/a.sh" } },
       ],
+      [
+        () => backend.tearOffTab("{}", { kind: "memo", id: "m" }),
+        "tear_off_tab",
+        { tab: "{}", tabRef: { kind: "memo", id: "m" } },
+      ],
+      [
+        () => backend.showTabMenu([{ id: "x", text: "엑스" }]),
+        "show_tab_menu",
+        { items: [{ id: "x", text: "엑스" }] },
+      ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
       [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],

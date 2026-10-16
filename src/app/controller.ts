@@ -54,7 +54,7 @@ import {
 import { describeError } from "./errors";
 import { canSplit, remove, resize, split } from "./layout";
 import { Pane, type PaneHost } from "./pane";
-import { SessionSync } from "./session-sync";
+import { sessionTab, SessionSync } from "./session-sync";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
@@ -74,6 +74,9 @@ const MEMOS_GATHER_MS = 300;
 export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
 export const NO_VERSIONS = "이전 버전이 없습니다";
 export const TOO_NARROW_TO_SPLIT = "창이 좁아 나눌 수 없습니다";
+export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기지 않았습니다";
+/** 「탭을 새 창으로 옮기기」: an item of the window menu and of a tab's context menu. */
+export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
 /** The strip along the editing area's right edge where a dragged tab opens a new pane. */
 export const DROP_EDGE_PX = 48;
 
@@ -547,6 +550,49 @@ export class AppController implements DocHost, PaneHost {
     await this.relocate(doc, this.openPaneAfter(at), 0);
   }
 
+  /** Moves `doc` into a new window of this workspace (「탭을 새 창으로 옮기기」), which opens with
+   * it alone and reads it afresh: a memo is saved first, an external file's edits kept as its
+   * draft. When that fails, or a banner still asks about the file, the tab stays and the status
+   * bar says so. Leaving, the tab is not closed — a blank new memo is not deleted: it is the other
+   * window's now. Returns whether it moved. */
+  async tearOff(doc: Doc): Promise<boolean> {
+    await settleComposition(this.focused.view);
+    if (!this.docs.includes(doc)) return false;
+    if (!(await doc.handOver())) {
+      this.statusBar.setMessage(NOT_MOVED_TO_NEW_WINDOW, "error");
+      return false;
+    }
+    // Closed while it was written.
+    if (!this.docs.includes(doc)) return false;
+    const pane = this.paneOf(doc);
+    pane.capture(doc);
+    try {
+      await this.backend.tearOffTab(JSON.stringify(sessionTab(doc, this.deviceId)), doc.tabRef);
+    } catch (error) {
+      this.report(error);
+      return false;
+    }
+    // The backend gave its place to the new window: there is nothing to release.
+    this.held.delete(doc);
+    const shown = pane.detach(doc);
+    if (doc instanceof ExternalDoc) doc.stopWatching();
+    this.dropHighlight(doc);
+    this.coloured.delete(doc.tabId);
+    await shown;
+    if (pane.tabs.list.length === 0) this.closePane(pane);
+    this.saveSessionSoon();
+    return true;
+  }
+
+  async tabMenu(tabId: string): Promise<void> {
+    const doc = this.docs.find((each) => each.tabId === tabId);
+    if (!doc) return;
+    const picked = await this.backend.showTabMenu([
+      { id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" },
+    ]);
+    if (picked === MOVE_TAB_TO_NEW_WINDOW) await this.tearOff(doc);
+  }
+
   /** `moveTab` once any composition has ended. */
   private async relocate(doc: Doc, to: Pane, index: number): Promise<void> {
     const from = this.paneOf(doc);
@@ -917,6 +963,9 @@ export class AppController implements DocHost, PaneHost {
           return await this.focusPane(-1);
         case "focus-pane-right":
           return await this.focusPane(1);
+        case MOVE_TAB_TO_NEW_WINDOW:
+          if (this.focused.tabs.active) await this.tearOff(this.focused.tabs.active);
+          return;
         case "next-tab":
           return await this.cycleTab(1);
         case "prev-tab":

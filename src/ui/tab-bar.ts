@@ -38,6 +38,8 @@ export class TabBar {
       close(id: string): void;
       /** Tab `id` has started to be dragged. */
       drag(id: string): TabDrag;
+      /** Tab `id` was right-clicked: its context menu. */
+      menu(id: string): void;
     },
   ) {}
 
@@ -102,6 +104,11 @@ export class TabBar {
     });
     el.addEventListener("auxclick", (event) => {
       if (event.button === 1) this.actions.close(tab.id);
+    });
+    el.addEventListener("contextmenu", (event) => {
+      // The webview's own menu (Reload, Inspect Element) is no use on a tab.
+      event.preventDefault();
+      this.actions.menu(tab.id);
     });
     return el;
   }
