@@ -132,6 +132,9 @@ export interface FakeData {
   tornOff?: { tab: SessionTab }[];
   /** What a tab's context menu returns: the id of the item to pick, or null for none. */
   tabMenuPick?: string | null;
+  /** How long `tearOffTab` takes, so a test can act while a tab is being torn off; without it a
+   * microtask. Absent in old seeds. */
+  tearOffDelayMs?: number;
   /** The items of every tab context menu shown, in order. Absent in old seeds. */
   tabMenus?: { id: string; text: string }[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
@@ -597,6 +600,8 @@ export class FakeBackend implements Backend {
   }
 
   async tearOffTab(tab: string, ref: TabRef) {
+    const delay = this.data.tearOffDelayMs;
+    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     const entry: unknown = JSON.parse(tab);
     if (typeof entry !== "object" || entry === null || Array.isArray(entry))
       throw new BackendError("bad-request", "a tab is a JSON object");

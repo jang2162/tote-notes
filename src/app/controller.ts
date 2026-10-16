@@ -558,17 +558,34 @@ export class AppController implements DocHost, PaneHost {
   async tearOff(doc: Doc): Promise<boolean> {
     await settleComposition(this.focused.view);
     if (!this.docs.includes(doc)) return false;
+    // The editor lets go of the tab first: a key typed while it is written and handed over would
+    // reach a tab that is leaving, and its late save would land after the new window has read it.
+    const from = this.paneOf(doc);
+    const onShow = doc === from.tabs.active;
+    if (onShow) {
+      from.capture(doc);
+      from.surface.showNothing();
+    }
+    // The tab stays: it is shown again, as before, where it is now.
+    const stay = () => {
+      const pane = this.paneOf(doc);
+      if (!onShow || !this.docs.includes(doc) || doc !== pane.tabs.active) return;
+      pane.show(doc);
+      if (pane === this.focused) pane.takeKeys();
+    };
     if (!(await doc.handOver())) {
+      stay();
+      // After `show`, which puts the tab's own notice in the status bar.
       this.statusBar.setMessage(NOT_MOVED_TO_NEW_WINDOW, "error");
       return false;
     }
     // Closed while it was written.
     if (!this.docs.includes(doc)) return false;
     const pane = this.paneOf(doc);
-    pane.capture(doc);
     try {
       await this.backend.tearOffTab(JSON.stringify(sessionTab(doc, this.deviceId)), doc.tabRef);
     } catch (error) {
+      stay();
       this.report(error);
       return false;
     }

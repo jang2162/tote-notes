@@ -71,6 +71,33 @@ test("a tab whose save fails stays with 저장 실패", async ({ page }) => {
   expect(places).toEqual({ "memo:a": "ws-1" });
 });
 
+test("keys typed while the tab is being torn off do not reach it", async ({ page }) => {
+  await typeInto(page, { tearOffDelayMs: 300 });
+  await menu(page, MOVE);
+  await page.keyboard.insertText("x");
+  // Past the memo save delay: a save the leaving tab scheduled would have run.
+  await page.waitForTimeout(600);
+  expect(await memoText(page, "a")).toBe("우유 계란");
+  expect((await data(page)).tornOff).toHaveLength(1);
+  await expect(page.locator(".tab")).toHaveCount(0);
+});
+
+test("a tab the backend does not take stays editable and says why", async ({ page }) => {
+  const refused = "ws-1 does not hold the tab";
+  await quietErrors(page, refused);
+  await typeInto(page);
+  // Another window holds it now, as far as the backend knows: it refuses the move.
+  await page.evaluate(() => {
+    window.__tote.backend.data.places!["memo:a"] = "ws-9";
+  });
+  await menu(page, MOVE);
+  await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await page.keyboard.insertText("!");
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란!");
+  await expect.poll(() => memoText(page, "a")).toBe("우유 계란!");
+});
+
 test("a memo with an open conflict stays", async ({ page }) => {
   await typeInto(page);
   await page.evaluate(
