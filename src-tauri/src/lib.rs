@@ -143,8 +143,9 @@ pub fn run() {
     });
 }
 
-/// Outside changes go to the window they concern as `tote://outside`. Before any window opens, so
-/// every one is watched; without a watcher tote still works, it only misses those changes.
+/// Outside changes go to the windows they concern as `tote://outside`: a workspace's to every
+/// window showing it. Before any window opens, so every workspace is watched; without a watcher
+/// tote still works, it only misses those changes.
 fn start_watching(app: AppHandle) {
     let handle = app.clone();
     let watching = app.state::<AppCore>().start_watching(move |target, batch| {
@@ -153,7 +154,7 @@ fn start_watching(app: AppHandle) {
         perf::mark("watch-batch-start");
         let outside = core.on_batch(target, batch);
         perf::mark("watch-batch-done");
-        if let Some((label, change)) = outside {
+        for (label, change) in outside {
             let _ = handle.emit_to(
                 EventTarget::webview_window(&label),
                 "tote://outside",
@@ -166,9 +167,10 @@ fn start_watching(app: AppHandle) {
     }
 }
 
-/// Backup rounds on a thread of their own (spec 「백업」): one right away, for the windows the
-/// start-up restore has already opened, then one every interval, and one for a window as it
-/// opens (`AppCore::request_backup`). None at quit, which must stay quick.
+/// Backup rounds on a thread of their own (spec 「백업」): one right away, for the workspaces the
+/// start-up restore has already opened, then one every interval, and one for a workspace as its
+/// first window opens (`AppCore::request_backup`). None at quit, which must stay quick. A
+/// workspace is snapshotted once however many windows show it; a failure is told to each of them.
 ///
 /// One thread takes every snapshot, in turn: `remove_leftovers` would delete the `.tmp-*` of a
 /// snapshot another thread is still building.
@@ -202,23 +204,24 @@ fn start_backups(app: AppHandle) {
             for label in only.iter().flatten() {
                 notices.opened(label);
             }
-            for (label, result) in core.backup_tick(SnapshotName::now(), only.as_ref()) {
+            for (labels, result) in core.backup_tick(SnapshotName::now(), only.as_ref()) {
                 match result {
-                    Ok(_) => notices.succeeded(&label),
+                    Ok(_) => labels.iter().for_each(|label| notices.succeeded(label)),
                     // The same name again (the same second, or a repeated daylight-saving hour):
                     // the next round takes it under a new one.
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(err) => {
-                        eprintln!("tote: backup of {label} failed: {err}");
-                        if notices.failed(&label, SystemTime::now()) {
+                        eprintln!("tote: backup of {} failed: {err}", labels.join(", "));
+                        let now = SystemTime::now();
+                        for label in labels.iter().filter(|label| notices.failed(label, now)) {
                             core.push_pending(
-                                &label,
+                                label,
                                 PendingOpen::Notice {
                                     message: format!("백업하지 못했습니다: {err}"),
                                 },
                             );
                             let _ = app.emit_to(
-                                EventTarget::webview_window(&label),
+                                EventTarget::webview_window(label),
                                 "tote://pending",
                                 (),
                             );

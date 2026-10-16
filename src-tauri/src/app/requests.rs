@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 
-use super::{lock, windows, AppCore, PendingOpen};
+use super::{commands, lock, windows, AppCore, PendingOpen};
 use crate::cli::CliRequest;
 use crate::workspace::names::is_valid_file_name;
 use crate::workspace::WorkspaceError;
@@ -49,13 +49,18 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
     let Some(workspace) = core.workspace(&label) else {
         return;
     };
+    // A memo made here is new to the workspace's other windows too.
+    let mut made = false;
     for path in &request.files {
         if !request.import {
             core.push_pending(&label, PendingOpen::External { path: path.clone() });
             continue;
         }
         match lock(&workspace).import_file(path) {
-            Ok(info) => core.push_pending(&label, PendingOpen::Memo { id: info.id }),
+            Ok(info) => {
+                made = true;
+                core.push_pending(&label, PendingOpen::Memo { id: info.id });
+            }
             Err(err) => {
                 eprintln!("tote: {}: {err}", path.display());
                 notify(
@@ -79,6 +84,7 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
             // The parked file is the only copy of the piped text until it is a memo.
             match created {
                 Ok(info) => {
+                    made = true;
                     core.push_pending(&label, PendingOpen::Memo { id: info.id });
                     let _ = fs::remove_file(file);
                 }
@@ -88,6 +94,9 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
                 }
             }
         }
+    }
+    if made {
+        commands::memos_changed(app, &label);
     }
     poke(app, &label);
 }

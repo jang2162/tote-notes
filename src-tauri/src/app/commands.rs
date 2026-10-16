@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
 use tauri::ipc::{Channel, InvokeBody, Request, Response};
-use tauri::{AppHandle, Emitter, Manager, State, WebviewWindow};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::{lifecycle, lock, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
@@ -97,6 +97,14 @@ fn workspace_of(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<W
     })
 }
 
+/// The memo list of window `label`'s workspace changed: its other windows read it again
+/// (`tote://memos`, gathered for 300ms on their side).
+pub fn memos_changed(app: &AppHandle, label: &str) {
+    for sibling in app.state::<AppCore>().siblings(label) {
+        let _ = app.emit_to(EventTarget::webview_window(&sibling), "tote://memos", ());
+    }
+}
+
 fn header(request: &Request<'_>, name: &str) -> CmdResult<String> {
     let raw = request
         .headers()
@@ -140,6 +148,8 @@ fn absolute_path(path: &str) -> CmdResult<PathBuf> {
 pub struct WorkspaceInfo {
     id: String,
     name: String,
+    /// The window's title: the name, numbered from the workspace's second window on.
+    title: String,
     path: PathBuf,
     device_id: String,
 }
@@ -147,9 +157,19 @@ pub struct WorkspaceInfo {
 #[tauri::command]
 pub fn workspace_info(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<WorkspaceInfo> {
     let workspace = workspace_of(&core, &window)?;
+    // Before the workspace lock: `titles_of` takes it too.
+    let title = core
+        .path_of(window.label())
+        .and_then(|path| {
+            core.titles_of(&path)
+                .into_iter()
+                .find(|(label, _)| label == window.label())
+        })
+        .map(|(_, title)| title);
     let workspace = lock(&workspace);
     Ok(WorkspaceInfo {
         id: workspace.id().to_string(),
+        title: title.unwrap_or_else(|| workspace.name()),
         name: workspace.name(),
         path: workspace.root().to_path_buf(),
         device_id: core.machine.device_id.clone(),
@@ -173,6 +193,7 @@ pub async fn list_memos(
 pub async fn create_memo(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<MemoInfo> {
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).create_memo("md", &[])?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -196,6 +217,7 @@ pub async fn write_memo(
     let id = header(&request, "x-memo-id")?;
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).write_memo(&id, body(&request)?)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -208,6 +230,7 @@ pub async fn retitle_memo(
 ) -> CmdResult<MemoInfo> {
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).retitle_memo(&id, &stem)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -220,6 +243,7 @@ pub async fn rename_memo(
 ) -> CmdResult<MemoInfo> {
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).rename_memo(&id, &file)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -233,6 +257,7 @@ pub async fn set_memo_language(
 ) -> CmdResult<MemoInfo> {
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).set_language(&id, &language, &ext)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -244,6 +269,7 @@ pub async fn delete_memo(
 ) -> CmdResult<()> {
     let workspace = workspace_of(&core, &window)?;
     lock(&workspace).delete_memo(&id)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(())
 }
 
@@ -256,6 +282,7 @@ pub async fn import_memo(
     let name = header(&request, "x-file-name")?;
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).import_memo(&name, body(&request)?)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -268,6 +295,7 @@ pub async fn import_file(
     let path = absolute_path(&path)?;
     let workspace = workspace_of(&core, &window)?;
     let info = lock(&workspace).import_file(&path)?;
+    memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
 
@@ -396,22 +424,27 @@ pub struct WorkspaceListItem {
     name: String,
     path: PathBuf,
     open: bool,
+    /// How many windows show it.
+    windows: usize,
     /// In the recent list, but its folder or `.tote/workspace.json` is gone.
     missing: bool,
 }
 
 /// The workspaces under `root`, most recently used first, then the recent ones that vanished.
+/// `windows` counts the windows showing a workspace.
 fn workspace_items(
     root: &Path,
     recent: &[PathBuf],
-    is_open: impl Fn(&Path) -> bool,
+    windows: impl Fn(&Path) -> usize,
 ) -> Vec<WorkspaceListItem> {
     let mut list: Vec<WorkspaceListItem> = Workspace::list(root)
         .into_iter()
         .map(|summary| {
             let path = std::fs::canonicalize(&summary.path).unwrap_or(summary.path);
+            let windows = windows(&path);
             WorkspaceListItem {
-                open: is_open(&path),
+                open: windows > 0,
+                windows,
                 name: summary.name,
                 path,
                 missing: false,
@@ -435,6 +468,7 @@ fn workspace_items(
                 .into_owned(),
             path: path.clone(),
             open: false,
+            windows: 0,
             missing: true,
         })
         .collect::<Vec<_>>();
@@ -447,7 +481,7 @@ pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<Workspac
     Ok(workspace_items(
         &core.workspace_root(),
         &core.recent(),
-        |path| core.is_open_path(path),
+        |path| core.windows_of(path).len(),
     ))
 }
 
@@ -793,7 +827,7 @@ mod tests {
             kept_path.clone(),
             hollow.clone(),
         ];
-        let items = workspace_items(root.path(), &recent, |p| p == kept_path);
+        let items = workspace_items(root.path(), &recent, |p| usize::from(p == kept_path));
         let view: Vec<_> = items
             .iter()
             .map(|i| (i.name.as_str(), i.open, i.missing))
@@ -807,5 +841,23 @@ mod tests {
             ]
         );
         assert_eq!(items[1].path, PathBuf::from("/gone/옛"));
+    }
+
+    #[test]
+    fn the_list_counts_each_workspaces_windows() {
+        let root = tempfile::tempdir().unwrap();
+        let a = Workspace::create(root.path(), "가").unwrap();
+        let a_path = std::fs::canonicalize(a.root()).unwrap();
+        Workspace::create(root.path(), "나").unwrap();
+        let recent = vec![PathBuf::from("/gone/옛")];
+        let items = workspace_items(root.path(), &recent, |p| if p == a_path { 2 } else { 0 });
+        let view: Vec<_> = items
+            .iter()
+            .map(|i| (i.name.as_str(), i.windows, i.open))
+            .collect();
+        assert_eq!(
+            view,
+            vec![("가", 2, true), ("나", 0, false), ("옛", 0, false)]
+        );
     }
 }

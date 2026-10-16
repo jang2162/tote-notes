@@ -274,7 +274,8 @@ const RECENT_LIMIT: usize = 20;
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct LaunchState {
-    /// Workspace windows open when tote last quit, in the order they were opened.
+    /// Workspace windows open when tote last quit, in the order they were opened: one entry per
+    /// window, so a workspace shown in two windows is listed twice.
     #[serde(default)]
     pub open_windows: Vec<PathBuf>,
     /// Workspaces by last use, most recent first.
@@ -297,34 +298,48 @@ impl LaunchState {
         self.recent.truncate(RECENT_LIMIT);
     }
 
+    /// A window on `workspace` opened.
     pub fn add_open(&mut self, workspace: &Path) {
-        if !self.open_windows.iter().any(|p| p == workspace) {
-            self.open_windows.push(workspace.to_path_buf());
-        }
+        self.open_windows.push(workspace.to_path_buf());
     }
 
+    /// A window on `workspace` closed: one entry goes, the workspace's other windows stay.
     pub fn remove_open(&mut self, workspace: &Path) {
-        self.open_windows.retain(|p| p != workspace);
+        if let Some(at) = self.open_windows.iter().position(|p| p == workspace) {
+            self.open_windows.remove(at);
+        }
     }
 
-    /// The workspace at `from` now lives at `to`: every mention follows it. A `to` that is already
-    /// listed keeps one entry, the earlier of the two places.
-    pub fn relocate(&mut self, from: &Path, to: &Path) {
-        for list in [&mut self.recent, &mut self.open_windows] {
-            let mut seen_to = false;
-            let mut moved = Vec::with_capacity(list.len());
-            for path in list.drain(..) {
-                let path = if path == from { to.to_path_buf() } else { path };
-                if path == to {
-                    if seen_to {
-                        continue;
-                    }
-                    seen_to = true;
-                }
-                moved.push(path);
-            }
-            *list = moved;
+    /// A window switched from the workspace `from` to `to`: the first entry of `from` becomes `to`
+    /// where it stands, so the windows keep their order.
+    pub fn switch_open(&mut self, from: &Path, to: &Path) {
+        if let Some(entry) = self.open_windows.iter_mut().find(|p| *p == from) {
+            *entry = to.to_path_buf();
         }
+    }
+
+    /// The workspace at `from` now lives at `to`: every mention follows it. In the recent list a
+    /// `to` that is already listed keeps one entry, the earlier of the two places; the windows to
+    /// reopen keep every entry, one per window.
+    pub fn relocate(&mut self, from: &Path, to: &Path) {
+        for path in &mut self.open_windows {
+            if path == from {
+                *path = to.to_path_buf();
+            }
+        }
+        let mut seen_to = false;
+        let mut moved = Vec::with_capacity(self.recent.len());
+        for path in self.recent.drain(..) {
+            let path = if path == from { to.to_path_buf() } else { path };
+            if path == to {
+                if seen_to {
+                    continue;
+                }
+                seen_to = true;
+            }
+            moved.push(path);
+        }
+        self.recent = moved;
     }
 }
 
@@ -599,7 +614,10 @@ mod tests {
         launch.remove_open(Path::new("/w/개인"));
         launch.save(&file).unwrap();
         let loaded = LaunchState::load(&file).unwrap();
-        assert_eq!(loaded.open_windows, vec![PathBuf::from("/w/업무")]);
+        assert_eq!(
+            loaded.open_windows,
+            vec![PathBuf::from("/w/업무"), PathBuf::from("/w/업무")]
+        );
         assert!(fs::read_to_string(&file).unwrap().contains("openWindows"));
     }
 
@@ -629,5 +647,53 @@ mod tests {
         launch.recent = vec!["/gone/옛".into(), "/new/옛".into()];
         launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
         assert_eq!(launch.recent, vec![PathBuf::from("/new/옛")]);
+    }
+
+    #[test]
+    fn open_windows_keep_a_workspace_once_per_window() {
+        let mut launch = LaunchState::default();
+        launch.add_open(Path::new("/w/P"));
+        launch.add_open(Path::new("/w/P"));
+        assert_eq!(
+            launch.open_windows,
+            vec![PathBuf::from("/w/P"), PathBuf::from("/w/P")]
+        );
+        launch.remove_open(Path::new("/w/P"));
+        assert_eq!(launch.open_windows, vec![PathBuf::from("/w/P")]);
+    }
+
+    #[test]
+    fn relocate_keeps_every_window_of_a_workspace() {
+        let mut launch = LaunchState {
+            recent: vec!["/gone/옛".into(), "/new/옛".into()],
+            open_windows: vec!["/gone/옛".into(), "/w/다른".into(), "/gone/옛".into()],
+        };
+        launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
+        assert_eq!(
+            launch.open_windows,
+            vec![
+                PathBuf::from("/new/옛"),
+                PathBuf::from("/w/다른"),
+                PathBuf::from("/new/옛")
+            ]
+        );
+        assert_eq!(launch.recent, vec![PathBuf::from("/new/옛")]);
+    }
+
+    #[test]
+    fn switch_open_replaces_one_entry_in_place() {
+        let mut launch = LaunchState {
+            recent: vec![],
+            open_windows: vec!["/w/A".into(), "/w/B".into(), "/w/A".into()],
+        };
+        launch.switch_open(Path::new("/w/A"), Path::new("/w/C"));
+        assert_eq!(
+            launch.open_windows,
+            vec![
+                PathBuf::from("/w/C"),
+                PathBuf::from("/w/B"),
+                PathBuf::from("/w/A")
+            ]
+        );
     }
 }

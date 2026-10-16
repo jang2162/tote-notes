@@ -255,6 +255,9 @@ export class TauriBackend implements Backend {
   onOutsideChange(handler: (change: OutsideChange) => void) {
     void this.window.listen<OutsideChange>("tote://outside", (event) => handler(event.payload));
   }
+  onMemosChanged(handler: () => void) {
+    void this.window.listen("tote://memos", () => handler());
+  }
   onFileDrop(handler: (paths: string[]) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {
       if (event.payload.type === "drop") handler(event.payload.paths);

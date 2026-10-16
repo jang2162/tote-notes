@@ -1,5 +1,6 @@
-//! The app's shared state: which window shows which workspace, focus order for routing, pending
-//! opens for windows still loading, and the close/quit bookkeeping. No Tauri types in here, so it
+//! The app's shared state: the workspaces open (one per folder) and the windows showing them,
+//! focus order for routing, pending opens for windows still loading, and the close/quit
+//! bookkeeping. No Tauri types in here, so it
 //! is tested with plain values; src/app/windows.rs and friends connect it to Tauri.
 
 pub mod commands;
@@ -85,6 +86,8 @@ pub struct AppCore {
     /// Wakes the backup thread with a window label (`request_backup`); unset until
     /// `start_backups` runs, so tests and early windows ask nothing.
     backup_waker: Mutex<Option<Sender<String>>>,
+    /// The number of the last window label handed out (`next_label`).
+    labels: AtomicU64,
     inner: Mutex<Inner>,
 }
 
@@ -95,24 +98,59 @@ struct Rescanned {
 }
 
 struct Inner {
+    /// Folder → its workspace, open while a window shows it or one is being opened for it.
+    workspaces: HashMap<PathBuf, OpenWorkspace>,
+    /// Window label → the window.
     windows: HashMap<String, OpenWindow>,
-    /// Labels whose window is being opened: claimed before `Workspace::open`, so two requests
-    /// for one folder cannot both open it.
-    reserved: HashSet<String>,
+    /// Folder → the label of the window being opened for it: claimed before `Workspace::open`,
+    /// so two requests for one folder cannot both open it.
+    reserved: HashMap<PathBuf, String>,
     /// Window labels, most recently focused first.
     focus: Vec<String>,
+    /// The `serial` of the next window registered.
+    serials: u64,
     launch: LaunchState,
     flush: FlushCoordinator,
     quitting: bool,
 }
 
+struct OpenWorkspace {
+    workspace: Arc<Mutex<Workspace>>,
+}
+
 struct OpenWindow {
     path: PathBuf,
-    workspace: Arc<Mutex<Workspace>>,
     pending: Vec<PendingOpen>,
+    /// Opening order among all windows; a workspace's windows are counted in it (titles).
+    serial: u64,
     /// Set by `closing`. On the window, not in a list of labels, so it goes with the window: a
-    /// mark left behind would keep a window reopened under the same label out of the next quit.
+    /// mark left behind would keep a window registered again under its label out of the next
+    /// quit.
     closing: bool,
+}
+
+impl Inner {
+    /// The labels of the windows on `path`, in opening order.
+    fn windows_of(&self, path: &Path) -> Vec<String> {
+        let mut windows: Vec<(&String, &OpenWindow)> = self
+            .windows
+            .iter()
+            .filter(|(_, window)| window.path == path)
+            .collect();
+        windows.sort_by_key(|(_, window)| window.serial);
+        windows
+            .into_iter()
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
+    /// Closes the workspace at `path` once no window shows it and none is being opened for it.
+    /// Returns its watch key when it closed.
+    fn close_if_unused(&mut self, path: &Path) -> Option<String> {
+        let unused = !self.reserved.contains_key(path)
+            && !self.windows.values().any(|window| window.path == path);
+        (unused && self.workspaces.remove(path).is_some()).then(|| AppCore::workspace_key(path))
+    }
 }
 
 impl AppCore {
@@ -158,10 +196,13 @@ impl AppCore {
             workspace_searches: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
             backup_waker: Mutex::new(None),
+            labels: AtomicU64::new(0),
             inner: Mutex::new(Inner {
+                workspaces: HashMap::new(),
                 windows: HashMap::new(),
-                reserved: HashSet::new(),
+                reserved: HashMap::new(),
                 focus: Vec::new(),
+                serials: 0,
                 launch,
                 flush: FlushCoordinator::default(),
                 quitting: false,
@@ -239,61 +280,157 @@ impl AppCore {
             .map(|e| e.path.clone())
     }
 
-    /// One window per workspace folder. The label comes from the folder, so opening the same
-    /// workspace again finds its window; two folders never share one even if a copied folder
-    /// carries the same workspace ID.
-    pub fn label_for(path: &Path) -> String {
+    /// A label for a new window: `ws-1`, `ws-2`, … counted from 1 in every run. A label names the
+    /// window, not the workspace it shows.
+    pub fn next_label(&self) -> String {
+        format!("ws-{}", self.labels.fetch_add(1, Ordering::Relaxed) + 1)
+    }
+
+    /// What the watcher calls the workspace at `path`. From the folder, so two folders never share
+    /// one even if a copied folder carries the same workspace ID.
+    pub fn workspace_key(path: &Path) -> String {
         format!(
-            "ws-{}",
+            "wk-{}",
             &content_hash(path.as_os_str().as_encoded_bytes())[..16]
         )
     }
 
-    /// Claims `label` for opening. False when it is registered or another request is opening it;
-    /// only the caller that got true may `register` and, on failure, `release` it.
-    pub fn reserve(&self, label: &str) -> bool {
+    /// Claims the folder `path` for opening a window. `Ok` with the new window's label: this
+    /// caller opens it, and must `register_window` or, on failure, `release` that label. `Err`
+    /// with the label of the window another request is opening for the folder right now.
+    ///
+    /// While the claim stands, the folder's workspace stays open even if its last window closes,
+    /// so a caller that found it open can still join it.
+    pub fn reserve(&self, path: &Path) -> Result<String, String> {
         let mut inner = lock(&self.inner);
-        if inner.windows.contains_key(label) {
-            return false;
+        if let Some(label) = inner.reserved.get(path) {
+            return Err(label.clone());
         }
-        inner.reserved.insert(label.to_string())
+        let label = self.next_label();
+        inner.reserved.insert(path.to_path_buf(), label.clone());
+        Ok(label)
     }
 
-    /// Undoes this caller's own `reserve` (and `register`) after a failed open.
+    /// Undoes this caller's own `reserve` (and `register_window`) after a failed open.
     pub fn release(&self, label: &str) {
-        {
+        let closed = {
             let mut inner = lock(&self.inner);
-            inner.reserved.remove(label);
-            inner.windows.remove(label);
-        }
+            let mut paths: Vec<PathBuf> = inner
+                .reserved
+                .iter()
+                .filter(|(_, l)| *l == label)
+                .map(|(path, _)| path.clone())
+                .collect();
+            inner.reserved.retain(|_, l| l != label);
+            paths.extend(inner.windows.remove(label).map(|window| window.path));
+            inner.focus.retain(|l| l != label);
+            paths
+                .iter()
+                .filter_map(|path| inner.close_if_unused(path))
+                .collect::<Vec<_>>()
+        };
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
-        }
-    }
-
-    pub fn register(&self, label: &str, workspace: Workspace) {
-        let root = workspace.root().to_path_buf();
-        let window = OpenWindow {
-            path: root.clone(),
-            workspace: Arc::new(Mutex::new(workspace)),
-            pending: Vec::new(),
-            closing: false,
-        };
-        {
-            let mut inner = lock(&self.inner);
-            inner.reserved.remove(label);
-            inner.windows.insert(label.to_string(), window);
-        }
-        // An unwatched workspace still works; it only misses outside changes until reopened.
-        if let Some(watcher) = self.watcher.get() {
-            if let Err(err) = watcher.watch_workspace(label, &root) {
-                eprintln!("tote: cannot watch {} for changes: {err}", root.display());
+            for key in closed {
+                watcher.unwatch_workspace(&key);
             }
         }
     }
 
+    /// Registers the window `label` on the workspace at `path`. `opened` is the workspace just
+    /// opened for it when it is the folder's first window; a later window brings none and joins
+    /// the one already open.
+    pub fn register_window(&self, label: &str, path: &Path, opened: Option<Workspace>) {
+        let watch = {
+            let mut inner = lock(&self.inner);
+            if inner.reserved.get(path).is_some_and(|l| l == label) {
+                inner.reserved.remove(path);
+            }
+            let watch = match opened {
+                Some(workspace) if !inner.workspaces.contains_key(path) => {
+                    inner.workspaces.insert(
+                        path.to_path_buf(),
+                        OpenWorkspace {
+                            workspace: Arc::new(Mutex::new(workspace)),
+                        },
+                    );
+                    true
+                }
+                _ => false,
+            };
+            if !inner.workspaces.contains_key(path) {
+                // Nothing to show: a caller that found the folder open held its claim, so this is
+                // a bug, and the window is left out rather than shown without a workspace.
+                eprintln!("tote: {label}: no workspace open at {}", path.display());
+                return;
+            }
+            inner.serials += 1;
+            let serial = inner.serials;
+            inner.windows.insert(
+                label.to_string(),
+                OpenWindow {
+                    path: path.to_path_buf(),
+                    pending: Vec::new(),
+                    serial,
+                    closing: false,
+                },
+            );
+            watch
+        };
+        // An unwatched workspace still works; it only misses outside changes until reopened.
+        if let (true, Some(watcher)) = (watch, self.watcher.get()) {
+            if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(path), path) {
+                eprintln!("tote: cannot watch {} for changes: {err}", path.display());
+            }
+        }
+    }
+
+    /// The windows showing the workspace at `path`, in the order they were opened.
+    pub fn windows_of(&self, path: &Path) -> Vec<String> {
+        lock(&self.inner).windows_of(path)
+    }
+
+    /// The window on `path` focused most recently; one not focused yet counts as newest.
+    pub fn front_window_of(&self, path: &Path) -> Option<String> {
+        let inner = lock(&self.inner);
+        let on_path = inner.windows_of(path);
+        on_path
+            .iter()
+            .find(|label| !inner.focus.contains(label))
+            .or_else(|| inner.focus.iter().find(|label| on_path.contains(label)))
+            .cloned()
+    }
+
+    /// The other windows showing the workspace of window `label`.
+    pub fn siblings(&self, label: &str) -> Vec<String> {
+        let inner = lock(&self.inner);
+        let Some(path) = inner.windows.get(label).map(|w| w.path.clone()) else {
+            return Vec::new();
+        };
+        let mut windows = inner.windows_of(&path);
+        windows.retain(|l| l != label);
+        windows
+    }
+
+    /// The title of each window on `path`, by label, in opening order (`window_title`).
+    pub fn titles_of(&self, path: &Path) -> Vec<(String, String)> {
+        let (labels, workspace) = {
+            let inner = lock(&self.inner);
+            let Some(open) = inner.workspaces.get(path) else {
+                return Vec::new();
+            };
+            (inner.windows_of(path), open.workspace.clone())
+        };
+        let name = lock(&workspace).name();
+        labels
+            .into_iter()
+            .enumerate()
+            .map(|(nth, label)| (label, window_title(&name, nth)))
+            .collect()
+    }
+
     /// Starts the watcher. `on_batch` runs on the watcher's thread for every batch and hands it to
-    /// `AppCore::on_batch`. Windows registered before this are not watched, so it runs before any
+    /// `AppCore::on_batch`. Workspaces opened before this are not watched, so it runs before any
     /// window opens.
     pub fn start_watching(
         &self,
@@ -318,13 +455,24 @@ impl AppCore {
         }
     }
 
-    /// What a batch from the watcher means for the window it is for, if anything: changes that
+    /// What a batch from the watcher means for the windows it is for, if anything: changes that
     /// are tote's own writes are dropped here. A workspace batch is applied under the workspace's
-    /// lock, so it cannot interleave with a save or `list_memos`.
-    pub fn on_batch(&self, target: WatchTarget, batch: Batch) -> Option<(String, OutsideChange)> {
+    /// lock, so it cannot interleave with a save or `list_memos`, and goes to every window of the
+    /// workspace.
+    pub fn on_batch(&self, target: WatchTarget, batch: Batch) -> Vec<(String, OutsideChange)> {
         match target {
-            WatchTarget::Workspace(label) => {
-                let workspace = self.workspace(&label)?;
+            WatchTarget::Workspace(key) => {
+                let found = {
+                    let inner = lock(&self.inner);
+                    inner
+                        .workspaces
+                        .iter()
+                        .find(|(path, _)| AppCore::workspace_key(path) == key)
+                        .map(|(path, open)| (path.clone(), open.workspace.clone()))
+                };
+                let Some((path, workspace)) = found else {
+                    return Vec::new();
+                };
                 let name = |path: &PathBuf| path.file_name()?.to_str().map(str::to_string);
                 let touched = batch.touched.iter().filter_map(name).collect();
                 let renames: Vec<(String, String)> = batch
@@ -335,24 +483,33 @@ impl AppCore {
                 let changes = match lock(&workspace).apply_fs_events(&touched, &renames) {
                     Ok(changes) => changes,
                     Err(err) => {
-                        eprintln!("tote: could not take in outside changes for {label}: {err}");
-                        return None;
+                        eprintln!(
+                            "tote: could not take in outside changes for {}: {err}",
+                            path.display()
+                        );
+                        return Vec::new();
                     }
                 };
-                (!changes.is_empty()).then_some((label, OutsideChange::Workspace { changes }))
+                if changes.is_empty() {
+                    return Vec::new();
+                }
+                let change = OutsideChange::Workspace { changes };
+                self.windows_of(&path)
+                    .into_iter()
+                    .map(|label| (label, change.clone()))
+                    .collect()
             }
-            WatchTarget::External(label, path) => {
-                let state = self.external.outside_state(&path)?;
-                Some((label, OutsideChange::External { path, state }))
-            }
+            WatchTarget::External(label, path) => match self.external.outside_state(&path) {
+                Some(state) => vec![(label, OutsideChange::External { path, state })],
+                None => Vec::new(),
+            },
         }
     }
 
     pub fn workspace(&self, label: &str) -> Option<Arc<Mutex<Workspace>>> {
-        lock(&self.inner)
-            .windows
-            .get(label)
-            .map(|w| w.workspace.clone())
+        let inner = lock(&self.inner);
+        let path = &inner.windows.get(label)?.path;
+        inner.workspaces.get(path).map(|w| w.workspace.clone())
     }
 
     pub fn path_of(&self, label: &str) -> Option<PathBuf> {
@@ -360,7 +517,7 @@ impl AppCore {
     }
 
     pub fn is_open_path(&self, path: &Path) -> bool {
-        lock(&self.inner).windows.values().any(|w| w.path == path)
+        lock(&self.inner).workspaces.contains_key(path)
     }
 
     pub fn recent(&self) -> Vec<PathBuf> {
@@ -415,7 +572,8 @@ impl AppCore {
         lock(&self.workspace_searches).get(window) == Some(&request_id)
     }
 
-    /// A window is gone. Returns the flush rounds it was the last one to wait for, by id.
+    /// A window is gone; its workspace closes with its last window. Returns the flush rounds it
+    /// was the last one to wait for, by id.
     pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
@@ -424,15 +582,24 @@ impl AppCore {
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
         }
-        let mut inner = lock(&self.inner);
-        let removed = inner.windows.remove(label);
-        inner.focus.retain(|l| l != label);
-        // While quitting, windows close one by one; the list to reopen was fixed by start_quit.
-        if let (Some(window), false) = (removed, inner.quitting) {
-            inner.launch.remove_open(&window.path);
-            self.save_launch(&inner.launch);
+        let (rounds, closed) = {
+            let mut inner = lock(&self.inner);
+            let removed = inner.windows.remove(label);
+            inner.focus.retain(|l| l != label);
+            let closed = removed
+                .as_ref()
+                .and_then(|window| inner.close_if_unused(&window.path));
+            // While quitting, windows close one by one; the list to reopen was fixed by start_quit.
+            if let (Some(window), false) = (removed, inner.quitting) {
+                inner.launch.remove_open(&window.path);
+                self.save_launch(&inner.launch);
+            }
+            (inner.flush.window_gone(label), closed)
+        };
+        if let (Some(key), Some(watcher)) = (closed, self.watcher.get()) {
+            watcher.unwatch_workspace(&key);
         }
-        inner.flush.window_gone(label)
+        rounds
     }
 
     /// The window is being closed: from now on a quit neither waits on it nor reopens it. A window
@@ -534,9 +701,9 @@ impl AppCore {
         *lock(&self.backup_waker) = Some(waker);
     }
 
-    /// Asks the backup thread to snapshot the window `label` now rather than at the next regular
-    /// round — a window just opened is marked changed (`Workspace::open`). Does nothing without a
-    /// waker, or when the thread is gone.
+    /// Asks the backup thread to snapshot the workspace of window `label` now rather than at the
+    /// next regular round — a workspace just opened is marked changed (`Workspace::open`). Does
+    /// nothing without a waker, or when the thread is gone.
     pub fn request_backup(&self, label: &str) {
         if let Some(waker) = lock(&self.backup_waker).as_ref() {
             let _ = waker.send(label.to_string());
@@ -548,11 +715,12 @@ impl AppCore {
         lock(&self.inner).windows.keys().cloned().collect()
     }
 
-    /// One backup round (spec 「백업」): each open window's workspace that changed since the last
-    /// round is snapshotted under `now`, then its old snapshots are pruned. With `only`, just the
-    /// windows with those labels are looked at; the others keep their marks. Returns what each
-    /// snapshotted window got: the new folder, `None` when there was nothing to put in, or why the
-    /// round failed for it.
+    /// One backup round (spec 「백업」): each open workspace that changed since the last round is
+    /// snapshotted under `now` — once, however many windows show it — then its old snapshots are
+    /// pruned. With `only`, just the workspaces of the windows with those labels are looked at;
+    /// the others keep their marks. Returns what each snapshotted workspace got, with the labels of
+    /// its windows: the new folder, `None` when there was nothing to put in, or why the round
+    /// failed for it.
     ///
     /// The workspace lock is held only to read the mark, not while copying: saves go on during a
     /// snapshot, which skips a file changed under it (`SkipReason::Changed`). A failed round, or one
@@ -561,15 +729,20 @@ impl AppCore {
         &self,
         now: SnapshotName,
         only: Option<&HashSet<String>>,
-    ) -> Vec<(String, io::Result<Option<PathBuf>>)> {
-        let windows: Vec<(String, Arc<Mutex<Workspace>>)> = lock(&self.inner)
-            .windows
-            .iter()
-            .filter(|(label, _)| only.is_none_or(|only| only.contains(*label)))
-            .map(|(label, window)| (label.clone(), window.workspace.clone()))
-            .collect();
+    ) -> Vec<(Vec<String>, io::Result<Option<PathBuf>>)> {
+        let workspaces: Vec<(Vec<String>, Arc<Mutex<Workspace>>)> = {
+            let inner = lock(&self.inner);
+            inner
+                .workspaces
+                .iter()
+                .map(|(path, open)| (inner.windows_of(path), open.workspace.clone()))
+                .filter(|(labels, _)| {
+                    only.is_none_or(|only| labels.iter().any(|label| only.contains(label)))
+                })
+                .collect()
+        };
         let mut ticked = Vec::new();
-        for (label, workspace) in windows {
+        for (labels, workspace) in workspaces {
             let (root, id) = {
                 let mut workspace = lock(&workspace);
                 if !workspace.take_changed() {
@@ -595,7 +768,7 @@ impl AppCore {
                     eprintln!("tote: could not prune the backups of {id}: {err}");
                 }
             }
-            ticked.push((label, result.map(|taken| taken.folder)));
+            ticked.push((labels, result.map(|taken| taken.folder)));
         }
         ticked
     }
@@ -608,6 +781,14 @@ impl AppCore {
         if let Err(err) = launch.save(&self.paths.launch_file()) {
             eprintln!("tote: could not save state.json: {err}");
         }
+    }
+}
+
+/// The title of the `nth` window (from 0) on the workspace `name`: the second one on is numbered.
+pub fn window_title(name: &str, nth: usize) -> String {
+    match nth {
+        0 => name.to_string(),
+        _ => format!("{name} — {}", nth + 1),
     }
 }
 
@@ -639,8 +820,17 @@ mod tests {
 
     fn open(core: &AppCore, name: &str) -> String {
         let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
-        let label = AppCore::label_for(workspace.root());
-        core.register(&label, workspace);
+        let label = core.next_label();
+        let path = workspace.root().to_path_buf();
+        core.register_window(&label, &path, Some(workspace));
+        core.opened(&label);
+        label
+    }
+
+    /// Another window on the workspace at `path`, already open.
+    fn attach(core: &AppCore, path: &Path) -> String {
+        let label = core.next_label();
+        core.register_window(&label, path, None);
         core.opened(&label);
         label
     }
@@ -682,7 +872,7 @@ mod tests {
         let later = SnapshotName::parse("20261012-121000").unwrap();
         let ticked = core.backup_tick(later, None);
         assert_eq!(ticked.len(), 1, "only the changed workspace");
-        assert_eq!(ticked[0].0, a);
+        assert_eq!(ticked[0].0, vec![a]);
         assert_eq!(
             ticked[0].1.as_ref().unwrap().as_deref(),
             Some(a_backups.path_of(later).as_path())
@@ -722,7 +912,7 @@ mod tests {
         let wake = SnapshotName::parse("20261012-120500").unwrap();
         let ticked = core.backup_tick(wake, Some(&HashSet::from([a.clone()])));
         assert_eq!(ticked.len(), 1);
-        assert_eq!(ticked[0].0, a);
+        assert_eq!(ticked[0].0, vec![a]);
         assert_eq!(a_backups.snapshots().unwrap().last(), Some(&wake));
         assert!(b_backups
             .snapshots()
@@ -734,7 +924,7 @@ mod tests {
         let regular = SnapshotName::parse("20261012-121000").unwrap();
         let ticked = core.backup_tick(regular, None);
         assert_eq!(ticked.len(), 1);
-        assert_eq!(ticked[0].0, b);
+        assert_eq!(ticked[0].0, vec![b]);
         assert_eq!(b_backups.snapshots().unwrap().last(), Some(&regular));
     }
 
@@ -794,18 +984,20 @@ mod tests {
             touched: [file.clone()].into(),
             renames: vec![],
         };
-        let target = WatchTarget::Workspace(label.clone());
-        assert_eq!(core.on_batch(target.clone(), ours()), None);
+        let target = WatchTarget::Workspace(AppCore::workspace_key(&core.path_of(&label).unwrap()));
+        assert_eq!(core.on_batch(target.clone(), ours()), vec![]);
         fs::write(&file, "theirs").unwrap();
-        let (to, change) = core.on_batch(target.clone(), ours()).unwrap();
-        assert_eq!(to, label);
+        let reached = core.on_batch(target.clone(), ours());
+        assert_eq!(reached.len(), 1);
+        let (to, change) = &reached[0];
+        assert_eq!(*to, label);
         assert_eq!(
-            serde_json::to_value(&change).unwrap(),
+            serde_json::to_value(change).unwrap(),
             serde_json::json!({"kind": "workspace", "changes": [{"kind": "modified", "id": memo.id}]})
         );
         assert_eq!(
             core.on_batch(WatchTarget::Workspace("gone".into()), ours()),
-            None
+            vec![]
         );
 
         let path = dir.path().join("밖.txt");
@@ -817,30 +1009,213 @@ mod tests {
             touched: [path.clone()].into(),
             renames: vec![],
         };
-        assert_eq!(core.on_batch(outside.clone(), seen()), None, "our own save");
-        fs::write(&path, "elsewhere").unwrap();
-        let (_, change) = core.on_batch(outside.clone(), seen()).unwrap();
         assert_eq!(
-            serde_json::to_value(&change).unwrap(),
+            core.on_batch(outside.clone(), seen()),
+            vec![],
+            "our own save"
+        );
+        fs::write(&path, "elsewhere").unwrap();
+        let reached = core.on_batch(outside.clone(), seen());
+        assert_eq!(reached.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&reached[0].1).unwrap(),
             serde_json::json!({"kind": "external", "path": path, "state": "modified"})
         );
         fs::remove_file(&path).unwrap();
-        let (_, change) = core.on_batch(outside, seen()).unwrap();
         assert_eq!(
-            change,
-            OutsideChange::External {
-                path,
-                state: ExternalState::Removed
-            }
+            core.on_batch(outside, seen()),
+            vec![(
+                label,
+                OutsideChange::External {
+                    path,
+                    state: ExternalState::Removed
+                }
+            )]
         );
     }
 
     #[test]
-    fn labels_are_stable_per_folder() {
-        let a = AppCore::label_for(Path::new("/w/업무"));
-        assert_eq!(a, AppCore::label_for(Path::new("/w/업무")));
-        assert_ne!(a, AppCore::label_for(Path::new("/w/개인")));
-        assert!(a.starts_with("ws-") && a.len() == 19);
+    fn labels_are_new_for_every_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let labels = [core.next_label(), core.next_label(), core.next_label()];
+        assert_eq!(labels, ["ws-1", "ws-2", "ws-3"]);
+        assert!(labels.iter().all(|label| label.starts_with("ws-")));
+    }
+
+    #[test]
+    fn workspace_keys_are_stable_per_folder() {
+        let a = AppCore::workspace_key(Path::new("/w/업무"));
+        assert_eq!(a, AppCore::workspace_key(Path::new("/w/업무")));
+        assert_ne!(a, AppCore::workspace_key(Path::new("/w/개인")));
+        assert!(a.starts_with("wk-") && a.len() == 19);
+    }
+
+    #[test]
+    fn two_windows_share_one_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        assert!(Arc::ptr_eq(
+            &core.workspace(&w1).unwrap(),
+            &core.workspace(&w2).unwrap()
+        ));
+    }
+
+    #[test]
+    fn the_workspace_closes_with_its_last_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        core.closed(&w1);
+        assert!(core.is_open_path(&path));
+        core.closed(&w2);
+        assert!(!core.is_open_path(&path));
+        assert!(core.workspace(&w2).is_none());
+    }
+
+    #[test]
+    fn a_backup_round_takes_a_shared_workspace_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let a_path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &a_path);
+        let w3 = open(&core, "나");
+        let a_id = lock(&core.workspace(&w1).unwrap()).id().to_string();
+        let b_id = lock(&core.workspace(&w3).unwrap()).id().to_string();
+        // An empty workspace makes no snapshot folder.
+        for label in [&w1, &w3] {
+            lock(&core.workspace(label).unwrap())
+                .create_memo("md", "메모".as_bytes())
+                .unwrap();
+        }
+
+        let now = SnapshotName::parse("20261012-120000").unwrap();
+        let ticked = core.backup_tick(now, None);
+        assert_eq!(ticked.len(), 2, "one entry per workspace");
+        let a_entry = ticked
+            .iter()
+            .find(|(labels, _)| labels.contains(&w1))
+            .unwrap();
+        assert_eq!(a_entry.0, vec![w1.clone(), w2.clone()]);
+        let b_entry = ticked
+            .iter()
+            .find(|(labels, _)| labels.contains(&w3))
+            .unwrap();
+        assert_eq!(b_entry.0, vec![w3.clone()]);
+        let snapshots = fs::read_dir(core.paths.backups_dir()).unwrap().count();
+        assert_eq!(snapshots, 2, "a folder per workspace");
+        let a_backups = BackupDir::new(&core.paths.backups_dir(), &a_id);
+        let b_backups = BackupDir::new(&core.paths.backups_dir(), &b_id);
+        assert_eq!(a_backups.snapshots().unwrap(), vec![now]);
+        assert_eq!(b_backups.snapshots().unwrap(), vec![now]);
+    }
+
+    #[test]
+    fn a_wake_takes_the_workspace_of_the_woken_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let w3 = open(&core, "나");
+        let wake = SnapshotName::parse("20261012-120500").unwrap();
+        let ticked = core.backup_tick(wake, Some(&HashSet::from([w2.clone()])));
+        assert_eq!(ticked.len(), 1);
+        assert_eq!(ticked[0].0, vec![w1, w2]);
+        // 나 stays marked: the next regular round takes it.
+        let regular = SnapshotName::parse("20261012-121000").unwrap();
+        let ticked = core.backup_tick(regular, None);
+        assert_eq!(ticked.len(), 1);
+        assert_eq!(ticked[0].0, vec![w3]);
+    }
+
+    #[test]
+    fn a_watch_batch_reaches_every_window_of_its_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        open(&core, "나");
+        let file = path.join("밖에서.md");
+        fs::write(&file, "theirs").unwrap();
+        let batch = Batch {
+            touched: [file].into(),
+            renames: vec![],
+        };
+        let reached = core.on_batch(WatchTarget::Workspace(AppCore::workspace_key(&path)), batch);
+        let labels: Vec<&String> = reached.iter().map(|(label, _)| label).collect();
+        assert_eq!(labels, vec![&w1, &w2]);
+        assert_eq!(reached[0].1, reached[1].1);
+    }
+
+    #[test]
+    fn siblings_are_the_other_windows_of_the_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let w3 = open(&core, "나");
+        assert_eq!(core.siblings(&w1), vec![w2.clone()]);
+        assert_eq!(core.siblings(&w2), vec![w1.clone()]);
+        assert_eq!(core.siblings(&w3), Vec::<String>::new());
+        assert_eq!(core.siblings("gone"), Vec::<String>::new());
+    }
+
+    #[test]
+    fn windows_of_a_workspace_are_in_opening_order_and_the_front_one_follows_focus() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        open(&core, "나");
+        assert_eq!(core.windows_of(&path), vec![w1.clone(), w2.clone()]);
+        assert_eq!(core.front_window_of(&path), Some(w2.clone()));
+        core.focused(&w1);
+        assert_eq!(core.front_window_of(&path), Some(w1.clone()));
+        assert_eq!(core.windows_of(&path), vec![w1, w2]);
+        assert_eq!(core.front_window_of(Path::new("/없음")), None);
+    }
+
+    #[test]
+    fn a_quit_waits_for_every_window_of_a_shared_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let w3 = open(&core, "나");
+        let Begin::Started { mut windows, .. } = core.begin_flush(FlushGoal::Quit) else {
+            panic!("expected a round")
+        };
+        windows.sort();
+        let mut expected = vec![w1, w2, w3];
+        expected.sort();
+        assert_eq!(windows, expected);
+    }
+
+    #[test]
+    fn window_titles_number_the_second_window_on() {
+        assert_eq!(window_title("업무", 0), "업무");
+        assert_eq!(window_title("업무", 1), "업무 — 2");
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        assert_eq!(
+            core.titles_of(&path),
+            vec![
+                (w1.clone(), "가".to_string()),
+                (w2.clone(), "가 — 2".to_string())
+            ]
+        );
+        core.closed(&w1);
+        assert_eq!(core.titles_of(&path), vec![(w2, "가".to_string())]);
     }
 
     #[test]
@@ -1028,20 +1403,40 @@ mod tests {
     }
 
     #[test]
-    fn a_label_is_reserved_once() {
+    fn a_path_is_reserved_once() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
         let workspace = Workspace::create(&core.workspace_root(), "가").unwrap();
-        let label = AppCore::label_for(workspace.root());
-        assert!(core.reserve(&label));
-        assert!(!core.reserve(&label));
-        core.register(&label, workspace);
-        // The second request lost the reservation, so it cleans up nothing.
-        assert!(!core.reserve(&label));
+        let path = workspace.root().to_path_buf();
+        let label = core.reserve(&path).unwrap();
+        // The second request is told which window is opening the folder, and cleans up nothing.
+        assert_eq!(core.reserve(&path), Err(label.clone()));
+        core.register_window(&label, &path, Some(workspace));
         assert!(core.workspace(&label).is_some());
         core.release(&label);
         assert!(core.workspace(&label).is_none());
-        assert!(core.reserve(&label));
+        assert!(!core.is_open_path(&path));
+        let again = core.reserve(&path).unwrap();
+        assert_ne!(again, label);
+    }
+
+    #[test]
+    fn a_reserved_folder_stays_open_when_its_last_window_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        // A second window is on its way: it found the workspace open, so it brings none.
+        let w2 = core.reserve(&path).unwrap();
+        core.closed(&w1);
+        assert!(core.is_open_path(&path));
+        core.register_window(&w2, &path, None);
+        assert!(core.workspace(&w2).is_some());
+        // Had it failed instead, its release would have closed the workspace.
+        let w3 = core.reserve(&path).unwrap();
+        core.closed(&w2);
+        core.release(&w3);
+        assert!(!core.is_open_path(&path));
     }
 
     #[test]
@@ -1130,8 +1525,8 @@ mod tests {
         let path = core.path_of(&a).unwrap();
         core.closed(&a);
         core.closing(&a);
-        // The same folder opened again in this run gets the same label.
-        core.register(&a, Workspace::open(&path).unwrap());
+        // Even a window registered again under the same label is not marked.
+        core.register_window(&a, &path, Some(Workspace::open(&path).unwrap()));
         core.opened(&a);
         assert!(matches!(
             core.begin_flush(FlushGoal::Quit),

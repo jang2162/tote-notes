@@ -370,3 +370,23 @@ test("keys typed after ⇧⌘V turns the tab to its preview do not edit the hidd
   await menu(page, "toggle-preview");
   await expect(page.locator(".cm-content")).toHaveText("# 하나");
 });
+
+test("another window's change to the memo list shows here", async ({ page }) => {
+  await start(page);
+  const calls = () => page.evaluate(() => window.__tote.backend.data.listMemosCalls ?? 0);
+  const before = await calls();
+  await page.evaluate(
+    (memo) => {
+      const backend = window.__tote.backend;
+      backend.data.memos["from-other-window"] = memo;
+      backend.memosChanged();
+      backend.memosChanged();
+      backend.memosChanged();
+    },
+    fakeMemo("다른 창.md", "다른 창에서 만든 메모"),
+  );
+  await expect(page.locator(".memo-row .memo-name")).toHaveText(["다른 창"]);
+  // Past the 300ms the three were gathered in: still one listing.
+  await page.waitForTimeout(500);
+  expect(await calls()).toBe(before + 1);
+});

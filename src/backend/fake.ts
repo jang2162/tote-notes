@@ -101,6 +101,8 @@ export interface FakeData {
   workspaceSearchLateFiles?: number;
   /** How many `listMemos` calls from now fail with `io`. Absent in old seeds. */
   failListMemos?: number;
+  /** `listMemos` calls so far. Absent in old seeds. */
+  listMemosCalls?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
   failWrites?: number;
   /** Memo ID → its copies in the backups, in any order. `listVersions` lists them newest first and
@@ -129,13 +131,19 @@ export function memoryStorage(initial: string | null = null): FakeStorage {
 
 export function defaultFakeData(): FakeData {
   return {
-    workspace: { id: "workspace-1", name: "메모", path: "/fake/메모", deviceId: "device-1" },
+    workspace: {
+      id: "workspace-1",
+      name: "메모",
+      title: "메모",
+      path: "/fake/메모",
+      deviceId: "device-1",
+    },
     memos: {},
     session: null,
     files: {},
     drafts: {},
     pending: [],
-    workspaces: [{ name: "메모", path: "/fake/메모", open: true, missing: false }],
+    workspaces: [{ name: "메모", path: "/fake/메모", open: true, windows: 1, missing: false }],
     picks: [],
     relocations: [],
     notWorkspaces: [],
@@ -281,6 +289,7 @@ export class FakeBackend implements Backend {
     drop: [] as ((paths: string[]) => void)[],
     config: [] as (() => void)[],
     outside: [] as ((change: OutsideChange) => void)[],
+    memos: [] as (() => void)[],
   };
 
   constructor(private readonly storage: FakeStorage = memoryStorage()) {
@@ -319,6 +328,11 @@ export class FakeBackend implements Backend {
   outside(change: OutsideChange): void {
     for (const handler of this.handlers.outside) handler(change);
   }
+  /** Another window changed the memo list, as the native side tells this one. The test changes
+   * `data` first. */
+  memosChanged(): void {
+    for (const handler of this.handlers.memos) handler();
+  }
   dropFiles(paths: string[]): void {
     for (const handler of this.handlers.drop) handler(paths);
   }
@@ -342,6 +356,8 @@ export class FakeBackend implements Backend {
   }
 
   async listMemos() {
+    this.data.listMemosCalls = (this.data.listMemosCalls ?? 0) + 1;
+    this.commit();
     if (this.data.failListMemos) {
       this.data.failListMemos -= 1;
       this.commit();
@@ -519,13 +535,19 @@ export class FakeBackend implements Backend {
     if (!validName(name)) throw new BackendError("invalid-name", name);
     if (this.data.workspaces.some((w) => sameName(w.name, name)))
       throw new BackendError("already-exists", name);
-    this.data.workspaces.push({ name, path: `/fake/${name}`, open: true, missing: false });
+    this.data.workspaces.push({
+      name,
+      path: `/fake/${name}`,
+      open: true,
+      windows: 1,
+      missing: false,
+    });
     this.commit();
   }
 
   async openWorkspace(path: string) {
     const workspace = this.data.workspaces.find((w) => w.path === path);
-    if (workspace) workspace.open = true;
+    if (workspace && !workspace.open) Object.assign(workspace, { open: true, windows: 1 });
     this.commit();
   }
 
@@ -534,7 +556,7 @@ export class FakeBackend implements Backend {
       throw new BackendError("not-a-workspace", `${to} is not a tote workspace`);
     this.data.relocations.push({ from, to });
     const item = this.data.workspaces.find((w) => w.path === from);
-    if (item) Object.assign(item, { path: to, open: true, missing: false });
+    if (item) Object.assign(item, { path: to, open: true, windows: 1, missing: false });
     this.commit();
   }
 
@@ -879,6 +901,9 @@ export class FakeBackend implements Backend {
   }
   onOutsideChange(handler: (change: OutsideChange) => void) {
     this.handlers.outside.push(handler);
+  }
+  onMemosChanged(handler: () => void) {
+    this.handlers.memos.push(handler);
   }
 
   private memo(id: string): FakeMemo {

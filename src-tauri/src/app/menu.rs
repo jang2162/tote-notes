@@ -1,5 +1,5 @@
 //! The menu bar. Edit uses the system items — in a WKWebView copy and paste only work through
-//! them. Tab actions go to the frontend of the latest window as `tote://menu`.
+//! them. Tab actions go to the frontend of the focused window as `tote://menu`.
 
 use std::io;
 use std::path::Path;
@@ -131,11 +131,11 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
         "close-window" => {
-            if let Some(window) = latest_window(app) {
+            if let Some(window) = target_window(app) {
                 let _ = window.close();
             }
         }
-        id => match latest_window(app) {
+        id => match target_window(app) {
             Some(window) => {
                 let _ = app.emit_to(
                     EventTarget::webview_window(window.label()),
@@ -149,9 +149,17 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
     }
 }
 
-fn latest_window(app: &AppHandle) -> Option<WebviewWindow> {
-    let label = app.state::<AppCore>().latest_window()?;
-    app.get_webview_window(&label)
+/// The window a menu item acts in: the focused one, else the one focused last — with every
+/// window minimized none has focus, yet ⌘N still acts somewhere.
+fn target_window(app: &AppHandle) -> Option<WebviewWindow> {
+    let focused = app
+        .webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false));
+    focused.or_else(|| {
+        let label = app.state::<AppCore>().latest_window()?;
+        app.get_webview_window(&label)
+    })
 }
 
 fn install_cli(app: &AppHandle) {

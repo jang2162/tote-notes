@@ -17,6 +17,8 @@ export interface MemoInfo {
 export interface WorkspaceInfo {
   id: string;
   name: string;
+  /** The window's title: the name, numbered from the workspace's second window on. */
+  title: string;
   path: string;
   deviceId: string;
 }
@@ -202,6 +204,8 @@ export interface WorkspaceListItem {
   name: string;
   path: string;
   open: boolean;
+  /** How many windows show it. */
+  windows: number;
   /** In the recent list, but its folder or `.tote/workspace.json` is gone. */
   missing: boolean;
 }
@@ -379,4 +383,6 @@ export interface Backend {
   onFileDrop(handler: (paths: string[]) => void): void;
   /** Another app changed this window's workspace or one of its watched external files. */
   onOutsideChange(handler: (change: OutsideChange) => void): void;
+  /** Another window changed the memo list of this window's workspace. */
+  onMemosChanged(handler: () => void): void;
 }

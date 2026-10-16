@@ -37,8 +37,9 @@ impl FailureNotices {
         self.told.remove(label);
     }
 
-    /// A window was just opened. Its label comes from its path, so one closed and reopened between
-    /// two rounds looks open throughout; forget it here so a failing backup is told again.
+    /// A window was just opened: whatever was told under its label is forgotten, so a failing
+    /// backup is told to it. Labels are new for every window, so this matters only for a label
+    /// registered again.
     pub fn opened(&mut self, label: &str) {
         self.told.remove(label);
     }

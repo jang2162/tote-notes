@@ -70,6 +70,8 @@ function extensionSignature(registry: Registry): string {
 }
 
 const SESSION_DELAY_MS = 1000;
+/** How long another window's changes to the memo list are gathered before one listing. */
+const MEMOS_GATHER_MS = 300;
 
 export const NOT_OPENABLE = "열 수 없음";
 export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
@@ -122,6 +124,8 @@ export class AppController implements DocHost {
   /** A memo listing has come through. The session is restored only after one: without the memos
    * its memo tabs have nothing to stand for, and a session written then would drop them. */
   private memosLoaded = false;
+  /** Another window's change to the memo list is waiting to be read (`MEMOS_GATHER_MS`). */
+  private memosChangedSoon: number | null = null;
   private readonly memoList = new MemoList((id) => void this.openMemo(id));
   private readonly searchPanel = new SearchPanel({
     search: (query, onEvent) =>
@@ -179,7 +183,7 @@ export class AppController implements DocHost {
     ]);
     this.perf = perf;
     this.deviceId = info.deviceId;
-    document.title = info.name;
+    document.title = info.title;
     await this.loadRegistry();
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
@@ -201,6 +205,7 @@ export class AppController implements DocHost {
     this.backend.onPending(() => void this.drainPending());
     this.backend.onFileDrop((paths) => void this.openExternals(paths));
     this.backend.onOutsideChange((change) => void this.onOutside(change));
+    this.backend.onMemosChanged(() => this.memosChanged());
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => void this.tabs.active?.leave());
@@ -1011,6 +1016,16 @@ export class AppController implements DocHost {
     } catch (error) {
       this.report(error);
     }
+  }
+
+  /** Another window changed the memo list: a burst of them (typing that renames a memo, an
+   * import of many files) is read once. */
+  private memosChanged(): void {
+    if (this.memosChangedSoon !== null) return;
+    this.memosChangedSoon = window.setTimeout(() => {
+      this.memosChangedSoon = null;
+      void this.refreshMemos();
+    }, MEMOS_GATHER_MS);
   }
 
   private async refreshMemos(): Promise<void> {

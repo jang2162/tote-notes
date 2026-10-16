@@ -44,11 +44,14 @@ test("Enter that finishes a composition does not submit", async ({ page }) => {
 test("the workspace picker shows why a name was refused", async ({ page }) => {
   await page.evaluate(
     () =>
-      void window.workspacePicker([{ name: "메모", path: "/w/메모", open: true, missing: false }], {
-        open: () => {},
-        relocate: async () => null,
-        create: async (name) => (name === "" ? "쓸 수 없는 이름입니다" : null),
-      }),
+      void window.workspacePicker(
+        [{ name: "메모", path: "/w/메모", open: true, windows: 1, missing: false }],
+        {
+          open: () => {},
+          relocate: async () => null,
+          create: async (name) => (name === "" ? "쓸 수 없는 이름입니다" : null),
+        },
+      ),
   );
   await expect(page.locator(".picker-list li")).toHaveText(["메모 (열림)"]);
   await page.getByRole("button", { name: "만들기" }).click();
@@ -117,8 +120,8 @@ test("a modal closed twice leaves the one under it able to take Escape", async (
 test("a missing workspace offers to relocate", async ({ page }) => {
   await start(page, {
     workspaces: [
-      { name: "메모", path: "/fake/메모", open: true, missing: false },
-      { name: "옛", path: "/gone/옛", open: false, missing: true },
+      { name: "메모", path: "/fake/메모", open: true, windows: 1, missing: false },
+      { name: "옛", path: "/gone/옛", open: false, windows: 0, missing: true },
     ],
     picks: ["/new/옛"],
   });
@@ -137,11 +140,14 @@ test("cancelling the folder dialog keeps the picker open with nothing relocated"
   await page.goto("/tests/e2e/pages/dialogs.html");
   await page.evaluate(
     () =>
-      void window.workspacePicker([{ name: "옛", path: "/gone/옛", open: false, missing: true }], {
-        open: () => {},
-        create: async () => null,
-        relocate: async () => "",
-      }),
+      void window.workspacePicker(
+        [{ name: "옛", path: "/gone/옛", open: false, windows: 0, missing: true }],
+        {
+          open: () => {},
+          create: async () => null,
+          relocate: async () => "",
+        },
+      ),
   );
   await page.locator(".picker-list li").click();
   await expect(page.locator(".modal")).toHaveCount(1);
@@ -150,7 +156,7 @@ test("cancelling the folder dialog keeps the picker open with nothing relocated"
 
 test("pointing a missing workspace at a plain folder says so in Korean", async ({ page }) => {
   await start(page, {
-    workspaces: [{ name: "옛", path: "/gone/옛", open: false, missing: true }],
+    workspaces: [{ name: "옛", path: "/gone/옛", open: false, windows: 0, missing: true }],
     picks: ["/plain"],
     notWorkspaces: ["/plain"],
   });

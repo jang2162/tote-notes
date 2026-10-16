@@ -1,6 +1,8 @@
-//! Workspace windows: one per workspace folder, labelled by `AppCore::label_for`.
+//! Workspace windows, labelled `ws-<n>` by `AppCore::next_label`. Windows on one folder share
+//! its workspace.
 
-use std::path::Path;
+use std::collections::HashMap;
+use std::path::{Path, PathBuf};
 
 use tauri::{AppHandle, Manager, WebviewUrl, WebviewWindowBuilder, Window, WindowEvent};
 
@@ -20,30 +22,58 @@ pub fn background() -> bool {
     cfg!(debug_assertions) && std::env::var_os("TOTE_BACKGROUND").is_some()
 }
 
-/// Shows the window of the workspace at `path`, opening it when needed. Returns its label.
+/// Where a new window's frame comes from.
+pub enum WindowPlan {
+    /// The `n`th window of the workspace reopened (from 0): its saved frame.
+    Restore(usize),
+    /// A window of its own, at `near` when given, else at the default size in the middle.
+    Fresh { near: Option<WindowFrame> },
+}
+
+/// Shows the workspace at `path`: its window focused most recently comes to the front, or a
+/// window opens when none shows it. Returns the window's label.
 pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
     let core = app.state::<AppCore>();
     let path = std::fs::canonicalize(path)?;
-    let label = AppCore::label_for(&path);
-    if app.get_webview_window(&label).is_some() {
+    // A window still being made is in the list too: it shows the workspace as soon as it is up.
+    if let Some(label) = core.front_window_of(&path) {
         focus(app, &label);
         return Ok(label);
     }
-    // Another request is already opening this folder: it shows the window, so opening it again
-    // here would run `Workspace::open` twice and could undo the first one's registration.
-    if !core.reserve(&label) {
-        return Ok(label);
-    }
-    let workspace = match Workspace::open(&path) {
-        Ok(workspace) => workspace,
-        Err(err) => {
-            core.release(&label);
-            return Err(err.into());
+    open_window(app, &path, WindowPlan::Restore(0))
+}
+
+/// Opens a new window on the workspace at `path`, opening the workspace too when no window shows
+/// it yet. Returns the window's label.
+pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<String, CommandError> {
+    let core = app.state::<AppCore>();
+    let path = std::fs::canonicalize(path)?;
+    // Another request is opening a window on this folder right now: that window is the answer.
+    // Opening one here as well could run `Workspace::open` twice for one folder.
+    let label = match core.reserve(&path) {
+        Ok(label) => label,
+        Err(opening) => return Ok(opening),
+    };
+    let opened = if core.is_open_path(&path) {
+        None
+    } else {
+        match Workspace::open(&path) {
+            Ok(workspace) => Some(workspace),
+            Err(err) => {
+                core.release(&label);
+                return Err(err.into());
+            }
         }
     };
-    let title = workspace.name();
-    let frame = read_window_frame(workspace.root(), &core.machine.device_id);
-    core.register(&label, workspace);
+    let fresh = opened.is_some();
+    let frame = match plan {
+        // The session file keeps one frame per device, so every window reopened on a folder
+        // starts from it.
+        WindowPlan::Restore(_) => read_window_frame(&path, &core.machine.device_id),
+        WindowPlan::Fresh { near } => near,
+    };
+    core.register_window(&label, &path, opened);
+    let title = title_of(&core, &path, &label);
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .min_inner_size(480.0, 320.0)
@@ -58,9 +88,31 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
     }
     crate::perf::mark("window-shown");
     core.opened(&label);
-    // Opened windows are marked changed; have the backup thread take them now.
-    core.request_backup(&label);
+    retitle(app, &path);
+    // A workspace just opened is marked changed; have the backup thread take it now. A second
+    // window brings nothing new.
+    if fresh {
+        core.request_backup(&label);
+    }
     Ok(label)
+}
+
+fn title_of(core: &AppCore, path: &Path, label: &str) -> String {
+    core.titles_of(path)
+        .into_iter()
+        .find(|(l, _)| l == label)
+        .map(|(_, title)| title)
+        .unwrap_or_default()
+}
+
+/// Titles the windows on `path` again (`AppCore::titles_of`): after one opens or goes, the
+/// numbers shift.
+pub fn retitle(app: &AppHandle, path: &Path) {
+    for (label, title) in app.state::<AppCore>().titles_of(path) {
+        if let Some(window) = app.get_webview_window(&label) {
+            let _ = window.set_title(&title);
+        }
+    }
 }
 
 pub fn focus(app: &AppHandle, label: &str) {
@@ -78,10 +130,15 @@ pub fn focus(app: &AppHandle, label: &str) {
 pub fn restore(app: &AppHandle, request: Option<CliRequest>) {
     let core = app.state::<AppCore>();
     let mut shown = 0;
+    // A workspace shown in two windows is listed twice; the nth entry reopens its nth window.
+    let mut nth: HashMap<PathBuf, usize> = HashMap::new();
     // A folder that is gone stays in the recent list, so the picker offers it as 「찾을 수 없음」
     // and the person can point tote at the place it moved to.
     for path in core.take_open_windows() {
-        match show(app, &path) {
+        let count = nth.entry(path.clone()).or_default();
+        let plan = WindowPlan::Restore(*count);
+        *count += 1;
+        match open_window(app, &path, plan) {
             Ok(_) => shown += 1,
             Err(err) => eprintln!("tote: {}: {}", path.display(), err.message),
         }
@@ -128,8 +185,12 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
             lifecycle::begin(app, FlushGoal::CloseWindow(label.to_string()));
         }
         WindowEvent::Destroyed => {
+            let path = core.path_of(label);
             for (id, ack) in core.closed(label) {
                 lifecycle::settle(app, id, ack);
+            }
+            if let Some(path) = path {
+                retitle(app, &path);
             }
         }
         _ => {}
