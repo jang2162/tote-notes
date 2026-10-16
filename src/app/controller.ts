@@ -11,6 +11,7 @@ import type {
 } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { WriteScheduler } from "../core/scheduler";
+import { settleComposition } from "../editor/compose";
 import {
   languageData,
   parseLanguageConfiguration,
@@ -50,6 +51,7 @@ import {
   type DocHost,
 } from "./docs";
 import { describeError } from "./errors";
+import { canSplit, remove, resize, split } from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { SessionSync } from "./session-sync";
 
@@ -70,6 +72,7 @@ const MEMOS_GATHER_MS = 300;
 
 export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
 export const NO_VERSIONS = "이전 버전이 없습니다";
+export const TOO_NARROW_TO_SPLIT = "창이 좁아 나눌 수 없습니다";
 
 const sameTab = (a: TabRef, b: TabRef) =>
   a.kind === "memo"
@@ -81,10 +84,13 @@ const sameTab = (a: TabRef, b: TabRef) =>
  * `Pane`; the session is read and written by `SessionSync`. */
 export class AppController implements DocHost, PaneHost {
   readonly writes = new WriteScheduler((_key, error) => this.report(error));
-  /** The window's panes, left to right. There is one for now. */
+  /** The window's panes, left to right; at least one. */
   readonly panes: Pane[];
-  /** The pane the menu, the memo list and the status bar act on. */
+  /** The pane the keys, the menu, the memo list and the status bar act on. */
   focused: Pane;
+  /** The panes' shares of the editing area's width (`layout.ts`), one per pane. */
+  private widths = [1];
+  private readonly panesEl = h("div", { class: "panes" });
   registry = new Registry(EMPTY_REGISTRY);
   readonly theme: ThemeManager;
   readonly highlight = new HighlightClient(
@@ -145,16 +151,13 @@ export class AppController implements DocHost, PaneHost {
   ) {
     // Not a field initializer: those run before the `backend` parameter property is assigned.
     this.theme = new ThemeManager(backend, () => this.registry);
-    this.focused = new Pane(`pane-${++this.paneCount}`, this);
+    this.focused = this.makePane();
     this.panes = [this.focused];
+    this.panesEl.append(this.focused.el);
+    this.syncPanes();
     root.replaceChildren(
       this.sidebar.el,
-      h(
-        "main",
-        { class: "main" },
-        h("div", { class: "panes" }, ...this.panes.map((pane) => pane.el)),
-        this.statusBar.el,
-      ),
+      h("main", { class: "main" }, this.panesEl, this.statusBar.el),
     );
   }
 
@@ -236,7 +239,11 @@ export class AppController implements DocHost, PaneHost {
     await this.theme.start();
     this.session = new SessionSync(
       this.backend,
-      () => this.panes,
+      () => ({
+        panes: this.panes,
+        widths: this.widths,
+        focusedPane: this.panes.indexOf(this.focused),
+      }),
       this.deviceId,
       (id) => this.memoList.get(id),
       (memo) => new MemoDoc(this, memo),
@@ -271,10 +278,30 @@ export class AppController implements DocHost, PaneHost {
   }
 
   private async restoreSession(): Promise<void> {
-    const first = await this.session.restore();
-    for (const doc of this.docs) this.held.set(doc, doc.tabRef);
-    if (first) await this.paneOf(first).activate(first);
-    else this.focused.renderTabs();
+    const restored = await this.session.restore();
+    while (this.panes.length < restored.panes.length) {
+      const pane = this.makePane();
+      this.panes.push(pane);
+      this.mountPane(pane);
+    }
+    this.widths = restored.widths;
+    restored.panes.forEach(({ tabs }, index) => {
+      for (const doc of tabs) {
+        this.panes[index].tabs.push(doc);
+        this.held.set(doc, doc.tabRef);
+      }
+    });
+    this.setFocused(this.panes[restored.focusedPane]);
+    this.syncPanes();
+    // Each pane shows its active tab; only the focused one takes the keys.
+    await Promise.all(
+      restored.panes.map(({ active }, index) => {
+        const pane = this.panes[index];
+        if (active) return pane.activate(active);
+        pane.renderTabs();
+        return undefined;
+      }),
+    );
     this.restoring = false;
     this.markNextFrame("restore-done");
   }
@@ -431,7 +458,7 @@ export class AppController implements DocHost, PaneHost {
       // Another request may have opened it while the claim was on its way.
       doc = this.memoTab(id) ?? this.insertClaimed(new MemoDoc(this, info));
     }
-    await this.paneOf(doc).activate(doc);
+    await this.showTab(doc);
   }
 
   async openExternal(path: string): Promise<void> {
@@ -440,7 +467,7 @@ export class AppController implements DocHost, PaneHost {
       if (!(await this.claim({ kind: "external", path }))) return;
       doc = this.externalTab(path) ?? this.insertClaimed(new ExternalDoc(this, path));
     }
-    await this.paneOf(doc).activate(doc);
+    await this.showTab(doc);
   }
 
   async newMemo(): Promise<void> {
@@ -449,7 +476,7 @@ export class AppController implements DocHost, PaneHost {
     if (!(await this.claim({ kind: "memo", id: info.id }))) return;
     const doc = this.insertClaimed(new MemoDoc(this, info));
     doc.startEmpty();
-    await this.paneOf(doc).activate(doc);
+    await this.showTab(doc);
   }
 
   async closeTab(tabId: string): Promise<void> {
@@ -463,17 +490,160 @@ export class AppController implements DocHost, PaneHost {
       if (doc === pane.tabs.active) pane.view.focus();
       return;
     }
-    const wasActive = doc === pane.tabs.active;
-    if (pane.panelDoc === doc) pane.closePanel();
-    const next = pane.tabs.remove(doc);
+    const shown = pane.detach(doc);
     this.release(doc);
     this.dropHighlight(doc);
     this.coloured.delete(doc.tabId);
-    if (wasActive) {
-      if (next) await pane.activate(next);
-      else pane.showEmpty();
+    await shown;
+    if (pane.tabs.list.length === 0) this.closePane(pane);
+    this.saveSessionSoon();
+  }
+
+  /** Shows `doc` in the pane that has it, and focuses that pane. */
+  private async showTab(doc: Doc): Promise<void> {
+    const pane = this.paneOf(doc);
+    await this.focusOn(pane);
+    await pane.activate(doc);
+  }
+
+  /** Moves `doc` from its pane into `to`, after `to`'s active tab, and shows it there. It is the
+   * same tab: its text, edit history and place go with it. */
+  private async moveTab(doc: Doc, to: Pane): Promise<void> {
+    const from = this.paneOf(doc);
+    from.capture(doc);
+    const shown = from.detach(doc);
+    to.tabs.insertAfterActive(doc);
+    await Promise.all([shown, to.activate(doc)]);
+    this.saveSessionSoon();
+  }
+
+  private makePane(): Pane {
+    const pane = new Pane(`pane-${++this.paneCount}`, this);
+    // A click anywhere in a pane — its tab bar, its editor — focuses it.
+    pane.el.addEventListener("mousedown", () => void this.focusOn(pane), { capture: true });
+    return pane;
+  }
+
+  /** Puts `pane`, already in `panes`, on screen in its place, a divider between it and its
+   * neighbour. The other panes stay where they are in the DOM: one moved would lose its focus, and
+   * its viewer frame would load again. */
+  private mountPane(pane: Pane): void {
+    const index = this.panes.indexOf(pane);
+    if (index > 0) this.panes[index - 1].el.after(this.divider(), pane.el);
+    else this.panesEl.prepend(pane.el, this.divider());
+  }
+
+  /** The panes' widths, which is focused, and what an empty pane says, as they are now. */
+  private syncPanes(): void {
+    this.panesEl.classList.toggle("split", this.panes.length > 1);
+    this.syncWidths();
+    for (const pane of this.panes) {
+      pane.el.classList.toggle("focused", pane === this.focused);
+      if (pane.tabs.list.length === 0) pane.showEmptyText();
     }
-    pane.renderTabs();
+  }
+
+  private syncWidths(): void {
+    this.panes.forEach((pane, index) => (pane.el.style.flexGrow = String(this.widths[index])));
+  }
+
+  /** The editing area's width: the panes', without the dividers between them. */
+  private areaWidth(): number {
+    return this.panes.reduce((sum, pane) => sum + pane.el.getBoundingClientRect().width, 0);
+  }
+
+  /** The boundary between the pane on its left and the one on its right; dragged, it moves. */
+  private divider(): HTMLElement {
+    const el = h("div", { class: "pane-divider" });
+    el.addEventListener("pointerdown", (down) => {
+      const boundary = this.panes.findIndex((pane) => pane.el === el.previousElementSibling);
+      if (boundary < 0 || down.button !== 0) return;
+      down.preventDefault();
+      el.setPointerCapture(down.pointerId);
+      const start = this.widths;
+      const area = this.areaWidth();
+      const end = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", end);
+        el.removeEventListener("pointercancel", end);
+        this.saveSessionSoon();
+      };
+      const move = (event: PointerEvent) => {
+        // A pane opened or closed under the drag: its widths no longer fit.
+        if (this.widths.length !== start.length) return end();
+        this.widths = resize(start, boundary, event.clientX - down.clientX, area);
+        this.syncWidths();
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    });
+    return el;
+  }
+
+  /** ⌘\: the focused pane gives the right half of its width to a new pane, which takes the
+   * active tab and the focus — or opens empty when that tab is the pane's only one. */
+  async splitPane(): Promise<void> {
+    const from = this.focused;
+    await settleComposition(from.view);
+    if (this.focused !== from) return;
+    const at = this.panes.indexOf(from);
+    if (!canSplit(this.widths, at, this.areaWidth())) {
+      this.statusBar.setMessage(TOO_NARROW_TO_SPLIT);
+      return;
+    }
+    const moving = from.tabs.list.length > 1 ? from.tabs.active : null;
+    const pane = this.makePane();
+    this.panes.splice(at + 1, 0, pane);
+    this.widths = split(this.widths, at);
+    this.mountPane(pane);
+    this.setFocused(pane);
+    this.syncPanes();
+    if (moving) await this.moveTab(moving, pane);
+    else void from.tabs.active?.leave();
+  }
+
+  /** ⌥⌘← / ⌥⌘→: the pane left or right of the focused one; nothing past either end. */
+  async focusPane(step: -1 | 1): Promise<void> {
+    const next = this.panes[this.panes.indexOf(this.focused) + step];
+    if (next) await this.focusOn(next);
+  }
+
+  /** Closes `pane`, which has no tabs; the window's only pane stays. Its width goes to its left
+   * neighbour (the right one when it is leftmost), and so does the focus when it had it. */
+  closePane(pane: Pane): void {
+    const at = this.panes.indexOf(pane);
+    if (at < 0 || this.panes.length < 2) return;
+    this.panes.splice(at, 1);
+    this.widths = remove(this.widths, at);
+    // Its divider is the one on its left, or on its right when it was leftmost.
+    (pane.el.previousElementSibling ?? pane.el.nextElementSibling)?.remove();
+    pane.el.remove();
+    pane.closePanel();
+    pane.view.destroy();
+    if (this.focused === pane) this.setFocused(this.panes[Math.max(at - 1, 0)]);
+    this.syncPanes();
+    this.saveSessionSoon();
+  }
+
+  /** Moves the focus to `pane`. A composition in the pane left lands there first (core spec
+   * 「편집기」), then its tab is left as a tab losing focus is: its title is made, it saves. */
+  private async focusOn(pane: Pane): Promise<void> {
+    const left = this.focused;
+    if (pane === left) return;
+    await settleComposition(left.view);
+    // Closed meanwhile, or the focus went elsewhere while the composition ended.
+    if (!this.panes.includes(pane) || this.focused !== left) return;
+    this.setFocused(pane);
+    void left.tabs.active?.leave();
+  }
+
+  /** The keys, the menu, the memo list and the status bar go to `pane` from now. */
+  private setFocused(pane: Pane): void {
+    this.focused = pane;
+    for (const each of this.panes) each.el.classList.toggle("focused", each === pane);
+    pane.showStatus();
+    if (pane.surface.showsEditor) pane.view.focus();
     this.saveSessionSoon();
   }
 
@@ -520,7 +690,7 @@ export class AppController implements DocHost, PaneHost {
   /** Another window asked for a tab this window holds. */
   private async reveal(tab: TabRef): Promise<void> {
     const doc = tab.kind === "memo" ? this.memoTab(tab.id) : this.externalTab(tab.path);
-    if (doc) await this.paneOf(doc).activate(doc);
+    if (doc) await this.showTab(doc);
   }
 
   /** Everything written now — tab edits, titles and the session. `closing` (the window closes or
@@ -635,9 +805,16 @@ export class AppController implements DocHost, PaneHost {
         case "rename":
           return await this.renameActive();
         case "close-tab":
-          return this.focused.tabs.active
-            ? await this.closeTab(this.focused.tabs.active.tabId)
-            : await this.backend.closeWindow();
+          if (this.focused.tabs.active) return await this.closeTab(this.focused.tabs.active.tabId);
+          // An empty pane closes; the only one stays, and the window closes instead.
+          if (this.panes.length > 1) return this.closePane(this.focused);
+          return await this.backend.closeWindow();
+        case "split-pane":
+          return await this.splitPane();
+        case "focus-pane-left":
+          return await this.focusPane(-1);
+        case "focus-pane-right":
+          return await this.focusPane(1);
         case "next-tab":
           return await this.cycleTab(1);
         case "prev-tab":
@@ -670,8 +847,10 @@ export class AppController implements DocHost, PaneHost {
 
   /** A search result (spec 「워크스페이스 검색」): the memo's tab, its cursor on the match. */
   private async openMatch(id: string, line: number, column: number): Promise<void> {
-    // Set before the tab opens: its viewer may be on show before `openMemo` returns.
-    this.focused.pendingLine = { memoId: id, line };
+    // Set before the tab opens, on the pane it opens in: its viewer may be on show before
+    // `openMemo` returns.
+    const open = this.memoTab(id);
+    (open ? this.paneOf(open) : this.focused).pendingLine = { memoId: id, line };
     await this.openMemo(id);
     const doc = this.memoTab(id);
     if (!doc) return;

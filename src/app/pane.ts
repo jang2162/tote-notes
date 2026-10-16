@@ -16,6 +16,8 @@ import { Tabs } from "./tabs";
 
 export const NOT_OPENABLE = "열 수 없음";
 export const OPEN_AS_TEXT = "텍스트로 열기";
+/** What an empty pane says while the window has others; a window of one pane says how to start. */
+export const EMPTY_PANE = "빈 칸입니다. 메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
 
 const PROBLEM_TEXT: Record<Problem, string> = {
   binary: NOT_OPENABLE,
@@ -25,6 +27,9 @@ const PROBLEM_TEXT: Record<Problem, string> = {
   missing: "파일을 찾을 수 없습니다",
   unreadable: "파일을 읽지 못했습니다",
 };
+
+const PREVIEW_HINT = "미리보기 · ⇧⌘V 로 편집";
+const LARGE_TEXT_HINT = "읽기 전용 · 대용량 텍스트 뷰어";
 
 /** A panel on show that reads its file through tokens issued to `owner`; closing it revokes them. */
 interface TokenPanel {
@@ -38,6 +43,10 @@ export interface PaneHost {
   readonly backend: Backend;
   readonly registry: Registry;
   readonly theme: ThemeManager;
+  /** The window's panes, left to right. */
+  readonly panes: readonly Pane[];
+  /** The pane the keys, the menu and the status bar go to. */
+  readonly focused: Pane;
   /** The status bar while it speaks for `pane` (the focused pane), else null. */
   statusOf(pane: Pane): StatusBar | null;
   /** `pane` now shows `doc`, or nothing: the memo list and the status bar's language follow. */
@@ -89,11 +98,6 @@ export class Pane {
     const open = this.panel;
     if (!open || !(open.host instanceof LargeTextViewer)) return null;
     return { doc: open.doc, viewer: open.host, owner: open.owner };
-  }
-
-  /** The tab the panel on show belongs to, if one is on show. */
-  get panelDoc(): Doc | null {
-    return this.panel?.doc ?? null;
   }
 
   async activate(doc: Doc): Promise<void> {
@@ -151,12 +155,12 @@ export class Pane {
         this.openViewer(doc, preview, state.doc.toString());
         status?.setPosition(null);
         // A notice of the document (a restored draft) is not to be hidden by the mode's hint.
-        if (!doc.notice) status?.setMessage("미리보기 · ⇧⌘V 로 편집");
+        if (!doc.notice) status?.setMessage(PREVIEW_HINT);
         return;
       }
       // The language may have changed under a preview (detection on leaving), taking its viewer.
       doc.mode = "edit";
-      this.surface.showEditor(state, doc.scrollAnchor);
+      this.surface.showEditor(state, doc.scrollAnchor, this.host.focused === this);
       this.markPainted(doc);
       status?.setPosition(this.view.state);
       return;
@@ -177,11 +181,48 @@ export class Pane {
   showEmpty(): void {
     this.closePanel();
     this.surface.banner.hide();
-    this.surface.showEmpty();
+    this.showEmptyText();
     this.host.showing(this, null);
     const status = this.host.statusOf(this);
     status?.setPosition(null);
     status?.setMessage("");
+  }
+
+  /** The placeholder of a pane with no tabs, whose sentence depends on whether the window has
+   * other panes. */
+  showEmptyText(): void {
+    this.surface.showEmpty(this.host.panes.length > 1 ? EMPTY_PANE : undefined);
+  }
+
+  /** The status bar has just come to speak for this pane: it shows what `show` put there. */
+  showStatus(): void {
+    const doc = this.tabs.active;
+    this.host.showing(this, doc);
+    const status = this.host.statusOf(this);
+    if (!status) return;
+    status.setPosition(doc && this.surface.showsEditor ? this.view.state : null);
+    let message = doc?.notice ?? "";
+    if (doc && !message && this.panel)
+      message = this.largeText ? LARGE_TEXT_HINT : doc.mode === "preview" ? PREVIEW_HINT : "";
+    status.setMessage(message);
+  }
+
+  /** Takes `doc` out of this pane, open as it is: its panel closes, the tab next to it (or
+   * nothing) is shown when it was the active one, and the tab bar is drawn again. What closing a
+   * tab or moving it elsewhere does here. The part up to showing the next tab is done by the
+   * time this returns its promise. */
+  async detach(doc: Doc): Promise<void> {
+    const wasActive = doc === this.tabs.active;
+    if (this.panel?.doc === doc) this.closePanel();
+    const next = this.tabs.remove(doc);
+    if (wasActive) {
+      if (next) await this.activate(next);
+      else {
+        this.host.syncHighlightVisibility();
+        this.showEmpty();
+      }
+    }
+    this.renderTabs();
   }
 
   /** The view holds the live state of the active tab; keep where it is scrolled to. */
@@ -336,7 +377,7 @@ export class Pane {
       this.panel = { doc, owner, host: viewer };
       this.surface.showPanel(viewer.el);
       this.markPainted(doc);
-      this.host.statusOf(this)?.setMessage("읽기 전용 · 대용량 텍스트 뷰어");
+      this.host.statusOf(this)?.setMessage(LARGE_TEXT_HINT);
       this.takePendingLine(doc);
     } catch (error) {
       // The viewer is not coming: the line must not wait for the next time the tab opens.

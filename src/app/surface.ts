@@ -35,13 +35,14 @@ export class Surface {
     return !this.editorHost.hidden;
   }
 
-  showEditor(state: EditorState, scrollAnchor: number): void {
+  /** `focus`: false for a pane other than the focused one, which must not take the keys. */
+  showEditor(state: EditorState, scrollAnchor: number, focus = true): void {
     this.only(this.editorHost);
     this.view.setState(state);
     const anchor = Math.min(scrollAnchor, state.doc.length);
     this.view.dispatch({ effects: EditorView.scrollIntoView(anchor, { y: "start" }) });
     this.view.requestMeasure();
-    this.view.focus();
+    if (focus) this.view.focus();
   }
 
   /** The tab on show was read again: its new state, scrolled to `scrollAnchor`, without taking
@@ -74,8 +75,8 @@ export class Surface {
     this.showPlaceholder("");
   }
 
-  showEmpty(): void {
-    this.showPlaceholder("⌘N 으로 새 메모를 만드세요");
+  showEmpty(text = "⌘N 으로 새 메모를 만드세요"): void {
+    this.showPlaceholder(text);
   }
 
   private only(shown: HTMLElement): void {

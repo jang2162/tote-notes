@@ -45,7 +45,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const tabs = new Tabs();
   const sync = new SessionSync(
     backend,
-    () => [{ tabs }],
+    () => ({ panes: [{ tabs }], widths: [1], focusedPane: 0 }),
     "device-1",
     (id) => infos.get(id),
     (info) => new MemoDoc(host, info),
@@ -56,7 +56,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
 
 describe("SessionSync.restore", () => {
   it("brings back the scroll anchor, selection, mode and language of each tab", async () => {
-    const { tabs, sync } = setup(
+    const { sync } = setup(
       {
         version: 1,
         activeTab: 1,
@@ -73,17 +73,17 @@ describe("SessionSync.restore", () => {
       },
       { a: fakeMemo("가.md", "x".repeat(100)) },
     );
-    const active = await sync.restore();
-    expect(tabs.list.map((d) => d.kind)).toEqual(["memo", "external"]);
-    expect(tabs.list[0].scrollAnchor).toBe(40);
-    expect(tabs.list[0].mode).toBe("preview");
-    expect(tabs.list[1].restoreSelection).toEqual({ ranges: [{ anchor: 2, head: 2 }], main: 0 });
-    expect(tabs.list[1].language).toBe("python");
-    expect(active).toBe(tabs.list[1]);
+    const [{ tabs, active }] = (await sync.restore()).panes;
+    expect(tabs.map((d) => d.kind)).toEqual(["memo", "external"]);
+    expect(tabs[0].scrollAnchor).toBe(40);
+    expect(tabs[0].mode).toBe("preview");
+    expect(tabs[1].restoreSelection).toEqual({ ranges: [{ anchor: 2, head: 2 }], main: 0 });
+    expect(tabs[1].language).toBe("python");
+    expect(active).toBe(tabs[1]);
   });
 
   it("drops a memo the list no longer has and an external file of another device", async () => {
-    const { tabs, sync } = setup(
+    const { sync } = setup(
       {
         version: 1,
         activeTab: 0,
@@ -95,21 +95,21 @@ describe("SessionSync.restore", () => {
       },
       { a: fakeMemo("가.md", "") },
     );
-    const active = await sync.restore();
-    expect(tabs.list.map((d) => (d as MemoDoc).info?.id)).toEqual(["a"]);
+    const [{ tabs, active }] = (await sync.restore()).panes;
+    expect(tabs.map((d) => (d as MemoDoc).info?.id)).toEqual(["a"]);
     // The active tab was dropped: the last tab that is left is shown.
-    expect(active).toBe(tabs.list[0]);
+    expect(active).toBe(tabs[0]);
   });
 
-  it("brings back the tabs of the first pane of a version 2 window", async () => {
-    const { tabs, sync } = setup(
+  it("brings back every pane of a version 2 window with its width and the focus", async () => {
+    const { sync } = setup(
       {
         version: 2,
         windows: [
           {
             panes: [
-              { tabs: [{ kind: "memo", memoId: "a" }], activeTab: 0, width: 0.5 },
-              { tabs: [{ kind: "memo", memoId: "b" }], activeTab: 0, width: 0.5 },
+              { tabs: [{ kind: "memo", memoId: "a" }], activeTab: 0, width: 0.25 },
+              { tabs: [{ kind: "memo", memoId: "b" }], activeTab: 0, width: 0.75 },
             ],
             focusedPane: 1,
           },
@@ -117,13 +117,18 @@ describe("SessionSync.restore", () => {
       },
       { a: fakeMemo("가.md", ""), b: fakeMemo("나.md", "") },
     );
-    const active = await sync.restore();
-    expect(tabs.list.map((d) => (d as MemoDoc).info?.id)).toEqual(["a"]);
-    expect(active).toBe(tabs.list[0]);
+    const { panes, widths, focusedPane } = await sync.restore();
+    expect(panes.map(({ tabs }) => tabs.map((d) => (d as MemoDoc).info?.id))).toEqual([
+      ["a"],
+      ["b"],
+    ]);
+    expect(panes.map(({ tabs, active }) => active === tabs[0])).toEqual([true, true]);
+    expect(widths).toEqual([0.25, 0.75]);
+    expect(focusedPane).toBe(1);
   });
 
   it("opens the same memo once even if the session lists it twice", async () => {
-    const { tabs, sync } = setup(
+    const { sync } = setup(
       {
         version: 1,
         activeTab: 0,
@@ -134,12 +139,12 @@ describe("SessionSync.restore", () => {
       },
       { a: fakeMemo("가.md", "") },
     );
-    await sync.restore();
-    expect(tabs.list).toHaveLength(1);
+    const [{ tabs }] = (await sync.restore()).panes;
+    expect(tabs).toHaveLength(1);
   });
 
   it("opens every tab when their places cannot be claimed", async () => {
-    const { backend, tabs, sync } = setup(
+    const { backend, sync } = setup(
       {
         version: 1,
         activeTab: 1,
@@ -154,9 +159,9 @@ describe("SessionSync.restore", () => {
     backend.claimTabs = () => Promise.reject(failure);
     const logged = vi.spyOn(console, "error").mockImplementation(() => {});
     try {
-      const active = await sync.restore();
-      expect(tabs.list.map((d) => d.kind)).toEqual(["memo", "external"]);
-      expect(active).toBe(tabs.list[1]);
+      const [{ tabs, active }] = (await sync.restore()).panes;
+      expect(tabs.map((d) => d.kind)).toEqual(["memo", "external"]);
+      expect(active).toBe(tabs[1]);
       expect(logged).toHaveBeenCalledWith(failure);
     } finally {
       logged.mockRestore();
@@ -186,7 +191,7 @@ describe("conflict-kept banner in the session", () => {
   });
 
   it("keeps conflictKept in the session while another banner is up", async () => {
-    const { tabs, sync } = setup(
+    const { sync } = setup(
       {
         version: 1,
         activeTab: 0,
@@ -194,8 +199,7 @@ describe("conflict-kept banner in the session", () => {
       },
       { a: fakeMemo("장보기.md", "다른 앱"), n: fakeMemo("장보기 2.md", "내 글") },
     );
-    await sync.restore();
-    const doc = tabs.list[0] as MemoDoc;
+    const doc = (await sync.restore()).panes[0].tabs[0] as MemoDoc;
     await doc.ensureLoaded();
     await doc.onOutside({ kind: "removed", id: "n", file: "장보기 2.md" });
     expect(doc.banner?.kind).toBe("deleted");
@@ -203,7 +207,7 @@ describe("conflict-kept banner in the session", () => {
   });
 
   it("brings back the conflict-kept banner", async () => {
-    const { tabs, sync, opened } = setup(
+    const { sync, opened } = setup(
       {
         version: 1,
         activeTab: 0,
@@ -211,8 +215,7 @@ describe("conflict-kept banner in the session", () => {
       },
       { a: fakeMemo("장보기.md", "다른 앱"), n: fakeMemo("장보기 2.md", "내 글") },
     );
-    await sync.restore();
-    const doc = tabs.list[0] as MemoDoc;
+    const doc = (await sync.restore()).panes[0].tabs[0] as MemoDoc;
     expect(doc.banner?.kind).toBe("info");
     expect(doc.banner?.text).toBe(conflictKeptText("장보기"));
     expect(doc.banner?.actions.map((a) => a.label)).toEqual(["원래 메모 열기", "닫기"]);
@@ -226,7 +229,7 @@ describe("conflict-kept banner in the session", () => {
   });
 
   it("names no memo when the original is not in the list, and offers only 닫기", async () => {
-    const { tabs, sync } = setup(
+    const { sync } = setup(
       {
         version: 1,
         activeTab: 0,
@@ -234,8 +237,7 @@ describe("conflict-kept banner in the session", () => {
       },
       { n: fakeMemo("장보기 2.md", "내 글") },
     );
-    await sync.restore();
-    const doc = tabs.list[0] as MemoDoc;
+    const doc = (await sync.restore()).panes[0].tabs[0] as MemoDoc;
     expect(doc.banner?.text).toBe(conflictKeptText(null));
     expect(doc.banner?.actions.map((a) => a.label)).toEqual(["닫기"]);
   });

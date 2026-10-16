@@ -93,6 +93,20 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
             Some("CmdOrCtrl+Shift+F"),
         )?)
         .separator()
+        .item(&item(app, "split-pane", "칸 나누기", Some("CmdOrCtrl+\\"))?)
+        .item(&item(
+            app,
+            "focus-pane-left",
+            "왼쪽 칸으로",
+            Some("Alt+CmdOrCtrl+Left"),
+        )?)
+        .item(&item(
+            app,
+            "focus-pane-right",
+            "오른쪽 칸으로",
+            Some("Alt+CmdOrCtrl+Right"),
+        )?)
+        .separator()
         .item(&item(
             app,
             "next-tab",

@@ -23,44 +23,67 @@ export function sessionTab(doc: Doc, deviceId: string): SessionTab {
   return tab;
 }
 
-/** Reads the session into the window's panes and builds the session from them. Only the first pane
- * is read and written: a window has one. */
+/** The window a session is built from. */
+export interface SessionLayout {
+  /** Left to right. */
+  readonly panes: readonly { readonly tabs: Tabs }[];
+  /** The panes' shares of the editing area's width. */
+  readonly widths: readonly number[];
+  readonly focusedPane: number;
+}
+
+/** What `restore` brings back for the window to lay out. */
+export interface RestoredLayout {
+  /** Left to right, at least one: each pane's tabs in order and the one to activate — the pane's
+   * active tab, else its last one, else null. */
+  panes: { tabs: Doc[]; active: Doc | null }[];
+  /** Shares summing to 1, one per pane. */
+  widths: number[];
+  focusedPane: number;
+}
+
+/** Reads the window's session into tabs for its panes and builds the session from the panes. */
 export class SessionSync {
   constructor(
     private readonly backend: Backend,
-    /** The window's panes, left to right. */
-    private readonly panes: () => readonly { readonly tabs: Tabs }[],
+    private readonly layout: () => SessionLayout,
     private readonly deviceId: string,
     private readonly memoInfo: (id: string) => MemoInfo | undefined,
     private readonly makeMemo: (info: MemoInfo) => MemoDoc,
     private readonly makeExternal: (path: string) => ExternalDoc,
   ) {}
 
-  /** Fills the first pane's tabs (which must be empty) from the session's first pane and returns
-   * the tab to activate: the pane's active tab, else the last one, else null. A tab another window
-   * holds is left out; the places are claimed in one call, so fifty tabs are not fifty round
-   * trips. Nothing is read from disk here (spec 「세션」 — lazy). */
-  async restore(): Promise<Doc | null> {
-    const [pane] = parseWindowSession(parseJson(await this.backend.readWindowLayout())).panes;
-    const { tabs } = this.panes()[0];
-    const found: { doc: Doc; tab: SessionTab; index: number }[] = [];
-    for (const [index, tab] of pane.tabs.entries()) {
-      const doc = this.docFor(tab, found);
-      if (doc) found.push({ doc, tab, index });
+  /** The tabs of the session's panes, made but not yet in any pane. A tab listed twice is kept
+   * where it comes first, the panes read left to right; a tab another window holds is left out.
+   * The places are claimed in one call, so fifty tabs are not fifty round trips. Nothing is read
+   * from disk here (spec 「세션」 — lazy). A pane whose tabs are all left out comes back empty. */
+  async restore(): Promise<RestoredLayout> {
+    const window = parseWindowSession(parseJson(await this.backend.readWindowLayout()));
+    const found: { doc: Doc; tab: SessionTab; pane: number; index: number }[] = [];
+    for (const [pane, { tabs }] of window.panes.entries()) {
+      for (const [index, tab] of tabs.entries()) {
+        const doc = this.docFor(tab, found);
+        if (doc) found.push({ doc, tab, pane, index });
+      }
     }
     const claims = found.length ? await this.claim(found.map(({ doc }) => doc.tabRef)) : [];
-    let active: Doc | null = null;
-    for (const [at, { doc, tab, index }] of found.entries()) {
+    const panes = window.panes.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
+    for (const [at, { doc, tab, pane, index }] of found.entries()) {
       if (!claims[at]) continue;
       doc.restoreSelection = tab.selection;
       doc.scrollAnchor = tab.scrollAnchor ?? 0;
       doc.mode = tab.mode ?? "edit";
       if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
         doc.keepConflict(tab.conflictKept.memoId);
-      tabs.push(doc);
-      if (index === pane.activeTab) active = doc;
+      panes[pane].tabs.push(doc);
+      if (index === window.panes[pane].activeTab) panes[pane].active = doc;
     }
-    return active ?? tabs.list.at(-1) ?? null;
+    for (const pane of panes) pane.active ??= pane.tabs.at(-1) ?? null;
+    return {
+      panes,
+      widths: window.panes.map((pane) => pane.width),
+      focusedPane: window.focusedPane,
+    };
   }
 
   /** The places of `refs`; when they cannot be asked for, all are taken as given: the tabs come
@@ -76,23 +99,22 @@ export class SessionSync {
 
   async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
-    const { tabs } = this.panes()[0];
+    const { panes, widths, focusedPane } = this.layout();
     const window: WindowSession = {
-      panes: [
-        {
-          tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
-          activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,
-          width: 1,
-        },
-      ],
-      focusedPane: 0,
+      panes: panes.map(({ tabs }, index) => ({
+        tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
+        activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,
+        width: widths[index],
+      })),
+      focusedPane,
     };
     const frame = await this.backend.windowFrame();
     if (frame) window.frame = frame;
     return window;
   }
 
-  /** The tab for `tab`, or null for one already among `found` or not to be shown here. */
+  /** The tab for `tab`, or null for one already among `found` (in any pane) or not to be shown
+   * here. */
   private docFor(tab: SessionTab, found: readonly { doc: Doc }[]): Doc | null {
     const open = (same: (doc: Doc) => boolean) => found.some(({ doc }) => same(doc));
     if (tab.kind === "memo") {

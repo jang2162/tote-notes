@@ -268,12 +268,36 @@ body {
   min-height: 0;
 }
 
+/* `flex-grow` is the pane's share of the width (set by the controller); a window narrower than the
+ * panes' minimum shrinks them by their shares, so `min-width` stays 0. */
 .pane {
   display: grid;
-  flex: 1;
+  flex: 1 1 0;
   grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
+}
+
+.pane-divider {
+  position: relative;
+  z-index: 1;
+  flex: none;
+  width: 1px;
+  background: var(--border);
+  cursor: col-resize;
+  touch-action: none;
+}
+
+/* A wider grip than the line it draws. */
+.pane-divider::after {
+  content: "";
+  position: absolute;
+  inset: 0 -3px;
+}
+
+/* With panes side by side, the focused one's active tab is marked. */
+.panes.split .pane.focused .tab.active {
+  box-shadow: inset 0 2px 0 var(--accent);
 }
 
 .tabbar {
