@@ -14,6 +14,7 @@ test("previous versions list, preview and restore undoably", async ({ page }) =>
       a: [
         { snapshot: "20261012-100000", file: "회의.md", text: "v1" },
         { snapshot: "20261012-101000", file: "회의.md", text: "v2" },
+        { snapshot: "20261012-102000", file: "회의.md", text: "v2" },
       ],
     },
   });
@@ -22,7 +23,7 @@ test("previous versions list, preview and restore undoably", async ({ page }) =>
 
   await menu(page, "versions");
   const rows = page.locator(".version-list li");
-  await expect(rows).toHaveText(["2026-10-12 10:10:00", "2026-10-12 10:00:00"]);
+  await expect(rows).toHaveText(["2026-10-12 10:10:00 – 10:20:00", "2026-10-12 10:00:00"]);
   const preview = page.locator(".version-preview");
   await expect(preview).toHaveText("v2");
   await rows.nth(1).click();

@@ -103,8 +103,8 @@ export interface FakeData {
   failListMemos?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
   failWrites?: number;
-  /** Memo ID → its versions in the backups, in any order. `listVersions` lists them newest first
-   * and does not compare neighbours: a seed lists only versions that differ. Absent in old seeds. */
+  /** Memo ID → its copies in the backups, in any order. `listVersions` lists them newest first and
+   * folds a run of equal texts into one version. Absent in old seeds. */
   backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
   /** `revealBackups` calls. Absent in old seeds. */
   revealed?: number;
@@ -539,13 +539,23 @@ export class FakeBackend implements Backend {
   }
 
   async listVersions(id: string): Promise<Version[]> {
-    const versions = [...(this.data.backups?.[id] ?? [])].sort((a, b) =>
+    const copies = [...(this.data.backups?.[id] ?? [])].sort((a, b) =>
       a.snapshot < b.snapshot ? 1 : a.snapshot > b.snapshot ? -1 : 0,
     );
+    const runs: { snapshot: string; until: string; file: string; text: string }[] = [];
+    for (const copy of copies) {
+      const run = runs.at(-1);
+      if (run && run.text === copy.text) {
+        run.snapshot = copy.snapshot;
+        run.file = copy.file;
+      } else {
+        runs.push({ ...copy, until: copy.snapshot });
+      }
+    }
     return Promise.all(
-      versions.map(async ({ snapshot, file, text }) => {
+      runs.map(async ({ snapshot, until, file, text }) => {
         const size = new TextEncoder().encode(text).length;
-        return { snapshot, file, size, sha256: await sha256(text) };
+        return { snapshot, until, file, size, sha256: await sha256(text) };
       }),
     );
   }

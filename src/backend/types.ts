@@ -207,9 +207,11 @@ export interface WorkspaceListItem {
 }
 
 /** A memo's copy in a backup snapshot (`Version` in src-tauri/src/backup/versions.rs).
- * `snapshot` is the folder name, `YYYYMMDD-HHMMSS` in local time. */
+ * `snapshot` is the folder name, `YYYYMMDD-HHMMSS` in local time. `until` is the last snapshot
+ * holding the same text; it equals `snapshot` when the text was backed up once. */
 export interface Version {
   snapshot: string;
+  until: string;
   file: string;
   size: number;
   sha256: string;

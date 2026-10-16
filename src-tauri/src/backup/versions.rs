@@ -14,10 +14,12 @@ use super::{BackupDir, SnapshotName};
 use crate::workspace::index::MemoEntry;
 use crate::workspace::TOTE_DIR;
 
-/// One earlier version of a memo: its copy in a snapshot.
+/// One earlier version of a memo: its copy in a snapshot. Equal copies in a row are one version
+/// from `snapshot`, where the text was first backed up, to `until`, where it was last.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct Version {
     snapshot: String,
+    until: String,
     file: String,
     size: u64,
     sha256: String,
@@ -29,27 +31,28 @@ struct SnapshotIndex {
     memos: BTreeMap<String, MemoEntry>,
 }
 
-/// The versions of memo `memo_id`, newest first. Only where the text differs from the next older
-/// snapshot holding the memo: of a run of equal copies the oldest stays, the moment that text was
-/// first backed up. The newest is not compared with the workspace — it is listed even when the
-/// memo still reads the same.
+/// The versions of memo `memo_id`, newest first. A run of equal copies in neighbouring snapshots is
+/// one version: the oldest copy stands for it and `until` is the newest snapshot of the run. The
+/// newest is not compared with the workspace — it is listed even when the memo still reads the same.
 pub fn list(dir: &BackupDir, memo_id: &str) -> io::Result<Vec<Version>> {
-    let found: Vec<Version> = dir
+    let mut versions: Vec<Version> = Vec::new();
+    for found in dir
         .snapshots()?
         .into_iter()
         .rev()
         .filter_map(|name| version_in(dir, name, memo_id))
-        .collect();
-    Ok(found
-        .iter()
-        .enumerate()
-        .filter(|(i, version)| {
-            found
-                .get(i + 1)
-                .is_none_or(|older| older.sha256 != version.sha256)
-        })
-        .map(|(_, version)| version.clone())
-        .collect())
+    {
+        match versions.last_mut() {
+            Some(run) if run.sha256 == found.sha256 => {
+                *run = Version {
+                    until: run.until.clone(),
+                    ..found
+                };
+            }
+            _ => versions.push(found),
+        }
+    }
+    Ok(versions)
 }
 
 /// The memo's copy in snapshot `name`. A snapshot without it — taken before the memo existed, or
@@ -62,6 +65,7 @@ fn version_in(dir: &BackupDir, name: SnapshotName, memo_id: &str) -> Option<Vers
     let record = manifest.files.get(&file)?;
     Some(Version {
         snapshot: name.format(),
+        until: name.format(),
         size: record.size,
         sha256: record.sha256.clone(),
         file,
@@ -161,9 +165,10 @@ mod tests {
         filetime::set_file_mtime(path, FileTime::from_unix_time(unix_secs, 0)).unwrap();
     }
 
-    fn version(snapshot: &str, file: &str, text: &str) -> Version {
+    fn version(snapshot: &str, until: &str, file: &str, text: &str) -> Version {
         Version {
             snapshot: snapshot.into(),
+            until: until.into(),
             file: file.into(),
             size: text.len() as u64,
             sha256: content_hash(text.as_bytes()),
@@ -187,8 +192,8 @@ mod tests {
         assert_eq!(
             list(&s.dir, &memo.id).unwrap(),
             vec![
-                version("20261012-102000", "회의.md", "내용 2"),
-                version("20261012-100000", "a.md", "내용 1"),
+                version("20261012-102000", "20261012-103000", "회의.md", "내용 2"),
+                version("20261012-100000", "20261012-101000", "a.md", "내용 1"),
             ]
         );
         assert_eq!(
@@ -211,8 +216,8 @@ mod tests {
         assert_eq!(
             listed,
             vec![
-                version("20261012-101000", "a.md", "둘째"),
-                version("20261012-100000", "a.md", "하나"),
+                version("20261012-101000", "20261012-101000", "a.md", "둘째"),
+                version("20261012-100000", "20261012-100000", "a.md", "하나"),
             ]
         );
         assert_eq!(

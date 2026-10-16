@@ -2,10 +2,19 @@ import type { Version } from "../backend/types";
 import { modal } from "./dialogs";
 import { h } from "./dom";
 
-/** `20261012-153000` → `2026-10-12 15:30:00`: the snapshot's folder name is its local time. */
-export function versionLabel(snapshot: string): string {
-  const m = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/.exec(snapshot);
-  return m ? `${m[1]}-${m[2]}-${m[3]} ${m[4]}:${m[5]}:${m[6]}` : snapshot;
+const SNAPSHOT_NAME = /^(\d{4})(\d{2})(\d{2})-(\d{2})(\d{2})(\d{2})$/;
+
+/** `20261012-153000` → `2026-10-12 15:30:00`: the snapshot's folder name is its local time. A run
+ * shows both ends, the date only once when both fall on one day. */
+export function versionLabel(version: Pick<Version, "snapshot" | "until">): string {
+  const from = SNAPSHOT_NAME.exec(version.snapshot);
+  const to = SNAPSHOT_NAME.exec(version.until);
+  if (!from || !to) return version.snapshot;
+  const date = (m: RegExpExecArray) => `${m[1]}-${m[2]}-${m[3]}`;
+  const time = (m: RegExpExecArray) => `${m[4]}:${m[5]}:${m[6]}`;
+  const start = `${date(from)} ${time(from)}`;
+  if (version.until === version.snapshot) return start;
+  return date(from) === date(to) ? `${start} – ${time(to)}` : `${start} – ${date(to)} ${time(to)}`;
 }
 
 /** 「이전 버전」: the versions on the left, newest first and the newest shown, the picked one's text
@@ -41,7 +50,7 @@ export function openVersions(
       }
     };
     const rows = versions.map((version) => {
-      const row = h("li", { textContent: versionLabel(version.snapshot), title: version.file });
+      const row = h("li", { textContent: versionLabel(version), title: version.file });
       row.addEventListener("click", () => void pick(version, row));
       return row;
     });
