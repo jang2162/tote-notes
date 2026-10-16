@@ -14,7 +14,7 @@ pub mod workspace;
 use std::collections::HashSet;
 use std::io;
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::time::{Duration, Instant};
+use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager, RunEvent};
 
@@ -210,7 +210,7 @@ fn start_backups(app: AppHandle) {
                     Err(err) if err.kind() == io::ErrorKind::AlreadyExists => {}
                     Err(err) => {
                         eprintln!("tote: backup of {label} failed: {err}");
-                        if notices.failed(&label, Instant::now()) {
+                        if notices.failed(&label, SystemTime::now()) {
                             core.push_pending(
                                 &label,
                                 PendingOpen::Notice {
@@ -227,9 +227,8 @@ fn start_backups(app: AppHandle) {
                 }
             }
             if periodic {
-                // A round that ran long or a machine that slept leaves the mark in the past; start
-                // over from now instead of firing the missed rounds back to back.
-                deadline = (deadline + interval).max(Instant::now());
+                // After a long round, count one interval from now.
+                deadline = Instant::now() + interval;
             }
         }
     });

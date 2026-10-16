@@ -204,6 +204,33 @@ mod tests {
     }
 
     #[test]
+    fn a_run_of_three_and_a_return_are_listed_apart() {
+        let mut s = setup();
+        let memo = s.ws.import_memo("a.md", "A".as_bytes()).unwrap();
+        snap(&s, "20261012-100000");
+        s.ws.write_memo(&memo.id, "B".as_bytes()).unwrap();
+        touch(&s.ws.root().join("a.md"), 2_000_000_000);
+        snap(&s, "20261012-101000");
+        // An identical workspace makes no snapshot; another memo changing makes each of these.
+        s.ws.import_memo("b.md", b"1").unwrap();
+        snap(&s, "20261012-102000");
+        s.ws.import_memo("c.md", b"2").unwrap();
+        snap(&s, "20261012-103000");
+        s.ws.write_memo(&memo.id, "A".as_bytes()).unwrap();
+        touch(&s.ws.root().join("a.md"), 2_000_000_100);
+        snap(&s, "20261012-104000");
+
+        assert_eq!(
+            list(&s.dir, &memo.id).unwrap(),
+            vec![
+                version("20261012-104000", "20261012-104000", "a.md", "A"),
+                version("20261012-101000", "20261012-103000", "a.md", "B"),
+                version("20261012-100000", "20261012-100000", "a.md", "A"),
+            ]
+        );
+    }
+
+    #[test]
     fn the_newest_snapshot_is_listed_even_if_equal_to_the_workspace() {
         let mut s = setup();
         let memo = s.ws.import_memo("a.md", "하나".as_bytes()).unwrap();
