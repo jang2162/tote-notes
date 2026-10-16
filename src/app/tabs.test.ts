@@ -11,7 +11,7 @@ function host(): DocHost {
   return {
     backend,
     writes: new WriteScheduler(() => {}),
-    view: { state: EditorState.create(), dispatch: () => {} },
+    viewOf: () => ({ state: EditorState.create(), dispatch: () => {} }),
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,

@@ -1,4 +1,4 @@
-import type { Backend, MemoInfo } from "../backend/types";
+import type { Backend, MemoInfo, TabRef } from "../backend/types";
 import { parseWindowSession, type SessionTab, type WindowSession } from "../core/session";
 import { ExternalDoc, MemoDoc, type Doc } from "./docs";
 import type { Tabs } from "./tabs";
@@ -23,34 +23,32 @@ export function sessionTab(doc: Doc, deviceId: string): SessionTab {
   return tab;
 }
 
-/** Reads the session into `tabs` and builds the session from them. */
+/** Reads the session into the window's panes and builds the session from them. Only the first pane
+ * is read and written: a window has one. */
 export class SessionSync {
   constructor(
     private readonly backend: Backend,
-    private readonly tabs: Tabs,
+    /** The window's panes, left to right. */
+    private readonly panes: () => readonly { readonly tabs: Tabs }[],
     private readonly deviceId: string,
     private readonly memoInfo: (id: string) => MemoInfo | undefined,
     private readonly makeMemo: (info: MemoInfo) => MemoDoc,
     private readonly makeExternal: (path: string) => ExternalDoc,
   ) {}
 
-  /** Fills `tabs` (which must be empty) from the window's first pane and returns the tab to
-   * activate: the pane's active tab, else the last one, else null. A tab another window holds is
-   * left out; the places are claimed in one call, so fifty tabs are not fifty round trips. Nothing
-   * is read from disk here (spec 「세션」 — lazy). */
+  /** Fills the first pane's tabs (which must be empty) from the session's first pane and returns
+   * the tab to activate: the pane's active tab, else the last one, else null. A tab another window
+   * holds is left out; the places are claimed in one call, so fifty tabs are not fifty round
+   * trips. Nothing is read from disk here (spec 「세션」 — lazy). */
   async restore(): Promise<Doc | null> {
     const [pane] = parseWindowSession(parseJson(await this.backend.readWindowLayout())).panes;
+    const { tabs } = this.panes()[0];
     const found: { doc: Doc; tab: SessionTab; index: number }[] = [];
     for (const [index, tab] of pane.tabs.entries()) {
       const doc = this.docFor(tab, found);
       if (doc) found.push({ doc, tab, index });
     }
-    const claims = found.length
-      ? await this.backend.claimTabs(
-          found.map(({ doc }) => doc.tabRef),
-          false,
-        )
-      : [];
+    const claims = found.length ? await this.claim(found.map(({ doc }) => doc.tabRef)) : [];
     let active: Doc | null = null;
     for (const [at, { doc, tab, index }] of found.entries()) {
       if (!claims[at]) continue;
@@ -59,19 +57,31 @@ export class SessionSync {
       doc.mode = tab.mode ?? "edit";
       if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
         doc.keepConflict(tab.conflictKept.memoId);
-      this.tabs.push(doc);
+      tabs.push(doc);
       if (index === pane.activeTab) active = doc;
     }
-    return active ?? this.tabs.list.at(-1) ?? null;
+    return active ?? tabs.list.at(-1) ?? null;
+  }
+
+  /** The places of `refs`; when they cannot be asked for, all are taken as given: the tabs come
+   * back here rather than not at all, and the console says why one may be open twice. */
+  private async claim(refs: TabRef[]): Promise<boolean[]> {
+    try {
+      return await this.backend.claimTabs(refs, false);
+    } catch (error) {
+      console.error(error);
+      return refs.map(() => true);
+    }
   }
 
   async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
+    const { tabs } = this.panes()[0];
     const window: WindowSession = {
       panes: [
         {
-          tabs: this.tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
-          activeTab: this.tabs.active ? this.tabs.indexOf(this.tabs.active) : -1,
+          tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
+          activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,
           width: 1,
         },
       ],

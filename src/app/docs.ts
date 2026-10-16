@@ -89,8 +89,9 @@ export type CloseAsk = () => Promise<"save" | "discard" | "cancel">;
 export interface DocHost {
   backend: Backend;
   writes: WriteScheduler;
-  /** The window's editor. It shows the active tab's state, and its listener calls `doc.update`. */
-  view: Pick<EditorView, "state" | "dispatch">;
+  /** The editor of the pane `doc` is in. It shows that pane's active tab's state, and its listener
+   * calls `doc.update`. */
+  viewOf(doc: Doc): Pick<EditorView, "state" | "dispatch">;
   /** Editor extensions for a state of `doc` holding `text`, including the listener that calls
    * `doc.update`. */
   extensions(doc: Doc, options: { wrap: boolean; text: string }): Extension[];
@@ -628,8 +629,9 @@ export class MemoDoc extends Doc {
       // An undo step of its own: typing just before or after must not join it.
       annotations: isolateHistory.of("full"),
     };
-    if (this.host.view.state === start) {
-      this.host.view.dispatch(spec);
+    const view = this.host.viewOf(this);
+    if (view.state === start) {
+      view.dispatch(spec);
       return;
     }
     const tr = start.update(spec);

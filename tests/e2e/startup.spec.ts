@@ -64,6 +64,15 @@ test("a restart writes the session as version 2", async ({ page }) => {
   );
 });
 
+test("the window has one pane holding the tab bar and the editor", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째") }, session: twoTabSession });
+  const pane = page.locator("main.main > .panes > .pane");
+  await expect(pane).toHaveCount(1);
+  await expect(pane.locator(".tabbar")).toHaveCount(1);
+  await expect(pane.locator(".cm-editor")).toHaveCount(1);
+  await expect(page.locator("main.main > .statusbar")).toHaveCount(1);
+});
+
 test("a CLI failure shows in the status bar", async ({ page }) => {
   await start(page);
   await page.evaluate(() => window.__tote.backend.notice("워크스페이스가 없습니다: 없는곳"));

@@ -1,5 +1,5 @@
 import { EditorState } from "@codemirror/state";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "../backend/fake";
 import type { MemoInfo } from "../backend/types";
@@ -22,7 +22,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const host: DocHost = {
     backend,
     writes: new WriteScheduler(() => {}),
-    view: { state: EditorState.create(), dispatch: () => {} },
+    viewOf: () => ({ state: EditorState.create(), dispatch: () => {} }),
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,
@@ -45,7 +45,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const tabs = new Tabs();
   const sync = new SessionSync(
     backend,
-    tabs,
+    () => [{ tabs }],
     "device-1",
     (id) => infos.get(id),
     (info) => new MemoDoc(host, info),
@@ -137,6 +137,31 @@ describe("SessionSync.restore", () => {
     await sync.restore();
     expect(tabs.list).toHaveLength(1);
   });
+
+  it("opens every tab when their places cannot be claimed", async () => {
+    const { backend, tabs, sync } = setup(
+      {
+        version: 1,
+        activeTab: 1,
+        tabs: [
+          { kind: "memo", memoId: "a" },
+          { kind: "external", deviceId: "device-1", path: "/x/a.sh" },
+        ],
+      },
+      { a: fakeMemo("가.md", "") },
+    );
+    const failure = new Error("the places could not be claimed");
+    backend.claimTabs = () => Promise.reject(failure);
+    const logged = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const active = await sync.restore();
+      expect(tabs.list.map((d) => d.kind)).toEqual(["memo", "external"]);
+      expect(active).toBe(tabs.list[1]);
+      expect(logged).toHaveBeenCalledWith(failure);
+    } finally {
+      logged.mockRestore();
+    }
+  });
 });
 
 describe("conflict-kept banner in the session", () => {
@@ -224,7 +249,7 @@ describe("SessionSync.build and sessionTab", () => {
         {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
-          view: { state: EditorState.create(), dispatch: () => {} },
+          viewOf: () => ({ state: EditorState.create(), dispatch: () => {} }),
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,
@@ -242,7 +267,7 @@ describe("SessionSync.build and sessionTab", () => {
         {
           backend: new FakeBackend(),
           writes: new WriteScheduler(() => {}),
-          view: { state: EditorState.create(), dispatch: () => {} },
+          viewOf: () => ({ state: EditorState.create(), dispatch: () => {} }),
           extensions: () => [],
           languageConfig: async () => ({}),
           languageOf: () => undefined,

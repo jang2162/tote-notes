@@ -42,7 +42,7 @@ function setup(seed: Partial<FakeData> = {}) {
       throw error;
     }),
     // A state no document has: these documents are never on show.
-    view: { state: EditorState.create(), dispatch: () => {} },
+    viewOf: () => ({ state: EditorState.create(), dispatch: () => {} }),
     extensions: () => [],
     languageConfig: async () => ({}),
     languageOf: () => undefined,

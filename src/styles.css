@@ -257,7 +257,21 @@ body {
 
 .main {
   display: grid;
-  grid-template-rows: auto minmax(0, 1fr) auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+}
+
+.panes {
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+
+.pane {
+  display: grid;
+  flex: 1;
+  grid-template-rows: auto minmax(0, 1fr);
   min-width: 0;
   min-height: 0;
 }
