@@ -14,6 +14,11 @@ describe("detectLanguage", () => {
     expect(detectLanguage('<?xml version="1.0"?>\n<a/>', languages)?.id).toBe("xml");
   });
 
+  it("recognises a doctype whatever its case", () => {
+    expect(detectLanguage("<!DOCTYPE html>\n<p>", languages)?.id).toBe("html");
+    expect(detectLanguage("<!doctype html>\n<p>", languages)?.id).toBe("html");
+  });
+
   it("recognises whole-document JSON starting with { or [", () => {
     expect(detectLanguage('{"a": [1, 2]}', languages)?.id).toBe("json");
     expect(detectLanguage("  [1, 2, 3]\n", languages)?.id).toBe("json");

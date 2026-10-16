@@ -741,11 +741,7 @@ pub async fn search_workspace(
         // Only the list under the lock: a save or a watch batch waits for that, not the search.
         let (root, files) = {
             let mut workspace = lock(&workspace);
-            let files: Vec<(String, String)> = workspace
-                .list_memos()?
-                .into_iter()
-                .map(|memo| (memo.id, memo.file))
-                .collect();
+            let files = search::text_candidates(workspace.list_memos()?);
             (workspace.root().to_path_buf(), files)
         };
         let cancelled = || !core.workspace_search_is_live(&label, request_id);

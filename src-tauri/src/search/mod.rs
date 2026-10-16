@@ -19,6 +19,7 @@ use serde::Serialize;
 pub use crate::files::text::SearchError;
 use crate::files::text::TextQuery;
 use crate::persist::{is_binary, BINARY_PROBE_BYTES};
+use crate::workspace::{FileKind, MemoInfo};
 
 /// Bigger files are not opened (spec 「워크스페이스 검색」).
 pub const MAX_FILE_BYTES: u64 = 5 * 1024 * 1024;
@@ -74,6 +75,16 @@ pub struct Match {
     pub text: String,
     pub before: Vec<String>,
     pub after: Vec<String>,
+}
+
+/// The memos a search opens, as (memo ID, file name): text memos only. The kind comes from the
+/// extension, so a PDF or an image is never opened to look for a NUL byte.
+pub fn text_candidates(memos: impl IntoIterator<Item = MemoInfo>) -> Vec<(String, String)> {
+    memos
+        .into_iter()
+        .filter(|memo| memo.kind == FileKind::Text)
+        .map(|memo| (memo.id, memo.file))
+        .collect()
 }
 
 /// Searches `files` — (memo ID, file name) in `root` — and sends each file's matches to `emit`
@@ -305,6 +316,32 @@ mod tests {
     use std::sync::Mutex;
     use std::thread;
     use std::time::Duration;
+
+    fn info(id: &str, file: &str) -> MemoInfo {
+        MemoInfo {
+            id: id.to_string(),
+            file: file.to_string(),
+            auto_title: false,
+            language: None,
+            modified_ms: 0,
+            size: 0,
+            kind: crate::workspace::kind_for(file),
+        }
+    }
+
+    #[test]
+    fn only_text_memos_are_candidates() {
+        let memos = ["a.md", "b.pdf", "c.png", "d"]
+            .into_iter()
+            .map(|file| info(file.split('.').next().unwrap(), file));
+        assert_eq!(
+            text_candidates(memos),
+            vec![
+                ("a".to_string(), "a.md".to_string()),
+                ("d".to_string(), "d".to_string())
+            ]
+        );
+    }
 
     fn query(text: &str, case_sensitive: bool, regex: bool) -> SearchQuery {
         SearchQuery {

@@ -14,7 +14,8 @@ function firstLinePattern(source: string): RegExp | null {
   let pattern = patterns.get(source);
   if (pattern === undefined) {
     try {
-      pattern = new RegExp(source);
+      // Case-insensitive like VS Code's `firstLine`, so `<!doctype html>` matches too.
+      pattern = new RegExp(source, "i");
     } catch {
       pattern = null;
     }
