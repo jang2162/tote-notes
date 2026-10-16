@@ -1,6 +1,7 @@
 import type { Page } from "@playwright/test";
 
 import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
+import { parseSessionFile, type PaneSession } from "../../src/core/session";
 
 /** Opens the app on the fake backend seeded with `patch`. The seed is written once per test, so
  * reloading keeps the fake's data — that is how these specs simulate a restart. */
@@ -18,6 +19,16 @@ export async function start(page: Page, patch: Partial<FakeData> = {}): Promise<
 
 export async function ready(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__tote?.ready === true);
+}
+
+/** Pane `pane` of window `window` in the fake's session file, as the app reads it back; an empty
+ * pane while the file has none, so a poll waits for it. */
+export async function sessionPane(page: Page, window = 0, pane = 0): Promise<PaneSession> {
+  // `self`: the browser's window, which the `window` parameter hides here.
+  const text = await page.evaluate(() => self.__tote.backend.data.session);
+  return (
+    parseSessionFile(text).windows[window]?.panes[pane] ?? { tabs: [], activeTab: -1, width: 1 }
+  );
 }
 
 /** What the native menu would send. */

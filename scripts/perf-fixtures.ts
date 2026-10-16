@@ -143,6 +143,7 @@ export function writeRestoreWorkspace(root: string, deviceId: string): void {
   mkdirSync(join(root, ".tote/sessions"), { recursive: true });
   writeFileSync(
     join(root, ".tote/sessions", `${deviceId}.json`),
+    // Version 1 on purpose: the measured restore also goes through reading the old format.
     JSON.stringify({
       version: 1,
       activeTab: ids.length - 1,

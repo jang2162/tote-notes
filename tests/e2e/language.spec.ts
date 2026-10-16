@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { menu, sessionPane, start } from "./helpers";
 
 test("the status bar names the language of the file and opens a picker", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("script.sh", "echo hi") } });
@@ -40,8 +40,12 @@ test("an external file keeps its chosen language in the session", async ({ page 
   await page.locator(".modal.picker li", { hasText: "SQL" }).click();
   await expect(page.locator(".status-language")).toHaveText("SQL");
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"language":"sql"');
+    .poll(async () =>
+      (await sessionPane(page)).tabs.some(
+        (tab) => tab.kind === "external" && tab.language === "sql",
+      ),
+    )
+    .toBe(true);
   await page.reload();
   await page.waitForFunction(() => window.__tote?.ready === true);
   await expect(page.locator(".status-language")).toHaveText("SQL");

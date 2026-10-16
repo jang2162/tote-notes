@@ -747,7 +747,7 @@ export class AppController implements DocHost {
     const session = await this.session.build(() => {
       if (this.tabs.active) this.capture(this.tabs.active);
     });
-    await this.backend.writeSession(JSON.stringify(session));
+    await this.backend.writeWindowLayout(JSON.stringify(session));
   }
 
   private async drainPending(): Promise<void> {

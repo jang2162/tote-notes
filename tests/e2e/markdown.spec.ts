@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, ready, start } from "./helpers";
+import { menu, ready, sessionPane, start } from "./helpers";
 
 const PNG = Uint8Array.from(
   atob(
@@ -43,14 +43,12 @@ test("⇧⌘V shows the rendered Markdown and ⇧⌘V again the editor; the mode
   await expect(body.locator("h1")).toHaveText("회의 준비");
   await expect(body.locator("li strong")).toHaveText("하나");
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"mode":"preview"');
+    .poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode === "preview"))
+    .toBe(true);
   await menu(page, "toggle-preview");
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   await expect(page.locator(".cm-content")).toBeFocused();
-  await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .not.toContain('"mode"');
+  await expect.poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode)).toBe(false);
 });
 
 test("images in the same folder load through resolveRelative; outside the folder and remote images stay blank", async ({
@@ -133,8 +131,8 @@ test("the preview shows the text as it is when it opens, and the mode comes back
   await menu(page, "toggle-preview");
   await expect(frame(page).locator("body p")).toHaveText("둘째");
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"mode":"preview"');
+    .poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode === "preview"))
+    .toBe(true);
   await page.reload();
   await ready(page);
   await expect(frame(page).locator("body h1")).toHaveText("처음");
@@ -158,8 +156,8 @@ test("a memo imported from a tab in preview stays in preview", async ({ page }) 
   await expect(page.locator(".tab.active")).not.toHaveClass(/external/);
   await expect(frame(page).locator("body h1")).toHaveText("가져옴");
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"mode":"preview"');
+    .poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode === "preview"))
+    .toBe(true);
 });
 
 test("a preview that cannot start goes back to the editor with the text intact", async ({
@@ -178,9 +176,7 @@ test("a preview that cannot start goes back to the editor with the text intact",
   await expect(page.locator(".status-message")).toHaveText(
     "미리보기를 열 수 없어 편집으로 돌아왔습니다",
   );
-  await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .not.toContain('"mode"');
+  await expect.poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode)).toBe(false);
 });
 
 test("an area in an image map does not take the frame anywhere", async ({ page }) => {
@@ -213,7 +209,5 @@ test("a Markdown memo that detection turns into JSON on leaving ends in the edit
   await expect(page.locator(".status-language")).toHaveText("JSON");
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   await expect(page.locator(".cm-content")).toBeFocused();
-  await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .not.toContain('"mode"');
+  await expect.poll(async () => (await sessionPane(page)).tabs.some((tab) => tab.mode)).toBe(false);
 });

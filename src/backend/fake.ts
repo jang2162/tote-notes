@@ -1,4 +1,5 @@
 import { basename, splitName } from "../core/names";
+import { parseSessionFile } from "../core/session";
 import { scanBytes } from "../viewer/large-text";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
@@ -45,6 +46,7 @@ export interface FakeMemo {
 export interface FakeData {
   workspace: WorkspaceInfo;
   memos: Record<string, FakeMemo>;
+  /** The whole session file, version 1 or 2; this window is its first window. */
   session: string | null;
   /** External files by absolute path, base64. */
   files: Record<string, string>;
@@ -452,12 +454,13 @@ export class FakeBackend implements Backend {
     return this.importMemo(basename(path), fromBase64(data));
   }
 
-  async readSession() {
-    return this.data.session;
+  async readWindowLayout() {
+    const [window] = parseSessionFile(this.data.session).windows;
+    return window ? JSON.stringify(window) : null;
   }
 
-  async writeSession(json: string) {
-    this.data.session = json;
+  async writeWindowLayout(json: string) {
+    this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
     this.commit();
   }
 

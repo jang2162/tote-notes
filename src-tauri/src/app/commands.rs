@@ -23,7 +23,6 @@ use crate::files::{self, FileSource};
 use crate::perf::{self, PerfConfig};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
-use crate::session;
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
 
 /// What a rejected command returns. `code` is what the frontend branches on (`BackendError`).
@@ -333,26 +332,35 @@ pub async fn reveal_backups(core: State<'_, AppCore>, window: WebviewWindow) -> 
     Ok(versions::reveal(&dir)?)
 }
 
+/// This window's layout for the session (`WindowSession`), or `None` for a window that starts with
+/// no tabs: one of its own, or one the session had no layout for.
 #[tauri::command]
-pub async fn read_session(
-    core: State<'_, AppCore>,
-    window: WebviewWindow,
-) -> CmdResult<Option<String>> {
-    let workspace = workspace_of(&core, &window)?;
-    let root = lock(&workspace).root().to_path_buf();
-    Ok(session::read_session(&root, &core.machine.device_id)?)
+pub fn read_window_layout(core: State<'_, AppCore>, window: WebviewWindow) -> Option<String> {
+    core.layout_of(window.label())
+        .map(|layout| layout.to_string())
 }
 
+/// Writes this window's layout into its workspace's session file, with the other windows' layouts.
+/// `bad-request` when `json` is not a JSON object.
 #[tauri::command]
-pub async fn write_session(
+pub async fn write_window_layout(
     core: State<'_, AppCore>,
     window: WebviewWindow,
     json: String,
 ) -> CmdResult<()> {
-    let workspace = workspace_of(&core, &window)?;
-    let root = lock(&workspace).root().to_path_buf();
-    session::write_session(&root, &core.machine.device_id, &json)?;
+    workspace_of(&core, &window)?;
+    core.set_layout(window.label(), layout_from_json(&json)?)?;
     Ok(())
+}
+
+fn layout_from_json(json: &str) -> CmdResult<serde_json::Value> {
+    match serde_json::from_str(json) {
+        Ok(layout @ serde_json::Value::Object(_)) => Ok(layout),
+        _ => Err(CommandError::new(
+            "bad-request",
+            "a window layout is a JSON object",
+        )),
+    }
 }
 
 #[tauri::command]
@@ -841,6 +849,17 @@ mod tests {
             ]
         );
         assert_eq!(items[1].path, PathBuf::from("/gone/옛"));
+    }
+
+    #[test]
+    fn a_window_layout_must_be_a_json_object() {
+        assert_eq!(
+            layout_from_json(r#"{"panes":[]}"#).unwrap(),
+            serde_json::json!({"panes": []})
+        );
+        for json in ["[1,2]", "3", "{ broken"] {
+            assert_eq!(layout_from_json(json).unwrap_err().code, "bad-request");
+        }
     }
 
     #[test]

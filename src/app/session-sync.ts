@@ -1,5 +1,5 @@
 import type { Backend, MemoInfo } from "../backend/types";
-import { parseSession, type SessionFile, type SessionTab } from "../core/session";
+import { parseWindowSession, type SessionTab, type WindowSession } from "../core/session";
 import { ExternalDoc, MemoDoc, type Doc } from "./docs";
 import type { Tabs } from "./tabs";
 
@@ -34,12 +34,13 @@ export class SessionSync {
     private readonly makeExternal: (path: string) => ExternalDoc,
   ) {}
 
-  /** Fills `tabs` (which must be empty) and returns the tab to activate: the session's active
-   * tab, else the last one, else null. Nothing is read from disk here (spec 「세션」 — lazy). */
+  /** Fills `tabs` (which must be empty) from the window's first pane and returns the tab to
+   * activate: the pane's active tab, else the last one, else null. Nothing is read from disk here
+   * (spec 「세션」 — lazy). */
   async restore(): Promise<Doc | null> {
-    const session = parseSession(await this.backend.readSession());
+    const [pane] = parseWindowSession(parseJson(await this.backend.readWindowLayout())).panes;
     let active: Doc | null = null;
-    for (const [index, tab] of session.tabs.entries()) {
+    for (const [index, tab] of pane.tabs.entries()) {
       const doc = this.docFor(tab);
       if (!doc) continue;
       doc.restoreSelection = tab.selection;
@@ -48,21 +49,26 @@ export class SessionSync {
       if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
         doc.keepConflict(tab.conflictKept.memoId);
       this.tabs.push(doc);
-      if (index === session.activeTab) active = doc;
+      if (index === pane.activeTab) active = doc;
     }
     return active ?? this.tabs.list.at(-1) ?? null;
   }
 
-  async build(captureActive: () => void): Promise<SessionFile> {
+  async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
-    const session: SessionFile = {
-      version: 1,
-      activeTab: this.tabs.active ? this.tabs.indexOf(this.tabs.active) : -1,
-      tabs: this.tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
+    const window: WindowSession = {
+      panes: [
+        {
+          tabs: this.tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
+          activeTab: this.tabs.active ? this.tabs.indexOf(this.tabs.active) : -1,
+          width: 1,
+        },
+      ],
+      focusedPane: 0,
     };
     const frame = await this.backend.windowFrame();
-    if (frame) session.window = frame;
-    return session;
+    if (frame) window.frame = frame;
+    return window;
   }
 
   private docFor(tab: SessionTab): Doc | null {
@@ -75,5 +81,14 @@ export class SessionSync {
     const doc = this.makeExternal(tab.path);
     doc.language = tab.language ?? null;
     return doc;
+  }
+}
+
+/** `null` for no text or text that is not JSON: the window then starts with no tabs. */
+function parseJson(text: string | null): unknown {
+  try {
+    return text ? JSON.parse(text) : null;
+  } catch {
+    return null;
   }
 }

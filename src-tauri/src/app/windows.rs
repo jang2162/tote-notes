@@ -10,7 +10,7 @@ use super::commands::CommandError;
 use super::flush::FlushGoal;
 use super::{lifecycle, requests, AppCore};
 use crate::cli::CliRequest;
-use crate::session::{read_window_frame, WindowFrame};
+use crate::session::{layout_frame, WindowFrame};
 use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
 
 const DEFAULT_WIDTH: f64 = 1100.0;
@@ -24,7 +24,7 @@ pub fn background() -> bool {
 
 /// Where a new window's frame comes from.
 pub enum WindowPlan {
-    /// The `n`th window of the workspace reopened (from 0): its saved frame.
+    /// The `n`th window of the workspace reopened (from 0): its saved layout and frame.
     Restore(usize),
     /// A window of its own, at `near` when given, else at the default size in the middle.
     Fresh { near: Option<WindowFrame> },
@@ -66,13 +66,15 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         }
     };
     let fresh = opened.is_some();
+    let restored = match plan {
+        WindowPlan::Restore(k) => Some(k),
+        WindowPlan::Fresh { .. } => None,
+    };
+    core.register_window(&label, &path, opened, restored);
     let frame = match plan {
-        // The session file keeps one frame per device, so every window reopened on a folder
-        // starts from it.
-        WindowPlan::Restore(_) => read_window_frame(&path, &core.machine.device_id),
+        WindowPlan::Restore(k) => core.saved_layout(&path, k).as_ref().and_then(layout_frame),
         WindowPlan::Fresh { near } => near,
     };
-    core.register_window(&label, &path, opened);
     let title = title_of(&core, &path, &label);
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
@@ -127,6 +129,10 @@ pub fn focus(app: &AppHandle, label: &str) {
 
 /// Reopens the windows open at the last quit, then carries out the `tote` request that started
 /// the app, if any.
+///
+/// Every window is made here before any frontend runs — `setup` runs before the event loop — so
+/// the first layout a window writes cannot drop from the session file the saved layout of a
+/// window not reopened yet.
 pub fn restore(app: &AppHandle, request: Option<CliRequest>) {
     let core = app.state::<AppCore>();
     let mut shown = 0;

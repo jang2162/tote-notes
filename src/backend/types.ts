@@ -288,8 +288,11 @@ export interface Backend {
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;
 
-  readSession(): Promise<string | null>;
-  writeSession(json: string): Promise<void>;
+  /** This window's layout in the session (`WindowSession`), `null` when it has none. */
+  readWindowLayout(): Promise<string | null>;
+  /** Writes this window's layout; the backend puts it in the session file with the layouts of the
+   * workspace's other windows. */
+  writeWindowLayout(json: string): Promise<void>;
   takePendingOpens(): Promise<PendingOpen[]>;
 
   openExternal(path: string): Promise<ExternalInfo>;

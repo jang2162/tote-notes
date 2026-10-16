@@ -2,15 +2,30 @@ import { EditorSelection, type Text } from "@codemirror/state";
 
 import type { WindowFrame } from "../backend/types";
 
-/** One workspace window on one device, `.tote/sessions/<device ID>.json` (spec 「세션」). The
- * backend only checks that it is a JSON object and reads `window` before the window exists. */
+/** The windows of one workspace on one device, `.tote/sessions/<device ID>.json` (spec 「세션」),
+ * oldest-opened first. The backend gathers it from each window's layout and reads `frame` before
+ * the window exists. Version 1 held one window as `{ version: 1, window?, activeTab, tabs }`. */
 export interface SessionFile {
-  version: 1;
+  version: 2;
+  windows: WindowSession[];
+}
+
+/** One window's layout, which the window writes and reads through the backend. */
+export interface WindowSession {
   /** Outer position and inner size in logical pixels. */
-  window?: WindowFrame;
+  frame?: WindowFrame;
+  /** Left to right; at least one. */
+  panes: PaneSession[];
+  /** Index into `panes`. */
+  focusedPane: number;
+}
+
+export interface PaneSession {
+  tabs: SessionTab[];
   /** Index into `tabs`; 0 when the active tab was dropped or unset, -1 only when no tab is left. */
   activeTab: number;
-  tabs: SessionTab[];
+  /** The share of the editing area's width; the panes' widths sum to 1. */
+  width: number;
 }
 
 /** `EditorSelection.toJSON()`. */
@@ -45,27 +60,65 @@ const isNumber = (value: unknown): value is number =>
 
 const isPosition = (value: unknown): value is number => Number.isInteger(value);
 
-/** Reads a session leniently: a tab that does not parse is dropped, not the whole session. */
-export function parseSession(text: string | null): SessionFile {
-  const session: SessionFile = { version: 1, activeTab: -1, tabs: [] };
+/** Reads a session file leniently: a window, pane or tab that does not parse is dropped, not the
+ * whole session. A version 1 file is one window with one pane. */
+export function parseSessionFile(text: string | null): SessionFile {
+  const file: SessionFile = { version: 2, windows: [] };
   let raw: unknown = null;
   try {
     raw = text ? JSON.parse(text) : null;
   } catch {
-    return session;
+    return file;
   }
-  if (!isObject(raw) || !Array.isArray(raw.tabs)) return session;
+  if (!isObject(raw)) return file;
+  if (Array.isArray(raw.windows)) {
+    file.windows = raw.windows.filter(isObject).map(parseWindowSession);
+  } else if (Array.isArray(raw.tabs)) {
+    const pane = { tabs: raw.tabs, activeTab: raw.activeTab, width: 1 };
+    file.windows = [parseWindowSession({ frame: raw.window, panes: [pane], focusedPane: 0 })];
+  }
+  return file;
+}
+
+/** Lenient: a tab that does not parse is dropped; at least one pane; widths sum to 1. */
+export function parseWindowSession(value: unknown): WindowSession {
+  const raw = isObject(value) ? value : {};
+  const panes = (Array.isArray(raw.panes) ? raw.panes : []).filter(isObject).map(parsePane);
+  if (panes.length === 0) panes.push({ tabs: [], activeTab: -1, width: 1 });
+  const widths = normalizeWidths(panes.map((pane) => pane.width));
+  panes.forEach((pane, index) => (pane.width = widths[index]));
+  const focused = raw.focusedPane;
+  const window: WindowSession = {
+    panes,
+    focusedPane: isPosition(focused) && focused >= 0 && focused < panes.length ? focused : 0,
+  };
+  const frame = parseFrame(raw.frame);
+  if (frame) window.frame = frame;
+  return window;
+}
+
+/** Shares that sum to 1: `widths` over their sum, or equal shares when any of them is not a
+ * positive number (a pane of no width could not be seen). */
+export function normalizeWidths(widths: number[]): number[] {
+  if (widths.some((width) => !isNumber(width) || width <= 0))
+    return widths.map(() => 1 / widths.length);
+  const sum = widths.reduce((total, width) => total + width, 0);
+  return widths.map((width) => width / sum);
+}
+
+/** `width` is taken as it is, for `normalizeWidths` to judge. */
+function parsePane(raw: Json): PaneSession {
+  const pane: PaneSession = { tabs: [], activeTab: -1, width: raw.width as number };
+  if (!Array.isArray(raw.tabs)) return pane;
   const active = raw.activeTab;
   raw.tabs.forEach((value: unknown, index: number) => {
     const tab = parseTab(value);
     if (!tab) return;
-    if (index === active) session.activeTab = session.tabs.length;
-    session.tabs.push(tab);
+    if (index === active) pane.activeTab = pane.tabs.length;
+    pane.tabs.push(tab);
   });
-  if (session.activeTab < 0 && session.tabs.length > 0) session.activeTab = 0;
-  const frame = parseFrame(raw.window);
-  if (frame) session.window = frame;
-  return session;
+  if (pane.activeTab < 0 && pane.tabs.length > 0) pane.activeTab = 0;
+  return pane;
 }
 
 function parseTab(value: unknown): SessionTab | null {

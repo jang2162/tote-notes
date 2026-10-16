@@ -1,19 +1,21 @@
-//! Per-device session files, `.tote/sessions/<device ID>.json` (spec 「세션」). The frontend owns
-//! their schema (`SessionFile` in src/core/session.ts); this side only checks that they are JSON
-//! objects and reads the window frame, which it needs before the window — and so its frontend —
-//! exists.
+//! Per-device session files, `.tote/sessions/<device ID>.json` (spec 「세션」): the layout of
+//! every window open on the workspace, oldest-opened first. The frontend owns the layout schema
+//! (`WindowSession` in src/core/session.ts); this side keeps each layout as a JSON object, gathers
+//! the windows' layouts into the file, and reads a window's frame, which it needs before the
+//! window — and so its frontend — exists.
 
 pub mod drafts;
 
-use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
-use serde_json::{Map, Value};
+use serde_json::{json, Map, Value};
 
 use crate::persist::{read_json, write_json};
 use crate::workspace::TOTE_DIR;
+
+pub const SESSION_VERSION: u64 = 2;
 
 pub fn session_file(root: &Path, device_id: &str) -> PathBuf {
     root.join(TOTE_DIR)
@@ -21,19 +23,39 @@ pub fn session_file(root: &Path, device_id: &str) -> PathBuf {
         .join(format!("{device_id}.json"))
 }
 
-/// The session text, or `None` when this device has none for the workspace yet. An unreadable
-/// file is set aside and the window starts with no tabs.
-pub fn read_session(root: &Path, device_id: &str) -> io::Result<Option<String>> {
-    Ok(
-        read_json::<Map<String, Value>>(&session_file(root, device_id))?
-            .map(|map| Value::Object(map).to_string()),
-    )
+/// The window layouts of the file, oldest-opened first; a version 1 file is one window. No file,
+/// or one of neither shape, is no windows. An unreadable file is set aside.
+pub fn read_layouts(root: &Path, device_id: &str) -> io::Result<Vec<Value>> {
+    let Some(file) = read_json::<Map<String, Value>>(&session_file(root, device_id))? else {
+        return Ok(Vec::new());
+    };
+    if let Some(Value::Array(windows)) = file.get("windows") {
+        return Ok(windows.iter().filter(|w| w.is_object()).cloned().collect());
+    }
+    let Some(tabs @ Value::Array(_)) = file.get("tabs") else {
+        return Ok(Vec::new());
+    };
+    // Version 1: one window, its tabs in one pane over the whole width.
+    let mut pane = Map::new();
+    pane.insert("tabs".into(), tabs.clone());
+    if let Some(active) = file.get("activeTab") {
+        pane.insert("activeTab".into(), active.clone());
+    }
+    pane.insert("width".into(), json!(1.0));
+    let mut layout = Map::new();
+    if let Some(frame) = file.get("window") {
+        layout.insert("frame".into(), frame.clone());
+    }
+    layout.insert("panes".into(), json!([pane]));
+    layout.insert("focusedPane".into(), json!(0));
+    Ok(vec![Value::Object(layout)])
 }
 
-pub fn write_session(root: &Path, device_id: &str, json: &str) -> io::Result<()> {
-    let map: Map<String, Value> = serde_json::from_str(json)
-        .map_err(|err| io::Error::new(io::ErrorKind::InvalidData, err))?;
-    write_json(&session_file(root, device_id), &map)
+pub fn write_layouts(root: &Path, device_id: &str, layouts: &[Value]) -> io::Result<()> {
+    write_json(
+        &session_file(root, device_id),
+        &json!({ "version": SESSION_VERSION, "windows": layouts }),
+    )
 }
 
 /// Where a workspace window was, in logical pixels (outer position, inner size).
@@ -45,11 +67,12 @@ pub struct WindowFrame {
     pub height: f64,
 }
 
-/// The saved window frame when the session has a usable one.
-pub fn read_window_frame(root: &Path, device_id: &str) -> Option<WindowFrame> {
-    let text = fs::read_to_string(session_file(root, device_id)).ok()?;
-    let value: Value = serde_json::from_str(&text).ok()?;
-    let frame: WindowFrame = serde_json::from_value(value.get("window")?.clone()).ok()?;
+/// The layout's window frame when it has a usable one.
+pub fn layout_frame(layout: &Value) -> Option<WindowFrame> {
+    usable(serde_json::from_value(layout.get("frame")?.clone()).ok()?)
+}
+
+fn usable(frame: WindowFrame) -> Option<WindowFrame> {
     let finite = [frame.x, frame.y, frame.width, frame.height]
         .iter()
         .all(|v| v.is_finite());
@@ -59,6 +82,7 @@ pub fn read_window_frame(root: &Path, device_id: &str) -> Option<WindowFrame> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
     use std::fs;
 
     fn corrupt_copies(dir: &std::path::Path) -> usize {
@@ -69,47 +93,86 @@ mod tests {
             .count()
     }
 
+    fn put(root: &Path, device_id: &str, text: &str) {
+        let file = session_file(root, device_id);
+        fs::create_dir_all(file.parent().unwrap()).unwrap();
+        fs::write(&file, text).unwrap();
+    }
+
     #[test]
-    fn sessions_round_trip_per_device() {
+    fn a_version_1_file_reads_as_one_window() {
         let root = tempfile::tempdir().unwrap();
-        assert_eq!(read_session(root.path(), "d1").unwrap(), None);
-        write_session(root.path(), "d1", r#"{"version":1,"tabs":[]}"#).unwrap();
-        let text = read_session(root.path(), "d1").unwrap().unwrap();
-        let value: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!(value["version"], 1);
-        assert_eq!(read_session(root.path(), "d2").unwrap(), None);
+        let (a, b) = (
+            json!({"kind": "memo", "memoId": "a"}),
+            json!({"kind": "memo", "memoId": "b"}),
+        );
+        put(
+            root.path(),
+            "d",
+            &json!({
+                "version": 1,
+                "window": {"x": 10, "y": 20, "width": 900, "height": 700},
+                "activeTab": 1,
+                "tabs": [a, b],
+            })
+            .to_string(),
+        );
+        assert_eq!(
+            read_layouts(root.path(), "d").unwrap(),
+            vec![json!({
+                "frame": {"x": 10, "y": 20, "width": 900, "height": 700},
+                "panes": [{"tabs": [a, b], "activeTab": 1, "width": 1.0}],
+                "focusedPane": 0,
+            })]
+        );
+    }
+
+    #[test]
+    fn layouts_round_trip_as_version_2() {
+        let root = tempfile::tempdir().unwrap();
+        assert_eq!(
+            read_layouts(root.path(), "d1").unwrap(),
+            Vec::<Value>::new()
+        );
+        let l1 = json!({"panes": [{"tabs": [], "activeTab": -1, "width": 1.0}], "focusedPane": 0});
+        let l2 = json!({"frame": {"x": 1, "y": 2, "width": 800, "height": 600}, "panes": []});
+        write_layouts(root.path(), "d1", &[l1.clone(), l2.clone()]).unwrap();
+        let file: Value =
+            serde_json::from_str(&fs::read_to_string(session_file(root.path(), "d1")).unwrap())
+                .unwrap();
+        assert_eq!(file["version"], 2);
+        assert_eq!(read_layouts(root.path(), "d1").unwrap(), vec![l1, l2]);
+        // Each device has its own file.
+        assert_eq!(
+            read_layouts(root.path(), "d2").unwrap(),
+            Vec::<Value>::new()
+        );
         assert!(session_file(root.path(), "d1").ends_with(".tote/sessions/d1.json"));
     }
 
     #[test]
-    fn only_json_objects_are_written() {
+    fn a_file_with_neither_shape_reads_as_no_windows() {
         let root = tempfile::tempdir().unwrap();
-        let err = write_session(root.path(), "d", "[1,2]").unwrap_err();
-        assert_eq!(err.kind(), std::io::ErrorKind::InvalidData);
+        for text in [r#"{"version":2}"#, r#"{"tabs":"x"}"#] {
+            put(root.path(), "d", text);
+            assert_eq!(read_layouts(root.path(), "d").unwrap(), Vec::<Value>::new());
+        }
     }
 
     #[test]
     fn an_unreadable_session_starts_empty_and_is_set_aside() {
         let root = tempfile::tempdir().unwrap();
         let file = session_file(root.path(), "d");
-        fs::create_dir_all(file.parent().unwrap()).unwrap();
-        fs::write(&file, "{ broken").unwrap();
-        assert_eq!(read_session(root.path(), "d").unwrap(), None);
+        put(root.path(), "d", "{ broken");
+        assert_eq!(read_layouts(root.path(), "d").unwrap(), Vec::<Value>::new());
         assert!(!file.exists());
         assert_eq!(corrupt_copies(file.parent().unwrap()), 1);
     }
 
     #[test]
     fn the_window_frame_is_read_when_usable() {
-        let root = tempfile::tempdir().unwrap();
-        write_session(
-            root.path(),
-            "d",
-            r#"{"window":{"x":10,"y":20,"width":900,"height":700}}"#,
-        )
-        .unwrap();
         assert_eq!(
-            read_window_frame(root.path(), "d"),
+            layout_frame(&json!({"frame": {"x": 10, "y": 20, "width": 900, "height": 700}})),
             Some(WindowFrame {
                 x: 10.0,
                 y: 20.0,
@@ -117,14 +180,22 @@ mod tests {
                 height: 700.0
             })
         );
-        write_session(
-            root.path(),
-            "d",
-            r#"{"window":{"x":0,"y":0,"width":20,"height":20}}"#,
-        )
-        .unwrap();
-        assert_eq!(read_window_frame(root.path(), "d"), None);
-        write_session(root.path(), "d", r#"{"tabs":[]}"#).unwrap();
-        assert_eq!(read_window_frame(root.path(), "d"), None);
+        for frame in [
+            json!({"x": 0, "y": 0, "width": 20, "height": 20}),
+            json!({"x": 0, "y": 0, "width": 199, "height": 700}),
+            json!({"x": 0, "y": 0, "width": 900, "height": 149}),
+            json!({"x": "0", "y": 0, "width": 900, "height": 700}),
+        ] {
+            assert_eq!(layout_frame(&json!({ "frame": frame })), None);
+        }
+        assert_eq!(layout_frame(&json!({"panes": []})), None);
+        // JSON has no infinity; one written from a frame that had it reads back unusable.
+        let infinite = WindowFrame {
+            x: f64::INFINITY,
+            y: 0.0,
+            width: 900.0,
+            height: 700.0,
+        };
+        assert_eq!(usable(infinite), None);
     }
 }

@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { fakeFile } from "../../src/backend/fake";
-import { menu, ready, start } from "./helpers";
+import { menu, ready, sessionPane, start } from "./helpers";
 
 test("an external file keeps a draft across a restart and is written only on ⌘S", async ({
   page,
@@ -20,8 +20,12 @@ test("an external file keeps a draft across a restart and is written only on ⌘
   expect(await page.evaluate(() => window.__tote.backend.fileText("/x/a.sh"))).toBe("echo hi\n");
   // The session is written a second after the last change; reload only once it lists the tab.
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"path":"/x/a.sh"');
+    .poll(async () =>
+      (await sessionPane(page)).tabs.some(
+        (tab) => tab.kind === "external" && tab.path === "/x/a.sh",
+      ),
+    )
+    .toBe(true);
 
   await page.reload();
   await ready(page);

@@ -92,11 +92,11 @@ export class TauriBackend implements Backend {
     return call<MemoInfo>("import_file", { path });
   }
 
-  readSession() {
-    return call<string | null>("read_session");
+  readWindowLayout() {
+    return call<string | null>("read_window_layout");
   }
-  writeSession(json: string) {
-    return call<void>("write_session", { json });
+  writeWindowLayout(json: string) {
+    return call<void>("write_window_layout", { json });
   }
   takePendingOpens() {
     return call<PendingOpen[]>("take_pending_opens");

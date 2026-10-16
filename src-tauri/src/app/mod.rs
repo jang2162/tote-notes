@@ -19,6 +19,7 @@ use std::sync::mpsc::Sender;
 use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 use serde::Serialize;
+use serde_json::Value;
 
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
 use crate::backup::snapshot::{self, Taken};
@@ -29,6 +30,7 @@ use crate::files::TokenStore;
 use crate::persist::content_hash;
 use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
+use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
 use crate::workspace::{Change, Workspace};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
@@ -116,6 +118,9 @@ struct Inner {
 
 struct OpenWorkspace {
     workspace: Arc<Mutex<Workspace>>,
+    /// The window layouts of this device's session file, read when the workspace opened: the
+    /// `k`th window reopened on it starts from `saved[k]`.
+    saved: Vec<Value>,
 }
 
 struct OpenWindow {
@@ -127,6 +132,9 @@ struct OpenWindow {
     /// mark left behind would keep a window registered again under its label out of the next
     /// quit.
     closing: bool,
+    /// The window's layout for the session file: the latest its frontend wrote, else the one it
+    /// was reopened with. A window with none is left out of the file.
+    layout: Option<Value>,
 }
 
 impl Inner {
@@ -141,6 +149,14 @@ impl Inner {
         windows
             .into_iter()
             .map(|(label, _)| label.clone())
+            .collect()
+    }
+
+    /// The layouts of `labels` that have one, in that order: what the session file holds.
+    fn layouts_of(&self, labels: &[String]) -> Vec<Value> {
+        labels
+            .iter()
+            .filter_map(|label| self.windows.get(label)?.layout.clone())
             .collect()
     }
 
@@ -339,8 +355,15 @@ impl AppCore {
 
     /// Registers the window `label` on the workspace at `path`. `opened` is the workspace just
     /// opened for it when it is the folder's first window; a later window brings none and joins
-    /// the one already open.
-    pub fn register_window(&self, label: &str, path: &Path, opened: Option<Workspace>) {
+    /// the one already open. `restored`: the window reopens the `k`th saved layout
+    /// (`saved_layout`); `None` for a window of its own, which starts with no layout.
+    pub fn register_window(
+        &self,
+        label: &str,
+        path: &Path,
+        opened: Option<Workspace>,
+        restored: Option<usize>,
+    ) {
         let watch = {
             let mut inner = lock(&self.inner);
             if inner.reserved.get(path).is_some_and(|l| l == label) {
@@ -348,10 +371,16 @@ impl AppCore {
             }
             let watch = match opened {
                 Some(workspace) if !inner.workspaces.contains_key(path) => {
+                    // A session that cannot be read starts the windows with no tabs.
+                    let saved = read_layouts(path, &self.machine.device_id).unwrap_or_else(|err| {
+                        eprintln!("tote: cannot read the session of {}: {err}", path.display());
+                        Vec::new()
+                    });
                     inner.workspaces.insert(
                         path.to_path_buf(),
                         OpenWorkspace {
                             workspace: Arc::new(Mutex::new(workspace)),
+                            saved,
                         },
                     );
                     true
@@ -366,6 +395,7 @@ impl AppCore {
             }
             inner.serials += 1;
             let serial = inner.serials;
+            let layout = restored.and_then(|k| inner.workspaces[path].saved.get(k).cloned());
             inner.windows.insert(
                 label.to_string(),
                 OpenWindow {
@@ -373,6 +403,7 @@ impl AppCore {
                     pending: Vec::new(),
                     serial,
                     closing: false,
+                    layout,
                 },
             );
             watch
@@ -388,6 +419,39 @@ impl AppCore {
     /// The windows showing the workspace at `path`, in the order they were opened.
     pub fn windows_of(&self, path: &Path) -> Vec<String> {
         lock(&self.inner).windows_of(path)
+    }
+
+    /// The `k`th window layout of the session file of the workspace at `path`, as read when the
+    /// workspace opened.
+    pub fn saved_layout(&self, path: &Path, k: usize) -> Option<Value> {
+        lock(&self.inner)
+            .workspaces
+            .get(path)?
+            .saved
+            .get(k)
+            .cloned()
+    }
+
+    pub fn layout_of(&self, label: &str) -> Option<Value> {
+        lock(&self.inner).windows.get(label)?.layout.clone()
+    }
+
+    /// The window `label` wrote its layout: the session file of its workspace is written again
+    /// with it. While quitting only memory changes — `start_quit` wrote the file, and a late write
+    /// from a window still open would drop the windows already gone from it.
+    pub fn set_layout(&self, label: &str, layout: Value) -> io::Result<()> {
+        let mut inner = lock(&self.inner);
+        let Some(window) = inner.windows.get_mut(label) else {
+            return Ok(());
+        };
+        window.layout = Some(layout);
+        let path = window.path.clone();
+        if inner.quitting {
+            return Ok(());
+        }
+        // Written under the lock, so two windows' writes reach the file in the order they came.
+        let labels = inner.windows_of(&path);
+        write_layouts(&path, &self.machine.device_id, &inner.layouts_of(&labels))
     }
 
     /// The window on `path` focused most recently; one not focused yet counts as newest.
@@ -589,10 +653,23 @@ impl AppCore {
             let closed = removed
                 .as_ref()
                 .and_then(|window| inner.close_if_unused(&window.path));
-            // While quitting, windows close one by one; the list to reopen was fixed by start_quit.
+            // While quitting, windows close one by one; the list to reopen and the session files
+            // were fixed by start_quit.
             if let (Some(window), false) = (removed, inner.quitting) {
                 inner.launch.remove_open(&window.path);
                 self.save_launch(&inner.launch);
+                // The last window's layout is already all the file holds, and stays for next time.
+                let left = inner.windows_of(&window.path);
+                if !left.is_empty() {
+                    let layouts = inner.layouts_of(&left);
+                    if let Err(err) = write_layouts(&window.path, &self.machine.device_id, &layouts)
+                    {
+                        eprintln!(
+                            "tote: could not save the session of {}: {err}",
+                            window.path.display()
+                        );
+                    }
+                }
             }
             (inner.flush.window_gone(label), closed)
         };
@@ -680,20 +757,40 @@ impl AppCore {
     }
 
     /// Fixes what reopens at the next launch: every open window but those being closed, the most
-    /// recently focused last so it ends up in front.
+    /// recently focused last so it ends up in front. Each workspace's session file is written in
+    /// the same order, so the `k`th window reopened on a folder gets the `k`th layout. A workspace
+    /// whose every window is being closed keeps its file: the last layout written stays.
     pub fn start_quit(&self) {
         let mut inner = lock(&self.inner);
         inner.quitting = true;
-        let order: Vec<PathBuf> = inner
+        let order: Vec<(String, PathBuf)> = inner
             .focus
             .iter()
             .rev()
-            .filter_map(|label| inner.windows.get(label))
-            .filter(|window| !window.closing)
-            .map(|window| window.path.clone())
+            .filter_map(|label| Some((label, inner.windows.get(label)?)))
+            .filter(|(_, window)| !window.closing)
+            .map(|(label, window)| (label.clone(), window.path.clone()))
             .collect();
-        inner.launch.open_windows = order;
+        inner.launch.open_windows = order.iter().map(|(_, path)| path.clone()).collect();
         self.save_launch(&inner.launch);
+        let mut written = HashSet::new();
+        for (_, path) in &order {
+            if !written.insert(path) {
+                continue;
+            }
+            let labels: Vec<String> = order
+                .iter()
+                .filter(|(_, p)| p == path)
+                .map(|(label, _)| label.clone())
+                .collect();
+            let layouts = inner.layouts_of(&labels);
+            if let Err(err) = write_layouts(path, &self.machine.device_id, &layouts) {
+                eprintln!(
+                    "tote: could not save the session of {}: {err}",
+                    path.display()
+                );
+            }
+        }
     }
 
     /// Hands the backup thread's wake-up channel to the core (`request_backup`).
@@ -801,6 +898,7 @@ fn bring_to_front(focus: &mut Vec<String>, label: &str) {
 mod tests {
     use super::*;
     use crate::appdata::Precedence;
+    use serde_json::json;
 
     fn core(dir: &Path) -> AppCore {
         let paths = AppPaths::from_parts(Some(dir.join("data")), None, None, false).unwrap();
@@ -822,7 +920,7 @@ mod tests {
         let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
         let label = core.next_label();
         let path = workspace.root().to_path_buf();
-        core.register_window(&label, &path, Some(workspace));
+        core.register_window(&label, &path, Some(workspace), None);
         core.opened(&label);
         label
     }
@@ -830,7 +928,7 @@ mod tests {
     /// Another window on the workspace at `path`, already open.
     fn attach(core: &AppCore, path: &Path) -> String {
         let label = core.next_label();
-        core.register_window(&label, path, None);
+        core.register_window(&label, path, None, None);
         core.opened(&label);
         label
     }
@@ -1411,7 +1509,7 @@ mod tests {
         let label = core.reserve(&path).unwrap();
         // The second request is told which window is opening the folder, and cleans up nothing.
         assert_eq!(core.reserve(&path), Err(label.clone()));
-        core.register_window(&label, &path, Some(workspace));
+        core.register_window(&label, &path, Some(workspace), None);
         assert!(core.workspace(&label).is_some());
         core.release(&label);
         assert!(core.workspace(&label).is_none());
@@ -1430,7 +1528,7 @@ mod tests {
         let w2 = core.reserve(&path).unwrap();
         core.closed(&w1);
         assert!(core.is_open_path(&path));
-        core.register_window(&w2, &path, None);
+        core.register_window(&w2, &path, None, None);
         assert!(core.workspace(&w2).is_some());
         // Had it failed instead, its release would have closed the workspace.
         let w3 = core.reserve(&path).unwrap();
@@ -1502,6 +1600,133 @@ mod tests {
         );
     }
 
+    fn layouts(core: &AppCore, path: &Path) -> Vec<serde_json::Value> {
+        crate::session::read_layouts(path, &core.machine.device_id).unwrap()
+    }
+
+    #[test]
+    fn each_window_writes_into_the_shared_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        let (a, b) = (json!({"focusedPane": 0}), json!({"focusedPane": 1}));
+        core.set_layout(&w1, a.clone()).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        assert_eq!(layouts(&core, &path), vec![a.clone(), b.clone()]);
+        assert_eq!(core.layout_of(&w1), Some(a));
+        assert_eq!(core.layout_of("ws-없음"), None);
+    }
+
+    #[test]
+    fn closing_one_of_two_windows_drops_its_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        let (a, b) = (json!({"focusedPane": 0}), json!({"focusedPane": 1}));
+        core.set_layout(&w1, a).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        core.closed(&w1);
+        assert_eq!(layouts(&core, &path), vec![b]);
+    }
+
+    #[test]
+    fn closing_the_last_window_keeps_its_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        let (a, b) = (json!({"focusedPane": 0}), json!({"focusedPane": 1}));
+        core.set_layout(&w1, a).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        core.closed(&w1);
+        core.closed(&w2);
+        assert_eq!(layouts(&core, &path), vec![b]);
+    }
+
+    #[test]
+    fn a_window_that_never_wrote_keeps_its_restored_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let workspace = Workspace::create(&core.workspace_root(), "가").unwrap();
+        let path = workspace.root().to_path_buf();
+        let (a, b, a2) = (
+            json!({"focusedPane": 0}),
+            json!({"focusedPane": 1}),
+            json!({"focusedPane": 2}),
+        );
+        crate::session::write_layouts(&path, &core.machine.device_id, &[a.clone(), b.clone()])
+            .unwrap();
+        let w1 = core.next_label();
+        core.register_window(&w1, &path, Some(workspace), Some(0));
+        let w2 = core.next_label();
+        core.register_window(&w2, &path, None, Some(1));
+        assert_eq!(core.saved_layout(&path, 0), Some(a.clone()));
+        assert_eq!(core.saved_layout(&path, 2), None);
+        assert_eq!(core.layout_of(&w2), Some(b.clone()));
+        core.set_layout(&w1, a2.clone()).unwrap();
+        assert_eq!(layouts(&core, &path), vec![a2, b]);
+    }
+
+    #[test]
+    fn a_quit_keeps_every_layout_in_the_order_it_reopens() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        let (a, b) = (json!({"focusedPane": 0}), json!({"focusedPane": 1}));
+        core.set_layout(&w1, a.clone()).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        core.focused(&w1);
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![path.clone(), path.clone()]);
+        assert_eq!(layouts(&core, &path), vec![b.clone(), a.clone()]);
+        core.closed(&w1);
+        core.closed(&w2);
+        assert_eq!(layouts(&core, &path), vec![b, a]);
+    }
+
+    #[test]
+    fn a_quit_while_the_last_window_closes_keeps_its_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let a = json!({"focusedPane": 0});
+        core.set_layout(&w1, a.clone()).unwrap();
+        core.closing(&w1);
+        core.start_quit();
+        assert_eq!(layouts(&core, &path), vec![a]);
+    }
+
+    #[test]
+    fn a_layout_written_while_quitting_leaves_the_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &path);
+        let (a, b, b2) = (
+            json!({"focusedPane": 0}),
+            json!({"focusedPane": 1}),
+            json!({"focusedPane": 2}),
+        );
+        core.set_layout(&w1, a.clone()).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        core.focused(&w2);
+        core.start_quit();
+        core.closed(&w1);
+        // w2's session timer fires after w1 is gone: the file still lists both.
+        core.set_layout(&w2, b2.clone()).unwrap();
+        assert_eq!(layouts(&core, &path), vec![a, b]);
+        assert_eq!(core.layout_of(&w2), Some(b2));
+    }
+
     #[test]
     fn a_window_being_closed_is_left_out_of_a_quit() {
         let dir = tempfile::tempdir().unwrap();
@@ -1526,7 +1751,7 @@ mod tests {
         core.closed(&a);
         core.closing(&a);
         // Even a window registered again under the same label is not marked.
-        core.register_window(&a, &path, Some(Workspace::open(&path).unwrap()));
+        core.register_window(&a, &path, Some(Workspace::open(&path).unwrap()), None);
         core.opened(&a);
         assert!(matches!(
             core.begin_flush(FlushGoal::Quit),

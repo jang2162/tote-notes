@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { ready, start } from "./helpers";
+import { ready, sessionPane, start } from "./helpers";
 
 /** What another app does to memo `id`: new contents, stamped later than anything seeded. */
 async function writeElsewhere(page: Page, id: string, text: string): Promise<void> {
@@ -218,10 +218,10 @@ test("the conflict-kept banner survives a restart", async ({ page }) => {
   await keepConflict(page);
   await expect(banner(page)).toHaveText(new RegExp(KEPT));
   // The flush wrote the session after the banner went up.
-  const session = await page.evaluate(() => JSON.parse(window.__tote.backend.data.session!));
-  const tab = session.tabs[session.activeTab];
-  expect(tab.conflictKept).toEqual({ memoId: "a" });
-  expect(tab.memoId).not.toBe("a");
+  const pane = await sessionPane(page);
+  const tab = pane.tabs[pane.activeTab];
+  expect(tab).toMatchObject({ kind: "memo", conflictKept: { memoId: "a" } });
+  expect(tab).not.toMatchObject({ memoId: "a" });
 
   // Start again from that session, as after quitting the app.
   await page.reload();

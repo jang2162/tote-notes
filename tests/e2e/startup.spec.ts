@@ -1,7 +1,7 @@
 import { expect, test } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
-import { quietErrors, start } from "./helpers";
+import { quietErrors, ready, sessionPane, start } from "./helpers";
 
 const LISTING_FAILED = "the workspace could not be read";
 
@@ -39,11 +39,29 @@ test("a failed memo listing at start keeps the session file as it was", async ({
   await expect(message).not.toHaveClass(/error/);
   // From here on the session is written.
   await page.locator(".tab", { hasText: "가" }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => JSON.parse(window.__tote.backend.data.session ?? "null")?.activeTab),
-    )
-    .toBe(0);
+  await expect.poll(async () => (await sessionPane(page)).activeTab).toBe(0);
+});
+
+test("a restart writes the session as version 2", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "첫째"),
+      b: fakeMemo("나.md", "둘째"),
+      c: fakeMemo("다.md", "셋째"),
+    },
+    session: twoTabSession,
+  });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await page.locator(".memo-row", { hasText: "다" }).click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  await expect.poll(async () => (await sessionPane(page)).tabs.length).toBe(3);
+  await page.reload();
+  await ready(page);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+  expect(await page.evaluate(() => JSON.parse(window.__tote.backend.data.session!).version)).toBe(
+    2,
+  );
 });
 
 test("a CLI failure shows in the status bar", async ({ page }) => {
@@ -63,9 +81,9 @@ test("a deferred restore that fails is tried again by the next listing", async (
   });
   await page.evaluate(() => {
     const backend = window.__tote.backend;
-    const read = backend.readSession.bind(backend);
+    const read = backend.readWindowLayout.bind(backend);
     let failures = 1;
-    backend.readSession = async () => {
+    backend.readWindowLayout = async () => {
       if (failures-- > 0) throw new Error("the session could not be read");
       return read();
     };
@@ -78,11 +96,7 @@ test("a deferred restore that fails is tried again by the next listing", async (
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
   await page.locator(".tab", { hasText: "가" }).click();
-  await expect
-    .poll(() =>
-      page.evaluate(() => JSON.parse(window.__tote.backend.data.session ?? "null")?.activeTab),
-    )
-    .toBe(0);
+  await expect.poll(async () => (await sessionPane(page)).activeTab).toBe(0);
 });
 
 test("a CLI failure stays in the status bar after the opens of the same request", async ({

@@ -101,6 +101,27 @@ describe("SessionSync.restore", () => {
     expect(active).toBe(tabs.list[0]);
   });
 
+  it("brings back the tabs of the first pane of a version 2 window", async () => {
+    const { tabs, sync } = setup(
+      {
+        version: 2,
+        windows: [
+          {
+            panes: [
+              { tabs: [{ kind: "memo", memoId: "a" }], activeTab: 0, width: 0.5 },
+              { tabs: [{ kind: "memo", memoId: "b" }], activeTab: 0, width: 0.5 },
+            ],
+            focusedPane: 1,
+          },
+        ],
+      },
+      { a: fakeMemo("가.md", ""), b: fakeMemo("나.md", "") },
+    );
+    const active = await sync.restore();
+    expect(tabs.list.map((d) => (d as MemoDoc).info?.id)).toEqual(["a"]);
+    expect(active).toBe(tabs.list[0]);
+  });
+
   it("opens the same memo once even if the session lists it twice", async () => {
     const { tabs, sync } = setup(
       {
@@ -238,14 +259,15 @@ describe("SessionSync.build and sessionTab", () => {
     let captured = 0;
     const session = await sync.build(() => void captured++);
     expect(captured).toBe(1);
-    expect(session.activeTab).toBe(1);
-    expect(session.tabs[0]).toEqual({
+    const [pane] = session.panes;
+    expect(pane.activeTab).toBe(1);
+    expect(pane.tabs[0]).toEqual({
       kind: "memo",
       memoId: "a",
       scrollAnchor: 0,
       mode: "preview",
     });
-    expect(session.tabs[1]).toEqual({
+    expect(pane.tabs[1]).toEqual({
       kind: "external",
       deviceId: "device-1",
       path: "/x/a.sh",
@@ -254,5 +276,16 @@ describe("SessionSync.build and sessionTab", () => {
     });
     memo.mode = "edit";
     expect(sessionTab(memo, "device-1")).toEqual({ kind: "memo", memoId: "a", scrollAnchor: 0 });
+  });
+
+  it("builds a window of one pane with the whole width and the window's frame", async () => {
+    const { backend, sync } = setup(null);
+    expect(await sync.build(() => {})).toEqual({
+      panes: [{ tabs: [], activeTab: -1, width: 1 }],
+      focusedPane: 0,
+    });
+    const frame = { x: 1, y: 2, width: 800, height: 600 };
+    backend.windowFrame = async () => frame;
+    expect((await sync.build(() => {})).frame).toEqual(frame);
   });
 });

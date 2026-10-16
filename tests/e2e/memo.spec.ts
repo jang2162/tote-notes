@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT, RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, ready, start } from "./helpers";
+import { menu, ready, sessionPane, start } from "./helpers";
 
 test("a new memo is named after its first line once the cursor leaves it", async ({ page }) => {
   await start(page);
@@ -56,8 +56,8 @@ test("tabs, the active tab and the cursor come back after a restart", async ({ p
   await expect(page.locator(".cm-content")).toContainText("둘째 줄");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 6 } }));
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.session))
-    .toContain('"anchor":6');
+    .poll(async () => (await sessionPane(page)).tabs[0]?.selection?.ranges[0].anchor)
+    .toBe(6);
   await page.reload();
   await ready(page);
   await expect(page.locator(".tab.active .tab-title")).toHaveText("가");
@@ -81,7 +81,7 @@ test("a flush request writes pending edits and the title before answering", asyn
   expect(await page.evaluate(() => window.__tote.backend.memoTextByFile("급히 끈다.md"))).toBe(
     "급히 끈다",
   );
-  expect(await page.evaluate(() => window.__tote.backend.data.session)).toContain('"kind":"memo"');
+  expect((await sessionPane(page)).tabs.map((tab) => tab.kind)).toEqual(["memo"]);
 });
 
 test("the memo list filters by name", async ({ page }) => {
