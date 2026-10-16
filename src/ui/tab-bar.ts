@@ -11,14 +11,62 @@ export interface TabView {
   active: boolean;
 }
 
+/** How far a pressed tab moves before it is being dragged; less is a click. */
+export const DRAG_START_PX = 4;
+
+/** Where a tab dropped at `x` goes among `tabs` (their client boxes, left to right): before the
+ * first tab whose middle is right of `x`, else at the end. */
+export function dropIndex(tabs: { left: number; width: number }[], x: number): number {
+  const index = tabs.findIndex((tab) => x < tab.left + tab.width / 2);
+  return index < 0 ? tabs.length : index;
+}
+
+/** A tab being dragged, in client coordinates: it goes `over` places, then is dropped or, on Esc,
+ * called off. */
+export interface TabDrag {
+  over(x: number, y: number): void;
+  drop(x: number, y: number): void;
+  cancel(): void;
+}
+
 export class TabBar {
   readonly el = h("div", { class: "tabbar", role: "tablist" });
 
-  constructor(private readonly actions: { select(id: string): void; close(id: string): void }) {}
+  constructor(
+    private readonly actions: {
+      select(id: string): void;
+      close(id: string): void;
+      /** Tab `id` has started to be dragged. */
+      drag(id: string): TabDrag;
+    },
+  ) {}
 
   render(tabs: TabView[]): void {
     this.el.replaceChildren(...tabs.map((tab) => this.tab(tab)));
     this.el.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+  }
+
+  /** Where a tab dropped at `x` goes in this bar (`dropIndex`). */
+  indexAt(x: number): number {
+    return dropIndex(
+      this.tabEls().map((el) => el.getBoundingClientRect()),
+      x,
+    );
+  }
+
+  /** Marks where a dropped tab would go: before tab `index`, after the last one, or — with no
+   * tabs — the bar itself. Null takes the mark away. */
+  markDrop(index: number | null): void {
+    const tabs = this.tabEls();
+    for (const el of tabs) el.classList.remove("drop-before", "drop-after");
+    this.el.classList.toggle("drop-into", index !== null && tabs.length === 0);
+    if (index === null || tabs.length === 0) return;
+    if (index < tabs.length) tabs[index].classList.add("drop-before");
+    else tabs[tabs.length - 1].classList.add("drop-after");
+  }
+
+  private tabEls(): HTMLElement[] {
+    return [...this.el.querySelectorAll<HTMLElement>(".tab")];
   }
 
   private tab(tab: TabView): HTMLElement {
@@ -44,6 +92,10 @@ export class TabBar {
       h("span", { class: "tab-title", textContent: tab.title }),
       close,
     );
+    el.addEventListener("pointerdown", (event) => {
+      if (event.button === 0 && !(event.target as Element).closest(".tab-close"))
+        this.follow(tab.id, event);
+    });
     el.addEventListener("mousedown", (event) => {
       if (event.button === 0 && !(event.target as Element).closest(".tab-close"))
         this.actions.select(tab.id);
@@ -52,5 +104,48 @@ export class TabBar {
       if (event.button === 1) this.actions.close(tab.id);
     });
     return el;
+  }
+
+  /** Follows a press on tab `id` until it is let go. Pointer events rather than HTML5 drag and
+   * drop: the spike could not confirm the latter between tab bars in the app's webview. The tab's
+   * element is drawn again as it is selected, so the listeners are the window's. */
+  private follow(id: string, down: PointerEvent): void {
+    let drag: TabDrag | null = null;
+    const listening = new AbortController();
+    const stop = () => listening.abort();
+    const ours = (event: PointerEvent) => event.pointerId === down.pointerId;
+    const move = (event: PointerEvent) => {
+      if (!ours(event)) return;
+      if (!drag) {
+        const dx = event.clientX - down.clientX;
+        const dy = event.clientY - down.clientY;
+        if (Math.hypot(dx, dy) <= DRAG_START_PX) return;
+        drag = this.actions.drag(id);
+        // Over a viewer's frame the moves would go to the frame's document.
+        this.el.setPointerCapture(event.pointerId);
+      }
+      drag.over(event.clientX, event.clientY);
+    };
+    const up = (event: PointerEvent) => {
+      if (!ours(event)) return;
+      stop();
+      drag?.drop(event.clientX, event.clientY);
+    };
+    const cancel = () => {
+      stop();
+      drag?.cancel();
+    };
+    const key = (event: KeyboardEvent) => {
+      if (event.key !== "Escape" || !drag) return;
+      event.preventDefault();
+      event.stopPropagation();
+      cancel();
+    };
+    const options = { signal: listening.signal };
+    window.addEventListener("pointermove", move, options);
+    window.addEventListener("pointerup", up, options);
+    window.addEventListener("pointercancel", cancel, options);
+    window.addEventListener("blur", cancel, options);
+    window.addEventListener("keydown", key, { ...options, capture: true });
   }
 }

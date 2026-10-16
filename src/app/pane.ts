@@ -6,7 +6,7 @@ import type { Registry } from "../extensions/registry";
 import type { ThemeManager } from "../theme/manager";
 import { h } from "../ui/dom";
 import type { StatusBar } from "../ui/status-bar";
-import { TabBar } from "../ui/tab-bar";
+import { TabBar, type TabDrag } from "../ui/tab-bar";
 import { ViewerHost } from "../viewer/host";
 import { LargeTextViewer } from "../viewer/large-text";
 import { MemoDoc, type Doc, type ExternalDoc, type Problem } from "./docs";
@@ -57,6 +57,8 @@ export interface PaneHost {
    * running, so two viewers in one window must not reuse a number. */
   nextTextSearch(): number;
   closeTab(tabId: string): Promise<void>;
+  /** Tab `tabId` of a pane has started to be dragged: the window says where it may go. */
+  dragTab(tabId: string): TabDrag;
   saveSessionSoon(): void;
   report(error: unknown): void;
   mark(name: string): void;
@@ -72,6 +74,7 @@ export class Pane {
   readonly tabBar = new TabBar({
     select: (id) => void this.activateTab(id),
     close: (id) => void this.host.closeTab(id),
+    drag: (id) => this.host.dragTab(id),
   });
   /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
   readonly el: HTMLElement = h(

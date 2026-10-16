@@ -39,6 +39,7 @@ import { SearchPanel } from "../ui/search-panel";
 import { openSettings } from "../ui/settings";
 import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
+import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
 import type { LargeTextViewer } from "../viewer/large-text";
 import {
@@ -73,6 +74,11 @@ const MEMOS_GATHER_MS = 300;
 export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
 export const NO_VERSIONS = "이전 버전이 없습니다";
 export const TOO_NARROW_TO_SPLIT = "창이 좁아 나눌 수 없습니다";
+/** The strip along the editing area's right edge where a dragged tab opens a new pane. */
+export const DROP_EDGE_PX = 48;
+
+/** Where a dragged tab would go (`AppController.dropTarget`). */
+type DropTarget = "edge" | { pane: Pane; index: number } | null;
 
 const sameTab = (a: TabRef, b: TabRef) =>
   a.kind === "memo"
@@ -516,15 +522,95 @@ export class AppController implements DocHost, PaneHost {
     await pane.activate(doc);
   }
 
-  /** Moves `doc` from its pane into `to`, after `to`'s active tab, and shows it there. It is the
-   * same tab: its text, edit history and place go with it. */
-  private async moveTab(doc: Doc, to: Pane): Promise<void> {
+  /** Moves `doc` to `index` of `to`'s tabs (as they are before the move; `to` may be its own pane),
+   * where it is the active tab of the focused pane. It is the same tab, not saved on the way: its
+   * text, edit history and place go with it. A pane it leaves empty closes. */
+  async moveTab(doc: Doc, to: Pane, index: number): Promise<void> {
+    await settleComposition(this.focused.view);
+    // Closed, or its pane closed, while the composition ended.
+    if (!this.docs.includes(doc) || !this.panes.includes(to)) return;
+    await this.relocate(doc, to, index);
+  }
+
+  /** Moves `doc` into a new pane right of the rightmost one, which gives it half its width. */
+  async moveTabToNewPane(doc: Doc): Promise<void> {
+    await settleComposition(this.focused.view);
     const from = this.paneOf(doc);
-    from.capture(doc);
-    const shown = from.detach(doc);
-    to.tabs.insertAfterActive(doc);
+    if (!from.tabs.list.includes(doc)) return;
+    const at = this.panes.length - 1;
+    // The rightmost pane's only tab is where a new pane would put it already.
+    if (from === this.panes[at] && from.tabs.list.length === 1) return;
+    if (!canSplit(this.widths, at, this.areaWidth())) {
+      this.statusBar.setMessage(TOO_NARROW_TO_SPLIT);
+      return;
+    }
+    await this.relocate(doc, this.openPaneAfter(at), 0);
+  }
+
+  /** `moveTab` once any composition has ended. */
+  private async relocate(doc: Doc, to: Pane, index: number): Promise<void> {
+    const from = this.paneOf(doc);
+    const left = this.focused;
+    let shown: Promise<void> | undefined;
+    if (from !== to) {
+      from.capture(doc);
+      shown = from.detach(doc);
+    }
+    to.tabs.place(doc, index);
+    if (left !== to) {
+      this.setFocused(to);
+      if (left !== from) void left.tabs.active?.leave();
+    }
+    to.renderTabs();
     await Promise.all([shown, to.activate(doc)]);
+    if (from.tabs.list.length === 0) this.closePane(from);
     this.saveSessionSoon();
+  }
+
+  dragTab(tabId: string): TabDrag {
+    const edge = h("div", { class: "pane-drop-edge" });
+    this.panesEl.append(edge);
+    let marked: Pane | null = null;
+    const mark = (target: DropTarget) => {
+      marked?.tabBar.markDrop(null);
+      marked = null;
+      edge.classList.toggle("active", target === "edge");
+      if (!target || target === "edge") return;
+      marked = target.pane;
+      marked.tabBar.markDrop(target.index);
+    };
+    const end = () => {
+      mark(null);
+      edge.remove();
+    };
+    return {
+      over: (x, y) => mark(this.dropTarget(x, y)),
+      drop: (x, y) => {
+        const target = this.dropTarget(x, y);
+        end();
+        const doc = this.docs.find((each) => each.tabId === tabId);
+        if (!doc || !target) return;
+        const moved =
+          target === "edge"
+            ? this.moveTabToNewPane(doc)
+            : this.moveTab(doc, target.pane, target.index);
+        void moved.catch((error: unknown) => this.report(error));
+      },
+      cancel: end,
+    };
+  }
+
+  /** Where a tab dropped at (`x`, `y`) goes: the right edge of the editing area (a new pane), a
+   * place in a pane's tab bar, or — anywhere else in a pane — the end of its tabs. */
+  private dropTarget(x: number, y: number): DropTarget {
+    const area = this.panesEl.getBoundingClientRect();
+    if (x < area.left || x > area.right || y < area.top || y > area.bottom) return null;
+    if (x >= area.right - DROP_EDGE_PX) return "edge";
+    const hit = document.elementsFromPoint(x, y);
+    const pane = this.panes.find((each) => hit.includes(each.el));
+    if (!pane) return null;
+    const index = hit.includes(pane.tabBar.el) ? pane.tabBar.indexAt(x) : pane.tabs.list.length;
+    return { pane, index };
   }
 
   private makePane(): Pane {
@@ -603,14 +689,20 @@ export class AppController implements DocHost, PaneHost {
       return;
     }
     const moving = from.tabs.list.length > 1 ? from.tabs.active : null;
+    const pane = this.openPaneAfter(at);
+    this.setFocused(pane);
+    if (moving) await this.relocate(moving, pane, 0);
+    else void from.tabs.active?.leave();
+  }
+
+  /** A new, empty pane right of pane `at`, which gives it the right half of its width. */
+  private openPaneAfter(at: number): Pane {
     const pane = this.makePane();
     this.panes.splice(at + 1, 0, pane);
     this.widths = split(this.widths, at);
     this.mountPane(pane);
-    this.setFocused(pane);
     this.syncPanes();
-    if (moving) await this.moveTab(moving, pane);
-    else void from.tabs.active?.leave();
+    return pane;
   }
 
   /** ⌥⌘← / ⌥⌘→: the pane left or right of the focused one; nothing past either end. */

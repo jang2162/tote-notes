@@ -23,6 +23,18 @@ export class Tabs {
     return doc;
   }
 
+  /** Puts `doc` at `index` of the list as it is now — a tab dropped there. A tab of this list
+   * moves from where it was; the active one stays active. */
+  place<D extends Doc>(doc: D, index: number): D {
+    const at = this.docs.indexOf(doc);
+    if (at >= 0) {
+      this.docs.splice(at, 1);
+      if (at < index) index--;
+    }
+    this.docs.splice(Math.min(index, this.docs.length), 0, doc);
+    return doc;
+  }
+
   /** Puts `next` in `doc`'s place; when `doc` is no longer open (closed meanwhile), `next` opens
    * after the active tab instead of being lost. */
   replace<D extends Doc>(doc: Doc, next: D): D {
