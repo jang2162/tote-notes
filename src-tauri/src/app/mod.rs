@@ -491,8 +491,8 @@ impl AppCore {
         lock(&self.inner).flush.expire(id)
     }
 
-    pub fn cancel_flush(&self, id: u64) {
-        lock(&self.inner).flush.cancel(id);
+    pub fn cancel_flush(&self, id: u64) -> bool {
+        lock(&self.inner).flush.cancel(id)
     }
 
     /// Fixes what reopens at the next launch: every open window, the most recently focused last

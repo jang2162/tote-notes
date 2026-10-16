@@ -18,7 +18,8 @@ pub enum Begin {
     Started { id: u64, windows: Vec<String> },
     /// Nobody to wait for: carry the goal out now.
     Done(FlushGoal),
-    /// A quit, or this very close, is already waiting — or asking about a failed save.
+    /// A quit, or this very close, is already waiting — or asking about a failed save. A quit
+    /// that finds a close asking joins that question instead.
     AlreadyRunning,
 }
 
@@ -50,10 +51,26 @@ struct Round {
     reasons: Vec<String>,
     /// Ended as `Ack::Blocked`; the question is open.
     asking: bool,
+    /// A quit came while this close was asking; its answer carries the quit on or refuses it.
+    quit_waiting: bool,
 }
 
 impl FlushCoordinator {
     pub fn begin(&mut self, goal: FlushGoal, windows: Vec<String>) -> Begin {
+        // A second dialog over an open question would stack two answers; the quit waits on it.
+        // Rounds are kept in id order, so with several the first opened takes it.
+        if goal == FlushGoal::Quit {
+            let asking_close = self
+                .rounds
+                .values_mut()
+                .find(|round| round.asking && matches!(round.goal, FlushGoal::CloseWindow(_)));
+            if let Some(round) = asking_close {
+                round.quit_waiting = true;
+                return Begin::AlreadyRunning;
+            }
+        }
+        // A Dock quit or a logout told 「later」 here still owes macOS an answer: whichever round
+        // absorbed it answers when it ends.
         let busy = self
             .rounds
             .values()
@@ -71,6 +88,7 @@ impl FlushCoordinator {
             waiting: windows.iter().cloned().collect(),
             reasons: Vec::new(),
             asking: false,
+            quit_waiting: false,
         };
         self.rounds.insert(id, round);
         Begin::Started { id, windows }
@@ -116,9 +134,12 @@ impl FlushCoordinator {
         finished.into_iter().map(|id| (id, self.end(id))).collect()
     }
 
-    /// Drops round `id` — its question was answered, either way.
-    pub fn cancel(&mut self, id: u64) {
-        self.rounds.remove(&id);
+    /// Drops round `id` — its question was answered, either way. True when a quit was waiting on
+    /// it.
+    pub fn cancel(&mut self, id: u64) -> bool {
+        self.rounds
+            .remove(&id)
+            .is_some_and(|round| round.quit_waiting)
     }
 
     fn end(&mut self, id: u64) -> Ack {
@@ -279,6 +300,38 @@ mod tests {
             f.begin(FlushGoal::Quit, labels(&["a"])),
             Begin::Started { id: next, .. } if next != id
         ));
+    }
+
+    /// Round `id` closing window "a", ended as `Ack::Blocked`: its question is open.
+    fn asking_close(f: &mut FlushCoordinator) -> u64 {
+        let Begin::Started { id, .. } = f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"]))
+        else {
+            panic!("expected a round")
+        };
+        assert!(matches!(
+            f.ack(id, "a", Some(ONE_FAILED.into())),
+            Ack::Blocked { .. }
+        ));
+        id
+    }
+
+    #[test]
+    fn a_quit_joins_an_asking_close() {
+        let mut f = FlushCoordinator::default();
+        let id = asking_close(&mut f);
+        // No second dialog: the quit waits on the question already open.
+        assert_eq!(
+            f.begin(FlushGoal::Quit, labels(&["a", "b"])),
+            Begin::AlreadyRunning
+        );
+        assert!(f.cancel(id));
+    }
+
+    #[test]
+    fn cancelling_an_asking_close_reports_the_waiting_quit() {
+        let mut f = FlushCoordinator::default();
+        let id = asking_close(&mut f);
+        assert!(!f.cancel(id));
     }
 
     #[test]

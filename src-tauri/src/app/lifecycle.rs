@@ -83,12 +83,17 @@ fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
 }
 
 /// The question about round `id` was answered. Either answer ends the round; only 「그래도」
-/// carries the goal out.
+/// carries the goal out. A quit that joined a close's question goes the same way as the close.
 pub fn resolve_blocked(app: &AppHandle, id: u64, goal: FlushGoal, anyway: bool) {
-    app.state::<AppCore>().cancel_flush(id);
+    let quit_waiting = app.state::<AppCore>().cancel_flush(id);
     if anyway {
+        let close = matches!(goal, FlushGoal::CloseWindow(_));
         finish(app, goal);
-    } else if goal == FlushGoal::Quit {
+        // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
+        if close && quit_waiting {
+            begin(app, FlushGoal::Quit);
+        }
+    } else if goal == FlushGoal::Quit || quit_waiting {
         #[cfg(target_os = "macos")]
         system_quit::answer(app, false);
     }
