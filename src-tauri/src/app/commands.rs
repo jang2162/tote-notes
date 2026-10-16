@@ -97,6 +97,16 @@ fn workspace_of(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<W
     })
 }
 
+/// `workspace_of` for a command that changes the workspace: `bad-request` while the window switches
+/// workspaces and its page is still the old one (`AppCore::page_layout`).
+fn workspace_to_change(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<Workspace>>> {
+    core.workspace_to_change(window.label())
+        .map_err(|err| match err.kind() {
+            io::ErrorKind::NotFound => CommandError::new("no-workspace", err.to_string()),
+            _ => err.into(),
+        })
+}
+
 /// The memo list of window `label`'s workspace changed: its other windows read it again
 /// (`tote://memos`, gathered for 300ms on their side).
 pub fn memos_changed(app: &AppHandle, label: &str) {
@@ -191,7 +201,7 @@ pub async fn list_memos(
 
 #[tauri::command]
 pub async fn create_memo(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<MemoInfo> {
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).create_memo("md", &[])?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -215,7 +225,7 @@ pub async fn write_memo(
     request: Request<'_>,
 ) -> CmdResult<MemoInfo> {
     let id = header(&request, "x-memo-id")?;
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).write_memo(&id, body(&request)?)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -228,7 +238,7 @@ pub async fn retitle_memo(
     id: String,
     stem: String,
 ) -> CmdResult<MemoInfo> {
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).retitle_memo(&id, &stem)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -241,7 +251,7 @@ pub async fn rename_memo(
     id: String,
     file: String,
 ) -> CmdResult<MemoInfo> {
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).rename_memo(&id, &file)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -255,7 +265,7 @@ pub async fn set_memo_language(
     language: String,
     ext: String,
 ) -> CmdResult<MemoInfo> {
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).set_language(&id, &language, &ext)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -267,7 +277,7 @@ pub async fn delete_memo(
     window: WebviewWindow,
     id: String,
 ) -> CmdResult<()> {
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     lock(&workspace).delete_memo(&id)?;
     memos_changed(window.app_handle(), window.label());
     Ok(())
@@ -280,7 +290,7 @@ pub async fn import_memo(
     request: Request<'_>,
 ) -> CmdResult<MemoInfo> {
     let name = header(&request, "x-file-name")?;
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).import_memo(&name, body(&request)?)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -293,7 +303,7 @@ pub async fn import_file(
     path: String,
 ) -> CmdResult<MemoInfo> {
     let path = absolute_path(&path)?;
-    let workspace = workspace_of(&core, &window)?;
+    let workspace = workspace_to_change(&core, &window)?;
     let info = lock(&workspace).import_file(&path)?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
@@ -334,15 +344,16 @@ pub async fn reveal_backups(core: State<'_, AppCore>, window: WebviewWindow) -> 
 }
 
 /// This window's layout for the session (`WindowSession`), or `None` for a window that starts with
-/// no tabs: one of its own, or one the session had no layout for.
+/// no tabs: one of its own, or one the session had no layout for. A page asks as it starts, which
+/// ends a switch (`AppCore::page_layout`).
 #[tauri::command]
 pub fn read_window_layout(core: State<'_, AppCore>, window: WebviewWindow) -> Option<String> {
-    core.layout_of(window.label())
+    core.page_layout(window.label())
         .map(|layout| layout.to_string())
 }
 
 /// Writes this window's layout into its workspace's session file, with the other windows' layouts.
-/// `bad-request` when `json` is not a JSON object.
+/// `bad-request` when `json` is not a JSON object, or while the window switches workspaces.
 #[tauri::command]
 pub async fn write_window_layout(
     core: State<'_, AppCore>,
@@ -366,7 +377,7 @@ fn layout_from_json(json: &str) -> CmdResult<serde_json::Value> {
 
 /// Claims `tabs` for this window before it shows them, one answer each: false when another
 /// window has the tab. With `reveal`, that window comes forward and shows the tab
-/// (`tote://reveal`).
+/// (`tote://reveal`). `bad-request` while the window switches workspaces.
 #[tauri::command]
 pub fn claim_tabs(
     app: AppHandle,
@@ -374,15 +385,15 @@ pub fn claim_tabs(
     window: WebviewWindow,
     tabs: Vec<TabRef>,
     reveal: bool,
-) -> Vec<bool> {
-    let claims = core.claim_tabs(window.label(), &tabs);
+) -> CmdResult<Vec<bool>> {
+    let claims = core.claim_tabs(window.label(), &tabs)?;
     for (tab, claim) in tabs.iter().zip(&claims) {
         if let (Err(owner), true) = (claim, reveal) {
             windows::focus(&app, owner);
             let _ = app.emit_to(EventTarget::webview_window(owner), "tote://reveal", tab);
         }
     }
-    claims.iter().map(Result::is_ok).collect()
+    Ok(claims.iter().map(Result::is_ok).collect())
 }
 
 /// This window closed the tab: another may open it.
@@ -593,15 +604,35 @@ pub async fn relocate_workspace(
     Ok(())
 }
 
+/// Makes a workspace under the workspace root and returns its folder; no window opens on it (the
+/// window that asked switches to it).
 #[tauri::command]
 pub async fn create_workspace(
     app: AppHandle,
     core: State<'_, AppCore>,
     name: String,
-) -> CmdResult<()> {
+) -> CmdResult<PathBuf> {
     let workspace = Workspace::create(&core.workspace_root(), &name)?;
-    windows::show(&app, workspace.root())?;
-    Ok(())
+    let path = std::fs::canonicalize(workspace.root())?;
+    // The other windows' rails list it.
+    let _ = app.emit("tote://workspaces", ());
+    Ok(path)
+}
+
+/// This window shows the workspace at `path` (`windows::switch`): `"focused"` when it shows it
+/// already or another window showing it came forward, `"switching"` when this window writes its
+/// tabs and then reloads on it.
+#[tauri::command]
+pub async fn switch_workspace(
+    app: AppHandle,
+    window: WebviewWindow,
+    path: String,
+) -> CmdResult<&'static str> {
+    let switched = windows::switch(&app, window.label(), &absolute_path(&path)?)?;
+    Ok(match switched {
+        windows::Switched::Focused => "focused",
+        windows::Switched::Switching => "switching",
+    })
 }
 
 #[tauri::command]

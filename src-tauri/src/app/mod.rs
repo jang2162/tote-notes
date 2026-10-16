@@ -33,7 +33,7 @@ use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
 use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
-use crate::workspace::{Change, Workspace};
+use crate::workspace::{Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
 
@@ -59,6 +59,26 @@ pub enum PendingOpen {
     Notice {
         message: String,
     },
+}
+
+/// What a window asked to switch to calls for (`AppCore::switch_target`).
+#[derive(Debug, PartialEq, Eq)]
+pub enum SwitchTarget {
+    /// The window shows it already: nothing to do.
+    Stay,
+    /// Another window shows it, or is being opened for it: that one comes forward, and this one
+    /// stays where it is.
+    Focus(String),
+    /// No window shows it: this window writes its tabs, then switches.
+    Open,
+}
+
+/// Why `AppCore::prepare_switch` did not open the workspace.
+#[derive(Debug)]
+pub enum SwitchError {
+    /// A window came to show it while this one was writing its tabs: bring that one forward.
+    Shown(String),
+    Open(WorkspaceError),
 }
 
 /// What `tote://outside` tells a window another app did (spec 「외부 변경」).
@@ -140,6 +160,24 @@ struct OpenWindow {
     /// The window's layout for the session file: the latest its frontend wrote, else the one it
     /// was reopened with. A window with none is left out of the file.
     layout: Option<Value>,
+    /// Set by `switch_window` until the window's new page asks for its layout (`page_layout`).
+    /// Meanwhile the old page is still up and its timers may still fire; the backend finds a
+    /// window's workspace by its label, so what that page writes would land in the new workspace.
+    switching: bool,
+}
+
+impl OpenWindow {
+    /// Changes to the workspace from the window's page are refused while the page is the one of
+    /// the workspace it left.
+    fn check_writable(&self, label: &str) -> io::Result<()> {
+        if self.switching {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("{label} is switching workspaces"),
+            ));
+        }
+        Ok(())
+    }
 }
 
 impl Inner {
@@ -187,6 +225,7 @@ impl Inner {
                 serial,
                 closing: false,
                 layout,
+                switching: false,
             },
         );
     }
@@ -542,6 +581,146 @@ impl AppCore {
         lock(&self.inner).windows.get(label)?.layout.clone()
     }
 
+    /// The layout window `label`'s page starts from (`read_window_layout`). A page asks once, as
+    /// it starts: after a switch that is the new page, so its writes go through from now on.
+    pub fn page_layout(&self, label: &str) -> Option<Value> {
+        let mut inner = lock(&self.inner);
+        let window = inner.windows.get_mut(label)?;
+        window.switching = false;
+        window.layout.clone()
+    }
+
+    /// The workspace of window `label`, for a command that changes it. `NotFound` when the window
+    /// shows none, `InvalidInput` while it switches workspaces (`page_layout`). Under one lock
+    /// with the check, so a switch cannot come in between.
+    pub fn workspace_to_change(&self, label: &str) -> io::Result<Arc<Mutex<Workspace>>> {
+        let inner = lock(&self.inner);
+        let not_found = || {
+            io::Error::new(
+                io::ErrorKind::NotFound,
+                format!("{label} shows no workspace"),
+            )
+        };
+        let window = inner.windows.get(label).ok_or_else(not_found)?;
+        window.check_writable(label)?;
+        let open = inner.workspaces.get(&window.path).ok_or_else(not_found)?;
+        Ok(open.workspace.clone())
+    }
+
+    /// What window `label` asking to show the workspace at `to` calls for.
+    pub fn switch_target(&self, label: &str, to: &Path) -> SwitchTarget {
+        let shown = {
+            let inner = lock(&self.inner);
+            if inner.windows.get(label).is_some_and(|w| w.path == to) {
+                return SwitchTarget::Stay;
+            }
+            inner.reserved.get(to).cloned()
+        };
+        match shown.or_else(|| self.front_window_of(to)) {
+            Some(window) => SwitchTarget::Focus(window),
+            None => SwitchTarget::Open,
+        }
+    }
+
+    /// Opens the workspace at `to` for window `label` to switch to (`switch_window`), the folder
+    /// claimed for it meanwhile as `reserve` does. `Shown` when a window shows it or is being
+    /// opened for it — it may have come while this window wrote its tabs — and `Open` when it
+    /// cannot be opened; either way nothing changes.
+    pub fn prepare_switch(&self, label: &str, to: &Path) -> Result<Workspace, SwitchError> {
+        {
+            let mut inner = lock(&self.inner);
+            if let Some(opening) = inner.reserved.get(to) {
+                return Err(SwitchError::Shown(opening.clone()));
+            }
+            if let Some(window) = inner.windows_of(to).first() {
+                return Err(SwitchError::Shown(window.clone()));
+            }
+            inner.reserved.insert(to.to_path_buf(), label.to_string());
+        }
+        Workspace::open(to).map_err(|err| {
+            let mut inner = lock(&self.inner);
+            if inner.reserved.get(to).is_some_and(|l| l == label) {
+                inner.reserved.remove(to);
+            }
+            SwitchError::Open(err)
+        })
+    }
+
+    /// Window `label` shows `opened`, the workspace at `to` (`prepare_switch`), instead of its
+    /// own. The workspace it leaves keeps the session rule of a closed window — its layout stays
+    /// in the file if it was the last window there, else leaves it — and closes with its last
+    /// window; the window's places, file tokens, searches and watched files go. It takes the
+    /// first saved layout of `to`, keeps its spot among the windows to reopen, and refuses changes
+    /// from its page until the new page is up (`page_layout`). `NotFound` for a window not
+    /// registered, changing nothing.
+    pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
+        let (fresh, closed) = {
+            let mut inner = lock(&self.inner);
+            let Some(from) = inner.windows.get(label).map(|w| w.path.clone()) else {
+                return Err(io::Error::new(
+                    io::ErrorKind::NotFound,
+                    format!("{label} is not open"),
+                ));
+            };
+            if inner.reserved.get(to).is_some_and(|l| l == label) {
+                inner.reserved.remove(to);
+            }
+            let fresh = !inner.workspaces.contains_key(to);
+            if fresh {
+                let saved = read_layouts(to, &self.machine.device_id).unwrap_or_else(|err| {
+                    eprintln!("tote: cannot read the session of {}: {err}", to.display());
+                    Vec::new()
+                });
+                inner.workspaces.insert(
+                    to.to_path_buf(),
+                    OpenWorkspace {
+                        workspace: Arc::new(Mutex::new(opened)),
+                        saved,
+                    },
+                );
+            }
+            let layout = inner.workspaces[to].saved.first().cloned();
+            inner.places.release_window(label);
+            if let Some(window) = inner.windows.get_mut(label) {
+                window.path = to.to_path_buf();
+                window.layout = layout;
+                window.pending.clear();
+                window.switching = true;
+            }
+            // As in `closed`: the last window's layout is already all the file holds.
+            let left = inner.windows_of(&from);
+            if !left.is_empty() {
+                let layouts = inner.layouts_of(&left);
+                if let Err(err) = write_layouts(&from, &self.machine.device_id, &layouts) {
+                    eprintln!(
+                        "tote: could not save the session of {}: {err}",
+                        from.display()
+                    );
+                }
+            }
+            inner.launch.switch_open(&from, to);
+            inner.launch.touch(to);
+            self.save_launch(&inner.launch);
+            (fresh, inner.close_if_unused(&from))
+        };
+        self.files.revoke_window(label);
+        lock(&self.searches).remove(label);
+        lock(&self.workspace_searches).remove(label);
+        if let Some(watcher) = self.watcher.get() {
+            watcher.unwatch_window(label);
+            if let Some(key) = closed {
+                watcher.unwatch_workspace(&key);
+            }
+            // An unwatched workspace still works; it only misses outside changes until reopened.
+            if fresh {
+                if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(to), to) {
+                    eprintln!("tote: cannot watch {} for changes: {err}", to.display());
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// The window `label` wrote its layout: the session file of its workspace is written again
     /// with it. While quitting only memory changes — `start_quit` wrote the file, and a late write
     /// from a window still open would drop the windows already gone from it.
@@ -550,6 +729,7 @@ impl AppCore {
         let Some(window) = inner.windows.get_mut(label) else {
             return Ok(());
         };
+        window.check_writable(label)?;
         window.layout = Some(layout);
         let path = window.path.clone();
         if inner.quitting {
@@ -792,23 +972,29 @@ impl AppCore {
 
     /// Claims `tabs` for window `label`, each `Err(owner)` when another window holds it. A window
     /// not registered (closed meanwhile) gets every one and holds none: a claim it left behind
-    /// would never be freed.
-    pub fn claim_tabs(&self, label: &str, tabs: &[TabRef]) -> Vec<Result<(), String>> {
+    /// would never be freed. `Err` while the window switches workspaces (`page_layout`).
+    pub fn claim_tabs(&self, label: &str, tabs: &[TabRef]) -> io::Result<Vec<Result<(), String>>> {
         let mut inner = lock(&self.inner);
-        if !inner.windows.contains_key(label) {
-            return tabs.iter().map(|_| Ok(())).collect();
-        }
-        tabs.iter()
+        let Some(window) = inner.windows.get(label) else {
+            return Ok(tabs.iter().map(|_| Ok(())).collect());
+        };
+        window.check_writable(label)?;
+        Ok(tabs
+            .iter()
             .map(|tab| match inner.key_for(label, tab) {
                 Some(key) => inner.places.claim(label, key),
                 None => Ok(()),
             })
-            .collect()
+            .collect())
     }
 
-    /// Window `label` closed the tab: another window may open it now.
+    /// Window `label` closed the tab: another window may open it now. Nothing while the window
+    /// switches workspaces: its places went with the workspace it left.
     pub fn release_tab(&self, label: &str, tab: &TabRef) {
         let mut inner = lock(&self.inner);
+        if inner.windows.get(label).is_some_and(|w| w.switching) {
+            return;
+        }
         if let Some(key) = inner.key_for(label, tab) {
             inner.places.release(label, &key);
         }
@@ -867,12 +1053,20 @@ impl AppCore {
         let windows = match &goal {
             // A window that is not registered answers nothing, so a round for it would only end
             // at the timeout.
-            FlushGoal::CloseWindow(label) if !inner.windows.contains_key(label) => vec![],
-            FlushGoal::CloseWindow(label) => vec![label.clone()],
+            FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. }
+                if !inner.windows.contains_key(label) =>
+            {
+                vec![]
+            }
+            FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => {
+                vec![label.clone()]
+            }
+            // A window whose new page is not up has nothing to write — its tabs were written
+            // before it switched — and a page reloading may not answer at all.
             FlushGoal::Quit => inner
                 .windows
                 .iter()
-                .filter(|(_, window)| !window.closing)
+                .filter(|(_, window)| !window.closing && !window.switching)
                 .map(|(label, _)| label.clone())
                 .collect(),
         };
@@ -1984,13 +2178,13 @@ mod tests {
                 path: PathBuf::from("/tmp/a.sh"),
             },
         ];
-        assert_eq!(core.claim_tabs(&w1, &tabs), vec![Ok(()), Ok(())]);
+        assert_eq!(core.claim_tabs(&w1, &tabs).unwrap(), vec![Ok(()), Ok(())]);
         assert_eq!(
-            core.claim_tabs(&w2, &tabs),
+            core.claim_tabs(&w2, &tabs).unwrap(),
             vec![Err(w1.clone()), Err(w1.clone())]
         );
         core.closed(&w1);
-        assert_eq!(core.claim_tabs(&w2, &tabs), vec![Ok(()), Ok(())]);
+        assert_eq!(core.claim_tabs(&w2, &tabs).unwrap(), vec![Ok(()), Ok(())]);
     }
 
     /// A window `w1` on 「가」 whose layout holds the memo tabs `a` and `b`, both claimed by it.
@@ -2007,7 +2201,7 @@ mod tests {
             TabRef::Memo { id: "a".into() },
             TabRef::Memo { id: "b".into() },
         ];
-        assert_eq!(core.claim_tabs(&w1, &tabs), vec![Ok(()), Ok(())]);
+        assert_eq!(core.claim_tabs(&w1, &tabs).unwrap(), vec![Ok(()), Ok(())]);
         (w1, path, layout)
     }
 
@@ -2045,7 +2239,10 @@ mod tests {
             "focusedPane": 0,
         });
         assert_eq!(layouts(&core, &path), vec![layout.clone(), alone.clone()]);
-        assert_eq!(core.claim_tabs(&w1, &[memo_b()]), vec![Err(w2.clone())]);
+        assert_eq!(
+            core.claim_tabs(&w1, &[memo_b()]).unwrap(),
+            vec![Err(w2.clone())]
+        );
         // The app quits before the window is up: it reopens all the same.
         core.start_quit();
         assert_eq!(saved(&core).open_windows, vec![path.clone(), path.clone()]);
@@ -2064,7 +2261,7 @@ mod tests {
         assert!(core.adopt_tab(&w3, &other, tab, key).is_err());
         assert_eq!(layouts(&core, &path), vec![layout]);
         assert_eq!(core.layout_of(&w3), None);
-        assert_eq!(core.claim_tabs(&other, &[memo_b()]), vec![Err(w1)]);
+        assert_eq!(core.claim_tabs(&other, &[memo_b()]).unwrap(), vec![Err(w1)]);
     }
 
     #[test]
@@ -2079,8 +2276,190 @@ mod tests {
         core.give_back(&w2, &w1, &key);
         assert_eq!(layouts(&core, &path), vec![layout]);
         assert_eq!(core.windows_of(&path), vec![w1.clone()]);
-        assert_eq!(core.claim_tabs(&w1, &[memo_b()]), vec![Ok(())]);
+        assert_eq!(core.claim_tabs(&w1, &[memo_b()]).unwrap(), vec![Ok(())]);
         let other = attach(&core, &path);
-        assert_eq!(core.claim_tabs(&other, &[memo_b()]), vec![Err(w1)]);
+        assert_eq!(core.claim_tabs(&other, &[memo_b()]).unwrap(), vec![Err(w1)]);
+    }
+
+    /// A workspace named `name` beside the open ones, not open, its session file holding
+    /// `layouts`.
+    fn closed_workspace(core: &AppCore, name: &str, layouts: &[serde_json::Value]) -> PathBuf {
+        let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
+        let path = workspace.root().to_path_buf();
+        crate::session::write_layouts(&path, &core.machine.device_id, layouts).unwrap();
+        path
+    }
+
+    fn a_sh() -> TabRef {
+        TabRef::External {
+            path: PathBuf::from("/tmp/a.sh"),
+        }
+    }
+
+    fn switch(core: &AppCore, label: &str, to: &Path) {
+        let opened = core.prepare_switch(label, to).unwrap();
+        core.switch_window(label, to, opened).unwrap();
+    }
+
+    #[test]
+    fn switching_the_last_window_keeps_the_left_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let other = open(&core, "다");
+        let da = core.path_of(&other).unwrap();
+        let (a1, b0) = (json!({"focusedPane": 1}), json!({"focusedPane": 0}));
+        core.set_layout(&w1, a1.clone()).unwrap();
+        assert_eq!(core.claim_tabs(&w1, &[a_sh()]).unwrap(), vec![Ok(())]);
+        let na = closed_workspace(&core, "나", std::slice::from_ref(&b0));
+
+        switch(&core, &w1, &na);
+        assert_eq!(layouts(&core, &ga), vec![a1]);
+        let shown = core.workspace(&w1).unwrap();
+        assert_eq!(lock(&shown).root(), na.as_path());
+        assert_eq!(core.layout_of(&w1), Some(b0));
+        assert!(!core.is_open_path(&ga));
+        // In place: the window keeps its spot among the windows to reopen.
+        assert_eq!(saved(&core).open_windows, vec![na.clone(), da]);
+        assert_eq!(core.claim_tabs(&other, &[a_sh()]).unwrap(), vec![Ok(())]);
+    }
+
+    #[test]
+    fn switching_away_from_a_shared_workspace_drops_the_left_layout() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &ga);
+        let (a, b) = (json!({"focusedPane": 0}), json!({"focusedPane": 1}));
+        core.set_layout(&w1, a).unwrap();
+        core.set_layout(&w2, b.clone()).unwrap();
+        let na = closed_workspace(&core, "나", &[]);
+
+        switch(&core, &w1, &na);
+        assert_eq!(layouts(&core, &ga), vec![b]);
+        assert!(core.is_open_path(&ga));
+        assert_eq!(core.windows_of(&ga), vec![w2]);
+        assert_eq!(core.windows_of(&na), vec![w1.clone()]);
+        assert_eq!(core.layout_of(&w1), None);
+    }
+
+    #[test]
+    fn switching_to_a_vanished_workspace_leaves_the_window_where_it_was() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let a1 = json!({"focusedPane": 1});
+        core.set_layout(&w1, a1.clone()).unwrap();
+        assert_eq!(core.claim_tabs(&w1, &[a_sh()]).unwrap(), vec![Ok(())]);
+        let na = closed_workspace(&core, "나", &[]);
+        fs::remove_dir_all(&na).unwrap();
+
+        assert!(matches!(
+            core.prepare_switch(&w1, &na),
+            Err(SwitchError::Open(_))
+        ));
+        assert_eq!(core.path_of(&w1), Some(ga.clone()));
+        assert_eq!(core.layout_of(&w1), Some(a1.clone()));
+        assert_eq!(layouts(&core, &ga), vec![a1]);
+        assert_eq!(saved(&core).open_windows, vec![ga.clone()]);
+        let w2 = attach(&core, &ga);
+        assert_eq!(core.claim_tabs(&w2, &[a_sh()]).unwrap(), vec![Err(w1)]);
+        // Nothing is left claimed for the folder.
+        assert!(core.reserve(&na).is_ok());
+    }
+
+    #[test]
+    fn a_switch_to_a_workspace_opened_meanwhile_focuses_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        // While w1 wrote its tabs, a `tote` request opened 나 in a window of its own.
+        let w2 = open(&core, "나");
+        let na = core.path_of(&w2).unwrap();
+        assert!(matches!(
+            core.prepare_switch(&w1, &na),
+            Err(SwitchError::Shown(label)) if label == w2
+        ));
+        // Or is opening one right now.
+        let da = closed_workspace(&core, "다", &[]);
+        let opening = core.reserve(&da).unwrap();
+        assert!(matches!(
+            core.prepare_switch(&w1, &da),
+            Err(SwitchError::Shown(label)) if label == opening
+        ));
+        assert_eq!(core.path_of(&w1), Some(ga));
+        assert_eq!(core.windows_of(&na), vec![w2]);
+    }
+
+    #[test]
+    fn a_switch_to_a_workspace_shown_elsewhere_targets_that_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &ga);
+        let w3 = open(&core, "나");
+        let na = core.path_of(&w3).unwrap();
+        let da = closed_workspace(&core, "다", &[]);
+        // Its own workspace: nothing to do, though another window shows it too.
+        assert_eq!(core.switch_target(&w1, &ga), SwitchTarget::Stay);
+        assert_eq!(
+            core.switch_target(&w1, &na),
+            SwitchTarget::Focus(w3.clone())
+        );
+        assert_eq!(core.switch_target(&w3, &ga), SwitchTarget::Focus(w2));
+        assert_eq!(core.switch_target(&w1, &da), SwitchTarget::Open);
+    }
+
+    #[test]
+    fn a_switched_window_refuses_writes_until_its_page_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let b0 = json!({"focusedPane": 0});
+        let na = closed_workspace(&core, "나", std::slice::from_ref(&b0));
+        switch(&core, &w1, &na);
+
+        // The page of 가 is still up until the reload: what it writes is not 나's.
+        assert!(core.workspace_to_change(&w1).is_err());
+        assert!(core.set_layout(&w1, json!({"focusedPane": 9})).is_err());
+        assert!(core.claim_tabs(&w1, &[a_sh()]).is_err());
+        assert_eq!(layouts(&core, &na), vec![b0.clone()]);
+        // Reads still go: the old page lists what it lists, harmlessly.
+        assert!(core.workspace(&w1).is_some());
+
+        // The new page asks for its layout as it starts.
+        assert_eq!(core.page_layout(&w1), Some(b0));
+        assert!(core.workspace_to_change(&w1).is_ok());
+        assert_eq!(core.claim_tabs(&w1, &[a_sh()]).unwrap(), vec![Ok(())]);
+        let b1 = json!({"focusedPane": 1});
+        core.set_layout(&w1, b1.clone()).unwrap();
+        assert_eq!(layouts(&core, &na), vec![b1]);
+    }
+
+    #[test]
+    fn a_quit_while_a_switched_page_loads_reopens_it_on_its_new_workspace() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let a1 = json!({"focusedPane": 1});
+        core.set_layout(&w1, a1.clone()).unwrap();
+        let b0 = json!({"focusedPane": 0});
+        let na = closed_workspace(&core, "나", std::slice::from_ref(&b0));
+        switch(&core, &w1, &na);
+        // Its page has nothing to write and may not answer: the quit does not wait on it.
+        assert_eq!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Done(FlushGoal::Quit)
+        );
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![na.clone()]);
+        assert_eq!(layouts(&core, &na), vec![b0]);
+        assert_eq!(layouts(&core, &ga), vec![a1]);
     }
 }

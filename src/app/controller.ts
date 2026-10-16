@@ -35,6 +35,7 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
+import { railItems, railShortcut, WorkspaceRail, type RailItem } from "../ui/rail";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings } from "../ui/settings";
 import { Sidebar } from "../ui/sidebar";
@@ -77,6 +78,7 @@ export const TOO_NARROW_TO_SPLIT = "창이 좁아 나눌 수 없습니다";
 export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기지 않았습니다";
 /** 「탭을 새 창으로 옮기기」: an item of the window menu and of a tab's context menu. */
 export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
+const NEW_WORKSPACE_NAME = "새 워크스페이스 이름";
 /** The strip along the editing area's right edge where a dragged tab opens a new pane. */
 export const DROP_EDGE_PX = 48;
 
@@ -88,9 +90,9 @@ const sameTab = (a: TabRef, b: TabRef) =>
     ? b.kind === "memo" && a.id === b.id
     : b.kind === "external" && a.path === b.path;
 
-/** One workspace window: the sidebar, the status bar, menu actions, opening and closing tabs, the
- * session and the places its tabs hold. Each editor pane — its tabs, tab bar and editor area — is a
- * `Pane`; the session is read and written by `SessionSync`. */
+/** One workspace window: the workspace rail, the sidebar, the status bar, menu actions, opening and
+ * closing tabs, the session and the places its tabs hold. Each editor pane — its tabs, tab bar and
+ * editor area — is a `Pane`; the session is read and written by `SessionSync`. */
 export class AppController implements DocHost, PaneHost {
   readonly writes = new WriteScheduler((_key, error) => this.report(error));
   /** The window's panes, left to right; at least one. */
@@ -140,6 +142,14 @@ export class AppController implements DocHost, PaneHost {
     mark: (name) => this.mark(name),
   });
   private readonly sidebar = new Sidebar(this.memoList, this.searchPanel);
+  private readonly rail = new WorkspaceRail({
+    pick: (item) => void this.switchTo(item.path),
+    add: () => void this.newWorkspace(),
+  });
+  /** What the rail shows, for ⌃1 – ⌃9. */
+  private railList: RailItem[] = [];
+  /** The folder of the workspace the window shows. */
+  private workspacePath = "";
   private readonly statusBar = new StatusBar();
   /** Numbers the panes of this window, for their ids. */
   private paneCount = 0;
@@ -165,6 +175,7 @@ export class AppController implements DocHost, PaneHost {
     this.panesEl.append(this.focused.el);
     this.syncPanes();
     root.replaceChildren(
+      this.rail.el,
       this.sidebar.el,
       h("main", { class: "main" }, this.panesEl, this.statusBar.el),
     );
@@ -237,7 +248,23 @@ export class AppController implements DocHost, PaneHost {
     ]);
     this.perf = perf;
     this.deviceId = info.deviceId;
+    this.workspacePath = info.path;
     document.title = info.title;
+    void this.refreshRail();
+    this.backend.onWorkspacesChanged(() => void this.refreshRail());
+    // In the capture phase: the editor and the dialogs see the keys after this.
+    document.addEventListener(
+      "keydown",
+      (event) => {
+        const index = railShortcut(event);
+        const item = index === null ? undefined : this.railList[index];
+        if (!item) return;
+        event.preventDefault();
+        event.stopPropagation();
+        void this.switchTo(item.path);
+      },
+      true,
+    );
     await this.loadRegistry();
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
@@ -278,7 +305,10 @@ export class AppController implements DocHost, PaneHost {
         if (pane) void this.focusOn(pane);
       }, 0);
     });
-    window.addEventListener("focus", () => void this.refreshMemos());
+    window.addEventListener("focus", () => {
+      void this.refreshMemos();
+      void this.refreshRail();
+    });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll(false);
     });
@@ -873,6 +903,9 @@ export class AppController implements DocHost, PaneHost {
   /** Answers with what is still only in memory: the native side asks before closing over it. */
   private async onFlush(id: number): Promise<void> {
     try {
+      // A syllable still being composed goes into its own tab before the tabs are written
+      // (closing, quitting, switching the workspace).
+      await Promise.all(this.panes.map((pane) => settleComposition(pane.view)));
       await this.flushAll(true);
     } finally {
       const failed = this.docs.filter((doc) => doc.saveFailed).length;
@@ -990,8 +1023,9 @@ export class AppController implements DocHost, PaneHost {
         case "toggle-preview":
           return await this.togglePreview();
         case "open-workspace":
-        case "new-workspace":
           return await this.showPicker();
+        case "new-workspace":
+          return await this.newWorkspace();
         case "settings":
           return await this.showSettings();
         case "versions":
@@ -1094,14 +1128,52 @@ export class AppController implements DocHost, PaneHost {
     await doc.rename(file);
   }
 
+  private async refreshRail(): Promise<void> {
+    try {
+      this.railList = railItems(await this.backend.listWorkspaces(), this.workspacePath);
+      this.rail.render(this.railList);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  /** The rail and ⌃1 – ⌃9: this window shows the workspace at `path`. The backend has the window
+   * write its tabs (`onFlush`), then reloads it; a workspace another window shows comes forward
+   * instead. */
+  private async switchTo(path: string): Promise<void> {
+    this.mark("switch-click");
+    try {
+      await this.backend.switchWorkspace(path);
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  /** The rail's `+` and 「새 워크스페이스…」: a workspace made wherever it is asked for opens in
+   * this window. */
+  private async newWorkspace(): Promise<void> {
+    const name = (await promptText(NEW_WORKSPACE_NAME, ""))?.trim();
+    if (!name) {
+      if (this.focused.tabs.active) this.focused.view.focus();
+      return;
+    }
+    try {
+      await this.backend.switchWorkspace(await this.backend.createWorkspace(name));
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
   private async showPicker(): Promise<void> {
     const items = await this.backend.listWorkspaces();
     await workspacePicker(items, {
       open: (path) =>
         void this.backend.openWorkspace(path).catch((error: unknown) => this.report(error)),
+      // Made here, it opens in this window; one picked opens in a window of its own.
       create: async (name) => {
         try {
-          await this.backend.createWorkspace(name);
+          const path = await this.backend.createWorkspace(name);
+          void this.backend.switchWorkspace(path).catch((error: unknown) => this.report(error));
           return null;
         } catch (error) {
           return describeError(error);

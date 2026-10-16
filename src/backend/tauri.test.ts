@@ -71,6 +71,7 @@ describe("TauriBackend", () => {
       [() => backend.listWorkspaces(), "list_workspaces", undefined],
       [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
       [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
+      [() => backend.switchWorkspace("/w/업무"), "switch_workspace", { path: "/w/업무" }],
       [
         () => backend.relocateWorkspace("/gone/업무", "/new/업무"),
         "relocate_workspace",

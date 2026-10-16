@@ -4,17 +4,35 @@
 //! that could not write everything says why in its answer, and the round ends with a question
 //! instead of the goal (spec 「오류 처리」: a failed save is the one thing that holds up a quit).
 //!
-//! A quit never runs beside a close: a quit that comes while a close round is open — still
-//! writing or asking — joins it and starts once the close is done (`Ack::DoneThenQuit`), or
-//! shares its question; a close that comes while a quit round runs is absorbed by it. So a quit
-//! and a close never ask at once, and every quit macOS waits on is answered by one round's end.
+//! Closing a window and switching its workspace are window rounds: one window writes, and a
+//! window runs one window round at a time. A quit never runs beside a window round: a quit that
+//! comes while one is open — still writing or asking — joins it and starts once it is done
+//! (`Ack::DoneThenQuit`), or shares its question; a window round that comes while a quit round
+//! runs is absorbed by it. So a quit and a window round never ask at once, and every quit macOS
+//! waits on is answered by one round's end.
 
 use std::collections::{BTreeMap, BTreeSet};
+use std::path::PathBuf;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FlushGoal {
     CloseWindow(String),
+    /// The window `label` shows the workspace at `to` instead of its own.
+    SwitchWorkspace {
+        label: String,
+        to: PathBuf,
+    },
     Quit,
+}
+
+impl FlushGoal {
+    /// The window of a window round; `None` for a quit.
+    pub fn window(&self) -> Option<&str> {
+        match self {
+            FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => Some(label),
+            FlushGoal::Quit => None,
+        }
+    }
 }
 
 #[derive(Debug, PartialEq, Eq)]
@@ -23,9 +41,9 @@ pub enum Begin {
     Started { id: u64, windows: Vec<String> },
     /// Nobody to wait for: carry the goal out now.
     Done(FlushGoal),
-    /// A round already covers this goal: a quit round absorbs a close and a second quit, a close
-    /// round absorbs the same close again, and a quit that finds a close round — writing or
-    /// asking — joins the first one opened and starts when it is done.
+    /// A round already covers this goal: a quit round absorbs a window round and a second quit, a
+    /// window's round absorbs any other round of that window, and a quit that finds a window
+    /// round — writing or asking — joins the first one opened and starts when it is done.
     AlreadyRunning,
 }
 
@@ -36,7 +54,7 @@ pub enum Ack {
     Pending,
     /// Every window wrote what it had: carry the goal out.
     Done(FlushGoal),
-    /// The close a quit joined wrote everything: carry the close out, then start the quit.
+    /// The window round a quit joined wrote everything: carry it out, then start the quit.
     DoneThenQuit(FlushGoal),
     /// Some window could not write everything: ask before carrying the goal out. The round stays
     /// until `cancel`, so a second ⌘Q while the question is open starts nothing.
@@ -59,34 +77,38 @@ struct Round {
     reasons: Vec<String>,
     /// Ended as `Ack::Blocked`; the question is open.
     asking: bool,
-    /// A quit came while this close was open: its end starts the quit, or its question's answer
-    /// carries the quit on or refuses it.
+    /// A quit came while this window round was open: its end starts the quit, or its question's
+    /// answer carries the quit on or refuses it.
     quit_waiting: bool,
 }
 
 impl FlushCoordinator {
     pub fn begin(&mut self, goal: FlushGoal, windows: Vec<String>) -> Begin {
-        // A quit beside a close round could end in two dialogs at once, one per round; the quit
-        // waits on the close instead, writing or asking. Rounds are kept in id order, so with
-        // several the first opened takes it. A quit round already running wins: it absorbs this
-        // one below, and a close's 「취소」 must not refuse it.
+        // A quit beside a window round could end in two dialogs at once, one per round; the quit
+        // waits on the window round instead, writing or asking. Rounds are kept in id order, so
+        // with several the first opened takes it. A quit round already running wins: it absorbs
+        // this one below, and a window round's 「취소」 must not refuse it.
         let quit_running = self
             .rounds
             .values()
             .any(|round| round.goal == FlushGoal::Quit);
         if goal == FlushGoal::Quit && !quit_running {
-            let close = self
+            let window_round = self
                 .rounds
                 .values_mut()
-                .find(|round| matches!(round.goal, FlushGoal::CloseWindow(_)));
-            if let Some(round) = close {
+                .find(|round| round.goal.window().is_some());
+            if let Some(round) = window_round {
                 round.quit_waiting = true;
                 return Begin::AlreadyRunning;
             }
         }
         // A Dock quit or a logout told 「later」 here still owes macOS an answer: whichever round
         // absorbed it answers when it ends.
-        let busy = quit_running || self.rounds.values().any(|round| round.goal == goal);
+        let busy = quit_running
+            || self.rounds.values().any(|round| {
+                round.goal == goal
+                    || (goal.window().is_some() && round.goal.window() == goal.window())
+            });
         if busy {
             return Begin::AlreadyRunning;
         }
@@ -178,6 +200,8 @@ impl FlushCoordinator {
 
 #[cfg(test)]
 mod tests {
+    use std::path::PathBuf;
+
     use super::*;
 
     fn labels(list: &[&str]) -> Vec<String> {
@@ -439,6 +463,63 @@ mod tests {
             f.window_gone("a"),
             vec![(id, Ack::DoneThenQuit(FlushGoal::CloseWindow("a".into())))]
         );
+    }
+
+    fn switch(label: &str) -> FlushGoal {
+        FlushGoal::SwitchWorkspace {
+            label: label.into(),
+            to: PathBuf::from("/w/나"),
+        }
+    }
+
+    #[test]
+    fn one_window_runs_one_window_round_at_a_time() {
+        let mut f = FlushCoordinator::default();
+        assert!(matches!(
+            f.begin(switch("w1"), labels(&["w1"])),
+            Begin::Started { .. }
+        ));
+        assert_eq!(
+            f.begin(FlushGoal::CloseWindow("w1".into()), labels(&["w1"])),
+            Begin::AlreadyRunning
+        );
+        assert_eq!(
+            f.begin(switch("w1"), labels(&["w1"])),
+            Begin::AlreadyRunning
+        );
+        assert!(matches!(
+            f.begin(FlushGoal::CloseWindow("w2".into()), labels(&["w2"])),
+            Begin::Started { .. }
+        ));
+    }
+
+    #[test]
+    fn a_quit_joins_a_switch_like_a_close() {
+        // Still writing: the quit starts once the switch is done.
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(switch("a"), labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        assert_eq!(
+            f.begin(FlushGoal::Quit, labels(&["a", "b"])),
+            Begin::AlreadyRunning
+        );
+        assert_eq!(f.ack(id, "a", None), Ack::DoneThenQuit(switch("a")));
+
+        // Asking: one question answers both.
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(switch("a"), labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        assert!(matches!(
+            f.ack(id, "a", Some(ONE_FAILED.into())),
+            Ack::Blocked { .. }
+        ));
+        assert_eq!(
+            f.begin(FlushGoal::Quit, labels(&["a", "b"])),
+            Begin::AlreadyRunning
+        );
+        assert!(f.cancel(id));
     }
 
     #[test]

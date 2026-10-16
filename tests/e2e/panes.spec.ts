@@ -4,8 +4,8 @@ import { fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange } from "../../src/backend/types";
 import { menu, ready, sessionPane, start } from "./helpers";
 
-// Side-by-side panes of one window (⌘\, ⌥⌘← / ⌥⌘→) on the fake backend. The sidebar is 240px, so
-// the editing area is the viewport's width less 240.
+// Side-by-side panes of one window (⌘\, ⌥⌘← / ⌥⌘→) on the fake backend. The rail is 48px and the
+// sidebar 240px, so the editing area is the viewport's width less 288.
 
 const EMPTY_PANE = "빈 칸입니다. 메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
 const TOO_NARROW = "창이 좁아 나눌 수 없습니다";
@@ -113,7 +113,7 @@ test("⌘\\ with one tab opens an empty pane and focuses it", async ({ page }) =
 });
 
 test("⌘\\ in a narrow window says so and does nothing", async ({ page }) => {
-  // An editing area of 620px: two halves of 310px are under the minimum.
+  // An editing area of 572px: two halves of 286px are under the minimum.
   await page.setViewportSize({ width: 860, height: 720 });
   await start(page, {
     memos,
@@ -335,14 +335,15 @@ test("each pane keeps its own banner and preview mode", async ({ page }) => {
 });
 
 test("dragging the divider resizes and stops at 320px", async ({ page }) => {
-  // An editing area of 1040px less the 1px divider: two panes of 519.5px.
+  // An editing area of 992px — 1280px less the 48px rail and the 240px sidebar — less the 1px
+  // divider: two panes of 495.5px.
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
   await expect(panes(page)).toHaveCount(2);
   const width = (index: number) =>
     pane(page, index).evaluate((el) => el.getBoundingClientRect().width);
   const area = (await width(0)) + (await width(1));
-  expect(area).toBeCloseTo(1039, 0);
+  expect(area).toBeCloseTo(991, 0);
   /** Drags the divider by `dx` from where it is now. */
   const drag = async (dx: number) => {
     const box = (await page.locator(".pane-divider").boundingBox())!;
@@ -408,7 +409,7 @@ test("a session listing one memo in two panes restores it once", async ({ page }
 });
 
 test("widths keep their ratios in a window too narrow for them", async ({ page }) => {
-  // An editing area of 1360px: wide enough to make three panes by splitting.
+  // An editing area of 1312px: wide enough to make three panes by splitting.
   await page.setViewportSize({ width: 1600, height: 800 });
   await start(page, {
     memos,
@@ -419,7 +420,7 @@ test("widths keep their ratios in a window too narrow for them", async ({ page }
   await menu(page, "split-pane");
   await expect(panes(page)).toHaveCount(3);
   await expect.poll(() => sessionWidths(page, 3)).toEqual([0.5, 0.25, 0.25]);
-  // An editing area of 860px: under 960, so the panes are below the minimum width.
+  // An editing area of 812px: under 960, so the panes are below the minimum width.
   await page.setViewportSize({ width: 1100, height: 800 });
   await page.reload();
   await ready(page);

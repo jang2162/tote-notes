@@ -54,10 +54,70 @@ body {
 
 body {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: 48px 240px minmax(0, 1fr);
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
+}
+
+/* The workspace rail, left of the sidebar: a round button per workspace. */
+.rail {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
+  min-height: 0;
+  padding: 10px 0;
+  box-sizing: border-box;
+  overflow: hidden auto;
+  background: var(--sidebar-bg);
+  border-right: 1px solid var(--border);
+}
+
+.rail-item,
+.rail-add {
+  position: relative;
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 50%;
+  background: var(--bg);
+  color: var(--fg);
+  font:
+    11px/1 system-ui,
+    sans-serif;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.rail-item:hover,
+.rail-add:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--bg));
+}
+
+.rail-item.current {
+  border-color: var(--accent);
+  background: var(--active-bg);
+  box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 35%, transparent);
+}
+
+/* Another window shows this workspace. */
+.rail-dot {
+  position: absolute;
+  right: -1px;
+  bottom: -1px;
+  width: 8px;
+  height: 8px;
+  border: 1px solid var(--sidebar-bg);
+  border-radius: 50%;
+  background: var(--accent);
+}
+
+.rail-add {
+  color: var(--muted);
+  font-size: 16px;
 }
 
 .sidebar {

@@ -144,7 +144,10 @@ export class TauriBackend implements Backend {
     return call<WorkspaceListItem[]>("list_workspaces");
   }
   createWorkspace(name: string) {
-    return call<void>("create_workspace", { name });
+    return call<string>("create_workspace", { name });
+  }
+  switchWorkspace(path: string) {
+    return call<"focused" | "switching">("switch_workspace", { path });
   }
   relocateWorkspace(from: string, to: string) {
     return call<void>("relocate_workspace", { from, to });
@@ -273,6 +276,9 @@ export class TauriBackend implements Backend {
   }
   onReveal(handler: (tab: TabRef) => void) {
     void this.window.listen<TabRef>("tote://reveal", (event) => handler(event.payload));
+  }
+  onWorkspacesChanged(handler: () => void) {
+    void this.window.listen("tote://workspaces", () => handler());
   }
   onFileDrop(handler: (paths: string[]) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {

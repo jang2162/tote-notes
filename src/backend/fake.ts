@@ -139,6 +139,18 @@ export interface FakeData {
   tabMenus?: { id: string; text: string }[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
   hub?: HubState;
+  /** The workspaces other than `workspace`, by path, each as `workspace`, `memos` and `session`
+   * hold the current one: `switchWorkspace` trades the current one for one of these. Absent in old
+   * seeds. */
+  otherWorkspaces?: Record<
+    string,
+    { workspace: WorkspaceInfo; memos: Record<string, FakeMemo>; session: string | null }
+  >;
+  /** The workspace whose window `switchWorkspace` brought forward last, by path. */
+  focusedWorkspace?: string;
+  /** Timing marks are kept, as with `TOTE_PERF=1`; they go into `marks`. Absent in old seeds. */
+  perf?: boolean;
+  marks?: string[];
 }
 
 export interface FakeStorage {
@@ -323,9 +335,17 @@ export class FakeBackend implements Backend {
     outside: [] as ((change: OutsideChange) => void)[],
     memos: [] as (() => void)[],
     reveal: [] as ((tab: TabRef) => void)[],
+    workspaces: [] as (() => void)[],
   };
+  /** The fake's own flush rounds (`switchWorkspace`), waiting on this window's answer. */
+  private readonly flushWaiters = new Map<number, (blocked: string | undefined) => void>();
+  private flushRounds = 0;
   /** The window the page stands for. */
   private readonly label: string;
+  /** Set as a switch reloads the page, as the native side marks the window (`page_layout` in
+   * src-tauri/src/app/mod.rs): the old page's last writes — its blur, its timers — must not land in
+   * the workspace it is leaving for. */
+  private switching = false;
 
   constructor(
     private readonly storage: FakeStorage = memoryStorage(),
@@ -417,12 +437,17 @@ export class FakeBackend implements Backend {
   memosChanged(): void {
     for (const handler of this.handlers.memos) handler();
   }
+  /** A workspace was made, or a window came to show another one. */
+  workspacesChanged(): void {
+    for (const handler of this.handlers.workspaces) handler();
+  }
   /** Another window's page told this one what the native side would. */
   private heard(event: HubEvent): void {
     if (event.type === "flush") this.requestFlush(event.id);
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "reveal") this.reveal(event.tab);
     else if (event.type === "outside") this.outside(event.change);
+    else if (event.type === "workspaces") this.workspacesChanged();
   }
   /** The memo list changed: the other windows read it again, as the native side tells them. */
   private memosTouched(): void {
@@ -466,6 +491,7 @@ export class FakeBackend implements Backend {
   }
 
   async createMemo() {
+    this.refuseWhileSwitching();
     return this.add(this.freeName("untitled", "md"), true, new Uint8Array());
   }
 
@@ -477,6 +503,7 @@ export class FakeBackend implements Backend {
   }
 
   async writeMemo(id: string, bytes: Uint8Array) {
+    this.refuseWhileSwitching();
     if (this.data.failWrites) {
       this.data.failWrites -= 1;
       this.commit();
@@ -491,6 +518,7 @@ export class FakeBackend implements Backend {
   }
 
   async retitleMemo(id: string, stem: string) {
+    this.refuseWhileSwitching();
     const memo = this.memo(id);
     if (memo.autoTitle) {
       const { ext } = splitName(memo.file);
@@ -503,6 +531,7 @@ export class FakeBackend implements Backend {
   }
 
   async renameMemo(id: string, name: string) {
+    this.refuseWhileSwitching();
     const memo = this.memo(id);
     const file = name.trim();
     if (!validName(file)) throw new BackendError("invalid-name", file);
@@ -521,6 +550,7 @@ export class FakeBackend implements Backend {
   }
 
   async setMemoLanguage(id: string, language: string, ext: string) {
+    this.refuseWhileSwitching();
     const memo = this.memo(id);
     const { stem, ext: current } = splitName(memo.file);
     if (current.toLowerCase() !== ext.toLowerCase()) {
@@ -534,6 +564,7 @@ export class FakeBackend implements Backend {
   }
 
   async deleteMemo(id: string) {
+    this.refuseWhileSwitching();
     this.memo(id);
     delete this.data.memos[id];
     this.commit();
@@ -541,6 +572,7 @@ export class FakeBackend implements Backend {
   }
 
   async importMemo(fileName: string, bytes: Uint8Array) {
+    this.refuseWhileSwitching();
     if (!validName(fileName)) throw new BackendError("invalid-name", fileName);
     const { stem, ext } = splitName(fileName);
     return this.add(this.freeName(stem, ext), false, bytes);
@@ -562,6 +594,7 @@ export class FakeBackend implements Backend {
   }
 
   async writeWindowLayout(json: string) {
+    this.refuseWhileSwitching();
     if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
     else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
     this.commit();
@@ -575,6 +608,7 @@ export class FakeBackend implements Backend {
   }
 
   async claimTabs(tabs: TabRef[], reveal: boolean) {
+    this.refuseWhileSwitching();
     const places = (this.data.places ??= {});
     const claims = tabs.map((tab) => {
       const owner = places[placeKey(tab)];
@@ -593,6 +627,7 @@ export class FakeBackend implements Backend {
   }
 
   async releaseTab(tab: TabRef) {
+    if (this.switching) return;
     const places = this.data.places ?? {};
     if (places[placeKey(tab)] !== this.label) return;
     delete places[placeKey(tab)];
@@ -600,6 +635,7 @@ export class FakeBackend implements Backend {
   }
 
   async tearOffTab(tab: string, ref: TabRef) {
+    this.refuseWhileSwitching();
     const delay = this.data.tearOffDelayMs;
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     const entry: unknown = JSON.parse(tab);
@@ -692,14 +728,81 @@ export class FakeBackend implements Backend {
     if (!validName(name)) throw new BackendError("invalid-name", name);
     if (this.data.workspaces.some((w) => sameName(w.name, name)))
       throw new BackendError("already-exists", name);
-    this.data.workspaces.push({
-      name,
-      path: `/fake/${name}`,
-      open: true,
-      windows: 1,
-      missing: false,
-    });
+    const path = `/fake/${name}`;
+    this.data.workspaces.push({ name, path, open: false, windows: 0, missing: false });
+    (this.data.otherWorkspaces ??= {})[path] = {
+      workspace: {
+        id: `workspace-${name}`,
+        name,
+        title: name,
+        path,
+        deviceId: this.data.workspace.deviceId,
+      },
+      memos: {},
+      session: null,
+    };
     this.commit();
+    return path;
+  }
+
+  /** The native side's switch (`windows::switch`, `lifecycle::switch_window`): a workspace a window
+   * shows already comes forward and this window stays; any other is switched to after this
+   * window writes its tabs, the current workspace taking its place among `otherWorkspaces`, and
+   * the page reloads as the app's does. With a hub, whose windows share one workspace's memos,
+   * the window only leaves it in the counts and tells the others; its page stays. */
+  async switchWorkspace(path: string): Promise<"focused" | "switching"> {
+    if (path === this.data.workspace.path) return "focused";
+    const target = this.data.workspaces.find((w) => w.path === path);
+    if (target && target.windows > 0) {
+      this.data.focusedWorkspace = path;
+      this.commit();
+      return "focused";
+    }
+    const other = this.data.otherWorkspaces?.[path];
+    if (!target || !other)
+      throw new BackendError("not-a-workspace", `${path} is not a tote workspace`);
+    // A tab that could not be written: the native side asks, and the fake takes 「취소」.
+    if ((await this.flushThisWindow()) !== undefined) return "switching";
+    const data = this.data;
+    const left = data.workspaces.find((w) => w.path === data.workspace.path);
+    if (left) Object.assign(left, { windows: left.windows - 1, open: left.windows > 1 });
+    Object.assign(target, { windows: target.windows + 1, open: true });
+    if (this.hub) {
+      this.commit();
+      this.hub.send(this.hub.siblings(data), { type: "workspaces" });
+      return "switching";
+    }
+    const others = (data.otherWorkspaces ??= {});
+    others[data.workspace.path] = {
+      workspace: data.workspace,
+      memos: data.memos,
+      session: data.session,
+    };
+    delete others[path];
+    Object.assign(data, { workspace: other.workspace, memos: other.memos, session: other.session });
+    data.pending = [];
+    const places = data.places ?? {};
+    for (const [key, owner] of Object.entries(places)) if (owner === this.label) delete places[key];
+    this.commit();
+    this.switching = true;
+    location.reload();
+    return "switching";
+  }
+
+  private refuseWhileSwitching(): void {
+    if (this.switching)
+      throw new BackendError("bad-request", `${this.label} is switching workspaces`);
+  }
+
+  /** Asks this window to write everything (`onFlush`) and waits for its answer. */
+  private flushThisWindow(): Promise<string | undefined> {
+    // Apart from the ids tests hand `requestFlush`.
+    const id = 1_000_000 + ++this.flushRounds;
+    const answered = new Promise<string | undefined>((resolve) =>
+      this.flushWaiters.set(id, resolve),
+    );
+    this.requestFlush(id);
+    return answered;
   }
 
   async openWorkspace(path: string) {
@@ -766,6 +869,8 @@ export class FakeBackend implements Backend {
   async flushDone(id: number, blocked?: string) {
     this.data.flushed.push(blocked === undefined ? { id } : { id, blocked });
     this.commit();
+    this.flushWaiters.get(id)?.(blocked);
+    this.flushWaiters.delete(id);
   }
 
   async closeWindow() {
@@ -1018,11 +1123,15 @@ export class FakeBackend implements Backend {
     this.liveWorkspaceSearch = 0;
   }
 
-  /** The measurement runs against the app only. */
-  perfMark(_name: string) {}
+  /** The measurement runs against the app only; a test that turns `perf` on sees the marks. */
+  perfMark(name: string) {
+    if (!this.data.perf) return;
+    (this.data.marks ??= []).push(name);
+    this.commit();
+  }
 
   async perfConfig() {
-    return { enabled: false, search: null };
+    return { enabled: this.data.perf ?? false, search: null };
   }
 
   private issue(owner: string, name: string, data: string): string {
@@ -1067,6 +1176,9 @@ export class FakeBackend implements Backend {
   }
   onReveal(handler: (tab: TabRef) => void) {
     this.handlers.reveal.push(handler);
+  }
+  onWorkspacesChanged(handler: () => void) {
+    this.handlers.workspaces.push(handler);
   }
 
   private memo(id: string): FakeMemo {

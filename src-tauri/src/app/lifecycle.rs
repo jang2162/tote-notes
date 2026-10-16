@@ -1,14 +1,16 @@
-//! Closing a window and quitting: the affected windows write their edits first, then tote goes.
-//! Writing on close and quit is what bounds the loss when a hidden window's timers stall
-//! (spec 「저장」). A save that keeps failing is the one thing that asks first (spec 「오류 처리」).
+//! Closing a window, switching its workspace and quitting: the affected windows write their
+//! edits first, then the window or tote goes. Writing on close and quit is what bounds the loss
+//! when a hidden window's timers stall (spec 「저장」). A save that keeps failing is the one thing
+//! that asks first (spec 「오류 처리」).
 
+use std::path::Path;
 use std::time::Duration;
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use super::flush::{Ack, Begin, FlushGoal};
-use super::AppCore;
+use super::{windows, AppCore, PendingOpen, SwitchError};
 
 /// Long enough to write any memo to a local disk; short enough that a hung page cannot keep tote
 /// from closing.
@@ -92,8 +94,14 @@ pub fn settle(app: &AppHandle, id: u64, ack: Ack) {
 }
 
 fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
+    // A switch with a quit right after it only moves the window in the books: its new page would
+    // load just as the quit asks it to write, and the quit would wait out the timeout on it.
+    let quit_follows = steps.contains(&Step::BeginQuit);
     for step in steps {
         match step {
+            Step::Finish(FlushGoal::SwitchWorkspace { label, to }) => {
+                switch_window(app, &label, &to, !quit_follows)
+            }
             Step::Finish(goal) => finish(app, goal),
             // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
             Step::BeginQuit => begin(app, FlushGoal::Quit),
@@ -110,6 +118,7 @@ fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
 fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
     let anyway = match goal {
         FlushGoal::CloseWindow(_) => "그래도 닫기",
+        FlushGoal::SwitchWorkspace { .. } => "그래도 바꾸기",
         FlushGoal::Quit => "그래도 종료",
     };
     let mut dialog = app
@@ -121,10 +130,11 @@ fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
             anyway.to_string(),
             "취소".to_string(),
         ));
-    if let FlushGoal::CloseWindow(label) = &goal {
-        if let Some(window) = app.get_webview_window(label) {
-            dialog = dialog.parent(&window);
-        }
+    if let Some(window) = goal
+        .window()
+        .and_then(|label| app.get_webview_window(label))
+    {
+        dialog = dialog.parent(&window);
     }
     let app = app.clone();
     dialog.show(move |anyway| resolve_blocked(&app, id, goal, anyway));
@@ -147,6 +157,7 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
                 let _ = window.destroy();
             }
         }
+        FlushGoal::SwitchWorkspace { label, to } => switch_window(app, &label, &to, true),
         FlushGoal::Quit => {
             app.state::<AppCore>().start_quit();
             // macOS asked first (the Dock, a logout): answering it, not `exit`, lets a logout go
@@ -156,6 +167,46 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
                 return;
             }
             app.exit(0);
+        }
+    }
+}
+
+/// Window `label` wrote its tabs: it shows the workspace at `to` now, unless a window came to show
+/// it meanwhile — that one comes forward and this one stays — or it cannot be opened, which the
+/// window's status bar says. With `reload` false (a quit follows) only the books change: the
+/// window reopens on `to` at the next launch.
+fn switch_window(app: &AppHandle, label: &str, to: &Path, reload: bool) {
+    let core = app.state::<AppCore>();
+    let opened = match core.prepare_switch(label, to) {
+        Ok(opened) => opened,
+        Err(SwitchError::Shown(other)) => return windows::focus(app, &other),
+        Err(SwitchError::Open(err)) => {
+            core.push_pending(
+                label,
+                PendingOpen::Notice {
+                    message: format!("워크스페이스를 열지 못했습니다: {err}"),
+                },
+            );
+            let _ = app.emit_to(EventTarget::webview_window(label), "tote://pending", ());
+            return;
+        }
+    };
+    let from = core.path_of(label);
+    if let Err(err) = core.switch_window(label, to, opened) {
+        eprintln!("tote: {label}: could not switch to {}: {err}", to.display());
+        return;
+    }
+    for path in from.iter().map(|p| p.as_path()).chain([to]) {
+        windows::retitle(app, path);
+    }
+    let _ = app.emit("tote://workspaces", ());
+    // A workspace just opened is marked changed; have the backup thread take it now.
+    core.request_backup(label);
+    if reload {
+        if let Some(window) = app.get_webview_window(label) {
+            if let Err(err) = window.reload() {
+                eprintln!("tote: {label}: could not reload: {err}");
+            }
         }
     }
 }
@@ -307,6 +358,13 @@ mod tests {
         FlushGoal::CloseWindow("a".into())
     }
 
+    fn switch() -> FlushGoal {
+        FlushGoal::SwitchWorkspace {
+            label: "a".into(),
+            to: "/w/나".into(),
+        }
+    }
+
     #[test]
     fn every_answer_settles_a_waiting_system_quit() {
         let table = [
@@ -332,6 +390,17 @@ mod tests {
             ),
             // Refused here.
             (close(), false, true, vec![Step::RefuseSystemQuit]),
+            // A switch is a window round like a close. With a quit right after it, the switch
+            // only moves the window in the books (`run_steps`).
+            (switch(), true, false, vec![Step::Finish(switch())]),
+            (switch(), false, false, vec![]),
+            (
+                switch(),
+                true,
+                true,
+                vec![Step::Finish(switch()), Step::BeginQuit],
+            ),
+            (switch(), false, true, vec![Step::RefuseSystemQuit]),
         ];
         for (goal, anyway, quit_waiting, steps) in table {
             assert_eq!(

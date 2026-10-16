@@ -12,7 +12,7 @@ use tauri::{
 use super::commands::CommandError;
 use super::flush::FlushGoal;
 use super::places::TabKey;
-use super::{lifecycle, requests, AppCore};
+use super::{lifecycle, requests, AppCore, SwitchTarget};
 use crate::cli::CliRequest;
 use crate::session::{layout_frame, WindowFrame};
 use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
@@ -78,6 +78,44 @@ pub fn show(app: &AppHandle, path: &Path) -> Result<String, CommandError> {
         return Ok(label);
     }
     open_window(app, &path, WindowPlan::Restore(0))
+}
+
+/// What `switch` did.
+#[derive(Debug, PartialEq, Eq)]
+pub enum Switched {
+    /// The window shows the workspace already, or another window showing it came forward; this
+    /// window stays as it is.
+    Focused,
+    /// The window writes its tabs, then shows the workspace (`FlushGoal::SwitchWorkspace`).
+    Switching,
+}
+
+/// Window `label` asks to show the workspace at `to` (the rail, ⌃1–⌃9, a workspace just made).
+/// `not-a-workspace` when `to` is not one.
+pub fn switch(app: &AppHandle, label: &str, to: &Path) -> Result<Switched, CommandError> {
+    let core = app.state::<AppCore>();
+    let to = std::fs::canonicalize(to)?;
+    match core.switch_target(label, &to) {
+        SwitchTarget::Stay => Ok(Switched::Focused),
+        SwitchTarget::Focus(other) => {
+            focus(app, &other);
+            Ok(Switched::Focused)
+        }
+        SwitchTarget::Open if !Workspace::is_workspace(&to) => Err(CommandError::new(
+            "not-a-workspace",
+            format!("{} is not a tote workspace", to.display()),
+        )),
+        SwitchTarget::Open => {
+            lifecycle::begin(
+                app,
+                FlushGoal::SwitchWorkspace {
+                    label: label.to_string(),
+                    to,
+                },
+            );
+            Ok(Switched::Switching)
+        }
+    }
 }
 
 /// Opens a new window on the workspace at `path`. Reopening a saved window opens the workspace too

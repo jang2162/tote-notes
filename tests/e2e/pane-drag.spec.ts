@@ -43,8 +43,18 @@ const memos = {
   d: fakeMemo("라.md", "넷째", { modifiedMs: 1 }),
 };
 
+/** `locator`'s box. `boundingBox` does not wait, and right after a restore the tab bar is drawn
+ * again: a box read while its tabs are being replaced is null, so it is read until there is one. */
+async function boxOf(
+  locator: Locator,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
+  await expect.poll(async () => (box = await locator.boundingBox())).not.toBeNull();
+  return box!;
+}
+
 async function centre(locator: Locator): Promise<{ x: number; y: number }> {
-  const box = (await locator.boundingBox())!;
+  const box = await boxOf(locator);
   return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
@@ -64,13 +74,13 @@ async function drag(
 
 /** Just inside the left end of `target`, at its height: a drop there lands before it. */
 async function before(target: Locator): Promise<{ x: number; y: number }> {
-  const box = (await target.boundingBox())!;
+  const box = await boxOf(target);
   return { x: box.x + 4, y: box.y + box.height / 2 };
 }
 
 /** Inside the editing area's right edge, halfway down. */
 async function rightEdge(page: Page): Promise<{ x: number; y: number }> {
-  const box = (await page.locator(".panes").boundingBox())!;
+  const box = await boxOf(page.locator(".panes"));
   return { x: box.x + box.width - 10, y: box.y + box.height / 2 };
 }
 
@@ -134,7 +144,7 @@ test("dragging the last tab out closes its pane", async ({ page }) => {
   });
   await expect(panes(page)).toHaveCount(2);
   const bar = pane(page, 0).locator(".tabbar");
-  const box = (await bar.boundingBox())!;
+  const box = await boxOf(bar);
   // Past the last tab of the left pane's bar.
   await drag(page, tab(page, 1, "다"), { x: box.x + box.width - 20, y: box.y + box.height / 2 });
   await expect(panes(page)).toHaveCount(1);
@@ -162,7 +172,7 @@ test("a moved memo keeps its unsaved text and its undo", async ({ page }) => {
 });
 
 test("a drop that would split a narrow window does nothing and says so", async ({ page }) => {
-  // An editing area of 620px: two halves of 310px are under the minimum.
+  // An editing area of 572px: two halves of 286px are under the minimum.
   await page.setViewportSize({ width: 860, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
