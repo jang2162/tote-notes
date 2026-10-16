@@ -1,6 +1,8 @@
+import { mountDragPage } from "./drag/drag-page";
 import { mountImePage } from "./ime/ime-page";
 import { exitApp, labEnv, recordResult } from "./lab-api";
 import { mountLatencyPage } from "./perf/latency-page";
+import { runReloadAuto } from "./reload/reload";
 import { runSmokeAuto } from "./perf/smoke";
 import { runThroughputAuto } from "./perf/throughput";
 import { runViewerAuto } from "./viewer/host";
@@ -21,6 +23,8 @@ async function main(): Promise<void> {
         return runViewerAuto(env);
       case "throughput":
         return runThroughputAuto();
+      case "reload":
+        return runReloadAuto();
       case "smoke":
         return runSmokeAuto(app);
       default:
@@ -28,6 +32,7 @@ async function main(): Promise<void> {
         return exitApp();
     }
   }
+  if (env.manual === "drag") return mountDragPage(app);
   if (location.hash === "#latency") return mountLatencyPage(app);
   if (location.hash === "#ime") return mountImePage(app);
   app.innerHTML = `

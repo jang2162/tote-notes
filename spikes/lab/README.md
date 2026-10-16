@@ -21,12 +21,13 @@ pnpm tauri build --debug --no-bundle   # 결과: src-tauri/target/debug/lab
 
 자동 모드는 작은 창(480×320)을 주 모니터 오른쪽 아래에 항상 위로 띄운다(키보드 포커스는 가져가지 않는다). 창이 가려지면 macOS 가 WebView 를 스로틀해 측정이 무효가 된다. 주 모니터에 다른 앱이 전체 화면으로 떠 있어도 그 위에 보이도록, 자동 모드는 Dock 아이콘 없는 액세서리 앱으로 돌고 창을 모든 Space 에 둔다.
 
-| 모드         | 재는 것                                           | 결과 파일                                        |
-| ------------ | ------------------------------------------------- | ------------------------------------------------ |
-| `ping`       | IPC 와 결과 기록 경로                             | `results/ping.json`                              |
-| `viewer`     | 샌드박스 iframe 의 토큰 URL 영상 탐색·이미지·격리 | `results/viewer.json`, `results/viewer-rust.log` |
-| `throughput` | Worker TextMate 토큰화 처리량                     | `results/throughput.json`                        |
-| `smoke`      | 편집기 + Worker 하이라이트 파이프라인 동작        | `results/smoke.json`                             |
+| 모드         | 재는 것                                                  | 결과 파일                                        |
+| ------------ | -------------------------------------------------------- | ------------------------------------------------ |
+| `ping`       | IPC 와 결과 기록 경로                                    | `results/ping.json`                              |
+| `viewer`     | 샌드박스 iframe 의 토큰 URL 영상 탐색·이미지·격리        | `results/viewer.json`, `results/viewer-rust.log` |
+| `throughput` | Worker TextMate 토큰화 처리량                            | `results/throughput.json`                        |
+| `smoke`      | 편집기 + Worker 하이라이트 파이프라인 동작               | `results/smoke.json`                             |
+| `reload`     | `WebviewWindow::reload()` 전환(이벤트 횟수·창 위치·시간) | `results/reload.json`                            |
 
 ```bash
 mkdir -p results
@@ -85,6 +86,15 @@ echo "exit=$?"
 cat results/smoke.json
 ```
 
+`reload` 모드는 첫 페이지가 Rust 에 `reload()` 를 시키고, 새로 고쳐진 페이지(`sessionStorage` 로 구별)가 `lab://ping` 을 듣고 Rust 가 한 번 보낸 것을 센다. `ok` 가 `true`(`pings` 가 1, 창 위치·크기가 전후·1.5초 뒤 모두 같음)여야 한다. `elapsedMs` 는 `reload()` 호출부터 새 페이지의 리스너가 선 뒤 `reload_ready` 가 불리기까지다.
+
+```bash
+rm -f results/reload.json results/error-reload.json
+TOTE_LAB_AUTO=reload perl -e 'alarm shift; exec @ARGV' 60 ./src-tauri/target/debug/lab
+echo "exit=$?"
+cat results/reload.json
+```
+
 모르는 `TOTE_LAB_AUTO` 값(빈 값 포함)은 `results/error-unknown-auto.json` 을 쓰고 곧바로 종료한다.
 
 ## 픽스처
@@ -132,5 +142,14 @@ done
   **같은 조건으로 잰다.** 네 조합을 같은 모니터에서 잰다. 한 프레임은 `code-small` 의 `frameIntervalMs` 다. 대상의 `frameIntervalMs` 가 그것과 ±10% 넘게 다르면 그 조합을 다시 잰다. 다시 재도 다르면 창이 있는 모니터를 확인하고, `code-small` 부터 네 조합을 그 모니터에서 다시 잰다.
 
 - `#ime` — 한글 IME 조합 시나리오 7개. 「시작」을 누른 뒤 편집기를 클릭하지 말고 바로 입력하고, 마지막 글자는 Enter 로 확정하지 말고 바로 「확인」을 누른다(Enter 를 더 누르면 줄바꿈이 남아 거짓 실패가 된다 — 보고서 「한글 입력」 의 `enter`). 「결과 저장」은 이 화면을 연 뒤 「확인」한 항목만 `results/ime.json` 에 쓰고 이전 파일을 덮어쓴다.
+
+- `drag` 모드(수동, 환경 변수 `TOTE_LAB_MANUAL=drag`) — 탭 바 둘과 포인터 끌기용 바 둘을 그린다. 창을 닫으면 끝나고, 모든 끌기·포인터 이벤트가 이벤트마다 `results/drag.json` 에 다시 쓰인다(`entries` 에 시각 `t`, `kind`, `screenX/Y`, `clientX/Y`, `dropEffect`, 창 영역 안인지 `insideWindow`; `escCount` 는 Esc 횟수). 같은 절차를 세 번씩 한다: ① 탭을 다른 탭 바에 놓기 ② 탭을 창 밖(바탕 화면)에 놓기 ③ 끌다가 창 안에서 Esc. 시작 전에 이전 결과를 지운다.
+
+  ```bash
+  rm -f results/drag.json
+  TOTE_LAB_MANUAL=drag ./src-tauri/target/debug/lab
+  ```
+
+  읽는 법: ①은 `dragstart`→`dragover`→`drop`→`dragend` 순서와 `drop` 의 `target` 이 다른 바인지, ②는 마지막 `dragend` 의 `dropEffect === "none"` 과 `insideWindow === false` 인지, ③은 `drop` 없이 `dragend` 가 오고 `insideWindow === true` 인지(②와 구별되는지)를 본다. 포인터 변형(`pointerdown`/`pointerup`)은 `setPointerCapture` 뒤에 창 밖 `pointerup` 이 오는지(`insideWindow === false`)를 본다.
 
 창을 다른 창으로 가리지 않은 상태에서 잰다. 가려진 창은 프레임이 줄어 수치가 틀어진다.

@@ -1,10 +1,12 @@
 mod file_scheme;
 
 use std::path::PathBuf;
+use std::sync::Mutex;
+use std::time::Instant;
 
 use file_scheme::TokenStore;
 use serde::Serialize;
-use tauri::State;
+use tauri::{Emitter, State};
 
 #[derive(Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -14,6 +16,7 @@ struct LabEnv {
     video2: Option<String>,
     image: Option<String>,
     viewer_page: Option<String>,
+    manual: Option<String>,
 }
 
 #[tauri::command]
@@ -25,6 +28,7 @@ fn lab_env() -> LabEnv {
         video2: var("TOTE_LAB_VIDEO2"),
         image: var("TOTE_LAB_IMAGE"),
         viewer_page: var("TOTE_LAB_VIEWER_PAGE"),
+        manual: var("TOTE_LAB_MANUAL"),
     }
 }
 
@@ -60,6 +64,73 @@ fn exit_app(app: tauri::AppHandle) {
 #[tauri::command]
 fn issue_file_token(store: State<'_, TokenStore>, path: String) -> String {
     format!("tote-file://localhost/{}", store.issue(PathBuf::from(path)))
+}
+
+#[derive(Serialize, Clone, Copy, PartialEq)]
+struct Geometry {
+    x: i32,
+    y: i32,
+    width: u32,
+    height: u32,
+}
+
+fn geometry_of(window: &tauri::WebviewWindow) -> Result<Geometry, String> {
+    let pos = window.outer_position().map_err(|e| e.to_string())?;
+    let size = window.outer_size().map_err(|e| e.to_string())?;
+    Ok(Geometry {
+        x: pos.x,
+        y: pos.y,
+        width: size.width,
+        height: size.height,
+    })
+}
+
+/// What the `reload` spike remembers across the page reload: the page's own state is gone by then.
+#[derive(Default)]
+struct ReloadProbe {
+    started: Mutex<Option<(Instant, Geometry)>>,
+}
+
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct ReloadReady {
+    before: Geometry,
+    after: Geometry,
+    elapsed_ms: f64,
+}
+
+#[tauri::command]
+fn window_geometry(window: tauri::WebviewWindow) -> Result<Geometry, String> {
+    geometry_of(&window)
+}
+
+#[tauri::command]
+fn reload_begin(window: tauri::WebviewWindow, probe: State<'_, ReloadProbe>) -> Result<(), String> {
+    let before = geometry_of(&window)?;
+    *probe.started.lock().map_err(|e| e.to_string())? = Some((Instant::now(), before));
+    window.reload().map_err(|e| e.to_string())
+}
+
+/// The reloaded page calls this once its listener is up; the single `lab://ping` goes out here.
+#[tauri::command]
+fn reload_ready(
+    window: tauri::WebviewWindow,
+    probe: State<'_, ReloadProbe>,
+) -> Result<ReloadReady, String> {
+    let (started, before) = probe
+        .started
+        .lock()
+        .map_err(|e| e.to_string())?
+        .take()
+        .ok_or("reload_ready without reload_begin")?;
+    let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+    let after = geometry_of(&window)?;
+    window.emit("lab://ping", 1).map_err(|e| e.to_string())?;
+    Ok(ReloadReady {
+        before,
+        after,
+        elapsed_ms,
+    })
 }
 
 /// Auto runs keep a small window on top in the primary monitor's bottom-right corner. Once the
@@ -130,6 +201,7 @@ pub fn run() {
     builder
         .plugin(tauri_plugin_opener::init())
         .manage(store)
+        .manage(ReloadProbe::default())
         .setup(|app| {
             if std::env::var_os("TOTE_LAB_AUTO").is_some() {
                 #[cfg(target_os = "macos")]
@@ -157,7 +229,10 @@ pub fn run() {
             record_result,
             exit_app,
             ipc_probe,
-            issue_file_token
+            issue_file_token,
+            window_geometry,
+            reload_begin,
+            reload_ready
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");
