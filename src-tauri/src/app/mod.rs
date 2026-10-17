@@ -160,7 +160,7 @@ struct OpenWindow {
     /// The window's layout for the session file: the latest its frontend wrote, else the one it
     /// was reopened with. A window with none is left out of the file.
     layout: Option<Value>,
-    /// Set by `switch_window` until the window's new page asks for its layout (`page_layout`).
+    /// Set by `switch_window` until the window's new page asks for its workspace (`page_started`).
     /// Meanwhile the old page is still up and its timers may still fire; the backend finds a
     /// window's workspace by its label, so what that page writes would land in the new workspace.
     switching: bool,
@@ -581,17 +581,18 @@ impl AppCore {
         lock(&self.inner).windows.get(label)?.layout.clone()
     }
 
-    /// The layout window `label`'s page starts from (`read_window_layout`). A page asks once, as
-    /// it starts: after a switch that is the new page, so its writes go through from now on.
-    pub fn page_layout(&self, label: &str) -> Option<Value> {
-        let mut inner = lock(&self.inner);
-        let window = inner.windows.get_mut(label)?;
-        window.switching = false;
-        window.layout.clone()
+    /// Window `label`'s page asks for its workspace (`workspace_info`), the first thing a page
+    /// does as it starts: after a switch that is the new page, so its writes go through from now
+    /// on. The old page cannot be the one asking: a switch starts only once the page has its
+    /// workspace, while a later request such as `read_window_layout` may still be on its way.
+    pub fn page_started(&self, label: &str) {
+        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+            window.switching = false;
+        }
     }
 
     /// The workspace of window `label`, for a command that changes it. `NotFound` when the window
-    /// shows none, `InvalidInput` while it switches workspaces (`page_layout`). Under one lock
+    /// shows none, `InvalidInput` while it switches workspaces (`page_started`). Under one lock
     /// with the check, so a switch cannot come in between.
     pub fn workspace_to_change(&self, label: &str) -> io::Result<Arc<Mutex<Workspace>>> {
         let inner = lock(&self.inner);
@@ -651,7 +652,7 @@ impl AppCore {
     /// in the file if it was the last window there, else leaves it — and closes with its last
     /// window; the window's places, file tokens, searches and watched files go. It takes the
     /// first saved layout of `to`, keeps its spot among the windows to reopen, and refuses changes
-    /// from its page until the new page is up (`page_layout`). `NotFound` for a window not
+    /// from its page until the new page is up (`page_started`). `NotFound` for a window not
     /// registered, changing nothing.
     pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
         let (fresh, closed) = {
@@ -972,7 +973,7 @@ impl AppCore {
 
     /// Claims `tabs` for window `label`, each `Err(owner)` when another window holds it. A window
     /// not registered (closed meanwhile) gets every one and holds none: a claim it left behind
-    /// would never be freed. `Err` while the window switches workspaces (`page_layout`).
+    /// would never be freed. `Err` while the window switches workspaces (`page_started`).
     pub fn claim_tabs(&self, label: &str, tabs: &[TabRef]) -> io::Result<Vec<Result<(), String>>> {
         let mut inner = lock(&self.inner);
         let Some(window) = inner.windows.get(label) else {
@@ -2432,10 +2433,45 @@ mod tests {
         // Reads still go: the old page lists what it lists, harmlessly.
         assert!(core.workspace(&w1).is_some());
 
-        // The new page asks for its layout as it starts.
-        assert_eq!(core.page_layout(&w1), Some(b0));
+        // A late `read_window_layout` from the old page — still restoring when the switch began —
+        // does not let it write.
+        assert_eq!(core.layout_of(&w1), Some(b0.clone()));
+        assert!(core.workspace_to_change(&w1).is_err());
+        assert_eq!(layouts(&core, &na), vec![b0]);
+
+        // The new page asks for its workspace first thing (`workspace_info`).
+        core.page_started(&w1);
         assert!(core.workspace_to_change(&w1).is_ok());
         assert_eq!(core.claim_tabs(&w1, &[a_sh()]).unwrap(), vec![Ok(())]);
+        let b1 = json!({"focusedPane": 1});
+        core.set_layout(&w1, b1.clone()).unwrap();
+        assert_eq!(layouts(&core, &na), vec![b1]);
+    }
+
+    #[test]
+    fn a_quit_cancelled_after_a_switch_leaves_the_window_writable_once_its_page_reloads() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = open(&core, "다");
+        let na = closed_workspace(&core, "나", &[]);
+        // The switch round ended with a quit joined to it: the switch is carried out, then the
+        // quit begins while the switched page reloads.
+        switch(&core, &w1, &na);
+        let Begin::Started { id, windows } = core.begin_flush(FlushGoal::Quit) else {
+            panic!("expected a quit round")
+        };
+        assert_eq!(windows, vec![w2.clone()]);
+        // Another window's save failed, and the person cancels the quit.
+        let blocked = Some("저장하지 못한 메모 1개".to_string());
+        assert!(matches!(
+            core.ack_flush(id, &w2, blocked),
+            Ack::Blocked { .. }
+        ));
+        core.cancel_flush(id);
+        assert!(!core.is_quitting());
+        // The reloaded page of 나 comes up and writes into 나.
+        core.page_started(&w1);
         let b1 = json!({"focusedPane": 1});
         core.set_layout(&w1, b1.clone()).unwrap();
         assert_eq!(layouts(&core, &na), vec![b1]);

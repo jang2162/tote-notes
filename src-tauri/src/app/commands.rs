@@ -98,7 +98,7 @@ fn workspace_of(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<W
 }
 
 /// `workspace_of` for a command that changes the workspace: `bad-request` while the window switches
-/// workspaces and its page is still the old one (`AppCore::page_layout`).
+/// workspaces and its page is still the old one (`AppCore::page_started`).
 fn workspace_to_change(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<Workspace>>> {
     core.workspace_to_change(window.label())
         .map_err(|err| match err.kind() {
@@ -167,6 +167,8 @@ pub struct WorkspaceInfo {
 #[tauri::command]
 pub fn workspace_info(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<WorkspaceInfo> {
     let workspace = workspace_of(&core, &window)?;
+    // A page asks for this first: after a switch, the new page is up and may write.
+    core.page_started(window.label());
     // Before the workspace lock: `titles_of` takes it too.
     let title = core
         .path_of(window.label())
@@ -344,11 +346,10 @@ pub async fn reveal_backups(core: State<'_, AppCore>, window: WebviewWindow) -> 
 }
 
 /// This window's layout for the session (`WindowSession`), or `None` for a window that starts with
-/// no tabs: one of its own, or one the session had no layout for. A page asks as it starts, which
-/// ends a switch (`AppCore::page_layout`).
+/// no tabs: one of its own, or one the session had no layout for.
 #[tauri::command]
 pub fn read_window_layout(core: State<'_, AppCore>, window: WebviewWindow) -> Option<String> {
-    core.page_layout(window.label())
+    core.layout_of(window.label())
         .map(|layout| layout.to_string())
 }
 

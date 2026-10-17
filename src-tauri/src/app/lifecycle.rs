@@ -94,14 +94,11 @@ pub fn settle(app: &AppHandle, id: u64, ack: Ack) {
 }
 
 fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
-    // A switch with a quit right after it only moves the window in the books: its new page would
-    // load just as the quit asks it to write, and the quit would wait out the timeout on it.
-    let quit_follows = steps.contains(&Step::BeginQuit);
     for step in steps {
         match step {
-            Step::Finish(FlushGoal::SwitchWorkspace { label, to }) => {
-                switch_window(app, &label, &to, !quit_follows)
-            }
+            // A switch with a quit right after it reloads too: the quit may be cancelled, and a
+            // window left on its old page could not write. The quit does not wait on the page
+            // reloading — a switched window is out of its round (`AppCore::begin_flush`).
             Step::Finish(goal) => finish(app, goal),
             // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
             Step::BeginQuit => begin(app, FlushGoal::Quit),
@@ -157,7 +154,7 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
                 let _ = window.destroy();
             }
         }
-        FlushGoal::SwitchWorkspace { label, to } => switch_window(app, &label, &to, true),
+        FlushGoal::SwitchWorkspace { label, to } => switch_window(app, &label, &to),
         FlushGoal::Quit => {
             app.state::<AppCore>().start_quit();
             // macOS asked first (the Dock, a logout): answering it, not `exit`, lets a logout go
@@ -173,9 +170,8 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
 
 /// Window `label` wrote its tabs: it shows the workspace at `to` now, unless a window came to show
 /// it meanwhile — that one comes forward and this one stays — or it cannot be opened, which the
-/// window's status bar says. With `reload` false (a quit follows) only the books change: the
-/// window reopens on `to` at the next launch.
-fn switch_window(app: &AppHandle, label: &str, to: &Path, reload: bool) {
+/// window's status bar says.
+fn switch_window(app: &AppHandle, label: &str, to: &Path) {
     let core = app.state::<AppCore>();
     let opened = match core.prepare_switch(label, to) {
         Ok(opened) => opened,
@@ -202,11 +198,9 @@ fn switch_window(app: &AppHandle, label: &str, to: &Path, reload: bool) {
     let _ = app.emit("tote://workspaces", ());
     // A workspace just opened is marked changed; have the backup thread take it now.
     core.request_backup(label);
-    if reload {
-        if let Some(window) = app.get_webview_window(label) {
-            if let Err(err) = window.reload() {
-                eprintln!("tote: {label}: could not reload: {err}");
-            }
+    if let Some(window) = app.get_webview_window(label) {
+        if let Err(err) = window.reload() {
+            eprintln!("tote: {label}: could not reload: {err}");
         }
     }
 }
@@ -390,8 +384,9 @@ mod tests {
             ),
             // Refused here.
             (close(), false, true, vec![Step::RefuseSystemQuit]),
-            // A switch is a window round like a close. With a quit right after it, the switch
-            // only moves the window in the books (`run_steps`).
+            // A switch is a window round like a close. With a quit right after it, the switch is
+            // carried out — the window reloads on its new workspace — then the quit begins
+            // (`run_steps`).
             (switch(), true, false, vec![Step::Finish(switch())]),
             (switch(), false, false, vec![]),
             (

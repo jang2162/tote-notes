@@ -342,7 +342,7 @@ export class FakeBackend implements Backend {
   private flushRounds = 0;
   /** The window the page stands for. */
   private readonly label: string;
-  /** Set as a switch reloads the page, as the native side marks the window (`page_layout` in
+  /** Set as a switch reloads the page, as the native side marks the window (`page_started` in
    * src-tauri/src/app/mod.rs): the old page's last writes — its blur, its timers — must not land in
    * the workspace it is leaving for. */
   private switching = false;
