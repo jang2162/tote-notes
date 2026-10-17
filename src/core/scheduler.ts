@@ -54,6 +54,12 @@ export class WriteScheduler {
     await Promise.all([...this.slots.keys()].map((key) => this.flush(key)));
   }
 
+  /** A write of `key` is waiting for its delay or running. */
+  pending(key: string): boolean {
+    const slot = this.slots.get(key);
+    return slot !== undefined && (slot.next !== null || slot.running !== null);
+  }
+
   /** Drops the pending write of `key`; one already running still finishes. */
   cancel(key: string): void {
     const slot = this.slots.get(key);

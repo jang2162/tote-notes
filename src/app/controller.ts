@@ -242,6 +242,9 @@ export class AppController implements DocHost, PaneHost {
 
   async start(): Promise<void> {
     const [info, perf] = await Promise.all([
+      // The first call of a page: after a switch it lets the window write again
+      // (`AppCore::page_started`). The rail and ⌃1–⌃9 are wired after it, so an old page has
+      // always made it before its window switches.
       this.backend.workspaceInfo(),
       // A mark must never be what fails a window.
       this.backend.perfConfig().catch(() => this.perf),
@@ -907,6 +910,9 @@ export class AppController implements DocHost, PaneHost {
       // (closing, quitting, switching the workspace).
       await Promise.all(this.panes.map((pane) => settleComposition(pane.view)));
       await this.flushAll(true);
+      // The editors take keys while the tabs are written: what came in meanwhile is written too
+      // before the answer, which lets the native side switch the workspace or close the window.
+      if (this.docs.some((doc) => doc.unwritten)) await this.flushAll(true);
     } finally {
       const failed = this.docs.filter((doc) => doc.saveFailed).length;
       await this.backend.flushDone(id, failed ? `저장하지 못한 메모 ${failed}개` : undefined);

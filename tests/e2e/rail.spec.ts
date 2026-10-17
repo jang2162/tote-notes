@@ -110,6 +110,28 @@ test("the tabs left behind are written before the switch", async ({ page }) => {
   expect(tabs).toEqual([expect.objectContaining({ kind: "memo", memoId: "m" })]);
 });
 
+test("keys typed while a switch writes the tabs go into the memo left behind", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  // ⌃숫자 leaves the editor focused: the person may still be finishing a word as the round
+  // writes. The fake types it in while the round writes the session, the round's last write.
+  await page.evaluate(() => {
+    const { app, backend } = window.__tote;
+    backend.whileWritingLayout = () => {
+      const view = app.view;
+      view.dispatch({ changes: { from: view.state.doc.length, insert: " 넷" } });
+    };
+  });
+  await page.keyboard.press("Control+Digit2");
+  await switchedTo(page, "개인");
+  const left = await page.evaluate(() => {
+    const memo = window.__tote.backend.data.otherWorkspaces?.["/fake/업무"]?.memos.m;
+    const bytes = Uint8Array.from(atob(memo?.data ?? ""), (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  });
+  expect(left).toBe("안건 넷");
+});
+
 test("⌃2 switches to the second workspace", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Control+Digit2");

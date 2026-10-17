@@ -100,7 +100,8 @@ fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
             // window left on its old page could not write. The quit does not wait on the page
             // reloading — a switched window is out of its round (`AppCore::begin_flush`).
             Step::Finish(goal) => finish(app, goal),
-            // A Dock quit is still waiting on macOS's answer; the quit round's own end gives it.
+            // A Dock quit or a logout may still be waiting on macOS's answer; the quit round's own
+            // end gives it.
             Step::BeginQuit => begin(app, FlushGoal::Quit),
             Step::RefuseSystemQuit => {
                 #[cfg(target_os = "macos")]

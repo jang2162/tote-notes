@@ -346,6 +346,9 @@ export class FakeBackend implements Backend {
    * src-tauri/src/app/mod.rs): the old page's last writes — its blur, its timers — must not land in
    * the workspace it is leaving for. */
   private switching = false;
+  /** Runs once as the next window layout is written — the last write of a flush round — so a test
+   * can type while the round writes the tabs. */
+  whileWritingLayout: (() => void) | null = null;
 
   constructor(
     private readonly storage: FakeStorage = memoryStorage(),
@@ -595,6 +598,9 @@ export class FakeBackend implements Backend {
 
   async writeWindowLayout(json: string) {
     this.refuseWhileSwitching();
+    const typing = this.whileWritingLayout;
+    this.whileWritingLayout = null;
+    typing?.();
     if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
     else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
     this.commit();

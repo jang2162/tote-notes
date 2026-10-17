@@ -189,6 +189,8 @@ export abstract class Doc {
   abstract get title(): string;
   abstract get hint(): string;
   abstract get dirty(): boolean;
+  /** Text typed since the last write that is still only in memory, waiting for its write. */
+  abstract get unwritten(): boolean;
   /** The tab lost focus: write what is pending. */
   abstract leave(): Promise<void>;
   /** The window closes or the app quits: write everything, without asking. */
@@ -545,6 +547,10 @@ export class MemoDoc extends Doc {
 
   private get unsaved(): boolean {
     return this.state !== null && this.state.doc !== this.savedText;
+  }
+
+  get unwritten(): boolean {
+    return this.unsaved;
   }
 
   /** Another app changed the workspace (spec 「외부 변경」). A modification is read again when
@@ -1020,6 +1026,11 @@ export class ExternalDoc extends Doc {
     this.clearSaveFailed();
     await this.host.backend.discardExternalDraft(this.path);
     this.host.changed(this, "dirty");
+  }
+
+  /** Edits wait for their draft; the draft, not the file, is what keeps them. */
+  get unwritten(): boolean {
+    return this.host.writes.pending(this.draftKey);
   }
 
   /** A failed `keepDraft` leaves the scheduler's slot empty, so a second try is made here: this
