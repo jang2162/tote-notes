@@ -168,8 +168,9 @@ impl FlushCoordinator {
         finished.into_iter().map(|id| (id, self.end(id))).collect()
     }
 
-    /// A window round — a close or a switch — is asking, on a sheet over its window. AppKit
-    /// refuses a Dock or AppleScript quit by itself while a sheet is up, never asking tote.
+    /// A window round — a close or a switch — is asking, on a sheet over its window. AppKit's own
+    /// quit Apple Event handler would refuse a Dock or AppleScript quit while a sheet is up, never
+    /// asking tote; `system_quit` takes that event instead and holds the quit for this question.
     pub fn asking_close(&self) -> bool {
         self.rounds
             .values()

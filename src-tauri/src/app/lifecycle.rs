@@ -266,13 +266,34 @@ mod system_quit {
     // manager on the main thread only (`resume`).
     unsafe impl Send for SuspendedEvent {}
 
-    /// What macOS waits on for tote's answer, if anything.
-    enum Waiting {
+    /// What macOS waits on for tote's answer, if anything. One at a time: a quit that comes while
+    /// one waits is refused (`admits`). `E` is the held event; the tests stand in a plain value.
+    enum Waiting<E = SuspendedEvent> {
         None,
         /// Told 「later」; waits for `replyToApplicationShouldTerminate:`.
         Terminate,
         /// The sender of a quit Apple Event waits for its reply.
-        QuitEvent(SuspendedEvent),
+        QuitEvent(E),
+    }
+
+    /// How `answer` replies to what waited.
+    #[derive(Debug, PartialEq, Eq)]
+    enum Reply<E> {
+        /// `replyToApplicationShouldTerminate:` with this.
+        Terminate(bool),
+        /// Resume the held event, with this error in its reply.
+        Resume(E, Option<i16>),
+    }
+
+    /// What `applicationShouldTerminate:` does.
+    #[derive(Debug, PartialEq, Eq)]
+    enum TerminateDecision {
+        /// Another quit already waits on tote's answer: this one is refused, so the waiting one is
+        /// still answered once. Overwriting it would leave its sender without a reply for good.
+        Cancel,
+        Now,
+        /// Begin the write-then-close round.
+        Flush,
     }
 
     #[derive(Debug, PartialEq, Eq)]
@@ -394,23 +415,28 @@ mod system_quit {
             return;
         };
         let mut waiting = waiting();
-        // A second quit while one is held is refused, as AppKit would have.
-        if !matches!(*waiting, Waiting::None) {
+        let id: *const Suspension = if admits(&waiting) {
+            // SAFETY: called from the quit event's handler on the main thread, so there is a
+            // current event to suspend.
+            unsafe {
+                let manager: Retained<AnyObject> =
+                    msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+                msg_send![&*manager, suspendCurrentAppleEvent]
+            }
+        } else {
+            std::ptr::null()
+        };
+        // Refused, as AppKit would have: a second quit while one is held, or an event that could
+        // not be held. The handler returns with this reply, and the round is not joined.
+        if id.is_null() {
             drop(waiting);
             if let Some(reply) = reply {
                 refuse(reply, -128);
             }
             return;
         }
-        let round = app.state::<AppCore>().begin_flush(FlushGoal::Quit);
-        // SAFETY: called from the quit event's handler on the main thread, so there is a current
-        // event to suspend.
-        let id: *const Suspension = unsafe {
-            let manager: Retained<AnyObject> =
-                msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
-            msg_send![&*manager, suspendCurrentAppleEvent]
-        };
         *waiting = Waiting::QuitEvent(SuspendedEvent { id });
+        let round = app.state::<AppCore>().begin_flush(FlushGoal::Quit);
         // `run` may answer at once, which takes the lock.
         drop(waiting);
         super::run(app, round);
@@ -426,26 +452,32 @@ mod system_quit {
             if kind == TYPE_NULL {
                 return;
             }
-            let number: Retained<AnyObject> = msg_send![
+            let number: Option<Retained<AnyObject>> = msg_send![
                 class!(NSAppleEventDescriptor),
                 descriptorWithInt32: i32::from(code)
             ];
+            let Some(number) = number else {
+                return;
+            };
             let _: () =
                 msg_send![reply, setParamDescriptor: &*number, forKeyword: KEY_ERROR_NUMBER];
         }
     }
 
-    /// Lets a held quit event go, with `error` in its reply. Main thread only.
+    /// Lets a held quit event go, with `error` in its reply. Main thread only. Nothing here may
+    /// panic before the resume: the sender would wait for good.
     fn resume(event: SuspendedEvent, error: Option<i16>) {
-        // SAFETY: `event.id` came from `suspendCurrentAppleEvent` and is resumed once — `answer`
-        // takes it out of `WAITING` first.
+        // SAFETY: `event.id` came from `suspendCurrentAppleEvent`, is not null (`suspend`) and is
+        // resumed once — `answer` takes it out of `WAITING` first.
         unsafe {
             let manager: Retained<AnyObject> =
                 msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
             if let Some(code) = error {
-                let reply: Retained<AnyObject> =
+                let reply: Option<Retained<AnyObject>> =
                     msg_send![&*manager, replyAppleEventForSuspensionID: event.id];
-                refuse(&reply, code);
+                if let Some(reply) = reply {
+                    refuse(&reply, code);
+                }
             }
             let _: () = msg_send![&*manager, resumeWithSuspensionID: event.id];
         }
@@ -465,6 +497,41 @@ mod system_quit {
         (!quit).then_some(-128)
     }
 
+    /// A new quit — an event to hold or a `terminate:` to tell 「later」 — is taken only while
+    /// nothing waits; the one waiting keeps its answer.
+    fn admits<E>(held: &Waiting<E>) -> bool {
+        matches!(held, Waiting::None)
+    }
+
+    /// The refusal comes first: even with no window left or tote already going, a 「now」 here
+    /// would end tote before the waiting quit is answered.
+    fn terminate_decision<E>(
+        held: &Waiting<E>,
+        has_windows: bool,
+        quitting: bool,
+    ) -> TerminateDecision {
+        if !admits(held) {
+            TerminateDecision::Cancel
+        } else if !has_windows || quitting {
+            // No window has anything to write; and once tote is going, it goes.
+            TerminateDecision::Now
+        } else {
+            TerminateDecision::Flush
+        }
+    }
+
+    /// Takes what waits out of `slot`: how to reply to it, and what `answer` returns.
+    fn settle<E>(slot: &mut Waiting<E>, quit: bool) -> (Option<Reply<E>>, bool) {
+        match std::mem::replace(slot, Waiting::None) {
+            Waiting::None => (None, false),
+            Waiting::Terminate => (Some(Reply::Terminate(quit)), true),
+            // A held event's reply does not end tote: with 「yes」 `finish` exits by itself.
+            Waiting::QuitEvent(event) => {
+                (Some(Reply::Resume(event, resume_error_for(quit))), !quit)
+            }
+        }
+    }
+
     extern "C-unwind" fn should_terminate(
         _: &AnyObject,
         _: Sel,
@@ -474,17 +541,22 @@ mod system_quit {
             return NSApplicationTerminateReply::TerminateNow;
         };
         let core = app.state::<AppCore>();
-        // No window has anything to write; and once tote is going, it goes.
-        if !core.has_windows() || core.is_quitting() {
-            return NSApplicationTerminateReply::TerminateNow;
+        let mut waiting = waiting();
+        match terminate_decision(&waiting, core.has_windows(), core.is_quitting()) {
+            TerminateDecision::Cancel => NSApplicationTerminateReply::TerminateCancel,
+            TerminateDecision::Now => NSApplicationTerminateReply::TerminateNow,
+            TerminateDecision::Flush => {
+                let round = core.begin_flush(FlushGoal::Quit);
+                let reply = reply_for(&round);
+                if reply == NSApplicationTerminateReply::TerminateLater {
+                    *waiting = Waiting::Terminate;
+                    // `run` may answer at once, which takes the lock.
+                    drop(waiting);
+                    super::run(app, round);
+                }
+                reply
+            }
         }
-        let round = core.begin_flush(FlushGoal::Quit);
-        let reply = reply_for(&round);
-        if reply == NSApplicationTerminateReply::TerminateLater {
-            *waiting() = Waiting::Terminate;
-            super::run(app, round);
-        }
-        reply
     }
 
     /// 「Later」 only while a round is left to answer it. A round that is over as it starts
@@ -503,24 +575,22 @@ mod system_quit {
     /// quit came from tote's own menu, or it goes on a held quit event, whose reply does not end
     /// tote the way `replyToApplicationShouldTerminate:` does.
     pub fn answer(app: &AppHandle, quit: bool) -> bool {
-        let held = std::mem::replace(&mut *waiting(), Waiting::None);
-        if matches!(held, Waiting::None) {
-            return false;
-        }
-        let exits_itself = quit && matches!(held, Waiting::QuitEvent(_));
-        let replied = app.run_on_main_thread(move || match held {
-            Waiting::None => {}
-            Waiting::Terminate => {
+        let (reply, answered) = settle(&mut waiting(), quit);
+        let Some(reply) = reply else {
+            return answered;
+        };
+        let replied = app.run_on_main_thread(move || match reply {
+            Reply::Terminate(quit) => {
                 if let Some(mtm) = MainThreadMarker::new() {
                     NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(quit);
                 }
             }
-            Waiting::QuitEvent(event) => resume(event, resume_error_for(quit)),
+            Reply::Resume(event, error) => resume(event, error),
         });
         if let Err(err) = replied {
             eprintln!("tote: could not answer macOS's quit: {err}");
         }
-        !exits_itself
+        answered
     }
 
     #[cfg(test)]
@@ -561,6 +631,75 @@ mod system_quit {
             // A 「no」 reaches the sender as userCanceledErr, like AppKit's own refusal.
             assert_eq!(resume_error_for(false), Some(-128));
             assert_eq!(resume_error_for(true), None);
+
+            // 「취소」: refused, and macOS was waiting.
+            let mut slot = Waiting::QuitEvent(7);
+            assert_eq!(
+                settle(&mut slot, false),
+                (Some(Reply::Resume(7, Some(-128))), true)
+            );
+            assert!(matches!(slot, Waiting::None));
+            // 「그래도」: the reply does not end tote, so `finish` exits by itself.
+            let mut slot = Waiting::QuitEvent(7);
+            assert_eq!(
+                settle(&mut slot, true),
+                (Some(Reply::Resume(7, None)), false)
+            );
+            assert!(matches!(slot, Waiting::None));
+        }
+
+        #[test]
+        fn every_answer_settles_what_macos_waits_on_once() {
+            for quit in [true, false] {
+                let mut slot: Waiting<u32> = Waiting::Terminate;
+                assert_eq!(
+                    settle(&mut slot, quit),
+                    (Some(Reply::Terminate(quit)), true)
+                );
+                // Answered: a later answer finds nothing to settle.
+                assert_eq!(settle(&mut slot, quit), (None, false));
+            }
+            // Nothing waits: the quit came from tote's own menu.
+            let mut slot: Waiting<u32> = Waiting::None;
+            assert_eq!(settle(&mut slot, true), (None, false));
+        }
+
+        #[test]
+        fn a_new_quit_while_one_is_held_is_refused() {
+            assert!(admits(&Waiting::<u32>::None));
+            assert!(!admits(&Waiting::<u32>::Terminate));
+            assert!(!admits(&Waiting::QuitEvent(7)));
+        }
+
+        #[test]
+        fn a_terminate_while_a_quit_event_is_held_is_cancelled() {
+            // After 「그래도 닫기」 the quit round runs with no sheet up: a second Dock quit or a
+            // logout reaches `applicationShouldTerminate:` while the first event is held. Cancel
+            // comes first, whatever tote's state: the held event keeps its answer for later.
+            for (windows, quitting) in [(true, false), (false, false), (true, true)] {
+                assert_eq!(
+                    terminate_decision(&Waiting::QuitEvent(7), windows, quitting),
+                    TerminateDecision::Cancel
+                );
+                assert_eq!(
+                    terminate_decision(&Waiting::<u32>::Terminate, windows, quitting),
+                    TerminateDecision::Cancel
+                );
+            }
+            let free = Waiting::<u32>::None;
+            assert_eq!(
+                terminate_decision(&free, true, false),
+                TerminateDecision::Flush
+            );
+            // No window has anything to write; and once tote is going, it goes.
+            assert_eq!(
+                terminate_decision(&free, false, false),
+                TerminateDecision::Now
+            );
+            assert_eq!(
+                terminate_decision(&free, true, true),
+                TerminateDecision::Now
+            );
         }
     }
 }
