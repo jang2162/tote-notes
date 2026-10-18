@@ -426,7 +426,8 @@ pub async fn tear_off_tab(
             format!("{label} shows no workspace"),
         ));
     };
-    let near = windows::frame_of(&window).map(windows::near_frame);
+    let near =
+        windows::frame_of(&window).map(|f| windows::cascade(f, &windows::monitor_rects(&app)));
     let plan = windows::WindowPlan::Tab {
         tab,
         near,

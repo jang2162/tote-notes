@@ -12,7 +12,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
 
 use super::flush::FlushGoal;
-use super::windows::{frame_of, near_frame, WindowPlan};
+use super::windows::{cascade, frame_of, monitor_rects, WindowPlan};
 use super::{lifecycle, lock, windows, AppCore};
 
 use crate::cli::front::app_bundle;
@@ -209,7 +209,7 @@ fn new_window(app: &AppHandle) {
     let Some(path) = app.state::<AppCore>().path_of(window.label()) else {
         return;
     };
-    let near = frame_of(&window).map(near_frame);
+    let near = frame_of(&window).map(|f| cascade(f, &monitor_rects(app)));
     if let Err(err) = windows::open_window(app, &path, WindowPlan::Fresh { near }) {
         eprintln!("tote: {}: {}", path.display(), err.message);
     }

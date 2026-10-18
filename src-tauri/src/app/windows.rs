@@ -46,12 +46,19 @@ pub enum WindowPlan {
     },
 }
 
-/// Where a window opened from the window at `source` goes: a little right and down of it, at its
-/// size. The caller still fits it onto a monitor (`place`).
-pub fn near_frame(source: WindowFrame) -> WindowFrame {
+/// Where a window opened from the window at `source` goes: `NEAR_OFFSET` right and down of it, at
+/// its size, except that an axis which would run past the work area of the monitor `source` is on
+/// steps left or up instead. The caller still fits it onto a monitor (`place`).
+pub fn cascade(source: WindowFrame, monitors: &[MonitorRect]) -> WindowFrame {
+    let work = monitor_at(source, monitors).map(|m| m.work);
+    let step = |at: f64, extent: f64, start: f64, size: f64| match work {
+        Some(_) if at + NEAR_OFFSET + extent > start + size => at - NEAR_OFFSET,
+        _ => at + NEAR_OFFSET,
+    };
+    let (wx, wy, ww, wh) = work.unwrap_or_default();
     WindowFrame {
-        x: source.x + NEAR_OFFSET,
-        y: source.y + NEAR_OFFSET,
+        x: step(source.x, source.width, wx, ww),
+        y: step(source.y, source.height + TITLE_BAR_HEIGHT, wy, wh),
         ..source
     }
 }
@@ -322,8 +329,18 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-/// Monitors as (x, y, width, height) in logical pixels.
-fn monitor_rects(app: &AppHandle) -> Vec<(f64, f64, f64, f64)> {
+/// A rectangle as (x, y, width, height).
+pub type Rect = (f64, f64, f64, f64);
+
+/// A monitor in logical pixels: the whole screen, and the part of it windows may use (the menu bar
+/// and the Dock taken out).
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct MonitorRect {
+    pub full: Rect,
+    pub work: Rect,
+}
+
+pub fn monitor_rects(app: &AppHandle) -> Vec<MonitorRect> {
     let monitors = match app.available_monitors() {
         Ok(monitors) if monitors.is_empty() => {
             eprintln!("tote: no monitors: the list is empty");
@@ -339,26 +356,39 @@ fn monitor_rects(app: &AppHandle) -> Vec<(f64, f64, f64, f64)> {
         .iter()
         .map(|monitor| {
             let scale = monitor.scale_factor();
-            let (pos, size) = (monitor.position(), monitor.size());
-            (
-                f64::from(pos.x) / scale,
-                f64::from(pos.y) / scale,
-                f64::from(size.width) / scale,
-                f64::from(size.height) / scale,
-            )
+            let logical = |pos: &tauri::PhysicalPosition<i32>, size: &tauri::PhysicalSize<u32>| {
+                (
+                    f64::from(pos.x) / scale,
+                    f64::from(pos.y) / scale,
+                    f64::from(size.width) / scale,
+                    f64::from(size.height) / scale,
+                )
+            };
+            let work = monitor.work_area();
+            MonitorRect {
+                full: logical(monitor.position(), monitor.size()),
+                work: logical(&work.position, &work.size),
+            }
         })
         .collect()
 }
 
-/// `frame` moved onto the monitor its title bar is on, as a whole: shrunk to the monitor when
-/// larger, then moved left and up until its far edges are inside, and right and down until its
-/// near edges are. `None` when no monitor holds that spot, so the caller opens the window at the
-/// default size in the middle.
-pub fn place(frame: WindowFrame, monitors: &[(f64, f64, f64, f64)]) -> Option<WindowFrame> {
+/// The monitor holding the point 40px right of and 10px below `frame`'s corner, on its title bar.
+fn monitor_at(frame: WindowFrame, monitors: &[MonitorRect]) -> Option<MonitorRect> {
     let (px, py) = (frame.x + 40.0, frame.y + 10.0);
-    let &(mx, my, mw, mh) = monitors
-        .iter()
-        .find(|&&(mx, my, mw, mh)| px >= mx && px < mx + mw && py >= my && py < my + mh)?;
+    monitors.iter().copied().find(|m| {
+        let (mx, my, mw, mh) = m.full;
+        px >= mx && px < mx + mw && py >= my && py < my + mh
+    })
+}
+
+/// `frame` moved into the work area of the monitor its title bar is on, as a whole: shrunk to the
+/// work area when larger, then moved left and up until its far edges are inside, and right and
+/// down until its near edges are. The monitor is picked on its full area, so a title bar over the
+/// Dock still lands on its monitor. `None` when no monitor holds that spot, so the caller opens
+/// the window at the default size in the middle.
+pub fn place(frame: WindowFrame, monitors: &[MonitorRect]) -> Option<WindowFrame> {
+    let (mx, my, mw, mh) = monitor_at(frame, monitors)?.work;
     let width = frame.width.min(mw);
     let height = frame.height.min(mh - TITLE_BAR_HEIGHT);
     Some(WindowFrame {
@@ -373,31 +403,6 @@ pub fn place(frame: WindowFrame, monitors: &[(f64, f64, f64, f64)]) -> Option<Wi
 mod tests {
     use super::*;
 
-    #[test]
-    fn a_new_window_sits_near_its_source() {
-        let source = WindowFrame {
-            x: 100.0,
-            y: 50.0,
-            width: 900.0,
-            height: 700.0,
-        };
-        assert_eq!(
-            near_frame(source),
-            WindowFrame {
-                x: 124.0,
-                y: 74.0,
-                width: 900.0,
-                height: 700.0
-            }
-        );
-    }
-
-    const M: [(f64, f64, f64, f64); 3] = [
-        (0.0, 0.0, 3840.0, 1600.0),
-        (3840.0, -734.0, 1440.0, 2560.0),
-        (0.0, 1600.0, 2560.0, 1440.0),
-    ];
-
     fn at(x: f64, y: f64, width: f64, height: f64) -> WindowFrame {
         WindowFrame {
             x,
@@ -407,19 +412,102 @@ mod tests {
         }
     }
 
+    /// Monitors whose work area is the whole screen.
+    fn flat(rects: &[Rect]) -> Vec<MonitorRect> {
+        rects
+            .iter()
+            .map(|&r| MonitorRect { full: r, work: r })
+            .collect()
+    }
+
+    /// Two monitors as macOS reports them: a Dock on the left of the main one, menu bars on both.
+    fn m() -> [MonitorRect; 2] {
+        [
+            MonitorRect {
+                full: (0.0, 0.0, 3840.0, 1600.0),
+                work: (61.0, 33.0, 3779.0, 1567.0),
+            },
+            MonitorRect {
+                full: (3840.0, -734.0, 1440.0, 2560.0),
+                work: (3840.0, -701.0, 1440.0, 2527.0),
+            },
+        ]
+    }
+
+    fn stepped(source: WindowFrame, monitors: &[MonitorRect]) -> Option<WindowFrame> {
+        place(cascade(source, monitors), monitors)
+    }
+
     #[test]
-    fn a_new_window_at_a_monitor_corner_stays_on_it() {
-        let source = at(4180.0, 1060.0, 1100.0, 760.0);
+    fn a_new_window_at_the_corner_steps_back_up_and_left() {
         assert_eq!(
-            place(near_frame(source), &M),
-            Some(at(4180.0, 1038.0, 1100.0, 760.0))
+            stepped(at(4180.0, 1038.0, 1100.0, 760.0), &m()),
+            Some(at(4156.0, 1014.0, 1100.0, 760.0))
         );
     }
 
     #[test]
+    fn a_new_window_in_the_open_steps_down_and_right() {
+        assert_eq!(
+            stepped(at(500.0, 300.0, 1100.0, 760.0), &m()),
+            Some(at(524.0, 324.0, 1100.0, 760.0))
+        );
+    }
+
+    #[test]
+    fn a_new_window_at_the_right_edge_only_steps_left() {
+        assert_eq!(
+            stepped(at(2740.0, 300.0, 1100.0, 760.0), &m()),
+            Some(at(2716.0, 324.0, 1100.0, 760.0))
+        );
+    }
+
+    #[test]
+    fn a_restored_frame_clears_the_menu_bar_and_the_dock() {
+        assert_eq!(
+            place(at(20.0, 10.0, 900.0, 600.0), &m()),
+            Some(at(61.0, 33.0, 900.0, 600.0))
+        );
+    }
+
+    #[test]
+    fn a_frame_whose_probe_is_on_the_dock_stays_on_its_monitor() {
+        assert_eq!(
+            place(at(0.0, 100.0, 900.0, 600.0), &m()),
+            Some(at(61.0, 100.0, 900.0, 600.0))
+        );
+    }
+
+    #[test]
+    fn a_window_taller_than_the_work_area_shrinks_to_it() {
+        let placed = place(at(100.0, 100.0, 900.0, 1600.0), &m()).unwrap();
+        assert_eq!((placed.y, placed.height), (33.0, 1539.0));
+    }
+
+    #[test]
+    fn a_nan_frame_is_dropped() {
+        assert_eq!(place(at(f64::NAN, 100.0, 900.0, 600.0), &m()), None);
+    }
+
+    #[test]
+    fn a_zero_sized_frame_is_kept_in_place() {
+        // The window's minimum size (480×320) keeps a zero-sized frame from ever being shown.
+        assert_eq!(
+            place(at(100.0, 100.0, 0.0, 0.0), &m()),
+            Some(at(100.0, 100.0, 0.0, 0.0))
+        );
+    }
+
+    const OLD: [Rect; 3] = [
+        (0.0, 0.0, 3840.0, 1600.0),
+        (3840.0, -734.0, 1440.0, 2560.0),
+        (0.0, 1600.0, 2560.0, 1440.0),
+    ];
+
+    #[test]
     fn a_saved_frame_half_off_its_monitor_moves_in() {
         assert_eq!(
-            place(at(5000.0, 100.0, 900.0, 700.0), &M),
+            place(at(5000.0, 100.0, 900.0, 700.0), &flat(&OLD)),
             Some(at(4380.0, 100.0, 900.0, 700.0))
         );
     }
@@ -427,7 +515,7 @@ mod tests {
     #[test]
     fn a_window_larger_than_its_monitor_shrinks_to_fit() {
         assert_eq!(
-            place(at(3840.0, -734.0, 2000.0, 3000.0), &M),
+            place(at(3840.0, -734.0, 2000.0, 3000.0), &flat(&OLD)),
             Some(at(3840.0, -734.0, 1440.0, 2532.0))
         );
     }
@@ -435,13 +523,13 @@ mod tests {
     #[test]
     fn a_frame_on_no_monitor_is_dropped() {
         let frame = at(6000.0, 100.0, 900.0, 700.0);
-        assert_eq!(place(frame, &M), None);
+        assert_eq!(place(frame, &flat(&OLD)), None);
         assert_eq!(place(frame, &[]), None);
     }
 
     #[test]
     fn a_saved_frame_is_reused_only_on_a_present_monitor() {
-        let monitors = [(0.0, 0.0, 1512.0, 982.0), (-1920.0, 0.0, 1920.0, 1080.0)];
+        let monitors = flat(&[(0.0, 0.0, 1512.0, 982.0), (-1920.0, 0.0, 1920.0, 1080.0)]);
         let frame = |x: f64, y: f64| at(x, y, 900.0, 700.0);
         assert!(place(frame(100.0, 50.0), &monitors).is_some());
         assert!(place(frame(-1800.0, 100.0), &monitors).is_some());
@@ -451,17 +539,18 @@ mod tests {
 
     #[test]
     fn a_frame_poking_into_a_neighbour_on_the_left_or_top_is_pulled_back() {
+        let monitors = flat(&OLD);
         assert_eq!(
-            place(at(3810.0, 100.0, 900.0, 700.0), &M),
+            place(at(3810.0, 100.0, 900.0, 700.0), &monitors),
             Some(at(3840.0, 100.0, 900.0, 700.0))
         );
-        let y = place(at(100.0, -5.0, 900.0, 600.0), &M).unwrap().y;
+        let y = place(at(100.0, -5.0, 900.0, 600.0), &monitors).unwrap().y;
         assert_eq!(y, 0.0);
     }
 
     #[test]
     fn a_frame_inside_a_monitor_is_kept() {
         let frame = at(100.0, 100.0, 900.0, 600.0);
-        assert_eq!(place(frame, &M), Some(frame));
+        assert_eq!(place(frame, &flat(&OLD)), Some(frame));
     }
 }
