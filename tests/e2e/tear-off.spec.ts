@@ -73,14 +73,18 @@ test("a tab whose save fails stays with 저장 실패", async ({ page }) => {
 });
 
 test("keys typed while the tab is being torn off do not reach it", async ({ page }) => {
-  await typeInto(page, { tearOffDelayMs: 300 });
+  await typeInto(page);
+  const release = await hold(page, "tearOffGate");
   await menu(page, MOVE);
+  // The tab is let go of and the backend is still handing it over.
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
   await page.keyboard.insertText("x");
-  // Past the memo save delay: a save the leaving tab scheduled would have run.
-  await page.waitForTimeout(600);
+  // Nothing is waiting to be saved: a key that reached the tab would have scheduled a write.
+  expect(await page.evaluate(() => window.__tote.app.focused.tabs.active!.unwritten)).toBe(false);
+  await release();
+  await expect(page.locator(".tab")).toHaveCount(0);
   expect(await memoText(page, "a")).toBe("우유 계란");
   expect((await data(page)).tornOff).toHaveLength(1);
-  await expect(page.locator(".tab")).toHaveCount(0);
 });
 
 test("a tab being torn off does not take its editor back when shown again", async ({ page }) => {
@@ -173,6 +177,22 @@ test("a tab with a conflict banner stays and says why", async ({ page }) => {
   await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
   await expect(page.locator(".tab")).toHaveCount(1);
   await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+  expect((await data(page)).tornOff).toBeUndefined();
+});
+
+test("a tab with a save failure and a conflict banner says the banner", async ({ page }) => {
+  await quietErrors(page, WRITE_FAILED);
+  await typeInto(page, { failWrites: 1000 });
+  await page.evaluate(
+    (text) => Object.assign(window.__tote.backend.data.memos.a, { data: text, modifiedMs: 900 }),
+    fakeFile("두유"),
+  );
+  await outside(page, { kind: "modified", id: "a" });
+  await expect(page.locator(".banner")).toBeVisible();
+  await menu(page, MOVE);
+  // Both hold the tab; the banner is what the person has to answer first.
+  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
+  await expect(page.locator(".tab")).toHaveCount(1);
   expect((await data(page)).tornOff).toBeUndefined();
 });
 

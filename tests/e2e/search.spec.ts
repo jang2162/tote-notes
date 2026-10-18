@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT } from "../../src/app/docs";
 import { fakeMemo } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { menu, paneSession, start } from "./helpers";
 
 // The workspace search panel (spec 「워크스페이스 검색」) on the fake backend, whose search walks
 // the memos in seed order — so the groups arrive in that order here, unlike the app's.
@@ -241,28 +241,13 @@ test("too many results say so", async ({ page }) => {
 
 test("a found line opens in the pane the tab lands in", async ({ page }) => {
   const rows = Array.from({ length: 300 }, (_, i) => `row ${i}`).join("\n");
-  const pane = (index: number) => ({
-    tabs: [{ kind: "memo", memoId: index ? "b" : "a" }],
-    activeTab: 0,
-  });
   await start(page, {
     memos: {
       a: fakeMemo("가.md", "첫째", { modifiedMs: 3 }),
       b: fakeMemo("나.md", "둘째", { modifiedMs: 2 }),
       long: fakeMemo("long.txt", `${"L".repeat(LONG_LINE_LIMIT + 1)}\n${rows}\nneedle here`),
     },
-    session: JSON.stringify({
-      version: 2,
-      windows: [
-        {
-          panes: [
-            { ...pane(0), width: 0.5 },
-            { ...pane(1), width: 0.5 },
-          ],
-          focusedPane: 0,
-        },
-      ],
-    }),
+    session: paneSession([[{ kind: "memo", memoId: "a" }], [{ kind: "memo", memoId: "b" }]]),
   });
   await expect(page.locator(".pane")).toHaveCount(2);
   await openSearch(page);

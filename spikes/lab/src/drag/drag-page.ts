@@ -95,7 +95,8 @@ export function mountDragPage(app: HTMLElement): void {
     if (ev instanceof DragEvent) entry.dropEffect = ev.dataTransfer?.dropEffect;
     // dragover and pointermove fire continuously; the log keeps only their first and last per run.
     const prev = entries[entries.length - 1];
-    // The run's first stays, so the last replaces only an entry that has one of its kind before it.
+    // A run's second entry is pushed so its first survives; every later one replaces the entry
+    // before it, which is how the run ends on its last.
     if (
       (kind === "dragover" || kind === "pointermove") &&
       prev?.kind === kind &&

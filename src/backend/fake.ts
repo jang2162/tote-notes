@@ -133,9 +133,6 @@ export interface FakeData {
   tornOff?: { tab: SessionTab }[];
   /** What a tab's context menu returns: the id of the item to pick, or null for none. */
   tabMenuPick?: string | null;
-  /** How long `tearOffTab` takes, so a test can act while a tab is being torn off; without it a
-   * microtask. Absent in old seeds. */
-  tearOffDelayMs?: number;
   /** Workspaces a switch fails to open once this window has written its tabs, as
    * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
    * seeds. */
@@ -668,8 +665,6 @@ export class FakeBackend implements Backend {
 
   async tearOffTab(tab: string, ref: TabRef) {
     this.refuseWhileSwitching();
-    const delay = this.data.tearOffDelayMs;
-    if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
     const gate = this.tearOffGate;
     this.tearOffGate = null;
     await gate;

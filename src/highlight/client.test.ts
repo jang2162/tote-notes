@@ -211,3 +211,35 @@ describe("HighlightClient viewport tokens", () => {
     expect(ofType("visible")).toEqual([{ type: "visible", docs: [2, 5] }]);
   });
 });
+
+describe("HighlightClient grammar read failures", () => {
+  afterEach(() => vi.unstubAllGlobals());
+
+  /** A client made after the page `unload`ed or not, over a grammar read that fails the way a
+   * request cut by a reload does. */
+  async function failing(unload: boolean) {
+    const listeners: Record<string, () => void> = {};
+    vi.stubGlobal("addEventListener", (type: string, listener: () => void) => {
+      listeners[type] = listener;
+    });
+    vi.resetModules();
+    const { HighlightClient: Client } = await import("./client");
+    if (unload) listeners.pagehide();
+    const worker = { postMessage: () => {}, addEventListener: () => {} } as unknown as Worker;
+    const read = () => Promise.reject(new TypeError("Load failed"));
+    return new Client(worker, () => registry, read);
+  }
+
+  it("is warned about when the page stays, not when it is going", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(await (await failing(false)).open(1, lang, () => "x")).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(1);
+      warn.mockClear();
+      expect(await (await failing(true)).open(1, lang, () => "x")).toBe(false);
+      expect(warn).not.toHaveBeenCalled();
+    } finally {
+      warn.mockRestore();
+    }
+  });
+});

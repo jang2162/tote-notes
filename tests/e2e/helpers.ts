@@ -53,6 +53,24 @@ export async function ready(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__tote?.ready === true);
 }
 
+/** A version 2 session of one window whose panes hold `tabs` side by side, each pane's first tab
+ * active and `focusedPane` focused. */
+export function paneSession(tabs: object[][], focusedPane = 0): string {
+  return JSON.stringify({
+    version: 2,
+    windows: [
+      {
+        panes: tabs.map((each) => ({
+          tabs: each,
+          activeTab: each.length ? 0 : -1,
+          width: 1 / tabs.length,
+        })),
+        focusedPane,
+      },
+    ],
+  });
+}
+
 /** Pane `pane` of window `window` in the fake's session file, as the app reads it back; an empty
  * pane while the file has none, so a poll waits for it. */
 export async function sessionPane(page: Page, window = 0, pane = 0): Promise<PaneSession> {

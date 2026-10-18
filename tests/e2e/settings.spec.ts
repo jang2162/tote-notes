@@ -123,6 +123,39 @@ test("installing an extension makes the next file read its language files again"
   await expect.poll(reads).toBeGreaterThan(before);
 });
 
+// A language file cut by a reload says nothing about the file: the page that is leaving does not
+// warn about it (src/core/leaving.ts), one that stays does.
+for (const leaving of [false, true]) {
+  test(`a language configuration that cannot be read ${leaving ? "is not warned about while the page is leaving" : "is warned about"}`, async ({
+    page,
+  }) => {
+    const warnings: string[] = [];
+    page.on("console", (message) => {
+      if (message.type() === "warning") warnings.push(message.text());
+    });
+    await start(page, { memos: { a: fakeMemo("a.sh", "echo a") } });
+    await page.evaluate((unload) => {
+      const backend = window.__tote.backend;
+      const read = backend.readExtensionFile.bind(backend);
+      (window as unknown as { cut: number }).cut = 0;
+      backend.readExtensionFile = (extensionId: string, path: string) => {
+        if (!path.startsWith("language-configuration/")) return read(extensionId, path);
+        (window as unknown as { cut: number }).cut++;
+        return Promise.reject(new TypeError("Load failed"));
+      };
+      if (unload) dispatchEvent(new Event("pagehide"));
+    }, leaving);
+    await page.locator(".memo-row", { hasText: "a" }).first().click();
+    await expect
+      .poll(() => page.evaluate(() => (window as unknown as { cut: number }).cut))
+      .toBeGreaterThan(0);
+    // A round trip to the page: the rejection has been caught by now.
+    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+    const own = warnings.filter((text) => text.includes("language configuration of"));
+    expect(own).toHaveLength(leaving ? 0 : 1);
+  });
+}
+
 test("a manifest problem is listed with its path", async ({ page }) => {
   await start(page, {
     problems: [{ path: "/ext/broken@1.0.0", message: "package.json 을 읽을 수 없습니다" }],
