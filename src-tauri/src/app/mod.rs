@@ -1086,6 +1086,10 @@ impl AppCore {
         lock(&self.inner).flush.cancel(id)
     }
 
+    pub fn asking_close(&self) -> bool {
+        lock(&self.inner).flush.asking_close()
+    }
+
     /// Fixes what reopens at the next launch: every open window but those being closed, the most
     /// recently focused last so it ends up in front, and a window still being made (never focused:
     /// a torn-off tab's) first. Each workspace's session file is written in the same order, so the

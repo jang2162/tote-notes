@@ -24,6 +24,7 @@ pub enum Step {
     Finish(FlushGoal),
     BeginQuit,
     /// Tell a waiting macOS 「no」 (Dock quit, logout). Does nothing when macOS is not waiting.
+    /// A quit Apple Event held while a close asked is let go by this answer too.
     RefuseSystemQuit,
     Ask {
         goal: FlushGoal,
@@ -217,12 +218,13 @@ pub fn hook_system_quit(app: &AppHandle) {
 
 #[cfg(target_os = "macos")]
 mod system_quit {
-    use std::sync::atomic::{AtomicBool, Ordering};
-    use std::sync::OnceLock;
+    use std::sync::{Mutex, MutexGuard, OnceLock, PoisonError};
 
+    use objc2::encode::{Encoding, RefEncode};
     use objc2::ffi::class_addMethod;
+    use objc2::rc::Retained;
     use objc2::runtime::{AnyClass, AnyObject, Imp, Sel};
-    use objc2::{sel, MainThreadMarker};
+    use objc2::{class, msg_send, sel, MainThreadMarker};
     use objc2_app_kit::{NSApplication, NSApplicationTerminateReply};
     use tauri::{AppHandle, Manager};
 
@@ -231,13 +233,67 @@ mod system_quit {
 
     type ShouldTerminate =
         extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject) -> NSApplicationTerminateReply;
+    type HandleQuitEvent = extern "C-unwind" fn(&AnyObject, Sel, *mut AnyObject, *mut AnyObject);
+
+    const fn four_char_code(code: &[u8; 4]) -> u32 {
+        u32::from_be_bytes(*code)
+    }
+
+    const K_CORE_EVENT_CLASS: u32 = four_char_code(b"aevt");
+    const K_AE_QUIT_APPLICATION: u32 = four_char_code(b"quit");
+    const KEY_ERROR_NUMBER: u32 = four_char_code(b"errn");
+    const TYPE_NULL: u32 = four_char_code(b"null");
+
+    /// What `suspendCurrentAppleEvent` hands back; only ever passed back to the event manager.
+    #[repr(C)]
+    struct Suspension {
+        _opaque: [u8; 0],
+    }
+
+    // SAFETY: the encoding Foundation declares for `NSAppleEventManagerSuspensionID`, a pointer to
+    // an opaque struct; objc2-foundation encodes it the same way.
+    unsafe impl RefEncode for Suspension {
+        const ENCODING_REF: Encoding =
+            Encoding::Pointer(&Encoding::Struct("__NSAppleEventManagerSuspension", &[]));
+    }
+
+    /// A quit Apple Event put off until a close's question is answered.
+    struct SuspendedEvent {
+        id: *const Suspension,
+    }
+
+    // SAFETY: the id is an opaque token tote never reads through; it is handed back to the event
+    // manager on the main thread only (`resume`).
+    unsafe impl Send for SuspendedEvent {}
+
+    /// What macOS waits on for tote's answer, if anything.
+    enum Waiting {
+        None,
+        /// Told 「later」; waits for `replyToApplicationShouldTerminate:`.
+        Terminate,
+        /// The sender of a quit Apple Event waits for its reply.
+        QuitEvent(SuspendedEvent),
+    }
+
+    #[derive(Debug, PartialEq, Eq)]
+    enum QuitEventAction {
+        /// Hold the event and join the close's question: its answer is the reply.
+        Suspend,
+        /// What AppKit's own handler does: `terminate:`, then `applicationShouldTerminate:`.
+        Terminate,
+    }
 
     static APP: OnceLock<AppHandle> = OnceLock::new();
-    /// macOS was told 「later」 and waits for `replyToApplicationShouldTerminate:`.
-    static WAITING: AtomicBool = AtomicBool::new(false);
+    static WAITING: Mutex<Waiting> = Mutex::new(Waiting::None);
 
     const NOT_HOOKED: &str =
         "tote: could not answer macOS's quit; the Dock's quit will not write first";
+    const QUIT_EVENT_NOT_HOOKED: &str =
+        "tote: could not take the quit Apple Event; a Dock quit during a close's question is lost";
+
+    fn waiting() -> MutexGuard<'static, Waiting> {
+        WAITING.lock().unwrap_or_else(PoisonError::into_inner)
+    }
 
     pub fn install(app: &AppHandle) {
         let _ = APP.set(app.clone());
@@ -249,13 +305,14 @@ mod system_quit {
             eprintln!("{NOT_HOOKED} (no app delegate)");
             return;
         };
-        let class: &AnyClass = AsRef::<AnyObject>::as_ref(&*delegate).class();
+        let delegate: &AnyObject = AsRef::<AnyObject>::as_ref(&*delegate);
+        let class = delegate.class() as *const AnyClass as *mut AnyClass;
         let method: ShouldTerminate = should_terminate;
         // SAFETY: the class is tao's own, registered at runtime without this selector, and the
         // function matches the encoding: returns NSUInteger (`Q`), takes self, _cmd and the sender.
         let added = unsafe {
             class_addMethod(
-                class as *const AnyClass as *mut AnyClass,
+                class,
                 sel!(applicationShouldTerminate:),
                 std::mem::transmute::<ShouldTerminate, Imp>(method),
                 c"Q@:@".as_ptr(),
@@ -264,6 +321,148 @@ mod system_quit {
         if !added.as_bool() {
             eprintln!("{NOT_HOOKED}");
         }
+        install_quit_event(delegate, class);
+    }
+
+    /// AppKit's own handler for the quit Apple Event (the Dock's 「종료」, AppleScript's `quit`, a
+    /// logout) refuses it by itself while a sheet is up: `applicationShouldTerminate:` is never
+    /// called, and a quit that comes during a close's question is lost. This handler takes its
+    /// place. It runs after launch (`setup`), so AppKit's own registration does not replace it.
+    fn install_quit_event(delegate: &AnyObject, class: *mut AnyClass) {
+        let method: HandleQuitEvent = handle_quit_event;
+        // SAFETY: as for `applicationShouldTerminate:` above; the function returns void (`v`) and
+        // takes self, _cmd, the event and the reply.
+        let added = unsafe {
+            class_addMethod(
+                class,
+                sel!(handleQuitEvent:withReplyEvent:),
+                std::mem::transmute::<HandleQuitEvent, Imp>(method),
+                c"v@:@@".as_ptr(),
+            )
+        };
+        if !added.as_bool() {
+            eprintln!("{QUIT_EVENT_NOT_HOOKED}");
+            return;
+        }
+        // SAFETY: NSAppleEventManager is Foundation's, and these are its documented messages with
+        // their argument types (AEEventClass and AEEventID are UInt32). It does not retain the
+        // handler; tao's delegate lives as long as the app.
+        unsafe {
+            let manager: Retained<AnyObject> =
+                msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+            let _: () = msg_send![
+                &*manager,
+                setEventHandler: delegate,
+                andSelector: sel!(handleQuitEvent:withReplyEvent:),
+                forEventClass: K_CORE_EVENT_CLASS,
+                andEventID: K_AE_QUIT_APPLICATION
+            ];
+        }
+    }
+
+    extern "C-unwind" fn handle_quit_event(
+        _: &AnyObject,
+        _: Sel,
+        _: *mut AnyObject,
+        reply: *mut AnyObject,
+    ) {
+        let Some(mtm) = MainThreadMarker::new() else {
+            return;
+        };
+        // SAFETY: the reply AppKit passed this handler, alive until it returns.
+        let reply = unsafe { reply.as_ref() };
+        let asking = APP
+            .get()
+            .is_some_and(|app| app.state::<AppCore>().asking_close());
+        match quit_event_action(asking) {
+            QuitEventAction::Suspend => suspend(reply),
+            QuitEventAction::Terminate => {
+                NSApplication::sharedApplication(mtm).terminate(None);
+                // `terminate:` returns only when the quit was refused; the sender hears so, as
+                // from AppKit's own handler. A logout waits on this to call itself off.
+                if let Some(reply) = reply {
+                    refuse(reply, -128);
+                }
+            }
+        }
+    }
+
+    /// Joins the close's question and holds the event for its answer (`answer`). Called from the
+    /// quit event's handler, with its reply.
+    fn suspend(reply: Option<&AnyObject>) {
+        let Some(app) = APP.get() else {
+            return;
+        };
+        let mut waiting = waiting();
+        // A second quit while one is held is refused, as AppKit would have.
+        if !matches!(*waiting, Waiting::None) {
+            drop(waiting);
+            if let Some(reply) = reply {
+                refuse(reply, -128);
+            }
+            return;
+        }
+        let round = app.state::<AppCore>().begin_flush(FlushGoal::Quit);
+        // SAFETY: called from the quit event's handler on the main thread, so there is a current
+        // event to suspend.
+        let id: *const Suspension = unsafe {
+            let manager: Retained<AnyObject> =
+                msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+            msg_send![&*manager, suspendCurrentAppleEvent]
+        };
+        *waiting = Waiting::QuitEvent(SuspendedEvent { id });
+        // `run` may answer at once, which takes the lock.
+        drop(waiting);
+        super::run(app, round);
+    }
+
+    /// Puts error `code` in an Apple Event's reply.
+    fn refuse(reply: &AnyObject, code: i16) {
+        // SAFETY: `reply` is an NSAppleEventDescriptor, and these are its documented messages
+        // (DescType and AEKeyword are UInt32).
+        unsafe {
+            let kind: u32 = msg_send![reply, descriptorType];
+            // The sender asked for no reply.
+            if kind == TYPE_NULL {
+                return;
+            }
+            let number: Retained<AnyObject> = msg_send![
+                class!(NSAppleEventDescriptor),
+                descriptorWithInt32: i32::from(code)
+            ];
+            let _: () =
+                msg_send![reply, setParamDescriptor: &*number, forKeyword: KEY_ERROR_NUMBER];
+        }
+    }
+
+    /// Lets a held quit event go, with `error` in its reply. Main thread only.
+    fn resume(event: SuspendedEvent, error: Option<i16>) {
+        // SAFETY: `event.id` came from `suspendCurrentAppleEvent` and is resumed once — `answer`
+        // takes it out of `WAITING` first.
+        unsafe {
+            let manager: Retained<AnyObject> =
+                msg_send![class!(NSAppleEventManager), sharedAppleEventManager];
+            if let Some(code) = error {
+                let reply: Retained<AnyObject> =
+                    msg_send![&*manager, replyAppleEventForSuspensionID: event.id];
+                refuse(&reply, code);
+            }
+            let _: () = msg_send![&*manager, resumeWithSuspensionID: event.id];
+        }
+    }
+
+    /// While a close asks, AppKit would refuse the quit before tote hears of it.
+    fn quit_event_action(asking_close: bool) -> QuitEventAction {
+        if asking_close {
+            QuitEventAction::Suspend
+        } else {
+            QuitEventAction::Terminate
+        }
+    }
+
+    /// userCanceledErr: what the sender of a refused quit gets.
+    fn resume_error_for(quit: bool) -> Option<i16> {
+        (!quit).then_some(-128)
     }
 
     extern "C-unwind" fn should_terminate(
@@ -282,7 +481,7 @@ mod system_quit {
         let round = core.begin_flush(FlushGoal::Quit);
         let reply = reply_for(&round);
         if reply == NSApplicationTerminateReply::TerminateLater {
-            WAITING.store(true, Ordering::SeqCst);
+            *waiting() = Waiting::Terminate;
             super::run(app, round);
         }
         reply
@@ -300,21 +499,28 @@ mod system_quit {
         }
     }
 
-    /// Tells a waiting macOS whether tote quits. False when macOS is not waiting — the quit came
-    /// from tote's own menu, and tote exits by itself.
+    /// Tells a waiting macOS whether tote quits, once. False when tote is to exit by itself: the
+    /// quit came from tote's own menu, or it goes on a held quit event, whose reply does not end
+    /// tote the way `replyToApplicationShouldTerminate:` does.
     pub fn answer(app: &AppHandle, quit: bool) -> bool {
-        if !WAITING.swap(false, Ordering::SeqCst) {
+        let held = std::mem::replace(&mut *waiting(), Waiting::None);
+        if matches!(held, Waiting::None) {
             return false;
         }
-        let replied = app.run_on_main_thread(move || {
-            if let Some(mtm) = MainThreadMarker::new() {
-                NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(quit);
+        let exits_itself = quit && matches!(held, Waiting::QuitEvent(_));
+        let replied = app.run_on_main_thread(move || match held {
+            Waiting::None => {}
+            Waiting::Terminate => {
+                if let Some(mtm) = MainThreadMarker::new() {
+                    NSApplication::sharedApplication(mtm).replyToApplicationShouldTerminate(quit);
+                }
             }
+            Waiting::QuitEvent(event) => resume(event, resume_error_for(quit)),
         });
         if let Err(err) = replied {
             eprintln!("tote: could not answer macOS's quit: {err}");
         }
-        true
+        !exits_itself
     }
 
     #[cfg(test)]
@@ -341,6 +547,20 @@ mod system_quit {
                 reply_for(&Begin::Done(FlushGoal::Quit)),
                 NSApplicationTerminateReply::TerminateNow
             );
+        }
+
+        #[test]
+        fn a_quit_event_during_an_asking_close_waits_for_its_answer() {
+            // `terminate:` would be refused by AppKit with the sheet up.
+            assert_eq!(quit_event_action(true), QuitEventAction::Suspend);
+            assert_eq!(quit_event_action(false), QuitEventAction::Terminate);
+        }
+
+        #[test]
+        fn every_answer_resumes_a_suspended_quit_event() {
+            // A 「no」 reaches the sender as userCanceledErr, like AppKit's own refusal.
+            assert_eq!(resume_error_for(false), Some(-128));
+            assert_eq!(resume_error_for(true), None);
         }
     }
 }

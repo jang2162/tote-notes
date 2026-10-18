@@ -168,6 +168,14 @@ impl FlushCoordinator {
         finished.into_iter().map(|id| (id, self.end(id))).collect()
     }
 
+    /// A window round — a close or a switch — is asking, on a sheet over its window. AppKit
+    /// refuses a Dock or AppleScript quit by itself while a sheet is up, never asking tote.
+    pub fn asking_close(&self) -> bool {
+        self.rounds
+            .values()
+            .any(|round| round.asking && round.goal.window().is_some())
+    }
+
     /// Drops round `id` — its question was answered, either way. True when a quit was waiting on
     /// it.
     pub fn cancel(&mut self, id: u64) -> bool {
@@ -381,6 +389,38 @@ mod tests {
             Begin::AlreadyRunning
         );
         assert!(f.cancel(id));
+    }
+
+    #[test]
+    fn asking_close_is_true_only_while_a_close_asks() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id: writing, .. } =
+            f.begin(FlushGoal::CloseWindow("b".into()), labels(&["b"]))
+        else {
+            panic!("expected a round")
+        };
+        // Still writing: no sheet is up yet.
+        assert!(!f.asking_close());
+        let id = asking_close(&mut f);
+        assert!(f.asking_close());
+        f.cancel(id);
+        assert!(!f.asking_close());
+        f.cancel(writing);
+
+        // A switch asks on a sheet too.
+        let Begin::Started { id, .. } = f.begin(switch("a"), labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        f.ack(id, "a", Some(ONE_FAILED.into()));
+        assert!(f.asking_close());
+        f.cancel(id);
+
+        // A quit's question is not on a window.
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Quit, labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        f.ack(id, "a", Some(ONE_FAILED.into()));
+        assert!(!f.asking_close());
     }
 
     #[test]
