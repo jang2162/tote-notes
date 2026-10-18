@@ -54,7 +54,7 @@
 2. **전환이 창을 남기고 끝나는 모든 길**(질문에 「취소」, 대상이 다른 창에 이미 열림, 대상을 열지 못함). 어느 하나라도 `tote://stay` 를 빠뜨리면 그 창은 빈 칸으로 굳어 아무것도 칠 수 없다. Task 3 의 e2e 셋과 `every_exit_that_keeps_the_window_says_stay` 가 고정한다.
 3. **떠나는 중에 새 탭이 생긴다**(⌘N, 사이드바 클릭, 받은 CLI 요청). 그 탭에 편집기가 붙으면 그 글은 새로 고침에 사라진다. Task 3 의 `a memo opened while the window leaves shows nothing` 이 고정한다.
 4. **모니터마다 배율이 다르거나 창이 모니터보다 크다.** 새 창이 여전히 밖으로 나가거나 크기가 음수가 되면 안 된다. Task 2 의 `a_window_larger_than_its_monitor_shrinks_to_fit` 가 고정하고, 배율이 섞인 경우는 Task 9 의 C-2 행이 실제 모니터로 본다.
-5. **전환 중에 온 `tote -w <대상> -i 파일`.** 떠나는 워크스페이스로 가져와지거나 사라지면 안 되고, 전환이 실패하면 상태 표시줄에 알려야 한다. Task 4 의 `a_request_during_a_switch_waits_for_its_end` 와 `a_request_held_by_a_failed_switch_is_told` 가 고정한다.
+5. **전환 중에 온 `tote -w <대상> --import 파일`.** 떠나는 워크스페이스로 가져와지거나 사라지면 안 되고, 전환이 실패하면 상태 표시줄에 알려야 한다. Task 4 의 `a_request_during_a_switch_waits_for_its_end` 와 `a_request_held_by_a_failed_switch_is_told` 가 고정한다.
 
 ---
 
@@ -116,7 +116,7 @@ Expected: 로그가 **찍히지 않고** `osascript` 가 즉시 -128. 찍히면 
 
 - [ ] **Step 3: 테스트가 실패하는지 본다**
 
-Run: `cargo test --manifest-path src-tauri/Cargo.toml system_quit asking_close`
+Run: `cargo test --manifest-path src-tauri/Cargo.toml -- system_quit asking_close`
 Expected: FAIL(정의 없음).
 
 - [ ] **Step 4: 구현한다**
