@@ -63,6 +63,24 @@ export async function sessionPane(page: Page, window = 0, pane = 0): Promise<Pan
   );
 }
 
+/** Holds the fake at `gate` — set on it now, taken by its next switch or tear-off — until the
+ * returned function is called: the test acts while the backend is busy, without a timer. */
+export async function hold(
+  page: Page,
+  gate: "switchGate" | "tearOffGate",
+): Promise<() => Promise<void>> {
+  await page.evaluate((name) => {
+    window.__tote.backend[name] = new Promise<void>((resolve) =>
+      Object.assign(window, { [`release-${name}`]: resolve }),
+    );
+  }, gate);
+  return () =>
+    page.evaluate(
+      (name) => (window as unknown as Record<string, () => void>)[`release-${name}`](),
+      gate,
+    );
+}
+
 /** What the native menu would send. */
 export function menu(page: Page, id: string): Promise<void> {
   return page.evaluate((menuId) => window.__tote.backend.menu(menuId), id);

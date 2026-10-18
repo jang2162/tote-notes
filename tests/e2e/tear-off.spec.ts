@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { menu, quietErrors, start } from "./helpers";
+import { hold, menu, quietErrors, start } from "./helpers";
 
 // 「탭을 새 창으로 옮기기」 in one window on the fake backend: what leaves this window and what the
 // backend is handed (`data.tornOff`). tests/e2e/windows.spec.ts opens the new window too.
@@ -88,7 +88,6 @@ test("a tab being torn off does not take its editor back when shown again", asyn
   await start(page, {
     memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
     session: JSON.stringify(twoTabs),
-    tearOffDelayMs: 300,
   });
   await expect(page.locator(".cm-content")).toHaveText("둘째");
   const away = async () => {
@@ -101,11 +100,14 @@ test("a tab being torn off does not take its editor back when shown again", asyn
   };
 
   // Shown again while it is handed over: it stays let go of, and goes.
+  let release = await hold(page, "tearOffGate");
   await menu(page, MOVE);
   await away();
-  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+  // Past the memo save delay: a save the key scheduled would have run.
   await page.waitForTimeout(600);
   expect(await memoText(page, "b")).toBe("둘째");
+  await release();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
 
   // The backend refuses the move: the tab is editable again.
   await page.evaluate(() => {
@@ -116,14 +118,30 @@ test("a tab being torn off does not take its editor back when shown again", asyn
   await page.evaluate(() => {
     window.__tote.backend.data.places!["memo:b"] = "ws-9";
   });
+  release = await hold(page, "tearOffGate");
   await menu(page, MOVE);
   await away();
+  await release();
   await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+ArrowDown");
   await page.keyboard.insertText("!");
   await expect.poll(() => memoText(page, "b")).toBe("둘째!");
+});
+
+test("a tab whose hand-over throws stays editable", async ({ page }) => {
+  const broken = "the hand-over broke";
+  await quietErrors(page, broken);
+  await typeInto(page);
+  await page.evaluate((message) => {
+    window.__tote.app.focused.tabs.active!.handOver = () => Promise.reject(new Error(message));
+  }, broken);
+  await menu(page, MOVE);
+  await expect(page.locator(".status-message")).toHaveText(`오류: ${broken}`);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await page.keyboard.insertText("!");
+  await expect.poll(() => memoText(page, "a")).toBe("우유 계란!");
 });
 
 test("a tab the backend does not take stays editable and says why", async ({ page }) => {

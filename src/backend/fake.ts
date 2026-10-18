@@ -136,6 +136,10 @@ export interface FakeData {
   /** How long `tearOffTab` takes, so a test can act while a tab is being torn off; without it a
    * microtask. Absent in old seeds. */
   tearOffDelayMs?: number;
+  /** Workspaces a switch fails to open once this window has written its tabs, as
+   * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
+   * seeds. */
+  unopenable?: string[];
   /** The items of every tab context menu shown, in order. Absent in old seeds. */
   tabMenus?: { id: string; text: string }[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
@@ -355,6 +359,11 @@ export class FakeBackend implements Backend {
    * the page: the gap between the round's answer and `switch_window` on the native side, where
    * writes are still taken. */
   switchDelayMs = 0;
+  /** Set by a test to hold the next switch at the same place as `switchDelayMs` until it resolves
+   * the promise. */
+  switchGate: Promise<void> | null = null;
+  /** Set by a test to hold the next `tearOffTab` until it resolves the promise. */
+  tearOffGate: Promise<void> | null = null;
 
   constructor(
     private readonly storage: FakeStorage = memoryStorage(),
@@ -654,6 +663,9 @@ export class FakeBackend implements Backend {
     this.refuseWhileSwitching();
     const delay = this.data.tearOffDelayMs;
     if (delay) await new Promise((resolve) => setTimeout(resolve, delay));
+    const gate = this.tearOffGate;
+    this.tearOffGate = null;
+    await gate;
     const entry: unknown = JSON.parse(tab);
     if (typeof entry !== "object" || entry === null || Array.isArray(entry))
       throw new BackendError("bad-request", "a tab is a JSON object");
@@ -783,6 +795,14 @@ export class FakeBackend implements Backend {
       return "switching";
     }
     if (this.switchDelayMs) await new Promise((resolve) => setTimeout(resolve, this.switchDelayMs));
+    const gate = this.switchGate;
+    this.switchGate = null;
+    await gate;
+    if (this.data.unopenable?.includes(path)) {
+      this.notice(`워크스페이스를 열지 못했습니다: ${path} cannot be opened`);
+      this.stay();
+      return "switching";
+    }
     const data = this.data;
     const left = data.workspaces.find((w) => w.path === data.workspace.path);
     if (left) Object.assign(left, { windows: left.windows - 1, open: left.windows > 1 });

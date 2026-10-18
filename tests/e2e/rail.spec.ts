@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
 import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
 import { parseSessionFile } from "../../src/core/session";
-import { menu, nextWindow, quietErrors, ready, start, startWindows } from "./helpers";
+import { hold, menu, nextWindow, quietErrors, ready, start, startWindows } from "./helpers";
 
 // The workspace rail (spec 「워크스페이스 띠」): the fake's `otherWorkspaces` stand for the
 // workspaces this window is not showing, and a switch reloads the page as the app's does.
@@ -151,17 +151,15 @@ const answered = (page: Page) =>
 test("keys typed after the switch round answers do not reach the memo left", async ({ page }) => {
   await open(page);
   await expect(page.locator(".cm-content")).toHaveText("안건");
-  await page.evaluate(() => {
-    const { app, backend } = window.__tote;
-    app.view.dispatch({ selection: { anchor: 2 } });
-    backend.switchDelayMs = 300;
-  });
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  const release = await hold(page, "switchGate");
   await railItem(page, "개인").click();
   await answered(page);
   await page.keyboard.insertText("x");
   // Typed into the gap before the window switches: written nowhere, so taken nowhere.
   expect(await page.evaluate(() => window.__tote.app.view.state.doc.toString())).not.toContain("x");
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await release();
   await switchedTo(page, "개인");
   expect(await leftMemoText(page, "m")).toBe("안건");
 });
@@ -186,16 +184,34 @@ test("a switch the person cancels gives the editor back", async ({ page }) => {
 
 test("a memo opened while the window leaves shows nothing", async ({ page }) => {
   await open(page);
-  await page.evaluate(() => {
-    window.__tote.backend.switchDelayMs = 300;
-  });
+  const release = await hold(page, "switchGate");
   await railItem(page, "개인").click();
   await answered(page);
   await menu(page, "new-memo");
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
   await expect(page.locator(".editor-host")).toBeHidden();
+  await release();
   await switchedTo(page, "개인");
+});
+
+test("a switch that cannot open its target after writing gives the panes back", async ({
+  page,
+}) => {
+  await open(page, { unopenable: ["/fake/개인"] });
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  const release = await hold(page, "switchGate");
+  await railItem(page, "개인").click();
+  await answered(page);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await release();
+  await expect(page.locator(".status-message")).toContainText("워크스페이스를 열지 못했습니다");
+  await expect(page).toHaveTitle("업무");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText(" 셋");
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
 });
 
 test("⌃2 does nothing while a dialog is open", async ({ page }) => {

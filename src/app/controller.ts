@@ -613,7 +613,15 @@ export class AppController implements DocHost, PaneHost {
       pane.show(doc);
       if (pane === this.focused) pane.takeKeys();
     };
-    if (!(await doc.handOver())) {
+    let handed: boolean;
+    try {
+      handed = await doc.handOver();
+    } catch (error) {
+      stay();
+      this.report(error);
+      return false;
+    }
+    if (!handed) {
       stay();
       // After `show`, which puts the tab's own notice in the status bar.
       this.statusBar.setMessage(NOT_MOVED_TO_NEW_WINDOW, "error");
