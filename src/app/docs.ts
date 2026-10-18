@@ -173,6 +173,9 @@ export abstract class Doc {
   /** What the tab asks about its file (another app changed or deleted it); kept while the tab is
    * left and come back to. */
   banner: BannerState | null = null;
+  /** The tab is being torn off to a new window: no pane shows it (`Pane.show`), so no key reaches a
+   * tab whose text has been handed over. */
+  leaving = false;
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;

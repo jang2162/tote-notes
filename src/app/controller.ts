@@ -3,6 +3,7 @@ import { EditorView, type ViewUpdate } from "@codemirror/view";
 
 import type {
   Backend,
+  FlushGoal,
   LanguageInfo,
   MemoInfo,
   OutsideChange,
@@ -99,6 +100,8 @@ export class AppController implements DocHost, PaneHost {
   readonly panes: Pane[];
   /** The pane the keys, the menu, the memo list and the status bar act on. */
   focused: Pane;
+  /** The window wrote its tabs to close or to switch its workspace (`leave`). */
+  leaving = false;
   /** The panes' shares of the editing area's width (`layout.ts`), one per pane. */
   private widths = [1];
   private readonly panesEl = h("div", { class: "panes" });
@@ -261,7 +264,9 @@ export class AppController implements DocHost, PaneHost {
       (event) => {
         const index = railShortcut(event);
         const item = index === null ? undefined : this.railList[index];
-        if (!item) return;
+        // A window that answered a close or a switch has no tabs left to write; a dialog keeps the
+        // window until it is answered.
+        if (!item || this.leaving || document.querySelector(".modal")) return;
         event.preventDefault();
         event.stopPropagation();
         void this.switchTo(item.path);
@@ -289,7 +294,8 @@ export class AppController implements DocHost, PaneHost {
       (path) => new ExternalDoc(this, path),
     );
     this.backend.onMenu((id) => void this.onMenu(id));
-    this.backend.onFlush((id) => void this.onFlush(id));
+    this.backend.onFlush((id, goal) => void this.onFlush(id, goal));
+    this.backend.onStay(() => this.stay());
     this.backend.onPending(() => void this.drainPending());
     this.backend.onFileDrop((paths) => void this.openExternals(paths));
     this.backend.onOutsideChange((change) => void this.onOutside(change));
@@ -594,15 +600,16 @@ export class AppController implements DocHost, PaneHost {
     // The editor lets go of the tab first: a key typed while it is written and handed over would
     // reach a tab that is leaving, and its late save would land after the new window has read it.
     const from = this.paneOf(doc);
-    const onShow = doc === from.tabs.active;
-    if (onShow) {
+    doc.leaving = true;
+    if (doc === from.tabs.active) {
       from.capture(doc);
       from.surface.showNothing();
     }
-    // The tab stays: it is shown again, as before, where it is now.
+    // The tab stays: it is shown again where it is now, if it is the active tab there.
     const stay = () => {
+      doc.leaving = false;
       const pane = this.paneOf(doc);
-      if (!onShow || !this.docs.includes(doc) || doc !== pane.tabs.active) return;
+      if (!this.docs.includes(doc) || doc !== pane.tabs.active) return;
       pane.show(doc);
       if (pane === this.focused) pane.takeKeys();
     };
@@ -903,20 +910,48 @@ export class AppController implements DocHost, PaneHost {
     await this.saveSessionNow();
   }
 
-  /** Answers with what is still only in memory: the native side asks before closing over it. */
-  private async onFlush(id: number): Promise<void> {
+  /** Answers with what is still only in memory: the native side asks before closing over it. A
+   * window that closes or switches lets go of its tabs before it answers (`leave`). */
+  private async onFlush(id: number, goal: FlushGoal): Promise<void> {
     try {
       // A syllable still being composed goes into its own tab before the tabs are written
       // (closing, quitting, switching the workspace).
       await Promise.all(this.panes.map((pane) => settleComposition(pane.view)));
       await this.flushAll(true);
-      // The editors take keys while the tabs are written: what came in meanwhile is written too
-      // before the answer, which lets the native side switch the workspace or close the window.
+      // The window stays open until the native side acts on the answer, and a key typed after the
+      // tabs are written would be lost with it. The editors take keys while the tabs are written:
+      // what came in meanwhile is written too before the answer.
+      if (goal !== "quit") this.leave();
       if (this.docs.some((doc) => doc.unwritten)) await this.flushAll(true);
     } finally {
       const failed = this.docs.filter((doc) => doc.saveFailed).length;
       await this.backend.flushDone(id, failed ? `저장하지 못한 메모 ${failed}개` : undefined);
     }
+  }
+
+  /** The window wrote its tabs to close or to switch its workspace (`onFlush`): every pane lets go
+   * of its tab until the window goes, or stays (`stay`). A tab opened meanwhile is not shown
+   * either (`Pane.show`). */
+  leave(): void {
+    this.leaving = true;
+    for (const pane of this.panes) {
+      const active = pane.tabs.active;
+      if (active) pane.capture(active);
+      pane.surface.showNothing();
+    }
+  }
+
+  /** The close or switch is off (`tote://stay`): each pane shows its tab again, and the focused
+   * pane takes the keys. */
+  stay(): void {
+    if (!this.leaving) return;
+    this.leaving = false;
+    for (const pane of this.panes) {
+      const active = pane.tabs.active;
+      if (active) pane.show(active);
+      else pane.showEmptyText();
+    }
+    this.focused.takeKeys();
   }
 
   private onUpdate(doc: Doc, update: ViewUpdate): void {

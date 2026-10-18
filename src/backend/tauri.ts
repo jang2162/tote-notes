@@ -12,6 +12,7 @@ import {
   type ExtensionSummary,
   type ExternalInfo,
   type FileSource,
+  type FlushGoal,
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
@@ -259,8 +260,13 @@ export class TauriBackend implements Backend {
   onMenu(handler: (id: string) => void) {
     void this.window.listen<string>("tote://menu", (event) => handler(event.payload));
   }
-  onFlush(handler: (id: number) => void) {
-    void this.window.listen<number>("tote://flush", (event) => handler(event.payload));
+  onFlush(handler: (id: number, goal: FlushGoal) => void) {
+    void this.window.listen<{ id: number; goal: FlushGoal }>("tote://flush", (event) =>
+      handler(event.payload.id, event.payload.goal),
+    );
+  }
+  onStay(handler: () => void) {
+    void this.window.listen("tote://stay", () => handler());
   }
   onPending(handler: () => void) {
     void this.window.listen("tote://pending", () => handler());

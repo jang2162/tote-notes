@@ -241,6 +241,10 @@ export type OutsideChange =
   | { kind: "workspace"; changes: WorkspaceChange[] }
   | { kind: "external"; path: string; state: ExternalState };
 
+/** What a flush round is for (`FlushGoal::kind` in src-tauri/src/app/flush.rs): the window
+ * closes, the window switches its workspace, or the app quits. */
+export type FlushGoal = "close" | "switch" | "quit";
+
 export interface WindowFrame {
   x: number;
   y: number;
@@ -405,7 +409,10 @@ export interface Backend {
   onConfigChanged(handler: () => void): void;
 
   onMenu(handler: (id: string) => void): void;
-  onFlush(handler: (id: number) => void): void;
+  onFlush(handler: (id: number, goal: FlushGoal) => void): void;
+  /** The close or switch this window wrote its tabs for is off (「취소」, the workspace could not
+   * be opened, another window shows it): the window stays as it was. */
+  onStay(handler: () => void): void;
   onPending(handler: () => void): void;
   onFileDrop(handler: (paths: string[]) => void): void;
   /** Another app changed this window's workspace or one of its watched external files. */

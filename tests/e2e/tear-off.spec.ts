@@ -82,6 +82,50 @@ test("keys typed while the tab is being torn off do not reach it", async ({ page
   await expect(page.locator(".tab")).toHaveCount(0);
 });
 
+test("a tab being torn off does not take its editor back when shown again", async ({ page }) => {
+  const refused = "ws-1 does not hold the tab";
+  await quietErrors(page, refused);
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(twoTabs),
+    tearOffDelayMs: 300,
+  });
+  await expect(page.locator(".cm-content")).toHaveText("둘째");
+  const away = async () => {
+    await page.locator(".tab", { hasText: "가" }).click();
+    await expect(page.locator(".cm-content")).toHaveText("첫째");
+    await page.locator(".tab", { hasText: "나" }).click();
+    await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
+    await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+    await page.keyboard.insertText("x");
+  };
+
+  // Shown again while it is handed over: it stays let go of, and goes.
+  await menu(page, MOVE);
+  await away();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+  await page.waitForTimeout(600);
+  expect(await memoText(page, "b")).toBe("둘째");
+
+  // The backend refuses the move: the tab is editable again.
+  await page.evaluate(() => {
+    delete window.__tote.backend.data.places!["memo:b"];
+  });
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("둘째");
+  await page.evaluate(() => {
+    window.__tote.backend.data.places!["memo:b"] = "ws-9";
+  });
+  await menu(page, MOVE);
+  await away();
+  await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await page.locator(".cm-content").click();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText("!");
+  await expect.poll(() => memoText(page, "b")).toBe("둘째!");
+});
+
 test("a tab the backend does not take stays editable and says why", async ({ page }) => {
   const refused = "ws-1 does not hold the tab";
   await quietErrors(page, refused);

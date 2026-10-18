@@ -132,6 +132,97 @@ test("keys typed while a switch writes the tabs go into the memo left behind", a
   expect(left).toBe("안건 넷");
 });
 
+/** The text of memo `id` of the workspace the switch left. */
+const leftMemoText = (page: Page, id: string) =>
+  page.evaluate((memoId) => {
+    const memo = window.__tote.backend.data.otherWorkspaces?.["/fake/업무"]?.memos[memoId];
+    const bytes = Uint8Array.from(atob(memo?.data ?? ""), (ch) => ch.charCodeAt(0));
+    return new TextDecoder().decode(bytes);
+  }, id);
+
+/** The switch round has its answer: the fake's own round ids start at 1 000 000. */
+const answered = (page: Page) =>
+  expect
+    .poll(() =>
+      page.evaluate(() => window.__tote.backend.data.flushed.some((each) => each.id >= 1_000_000)),
+    )
+    .toBe(true);
+
+test("keys typed after the switch round answers do not reach the memo left", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => {
+    const { app, backend } = window.__tote;
+    app.view.dispatch({ selection: { anchor: 2 } });
+    backend.switchDelayMs = 300;
+  });
+  await railItem(page, "개인").click();
+  await answered(page);
+  await page.keyboard.insertText("x");
+  // Typed into the gap before the window switches: written nowhere, so taken nowhere.
+  expect(await page.evaluate(() => window.__tote.app.view.state.doc.toString())).not.toContain("x");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await switchedTo(page, "개인");
+  expect(await leftMemoText(page, "m")).toBe("안건");
+});
+
+test("a switch the person cancels gives the editor back", async ({ page }) => {
+  await quietErrors(page, "no space left on device");
+  // Every write fails: the round answers with 저장 실패, and the fake takes 「취소」.
+  await open(page, { failWrites: 1000 });
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  await page.keyboard.insertText(" 셋");
+  await railItem(page, "개인").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.blocked)))
+    .toEqual(["저장하지 못한 메모 1개"]);
+  await expect(page).toHaveTitle("업무");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText("!");
+  await expect(page.locator(".cm-content")).toHaveText("안건 셋!");
+});
+
+test("a memo opened while the window leaves shows nothing", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    window.__tote.backend.switchDelayMs = 300;
+  });
+  await railItem(page, "개인").click();
+  await answered(page);
+  await menu(page, "new-memo");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await expect(page.locator(".editor-host")).toBeHidden();
+  await switchedTo(page, "개인");
+});
+
+test("⌃2 does nothing while a dialog is open", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => {
+    const { backend } = window.__tote;
+    const switches: string[] = [];
+    const switchWorkspace = backend.switchWorkspace.bind(backend);
+    backend.switchWorkspace = (path) => {
+      switches.push(path);
+      return switchWorkspace(path);
+    };
+    Object.assign(window, { switches });
+  });
+  await menu(page, "rename");
+  await expect(page.locator(".modal")).toContainText("새 파일 이름");
+  await page.keyboard.press("Control+Digit2");
+  // A switch would have reached the backend by now; the page would have reloaded soon after.
+  await page.waitForTimeout(300);
+  expect(await page.evaluate(() => (window as unknown as { switches: string[] }).switches)).toEqual(
+    [],
+  );
+  await expect(page.locator(".modal")).toBeVisible();
+  await expect(page).toHaveTitle("업무");
+});
+
 test("⌃2 switches to the second workspace", async ({ page }) => {
   await open(page);
   await page.keyboard.press("Control+Digit2");
@@ -211,9 +302,7 @@ test("the dot follows a workspace opened in another window", async ({ context })
   await expect(first.locator(".rail-item.current .rail-dot")).toHaveCount(0);
 });
 
-test("a composition in progress lands in its memo before a switch writes the tabs", async ({
-  page,
-}) => {
+test("onFlush writes a composition in progress before it answers", async ({ page }) => {
   await open(page, {
     session: JSON.stringify({
       version: 1,
@@ -257,7 +346,7 @@ test("a composition in progress lands in its memo before a switch writes the tab
     fire("input", "insertCompositionText", "가");
     await tick();
     const composing = view.composing;
-    backend.requestFlush(77);
+    backend.requestFlush(77, "switch");
     await new Promise((resolve) => setTimeout(resolve, 50));
     // The tabs are written once the composition ends.
     const flushedEarly = backend.data.flushed.some((each) => each.id === 77);

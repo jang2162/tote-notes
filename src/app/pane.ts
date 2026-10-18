@@ -47,6 +47,9 @@ export interface PaneHost {
   readonly panes: readonly Pane[];
   /** The pane the keys, the menu and the status bar go to. */
   readonly focused: Pane;
+  /** The window wrote its tabs to close or to switch its workspace: no pane shows a tab until it
+   * stays (`AppController.leave`). */
+  readonly leaving: boolean;
   /** The status bar while it speaks for `pane` (the focused pane), else null. */
   statusOf(pane: Pane): StatusBar | null;
   /** `pane` now shows `doc`, or nothing: the memo list and the status bar's language follow. */
@@ -154,6 +157,12 @@ export class Pane {
   }
 
   show(doc: Doc): void {
+    // Its text is written for good: a key typed into it now would be lost with the window, or land
+    // after the new window has read the tab.
+    if (doc.leaving || this.host.leaving) {
+      this.surface.showNothing();
+      return;
+    }
     this.closePanel();
     this.surface.banner.render(doc.banner);
     const state = doc.problem ? null : doc.state;

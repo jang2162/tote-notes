@@ -26,6 +26,17 @@ pub enum FlushGoal {
 }
 
 impl FlushGoal {
+    /// What the round is for, as `tote://flush` tells the page: a page that writes its tabs to
+    /// close or switch lets go of them as it answers (`AppController.onFlush`), a quitting one
+    /// does not.
+    pub fn kind(&self) -> &'static str {
+        match self {
+            FlushGoal::CloseWindow(_) => "close",
+            FlushGoal::SwitchWorkspace { .. } => "switch",
+            FlushGoal::Quit => "quit",
+        }
+    }
+
     /// The window of a window round; `None` for a quit.
     pub fn window(&self) -> Option<&str> {
         match self {

@@ -12,6 +12,7 @@ import {
   type ExternalInfo,
   type FileKind,
   type FileSource,
+  type FlushGoal,
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
@@ -328,7 +329,8 @@ export class FakeBackend implements Backend {
   private liveWorkspaceSearch = 0;
   private readonly handlers = {
     menu: [] as ((id: string) => void)[],
-    flush: [] as ((id: number) => void)[],
+    flush: [] as ((id: number, goal: FlushGoal) => void)[],
+    stay: [] as (() => void)[],
     pending: [] as (() => void)[],
     drop: [] as ((paths: string[]) => void)[],
     config: [] as (() => void)[],
@@ -349,6 +351,10 @@ export class FakeBackend implements Backend {
   /** Runs once as the next window layout is written — the last write of a flush round — so a test
    * can type while the round writes the tabs. */
   whileWritingLayout: (() => void) | null = null;
+  /** How long a switch waits after this window's answer before it swaps the workspace and reloads
+   * the page: the gap between the round's answer and `switch_window` on the native side, where
+   * writes are still taken. */
+  switchDelayMs = 0;
 
   constructor(
     private readonly storage: FakeStorage = memoryStorage(),
@@ -415,8 +421,12 @@ export class FakeBackend implements Backend {
   config(): void {
     for (const handler of this.handlers.config) handler();
   }
-  requestFlush(id: number): void {
-    for (const handler of this.handlers.flush) handler(id);
+  requestFlush(id: number, goal: FlushGoal = "quit"): void {
+    for (const handler of this.handlers.flush) handler(id, goal);
+  }
+  /** The close or switch this window wrote its tabs for is off, as `tote://stay` tells it. */
+  stay(): void {
+    for (const handler of this.handlers.stay) handler();
   }
   poke(): void {
     for (const handler of this.handlers.pending) handler();
@@ -446,7 +456,7 @@ export class FakeBackend implements Backend {
   }
   /** Another window's page told this one what the native side would. */
   private heard(event: HubEvent): void {
-    if (event.type === "flush") this.requestFlush(event.id);
+    if (event.type === "flush") this.requestFlush(event.id, event.goal);
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "reveal") this.reveal(event.tab);
     else if (event.type === "outside") this.outside(event.change);
@@ -768,7 +778,11 @@ export class FakeBackend implements Backend {
     if (!target || !other)
       throw new BackendError("not-a-workspace", `${path} is not a tote workspace`);
     // A tab that could not be written: the native side asks, and the fake takes 「취소」.
-    if ((await this.flushThisWindow()) !== undefined) return "switching";
+    if ((await this.flushThisWindow()) !== undefined) {
+      this.stay();
+      return "switching";
+    }
+    if (this.switchDelayMs) await new Promise((resolve) => setTimeout(resolve, this.switchDelayMs));
     const data = this.data;
     const left = data.workspaces.find((w) => w.path === data.workspace.path);
     if (left) Object.assign(left, { windows: left.windows - 1, open: left.windows > 1 });
@@ -807,7 +821,7 @@ export class FakeBackend implements Backend {
     const answered = new Promise<string | undefined>((resolve) =>
       this.flushWaiters.set(id, resolve),
     );
-    this.requestFlush(id);
+    this.requestFlush(id, "switch");
     return answered;
   }
 
@@ -1165,8 +1179,11 @@ export class FakeBackend implements Backend {
   onMenu(handler: (id: string) => void) {
     this.handlers.menu.push(handler);
   }
-  onFlush(handler: (id: number) => void) {
+  onFlush(handler: (id: number, goal: FlushGoal) => void) {
     this.handlers.flush.push(handler);
+  }
+  onStay(handler: () => void) {
+    this.handlers.stay.push(handler);
   }
   onPending(handler: () => void) {
     this.handlers.pending.push(handler);

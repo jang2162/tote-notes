@@ -6,6 +6,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use serde::Serialize;
 use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
@@ -54,22 +55,32 @@ pub fn steps_for_answer(goal: FlushGoal, anyway: bool, quit_waiting: bool) -> Ve
     }
 }
 
-pub fn begin(app: &AppHandle, goal: FlushGoal) {
-    let round = app.state::<AppCore>().begin_flush(goal);
-    run(app, round);
+/// What `tote://flush` asks of a window: write its tabs for round `id`, which is for `goal`
+/// (`FlushGoal::kind`).
+#[derive(Clone, Serialize)]
+struct FlushRequest {
+    id: u64,
+    goal: &'static str,
 }
 
-/// Carries out what starting a round calls for.
-fn run(app: &AppHandle, round: Begin) {
+pub fn begin(app: &AppHandle, goal: FlushGoal) {
+    let kind = goal.kind();
+    let round = app.state::<AppCore>().begin_flush(goal);
+    run(app, round, kind);
+}
+
+/// Carries out what starting a round for a goal of `kind` calls for.
+fn run(app: &AppHandle, round: Begin, kind: &'static str) {
     match round {
         Begin::Done(goal) => finish(app, goal),
         Begin::AlreadyRunning => {}
         Begin::Started { id, windows } => {
+            let request = FlushRequest { id, goal: kind };
             for label in &windows {
                 let _ = app.emit_to(
                     EventTarget::webview_window(label.as_str()),
                     "tote://flush",
-                    id,
+                    request.clone(),
                 );
             }
             let app = app.clone();
@@ -143,20 +154,63 @@ fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
 /// carries the goal out. A quit that joined a close's question goes the same way as the close.
 pub fn resolve_blocked(app: &AppHandle, id: u64, goal: FlushGoal, anyway: bool) {
     let quit_waiting = app.state::<AppCore>().cancel_flush(id);
+    if !anyway {
+        ended(app, &goal, Exit::Cancelled);
+    }
     run_steps(app, id, steps_for_answer(goal, anyway, quit_waiting));
 }
 
+/// How a round left its window.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum Exit {
+    /// The goal was carried out: the window is gone, or reloads on its new workspace.
+    Done,
+    /// 「취소」 to the question.
+    Cancelled,
+    /// A window came to show the workspace of the switch while this one wrote its tabs; that one
+    /// comes forward instead.
+    Shown,
+    /// The workspace of the switch could not be opened, or the window not switched to it.
+    NotSwitched,
+    /// The window could not be closed.
+    NotClosed,
+}
+
+/// The page of a window round's window emptied its panes as it answered (`AppController.onFlush`);
+/// every exit that keeps the window must give them back, or it shows nothing and takes no key for
+/// good. A quit's windows never let go of theirs.
+fn keeps_window(goal: &FlushGoal, exit: Exit) -> bool {
+    goal.window().is_some() && exit != Exit::Done
+}
+
+/// Round for `goal` left its window by `exit`: the page gets its panes back if the window stays.
+fn ended(app: &AppHandle, goal: &FlushGoal, exit: Exit) {
+    if let Some(label) = goal.window().filter(|_| keeps_window(goal, exit)) {
+        stay(app, label);
+    }
+}
+
+/// Tells the page of window `label` that the close or switch it wrote its tabs for is off
+/// (`tote://stay`).
+pub fn stay(app: &AppHandle, label: &str) {
+    let _ = app.emit_to(EventTarget::webview_window(label), "tote://stay", ());
+}
+
 pub fn finish(app: &AppHandle, goal: FlushGoal) {
-    match goal {
+    let exit = match &goal {
         FlushGoal::CloseWindow(label) => {
             // `closed` comes only once the window is gone: a quit begun right after this (a
             // joined quit's `BeginQuit`) must neither wait on the window nor reopen it.
-            app.state::<AppCore>().closing(&label);
-            if let Some(window) = app.get_webview_window(&label) {
-                let _ = window.destroy();
+            app.state::<AppCore>().closing(label);
+            match app.get_webview_window(label).map(|window| window.destroy()) {
+                Some(Err(err)) => {
+                    eprintln!("tote: {label}: could not close: {err}");
+                    Exit::NotClosed
+                }
+                _ => Exit::Done,
             }
         }
-        FlushGoal::SwitchWorkspace { label, to } => switch_window(app, &label, &to),
+        FlushGoal::SwitchWorkspace { label, to } => switch_window(app, label, to),
         FlushGoal::Quit => {
             app.state::<AppCore>().start_quit();
             // macOS asked first (the Dock, a logout): answering it, not `exit`, lets a logout go
@@ -166,18 +220,23 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
                 return;
             }
             app.exit(0);
+            return;
         }
-    }
+    };
+    ended(app, &goal, exit);
 }
 
 /// Window `label` wrote its tabs: it shows the workspace at `to` now, unless a window came to show
 /// it meanwhile — that one comes forward and this one stays — or it cannot be opened, which the
-/// window's status bar says.
-fn switch_window(app: &AppHandle, label: &str, to: &Path) {
+/// window's status bar says. Returns how the switch left the window.
+fn switch_window(app: &AppHandle, label: &str, to: &Path) -> Exit {
     let core = app.state::<AppCore>();
     let opened = match core.prepare_switch(label, to) {
         Ok(opened) => opened,
-        Err(SwitchError::Shown(other)) => return windows::focus(app, &other),
+        Err(SwitchError::Shown(other)) => {
+            windows::focus(app, &other);
+            return Exit::Shown;
+        }
         Err(SwitchError::Open(err)) => {
             core.push_pending(
                 label,
@@ -186,13 +245,13 @@ fn switch_window(app: &AppHandle, label: &str, to: &Path) {
                 },
             );
             let _ = app.emit_to(EventTarget::webview_window(label), "tote://pending", ());
-            return;
+            return Exit::NotSwitched;
         }
     };
     let from = core.path_of(label);
     if let Err(err) = core.switch_window(label, to, opened) {
         eprintln!("tote: {label}: could not switch to {}: {err}", to.display());
-        return;
+        return Exit::NotSwitched;
     }
     for path in from.iter().map(|p| p.as_path()).chain([to]) {
         windows::retitle(app, path);
@@ -205,6 +264,7 @@ fn switch_window(app: &AppHandle, label: &str, to: &Path) {
             eprintln!("tote: {label}: could not reload: {err}");
         }
     }
+    Exit::Done
 }
 
 /// The Dock's 「종료」, a logout and a restart quit through `terminate:`, never through the menu's
@@ -439,7 +499,7 @@ mod system_quit {
         let round = app.state::<AppCore>().begin_flush(FlushGoal::Quit);
         // `run` may answer at once, which takes the lock.
         drop(waiting);
-        super::run(app, round);
+        super::run(app, round, FlushGoal::Quit.kind());
     }
 
     /// Puts error `code` in an Apple Event's reply.
@@ -552,7 +612,7 @@ mod system_quit {
                     *waiting = Waiting::Terminate;
                     // `run` may answer at once, which takes the lock.
                     drop(waiting);
-                    super::run(app, round);
+                    super::run(app, round, FlushGoal::Quit.kind());
                 }
                 reply
             }
@@ -763,6 +823,36 @@ mod tests {
                 steps,
                 "{goal:?}, anyway {anyway}, quit waiting {quit_waiting}"
             );
+        }
+    }
+
+    #[test]
+    fn every_exit_that_keeps_the_window_says_stay() {
+        let table = [
+            // 「취소」 to the question.
+            (close(), Exit::Cancelled, true),
+            (switch(), Exit::Cancelled, true),
+            // Another window shows the workspace by now: it comes forward instead.
+            (switch(), Exit::Shown, true),
+            // The workspace could not be opened, or the window not switched to it.
+            (switch(), Exit::NotSwitched, true),
+            (close(), Exit::NotClosed, true),
+            // The window is gone, or reloads on its new workspace.
+            (close(), Exit::Done, false),
+            (switch(), Exit::Done, false),
+        ];
+        for (goal, exit, stays) in table {
+            assert_eq!(keeps_window(&goal, exit), stays, "{goal:?}, {exit:?}");
+        }
+        // A quit's windows never let go of their panes.
+        for exit in [
+            Exit::Done,
+            Exit::Cancelled,
+            Exit::Shown,
+            Exit::NotSwitched,
+            Exit::NotClosed,
+        ] {
+            assert!(!keeps_window(&FlushGoal::Quit, exit), "{exit:?}");
         }
     }
 
