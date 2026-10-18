@@ -69,9 +69,9 @@ pub fn cascade(source: WindowFrame, monitors: &[MonitorRect]) -> WindowFrame {
     }
 }
 
-// Tauri's default title bar style on macOS gives the window a full-size content view, so a
-// frame's inner height is the whole window's.
 /// Where `window` is, as the session keeps it: logical outer position and inner size.
+/// Tauri's default title bar style on macOS gives the window a full-size content view, so a
+/// frame's inner height is the whole window's.
 pub fn frame_of(window: &WebviewWindow) -> Option<WindowFrame> {
     let scale = window.scale_factor().ok()?;
     let position = window.outer_position().ok()?.to_logical::<f64>(scale);

@@ -23,6 +23,7 @@
 - 화면 확인 중 대화상자가 아무도 누르지 않았는데 답해지면 먼저 사람·다른 도구의 클릭을 의심한다. NSAlert 시트 버튼은 tote 가 맨 앞이 아니어도 첫 클릭에 눌린다. 누가 눌렀는지는 `DYLD_INSERT_LIBRARIES` 로 `-[NSApplication sendEvent:]` 를 감싸 이벤트의 `kCGEventSourceUnixProcessID` 를 보면 갈린다(0 이면 실제 HID 입력, 합성 이벤트는 보낸 프로세스 pid). 이때 번들 실행 파일을 `nohup` 으로 띄우지 않는다 — SIP 보호 바이너리를 거치면 `DYLD_*` 가 지워진다.
 - `orca computer set-value` 로 편집기에 글을 넣기 전에 편집기를 `click --element-index` 로 포커스한다. 포커스가 검색 입력 같은 다른 입력에 있으면 `ok` 를 돌려주면서 값이 그 입력으로 가거나 아무 데도 들어가지 않는다. 넣은 뒤 트리에서 편집기 값을 읽어 확인한다.
 - 접근성(System Events·`orca computer`)으로는 창을 메뉴 막대 밑(y < 메뉴 막대 높이)에 둘 수 없다. 그런 저장 자리가 필요하면 앱을 끈 뒤 워크스페이스 `.tote/sessions/<id>.json` 의 `windows[].frame` 을 고치고 다시 켠다.
+- 화면 확인을 시작하기 전에 `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked` 로 화면이 잠겨 있지 않은지 본다. 잠겨 있으면 앱은 떠도 접근성 창 목록이 비고 `orca computer` 가 `permission_denied` 를 낸다. 잠금은 에이전트가 풀지 않는다 — 그 확인을 사람 확인 표로 넘긴다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
