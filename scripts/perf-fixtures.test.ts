@@ -33,7 +33,10 @@ describe("perf fixtures", () => {
     expect(readFileSync(join(dir, "code.md"), "utf8")).toBe("```ts\n" + code + "```\n");
   });
 
-  it("the memo workspace has ten thousand indexed memos", () => {
+  // Ten thousand files written and read back: 1.2–2.4 s alone (`pnpm exec vitest run
+  // scripts/perf-fixtures.test.ts`), and past vitest's default 5 s when other work shares the disk.
+  // What is checked is the files, not how fast they are made.
+  it("the memo workspace has ten thousand indexed memos", { timeout: 30_000 }, () => {
     const root = join(scratch(), "memos-10k");
     writeMemoWorkspace(root, 10_000);
     expect(readJson(join(root, ".tote/workspace.json"))).toMatchObject({ version: 1 });

@@ -172,7 +172,28 @@ async function slowCalls(page: Page, ...names: SlowCall[]): Promise<void> {
   }, names);
 }
 
-const slowReads = (page: Page) => slowCalls(page, "readMemo", "openExternal");
+/** Holds every file read until the returned function is called: a tab picked meanwhile is still
+ * loading however long the test takes to type, where a delay ends on its own and lets the keys of
+ * a slow run land after the read. */
+async function holdReads(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend as unknown as Record<
+      string,
+      (...args: unknown[]) => Promise<unknown>
+    >;
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    Object.assign(window, { releaseReads: release });
+    for (const name of ["readMemo", "openExternal"]) {
+      const call = backend[name];
+      backend[name] = async (...args) => {
+        await held;
+        return call.apply(backend, args);
+      };
+    }
+  });
+  return () => page.evaluate(() => (window as unknown as { releaseReads(): void }).releaseReads());
+}
 
 // A tab still reading its file is not yet in the editor; keys typed meanwhile must not land in
 // the tab left behind, which would save them into a document the person no longer sees. They are
@@ -188,9 +209,10 @@ test("keys typed while a file opened with ⌘O loads do not reach the tab left, 
   await page.locator(".memo-row", { hasText: "a" }).click();
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Meta+ArrowDown");
-  await slowReads(page);
+  const release = await holdReads(page);
   await menu(page, "open-file");
   await page.keyboard.type("xy");
+  await release();
   await expect(page.locator(".cm-content")).toHaveText("# 새");
   await page.waitForTimeout(700); // past the memo's save delay
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
@@ -207,9 +229,10 @@ test("guard: keys typed while a memo picked in the list loads do not reach the t
   await page.locator(".memo-row", { hasText: "a" }).click();
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Meta+ArrowDown");
-  await slowReads(page);
+  const release = await holdReads(page);
   await page.locator(".memo-row", { hasText: "b" }).click();
   await page.keyboard.type("xy");
+  await release();
   await expect(page.locator(".cm-content")).toHaveText("# 둘");
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");
@@ -234,10 +257,11 @@ test("keys typed while a restored tab picked in the tab bar loads do not reach t
   });
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+ArrowDown");
-  await slowReads(page);
+  const release = await holdReads(page);
   // The title, not the tab: the middle of a short tab is its close button.
   await page.locator(".tab-title", { hasText: "b" }).click();
   await page.keyboard.type("xy");
+  await release();
   await expect(page.locator(".cm-content")).toHaveText("# 둘");
   await page.waitForTimeout(700);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("AAA");

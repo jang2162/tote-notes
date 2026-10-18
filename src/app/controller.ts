@@ -478,8 +478,9 @@ export class AppController implements DocHost, PaneHost {
     const pane = this.paneOf(doc);
     const active = doc === pane.tabs.active;
     const status = this.statusOf(pane);
-    if (doc instanceof MemoDoc && (change === "info" || change === "language"))
-      this.memoList.upsert(doc.info);
+    // Not on "language": that is the language data arriving, which leaves the info as it was and
+    // may land after a removal has been listed — upserting then brings the gone memo back.
+    if (doc instanceof MemoDoc && change === "info") this.memoList.upsert(doc.info);
     // A save that recovered a vanished memo gave the tab a new memo.
     if (active && status && doc instanceof MemoDoc && change === "info")
       this.memoList.setActive(doc.info.id);

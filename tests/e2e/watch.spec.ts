@@ -119,6 +119,38 @@ test("a deleted memo keeps its text and 다시 저장 brings it back", async ({ 
   await expect(page.locator(".memo-row.active .memo-name")).toHaveText("장보기");
 });
 
+test("language data arriving after a removal does not bring the memo back to the list", async ({
+  page,
+}) => {
+  // The language configuration is fetched from the dev server, which answers late under load:
+  // held here, it lands after the removal has been listed.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  await page.route("**/language-configuration/markdown.json", async (route) => {
+    await held;
+    await route.continue();
+  });
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유");
+  await page.evaluate(() => {
+    delete window.__tote.backend.data.memos.a;
+  });
+  await outside(page, { kind: "removed", id: "a", file: "장보기.md" });
+  await expect(banner(page)).toBeVisible();
+  await expect(page.locator(".memo-row")).toHaveCount(0);
+
+  release();
+  await expect
+    .poll(() =>
+      page.evaluate(
+        () => Object.keys(window.__tote.app.focused.tabs.active?.languageData ?? {}).length,
+      ),
+    )
+    .toBeGreaterThan(0);
+  await expect(page.locator(".memo-row")).toHaveCount(0);
+});
+
 test("a renamed memo keeps its tab and saves under the new name", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("장보기.md", "우유", { autoTitle: true }) } });
   await page.locator(".memo-row", { hasText: "장보기" }).click();
