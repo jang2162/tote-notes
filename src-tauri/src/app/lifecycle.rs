@@ -124,6 +124,19 @@ fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
     }
 }
 
+/// The question's text: the reasons, then what 「그래도」 costs for this goal.
+fn blocked_message(goal: &FlushGoal, reasons: &[String]) -> String {
+    let anyway = match goal {
+        FlushGoal::CloseWindow(_) => "닫으면",
+        FlushGoal::SwitchWorkspace { .. } => "바꾸면",
+        FlushGoal::Quit => "종료하면",
+    };
+    format!(
+        "{}\n그래도 {anyway} 저장하지 못한 글은 사라집니다.",
+        reasons.join("\n")
+    )
+}
+
 /// The text is still only in memory: going now loses it, so the person decides.
 fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
     let anyway = match goal {
@@ -133,7 +146,7 @@ fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
     };
     let mut dialog = app
         .dialog()
-        .message(reasons.join("\n"))
+        .message(blocked_message(&goal, reasons))
         .title("저장하지 못한 메모가 있습니다")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
@@ -777,6 +790,24 @@ mod system_quit {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_blocked_question_says_the_text_is_lost() {
+        let reasons = ["저장하지 못한 메모 1개".to_string()];
+        for (goal, text) in [
+            (close(), "그래도 닫으면 저장하지 못한 글은 사라집니다."),
+            (switch(), "그래도 바꾸면 저장하지 못한 글은 사라집니다."),
+            (
+                FlushGoal::Quit,
+                "그래도 종료하면 저장하지 못한 글은 사라집니다.",
+            ),
+        ] {
+            assert_eq!(
+                blocked_message(&goal, &reasons),
+                format!("저장하지 못한 메모 1개\n{text}")
+            );
+        }
+    }
 
     fn close() -> FlushGoal {
         FlushGoal::CloseWindow("a".into())

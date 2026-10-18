@@ -76,6 +76,7 @@ const MEMOS_GATHER_MS = 300;
 export const VERSIONS_ONLY_IN_MEMOS = "메모 탭에서만 쓸 수 있습니다";
 export const NO_VERSIONS = "이전 버전이 없습니다";
 export const TOO_NARROW_TO_SPLIT = "창이 좁아 나눌 수 없습니다";
+export const NOT_MOVED_WITH_BANNER = "충돌·삭제 알림이 떠 있어 새 창으로 옮기지 않았습니다";
 export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기지 않았습니다";
 /** 「탭을 새 창으로 옮기기」: an item of the window menu and of a tab's context menu. */
 export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
@@ -624,7 +625,8 @@ export class AppController implements DocHost, PaneHost {
     if (!handed) {
       stay();
       // After `show`, which puts the tab's own notice in the status bar.
-      this.statusBar.setMessage(NOT_MOVED_TO_NEW_WINDOW, "error");
+      const asks = doc.banner?.kind === "conflict" || doc.banner?.kind === "deleted";
+      this.statusBar.setMessage(asks ? NOT_MOVED_WITH_BANNER : NOT_MOVED_TO_NEW_WINDOW, "error");
       return false;
     }
     // Closed while it was written.
@@ -1195,6 +1197,8 @@ export class AppController implements DocHost, PaneHost {
       await this.backend.switchWorkspace(path);
     } catch (error) {
       this.report(error);
+      // The folder may be gone since the list was read: ask again so the rail drops it.
+      void this.refreshRail();
     }
   }
 

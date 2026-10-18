@@ -8,6 +8,7 @@ import { hold, menu, quietErrors, start } from "./helpers";
 // backend is handed (`data.tornOff`). tests/e2e/windows.spec.ts opens the new window too.
 
 const NOT_MOVED = "저장하지 못해 새 창으로 옮기지 않았습니다";
+const NOT_MOVED_WITH_BANNER = "충돌·삭제 알림이 떠 있어 새 창으로 옮기지 않았습니다";
 const MOVE = "move-tab-to-new-window";
 const WRITE_FAILED = "no space left on device";
 
@@ -160,7 +161,7 @@ test("a tab the backend does not take stays editable and says why", async ({ pag
   await expect.poll(() => memoText(page, "a")).toBe("우유 계란!");
 });
 
-test("a memo with an open conflict stays", async ({ page }) => {
+test("a tab with a conflict banner stays and says why", async ({ page }) => {
   await typeInto(page);
   await page.evaluate(
     (text) => Object.assign(window.__tote.backend.data.memos.a, { data: text, modifiedMs: 900 }),
@@ -169,7 +170,7 @@ test("a memo with an open conflict stays", async ({ page }) => {
   await outside(page, { kind: "modified", id: "a" });
   await expect(page.locator(".banner")).toBeVisible();
   await menu(page, MOVE);
-  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED);
+  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
   await expect(page.locator(".tab")).toHaveCount(1);
   await expect(page.locator(".cm-content")).toHaveText("우유 계란");
   expect((await data(page)).tornOff).toBeUndefined();
@@ -184,7 +185,7 @@ test("an external file whose draft is over a changed file stays", async ({ page 
   await menu(page, "open-file");
   await expect(page.locator(".banner")).toBeVisible();
   await menu(page, MOVE);
-  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED);
+  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
   await expect(page.locator(".tab")).toHaveCount(1);
   expect((await data(page)).tornOff).toBeUndefined();
 });
@@ -199,7 +200,7 @@ test("a memo deleted on disk stays", async ({ page }) => {
   await outside(page, { kind: "removed", id: "a", file: "장보기.md" });
   await expect(page.locator(".banner")).toBeVisible();
   await menu(page, MOVE);
-  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED);
+  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
   await expect(page.locator(".tab")).toHaveCount(1);
   expect((await data(page)).tornOff).toBeUndefined();
 });

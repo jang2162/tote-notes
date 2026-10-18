@@ -266,6 +266,22 @@ test("a workspace open in another window is brought forward and this window stay
   expect(await page.evaluate(() => "notReloaded" in window)).toBe(true);
 });
 
+test("a workspace that cannot be found leaves the rail after a failed switch", async ({ page }) => {
+  await quietErrors(page, "is switching workspaces", "is not a tote workspace");
+  await start(page, seed());
+  // The folder went since the list was read: the rail still shows it.
+  await page.evaluate(() => {
+    const data = window.__tote.backend.data;
+    data.workspaces[1].missing = true;
+    delete data.otherWorkspaces!["/fake/개인"];
+  });
+  await expect(railItem(page, "개인")).toHaveCount(1);
+  await railItem(page, "개인").click();
+  await expect(railItem(page, "개인")).toHaveCount(0);
+  await expect(page.locator(".status-message")).toHaveText("워크스페이스가 아닌 폴더입니다");
+  await expect(railItem(page, "가계부")).toHaveCount(1);
+});
+
 test("+ creates a workspace and switches this window to it", async ({ page }) => {
   await open(page);
   await page.locator(".rail-add").click();
