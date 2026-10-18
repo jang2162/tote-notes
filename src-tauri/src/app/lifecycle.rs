@@ -233,8 +233,7 @@ fn switch_window(app: &AppHandle, label: &str, to: &Path) -> Exit {
     let exit = switch_window_inner(app, label, to);
     // Whichever way it ended: a CLI request that came meanwhile is handled as if it came now.
     let core = app.state::<AppCore>();
-    core.end_switch(label);
-    for request in core.take_held(label) {
+    for request in core.finish_switch(label) {
         super::requests::handle(app, request);
     }
     exit

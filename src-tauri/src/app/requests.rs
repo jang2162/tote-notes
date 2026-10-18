@@ -48,9 +48,10 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
     };
     // The window is between writing its tabs and showing the target: a request for the target
     // would land in the workspace it leaves. `lifecycle::switch_window` handles it again.
-    if core.hold_request(&label, request.clone()) {
-        return;
-    }
+    let request = match core.hold_request(&label, request) {
+        Ok(()) => return,
+        Err(request) => request,
+    };
     let Some(workspace) = core.workspace(&label) else {
         return;
     };

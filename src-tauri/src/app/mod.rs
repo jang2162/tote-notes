@@ -140,6 +140,9 @@ struct Inner {
     launch: LaunchState,
     flush: FlushCoordinator,
     quitting: bool,
+    /// Window label → the CLI requests `hold_request` kept for its switch. Not on the window: a
+    /// window that goes mid-switch (`closed`, `release`) must not take them with it.
+    held: HashMap<String, Vec<CliRequest>>,
 }
 
 struct OpenWorkspace {
@@ -165,12 +168,11 @@ struct OpenWindow {
     /// Meanwhile the old page is still up and its timers may still fire; the backend finds a
     /// window's workspace by its label, so what that page writes would land in the new workspace.
     switching: bool,
-    /// Set by `prepare_switch` until `end_switch`: the window writes its tabs for a switch, and
+    /// Set by `prepare_switch` until `finish_switch`: the window writes its tabs for a switch, and
     /// its `path` is still the workspace it leaves while `reserved` already names it for the
     /// target. A CLI request for the target would land in the workspace left and be cleared by
-    /// `switch_window`, so it waits in `held`.
+    /// `switch_window`, so it waits in `Inner::held`.
     in_switch: bool,
-    held: Vec<CliRequest>,
 }
 
 impl OpenWindow {
@@ -234,7 +236,6 @@ impl Inner {
                 layout,
                 switching: false,
                 in_switch: false,
-                held: Vec::new(),
             },
         );
     }
@@ -302,6 +303,7 @@ impl AppCore {
                 launch,
                 flush: FlushCoordinator::default(),
                 quitting: false,
+                held: HashMap::new(),
             }),
         }
     }
@@ -619,6 +621,8 @@ impl AppCore {
 
     /// `InvalidInput` while window `label` switches workspaces (`page_started`); for the commands
     /// that bind a window to something of its workspace without changing the workspace itself.
+    /// Only as of the call: a switch that begins after it does not undo what it bound, which the
+    /// switch drops for the window (`switch_window` revokes its tokens and watches).
     pub fn ensure_writable(&self, label: &str) -> io::Result<()> {
         match lock(&self.inner).windows.get(label) {
             Some(window) => window.check_writable(label),
@@ -1059,41 +1063,42 @@ impl AppCore {
             .unwrap_or_default()
     }
 
-    /// Whether the window is between `prepare_switch` and `end_switch`.
-    pub fn is_switching(&self, label: &str) -> bool {
+    /// Whether the window is between `prepare_switch` and `finish_switch`. Not the page-side
+    /// `switching` (`page_started`), which outlasts it.
+    #[cfg(test)]
+    fn is_switching(&self, label: &str) -> bool {
         lock(&self.inner)
             .windows
             .get(label)
             .is_some_and(|w| w.in_switch)
     }
 
-    /// Keeps `request`, meant for window `label`, until its switch ends. `false` when the window
-    /// is not switching (the check and the hold are one step, so the end cannot slip between):
-    /// the caller handles the request itself.
-    pub fn hold_request(&self, label: &str, request: CliRequest) -> bool {
-        match lock(&self.inner).windows.get_mut(label) {
-            Some(window) if window.in_switch => {
-                window.held.push(request);
-                true
-            }
-            _ => false,
+    /// Keeps `request`, meant for window `label`, until its switch ends. Gives it back when the
+    /// window is not switching (the check and the hold are one step, so the end cannot slip
+    /// between): the caller handles the request itself.
+    pub fn hold_request(&self, label: &str, request: CliRequest) -> Result<(), CliRequest> {
+        let mut inner = lock(&self.inner);
+        if inner.windows.get(label).is_some_and(|w| w.in_switch) {
+            inner
+                .held
+                .entry(label.to_string())
+                .or_default()
+                .push(request);
+            Ok(())
+        } else {
+            Err(request)
         }
     }
 
-    /// The switch of window `label` is over, whichever way it ended.
-    pub fn end_switch(&self, label: &str) {
-        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+    /// The switch of window `label` is over, whichever way it ended: the requests
+    /// `hold_request` kept come back, in the order they came, to be handled as if they came now.
+    /// They are kept even when the window is gone meanwhile.
+    pub fn finish_switch(&self, label: &str) -> Vec<CliRequest> {
+        let mut inner = lock(&self.inner);
+        if let Some(window) = inner.windows.get_mut(label) {
             window.in_switch = false;
         }
-    }
-
-    /// The requests `hold_request` kept for the window, in the order they came.
-    pub fn take_held(&self, label: &str) -> Vec<CliRequest> {
-        lock(&self.inner)
-            .windows
-            .get_mut(label)
-            .map(|w| std::mem::take(&mut w.held))
-            .unwrap_or_default()
+        inner.held.remove(label).unwrap_or_default()
     }
 
     /// The windows to reopen at launch. They are listed again as each one opens.
@@ -2504,43 +2509,78 @@ mod tests {
 
         // `handle` finds the switching window as the label of the target (`reserve` names it).
         assert!(core.is_switching(&a));
-        assert!(core.hold_request(&a, request_for("나")));
-        assert_eq!(core.take_held(&a), vec![request_for("나")]);
-        assert!(core.hold_request(&a, request_for("나")));
+        assert_eq!(core.hold_request(&a, request_for("나")), Ok(()));
+        let mut second = request_for("나");
+        second.files = vec![PathBuf::from("/tmp/b.md")];
+        assert_eq!(core.hold_request(&a, second.clone()), Ok(()));
         core.switch_window(&a, &w2, opened).unwrap();
-        core.end_switch(&a);
 
-        // Handled again, the window shows the target: nothing holds it, and it lands there.
+        let held = core.finish_switch(&a);
+        assert_eq!(held, vec![request_for("나"), second]);
         assert!(!core.is_switching(&a));
-        let held = core.take_held(&a);
-        assert_eq!(held, vec![request_for("나")]);
-        assert!(!core.hold_request(&a, held[0].clone()));
+        assert!(core.finish_switch(&a).is_empty());
+        // Handled again, the window shows the target: nothing holds them, and each lands there.
         assert_eq!(core.path_of(&a), Some(w2));
-        core.push_pending(&a, PendingOpen::Memo { id: "m".into() });
+        for request in held {
+            let request = core.hold_request(&a, request).unwrap_err();
+            for path in request.files {
+                core.push_pending(&a, PendingOpen::External { path });
+            }
+        }
         core.page_started(&a);
         assert_eq!(
             core.take_pending(&a),
-            vec![PendingOpen::Memo { id: "m".into() }]
+            vec![
+                PendingOpen::External {
+                    path: "/tmp/a.md".into()
+                },
+                PendingOpen::External {
+                    path: "/tmp/b.md".into()
+                }
+            ]
         );
     }
 
     #[test]
-    fn a_request_held_by_a_failed_switch_is_told() {
+    fn a_request_held_for_a_window_that_goes_is_not_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "다");
+        let na = closed_workspace(&core, "나", &[]);
+        core.prepare_switch(&a, &na).unwrap();
+        assert_eq!(core.hold_request(&a, request_for("나")), Ok(()));
+
+        core.closed(&a);
+
+        // The switch ends for a window gone: what it held comes back for `handle` to place by
+        // its own rules (another window, or none at all).
+        assert_eq!(core.finish_switch(&a), vec![request_for("나")]);
+        assert_eq!(core.latest_window(), Some(b));
+        assert_eq!(
+            core.hold_request(&a, request_for("나")),
+            Err(request_for("나"))
+        );
+    }
+
+    #[test]
+    fn a_failed_open_ends_the_switch_and_frees_the_target() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
         let a = open(&core, "가");
         let ga = core.path_of(&a).unwrap();
         let gone = closed_workspace(&core, "나", &[]);
         fs::remove_dir_all(&gone).unwrap();
-        // Held while `Workspace::open` runs, which then fails.
         let opening = core.prepare_switch(&a, &gone);
         assert!(matches!(opening, Err(SwitchError::Open(_))));
 
-        // The failure is the end of the switch: the same rule as for any window handles what came.
+        // A request that came now is the window's own to handle again, by the usual rules.
         assert!(!core.is_switching(&a));
-        assert!(!core.hold_request(&a, request_for("나")));
+        assert_eq!(
+            core.hold_request(&a, request_for("나")),
+            Err(request_for("나"))
+        );
         assert_eq!(core.path_of(&a), Some(ga));
-        // The claim on the target is gone too, so `show` opens it or says it cannot.
         assert!(core.reserve(&gone).is_ok());
     }
 
@@ -2557,7 +2597,7 @@ mod tests {
 
         // After the core switch, until the new page asks for its workspace.
         core.switch_window(&a, &na, opened).unwrap();
-        core.end_switch(&a);
+        core.finish_switch(&a);
         core.push_pending(&a, memo.clone());
         assert!(core.take_pending(&a).is_empty());
         core.page_started(&a);
