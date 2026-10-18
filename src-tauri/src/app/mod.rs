@@ -171,10 +171,10 @@ struct OpenWindow {
     /// Meanwhile the old page is still up and its timers may still fire; the backend finds a
     /// window's workspace by its label, so what that page writes would land in the new workspace.
     switching: bool,
-    /// Set by `prepare_switch` until `finish_switch`: the window writes its tabs for a switch, and
-    /// its `path` is still the workspace it leaves while `reserved` already names it for the
-    /// target. A CLI request for the target would land in the workspace left and be cleared by
-    /// `switch_window`, so it waits in `Inner::held`.
+    /// Set from the moment the window's round ends as a switch — by `prepare_switch`, or already
+    /// by `expire_flush` — until `finish_switch`. Meanwhile its `path` is still the workspace it
+    /// leaves while `reserved` already names it for the target. A CLI request for the target would
+    /// land in the workspace left and be cleared by `switch_window`, so it waits in `Inner::held`.
     in_switch: bool,
 }
 
@@ -1089,8 +1089,8 @@ impl AppCore {
             .is_some_and(|w| w.in_switch || w.switching || w.closing)
     }
 
-    /// Whether the window is between `prepare_switch` and `finish_switch`. Not the page-side
-    /// `switching` (`page_started`), which outlasts it.
+    /// Whether the window is between its round ending as a switch and `finish_switch`. Not the
+    /// page-side `switching` (`page_started`), which outlasts it.
     #[cfg(test)]
     fn is_switching(&self, label: &str) -> bool {
         lock(&self.inner)
@@ -1180,8 +1180,28 @@ impl AppCore {
         lock(&self.inner).flush.ack(id, label, blocked)
     }
 
+    /// Round `id` ran out of time. A window it ends as a switch or a close is marked going under the
+    /// same lock: an answer coming before `lifecycle::finish` marks it would find the window
+    /// staying and take its panes back, just before it reloads or goes (`lifecycle::ack`).
     pub fn expire_flush(&self, id: u64) -> Ack {
-        lock(&self.inner).flush.expire(id)
+        let mut inner = lock(&self.inner);
+        let ack = inner.flush.expire(id);
+        if let Ack::Done(goal) | Ack::DoneThenQuit(goal) = &ack {
+            match goal {
+                FlushGoal::SwitchWorkspace { label, .. } => {
+                    if let Some(window) = inner.windows.get_mut(label) {
+                        window.in_switch = true;
+                    }
+                }
+                FlushGoal::CloseWindow(label) => {
+                    if let Some(window) = inner.windows.get_mut(label) {
+                        window.closing = true;
+                    }
+                }
+                FlushGoal::Quit => {}
+            }
+        }
+        ack
     }
 
     pub fn cancel_flush(&self, id: u64) -> bool {
@@ -2683,6 +2703,47 @@ mod tests {
         assert!(!core.window_is_leaving(&a));
 
         core.closing(&a);
+        assert!(core.window_is_leaving(&a));
+        core.close_failed(&a);
+        assert!(!core.window_is_leaving(&a));
+    }
+
+    #[test]
+    fn a_window_round_that_times_out_marks_its_window_leaving_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        let switch = FlushGoal::SwitchWorkspace {
+            label: a.clone(),
+            to: na.clone(),
+        };
+
+        // Before `finish` marks the window itself, a late answer must find it going.
+        let Begin::Started { id, .. } = core.begin_flush(switch.clone()) else {
+            panic!("expected a round")
+        };
+        assert_eq!(core.expire_flush(id), Ack::Done(switch.clone()));
+        assert!(core.window_is_leaving(&a));
+        // The switch ends without `prepare_switch` — another window shows the target.
+        core.finish_switch(&a);
+        assert!(!core.window_is_leaving(&a));
+
+        // A quit joined to it: the switch is carried out first.
+        let Begin::Started { id, .. } = core.begin_flush(switch.clone()) else {
+            panic!("expected a round")
+        };
+        assert_eq!(core.begin_flush(FlushGoal::Quit), Begin::AlreadyRunning);
+        assert_eq!(core.expire_flush(id), Ack::DoneThenQuit(switch));
+        assert!(core.window_is_leaving(&a));
+        core.finish_switch(&a);
+        assert!(!core.window_is_leaving(&a));
+
+        let close = FlushGoal::CloseWindow(a.clone());
+        let Begin::Started { id, .. } = core.begin_flush(close.clone()) else {
+            panic!("expected a round")
+        };
+        assert_eq!(core.expire_flush(id), Ack::Done(close));
         assert!(core.window_is_leaving(&a));
         core.close_failed(&a);
         assert!(!core.window_is_leaving(&a));

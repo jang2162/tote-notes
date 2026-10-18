@@ -937,7 +937,7 @@ export class AppController implements DocHost, PaneHost {
     try {
       // A syllable still being composed goes into its own tab before the tabs are written
       // (closing, quitting, switching the workspace).
-      await Promise.all(this.panes.map((pane) => settleComposition(pane.view)));
+      await this.settleCompositions();
       await this.flushAll(true);
       // The window stays open until the native side acts on the answer, and a key typed after the
       // tabs are written would be lost with it. The editors take keys while the tabs are written:
@@ -960,12 +960,15 @@ export class AppController implements DocHost, PaneHost {
    * of its tab until the window goes, or stays (`stay`). A tab opened meanwhile is not shown
    * either (`Pane.show`). */
   leave(): void {
+    // A second round while leaving (⌘W after a switch answered) finds the keys nowhere by now.
+    if (!this.leaving) {
+      const active = document.activeElement;
+      this.keysBeforeLeaving =
+        active instanceof HTMLElement && active !== document.body && !this.panesEl.contains(active)
+          ? active
+          : null;
+    }
     this.leaving = true;
-    const active = document.activeElement;
-    this.keysBeforeLeaving =
-      active instanceof HTMLElement && active !== document.body && !this.panesEl.contains(active)
-        ? active
-        : null;
     for (const pane of this.panes) {
       const active = pane.tabs.active;
       if (active) pane.capture(active);
@@ -984,10 +987,19 @@ export class AppController implements DocHost, PaneHost {
       if (active) pane.show(active);
       else pane.showEmptyText();
     }
-    const before = this.keysBeforeLeaving;
+    // Only if still there and shown: WebKit keeps the keys in an element hidden since the last
+    // layout (the search panel closed meanwhile), and drops them at the next one. The rects lay the
+    // page out first.
+    const before = this.keysBeforeLeaving?.getClientRects().length ? this.keysBeforeLeaving : null;
     this.keysBeforeLeaving = null;
-    if (before?.isConnected) before.focus({ preventScroll: true });
-    else this.focused.takeKeys();
+    before?.focus({ preventScroll: true });
+    if (!before || document.activeElement !== before) this.focused.takeKeys();
+  }
+
+  /** A syllable still being composed goes into its own tab before the window writes its tabs or
+   * another window comes forward. */
+  private async settleCompositions(): Promise<void> {
+    await Promise.all(this.panes.map((pane) => settleComposition(pane.view)));
   }
 
   private onUpdate(doc: Doc, update: ViewUpdate): void {
@@ -1217,6 +1229,9 @@ export class AppController implements DocHost, PaneHost {
     // The window answered a close or a switch: it has no tabs left to write.
     if (this.leaving) return;
     this.mark("switch-click");
+    // The rail takes no focus, and a workspace another window shows comes forward without a round
+    // (`onFlush`) to end the composition.
+    await this.settleCompositions();
     try {
       await this.backend.switchWorkspace(path);
     } catch (error) {

@@ -104,9 +104,10 @@ pub fn ack(app: &AppHandle, id: u64, label: &str, blocked: Option<String>) -> bo
 }
 
 /// Whether a page that answered with `ack` keeps its panes empty. An answer to a round that is
-/// over came after the round was settled without it — the timeout ran out first — so a
-/// `tote://stay` for it either never comes or came before the page let go of its panes: the page
-/// takes them back unless its window is going.
+/// over came after the round was settled without it — the timeout ran out first, its question
+/// was answered, its window went, or the window had answered already — so a `tote://stay` for it
+/// either never comes or came before the page let go of its panes: the page takes them back
+/// unless its window is going. A round still open or asking settles the window as it ends.
 fn keeps_leaving(ack: &Ack, window_is_leaving: bool) -> bool {
     match ack {
         Ack::Stale => window_is_leaving,
@@ -889,6 +890,15 @@ mod tests {
         assert!(keeps_leaving(&Ack::Stale, true));
         assert!(!keeps_leaving(&Ack::Stale, false));
         assert!(keeps_leaving(&Ack::Done(switch()), false));
+        // A round still open or asking: its end or its question's answer settles the window.
+        assert!(keeps_leaving(&Ack::Pending, false));
+        assert!(keeps_leaving(
+            &Ack::Blocked {
+                goal: switch(),
+                reasons: vec!["저장하지 못한 메모 1개".into()],
+            },
+            false
+        ));
     }
 
     #[test]

@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
 import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
@@ -262,6 +262,47 @@ test("a cancelled switch gives focus back to the search box", async ({ page }) =
   ).toBe(true);
 });
 
+/** Starts on `seed(patch)`; the search box has the keys; the window answers switch round 77 and
+ * leaves. */
+async function leaveFromSearch(page: Page, patch: Partial<FakeData> = {}): Promise<Locator> {
+  await open(page, patch);
+  await expect(page.locator(".pane")).toHaveCount(1);
+  await menu(page, "search-workspace");
+  const search = page.locator(".search-input");
+  await expect(search).toBeFocused();
+  await page.evaluate(() => window.__tote.backend.requestFlush(77, "switch"));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.id)))
+    .toContain(77);
+  expect(await page.evaluate(() => window.__tote.app.leaving)).toBe(true);
+  return search;
+}
+
+test("a search box hidden while the window left gives the keys to the pane", async ({ page }) => {
+  // No tab: showing the pane again puts the keys nowhere, unlike an editor it shows.
+  const search = await leaveFromSearch(page, { session: null });
+  await page.evaluate(() =>
+    (window.__tote.app as unknown as { sidebar: { show(view: string): void } }).sidebar.show(
+      "memos",
+    ),
+  );
+  await expect(search).toBeHidden();
+  await page.evaluate(() => window.__tote.backend.stay());
+  await expect(page.locator(".pane")).toBeFocused();
+});
+
+test("a second round while the window leaves keeps where the keys were", async ({ page }) => {
+  const search = await leaveFromSearch(page);
+  // The keys are nowhere by the time a close round comes (⌘W after the switch answered).
+  await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+  await page.evaluate(() => window.__tote.backend.requestFlush(78, "close"));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.id)))
+    .toContain(78);
+  await page.evaluate(() => window.__tote.backend.stay());
+  await expect(search).toBeFocused();
+});
+
 test("a rail click while the window leaves does nothing", async ({ page }) => {
   await open(page);
   await page.evaluate(() => {
@@ -487,4 +528,101 @@ test("onFlush writes a composition in progress before it answers", async ({ page
     .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.id)))
     .toContain(77);
   expect(await page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건가");
+});
+
+/** Starts on `seed(patch)` with the cursor after 「안건」 and 「가」 being composed there. Like
+ * macOS's, the input method ends the composition when the editor loses focus; `composed.ended`
+ * says it has, and `composed.endedAtSwitch` whether it had when `switchWorkspace` was called. The
+ * input method's events are sent as in the test above. */
+async function composeUntilBlur(page: Page, patch: Partial<FakeData> = {}): Promise<void> {
+  await open(page, {
+    session: JSON.stringify({
+      version: 1,
+      activeTab: 0,
+      tabs: [
+        { kind: "memo", memoId: "m", selection: { ranges: [{ anchor: 2, head: 2 }], main: 0 } },
+      ],
+    }),
+    ...patch,
+  });
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.evaluate(async () => {
+    const { app, backend } = window.__tote;
+    const view = app.view;
+    const dom = view.contentDOM;
+    const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const fire = (type: "beforeinput" | "input", inputType: string, data: string | null) =>
+      dom.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data }));
+    const composition = (type: string, data: string) =>
+      dom.dispatchEvent(new CompositionEvent(type, { bubbles: true, data }));
+    const write = (from: number, to: number, text: string) => {
+      const at = view.domAtPos(from);
+      let node = at.node;
+      let offset = at.offset;
+      if (node.nodeType !== Node.TEXT_NODE) {
+        const before = node.childNodes[offset - 1];
+        node = before;
+        offset = before.nodeValue!.length;
+      }
+      const value = node.nodeValue!;
+      node.nodeValue = value.slice(0, offset) + text + value.slice(offset + (to - from));
+      document.getSelection()!.collapse(node, offset + text.length);
+    };
+    const state = { ended: false, endedAtSwitch: null as boolean | null };
+    Object.assign(window, { composed: state });
+    const switchWorkspace = backend.switchWorkspace.bind(backend);
+    backend.switchWorkspace = (path) => {
+      state.endedAtSwitch = state.ended;
+      return switchWorkspace(path);
+    };
+    composition("compositionstart", "");
+    await tick();
+    const from = view.state.selection.main.from;
+    composition("compositionupdate", "가");
+    fire("beforeinput", "insertCompositionText", "가");
+    write(from, from, "가");
+    fire("input", "insertCompositionText", "가");
+    await tick();
+    // The syllable is in the text already; the end only commits it. Writing it again here would
+    // put the selection back in the editor, and the keys with it.
+    dom.addEventListener(
+      "blur",
+      () => {
+        composition("compositionend", "가");
+        state.ended = true;
+      },
+      { once: true },
+    );
+  });
+}
+
+const composed = (page: Page) =>
+  page.evaluate(
+    () =>
+      (window as unknown as { composed: { ended: boolean; endedAtSwitch: boolean | null } })
+        .composed,
+  );
+
+test("a rail click on a workspace another window shows settles a composition first", async ({
+  page,
+}) => {
+  // The rail takes no focus, and no flush round runs to end the composition.
+  await composeUntilBlur(page, {
+    workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)],
+  });
+  await railItem(page, "가계부").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.focusedWorkspace))
+    .toBe("/fake/가계부");
+  expect((await composed(page)).endedAtSwitch).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건가");
+  await expect(page).toHaveTitle("업무");
+});
+
+test("+ ends a composition as its dialog takes the keys", async ({ page }) => {
+  await composeUntilBlur(page);
+  await page.locator(".rail-add").click();
+  await expect(page.locator(".modal input")).toBeFocused();
+  expect((await composed(page)).ended).toBe(true);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건가");
 });
