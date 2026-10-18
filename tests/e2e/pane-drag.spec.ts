@@ -314,3 +314,22 @@ test("closePane leaves a pane that still has tabs", async ({ page }) => {
   await expect(panes(page)).toHaveCount(2);
   await expect(titles(page, 1)).toHaveText(["나"]);
 });
+
+test("a drag goes on and ends cleanly when the pointer cannot be captured", async ({ page }) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  await page.evaluate(() => {
+    Element.prototype.setPointerCapture = () => {
+      throw new DOMException("no such pointer", "InvalidStateError");
+    };
+  });
+  await drag(page, tab(page, 0, "나"), await rightEdge(page), false);
+  await expect(page.locator(".pane-drop-edge.active")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".pane-drop-edge")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(panes(page)).toHaveCount(1);
+  expect(errors).toEqual([]);
+});

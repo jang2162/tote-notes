@@ -22,3 +22,14 @@ describe("FakeBackend settings", () => {
     expect(bundled.every((e) => e.enabled)).toBe(true);
   });
 });
+
+describe("FakeBackend whileWritingLayout", () => {
+  it("is kept for the switch's flush round, not used up by a write outside one", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    let ran = 0;
+    backend.whileWritingLayout = () => ran++;
+    await backend.writeWindowLayout(JSON.stringify({ panes: [], focusedPane: 0 }));
+    expect(ran).toBe(0);
+    expect(backend.whileWritingLayout).not.toBeNull();
+  });
+});

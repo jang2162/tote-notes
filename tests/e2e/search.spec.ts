@@ -282,6 +282,8 @@ test("a found line opens in the pane the tab lands in", async ({ page }) => {
   await page.locator(".pane").nth(1).locator(".cm-content").click();
   await expect(page.locator(".pane.focused")).toHaveCount(1);
   await expect(page.locator(".pane").nth(1)).toHaveClass(/\bfocused\b/);
+  // The claim is held once the fake has been asked for it.
+  await expect.poll(() => page.evaluate(() => "releaseClaim" in window)).toBe(true);
   await page.evaluate(() => (window as unknown as { releaseClaim: () => void }).releaseClaim());
   await expect(
     page.locator(".pane").nth(1).locator(".large-text .large-text-line.current"),
