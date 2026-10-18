@@ -21,6 +21,8 @@ const DEFAULT_WIDTH: f64 = 1100.0;
 const DEFAULT_HEIGHT: f64 = 760.0;
 /// How far right and down a new window sits from the window it came from.
 const NEAR_OFFSET: f64 = 24.0;
+/// The title bar sits above a frame's inner `height`, so the window is this much taller outside.
+const TITLE_BAR_HEIGHT: f64 = 28.0;
 
 /// Debug builds started with `TOTE_BACKGROUND=1` — smoke checks run by agents — open windows
 /// without taking focus, so a check never pulls the person's screen away.
@@ -45,7 +47,7 @@ pub enum WindowPlan {
 }
 
 /// Where a window opened from the window at `source` goes: a little right and down of it, at its
-/// size. The caller still checks it is on a monitor (`frame_visible`).
+/// size. The caller still fits it onto a monitor (`place`).
 pub fn near_frame(source: WindowFrame) -> WindowFrame {
     WindowFrame {
         x: source.x + NEAR_OFFSET,
@@ -169,7 +171,7 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         .title(title)
         .min_inner_size(480.0, 320.0)
         .focused(!background());
-    let builder = match frame.filter(|f| frame_visible(f, &monitor_rects(app))) {
+    let builder = match frame.and_then(|f| place(f, &monitor_rects(app))) {
         Some(f) => builder.position(f.x, f.y).inner_size(f.width, f.height),
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
     };
@@ -316,8 +318,17 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
 
 /// Monitors as (x, y, width, height) in logical pixels.
 fn monitor_rects(app: &AppHandle) -> Vec<(f64, f64, f64, f64)> {
-    app.available_monitors()
-        .unwrap_or_default()
+    let monitors = match app.available_monitors() {
+        Ok(monitors) => monitors,
+        Err(err) => {
+            eprintln!("tote: no monitors: {err}");
+            Vec::new()
+        }
+    };
+    if monitors.is_empty() {
+        eprintln!("tote: no monitors: the list is empty");
+    }
+    monitors
         .iter()
         .map(|monitor| {
             let scale = monitor.scale_factor();
@@ -339,6 +350,24 @@ pub fn frame_visible(frame: &WindowFrame, monitors: &[(f64, f64, f64, f64)]) -> 
     monitors
         .iter()
         .any(|&(mx, my, mw, mh)| x >= mx && x < mx + mw && y >= my && y < my + mh)
+}
+
+/// `frame` moved onto the monitor its title bar is on, as a whole: shrunk to the monitor when
+/// larger, then moved left and up until its far edges are inside. `None` when no monitor holds
+/// that spot, so the caller opens the window at the default size in the middle.
+pub fn place(frame: WindowFrame, monitors: &[(f64, f64, f64, f64)]) -> Option<WindowFrame> {
+    let (px, py) = (frame.x + 40.0, frame.y + 10.0);
+    let &(mx, my, mw, mh) = monitors
+        .iter()
+        .find(|&&(mx, my, mw, mh)| px >= mx && px < mx + mw && py >= my && py < my + mh)?;
+    let width = frame.width.min(mw);
+    let height = frame.height.min(mh - TITLE_BAR_HEIGHT);
+    Some(WindowFrame {
+        x: frame.x.min(mx + mw - width),
+        y: frame.y.min(my + mh - height - TITLE_BAR_HEIGHT),
+        width,
+        height,
+    })
 }
 
 #[cfg(test)]
@@ -377,5 +406,58 @@ mod tests {
                 height: 700.0
             }
         );
+    }
+
+    const M: [(f64, f64, f64, f64); 3] = [
+        (0.0, 0.0, 3840.0, 1600.0),
+        (3840.0, -734.0, 1440.0, 2560.0),
+        (0.0, 1600.0, 2560.0, 1440.0),
+    ];
+
+    fn at(x: f64, y: f64, width: f64, height: f64) -> WindowFrame {
+        WindowFrame {
+            x,
+            y,
+            width,
+            height,
+        }
+    }
+
+    #[test]
+    fn a_new_window_at_a_monitor_corner_stays_on_it() {
+        let source = at(4180.0, 1060.0, 1100.0, 760.0);
+        assert_eq!(
+            place(near_frame(source), &M),
+            Some(at(4180.0, 1038.0, 1100.0, 760.0))
+        );
+    }
+
+    #[test]
+    fn a_saved_frame_half_off_its_monitor_moves_in() {
+        assert_eq!(
+            place(at(5000.0, 100.0, 900.0, 700.0), &M),
+            Some(at(4380.0, 100.0, 900.0, 700.0))
+        );
+    }
+
+    #[test]
+    fn a_window_larger_than_its_monitor_shrinks_to_fit() {
+        assert_eq!(
+            place(at(3840.0, -734.0, 2000.0, 3000.0), &M),
+            Some(at(3840.0, -734.0, 1440.0, 2532.0))
+        );
+    }
+
+    #[test]
+    fn a_frame_on_no_monitor_is_dropped() {
+        let frame = at(6000.0, 100.0, 900.0, 700.0);
+        assert_eq!(place(frame, &M), None);
+        assert_eq!(place(frame, &[]), None);
+    }
+
+    #[test]
+    fn a_frame_inside_a_monitor_is_kept() {
+        let frame = at(100.0, 100.0, 900.0, 600.0);
+        assert_eq!(place(frame, &M), Some(frame));
     }
 }
