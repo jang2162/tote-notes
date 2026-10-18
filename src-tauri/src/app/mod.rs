@@ -150,6 +150,9 @@ struct OpenWorkspace {
     /// The window layouts of this device's session file, read when the workspace opened: the
     /// `k`th window reopened on it starts from `saved[k]`.
     saved: Vec<Value>,
+    /// What the watcher calls this workspace (`AppCore::workspace_key`), so a batch finds it
+    /// without hashing every open path.
+    key: String,
 }
 
 struct OpenWindow {
@@ -438,14 +441,16 @@ impl AppCore {
     /// Registers the window `label` on the workspace at `path`. `opened` is the workspace just
     /// opened for it when it is the folder's first window; a later window brings none and joins
     /// the one already open. `restored`: the window reopens the `k`th saved layout
-    /// (`saved_layout`); `None` for a window of its own, which starts with no layout.
+    /// (`saved_layout`); `None` for a window of its own, which starts with no layout. Returns
+    /// `false`, registering nothing, when no workspace is open at `path` for it to show.
+    #[must_use]
     pub fn register_window(
         &self,
         label: &str,
         path: &Path,
         opened: Option<Workspace>,
         restored: Option<usize>,
-    ) {
+    ) -> bool {
         let watch = {
             let mut inner = lock(&self.inner);
             if inner.reserved.get(path).is_some_and(|l| l == label) {
@@ -463,6 +468,7 @@ impl AppCore {
                         OpenWorkspace {
                             workspace: Arc::new(Mutex::new(workspace)),
                             saved,
+                            key: AppCore::workspace_key(path),
                         },
                     );
                     true
@@ -473,7 +479,7 @@ impl AppCore {
                 // Nothing to show: a caller that found the folder open held its claim, so this is
                 // a bug, and the window is left out rather than shown without a workspace.
                 eprintln!("tote: {label}: no workspace open at {}", path.display());
-                return;
+                return false;
             }
             let layout = restored.and_then(|k| inner.workspaces[path].saved.get(k).cloned());
             inner.add_window(label, path, layout);
@@ -485,6 +491,7 @@ impl AppCore {
                 eprintln!("tote: cannot watch {} for changes: {err}", path.display());
             }
         }
+        true
     }
 
     /// Registers a new window of its own on the workspace open at `path` — ⌥⌘N, a torn-off tab —
@@ -706,6 +713,7 @@ impl AppCore {
                     OpenWorkspace {
                         workspace: Arc::new(Mutex::new(opened)),
                         saved,
+                        key: AppCore::workspace_key(to),
                     },
                 );
             }
@@ -846,7 +854,7 @@ impl AppCore {
                     inner
                         .workspaces
                         .iter()
-                        .find(|(path, _)| AppCore::workspace_key(path) == key)
+                        .find(|(_, open)| open.key == key)
                         .map(|(path, open)| (path.clone(), open.workspace.clone()))
                 };
                 let Some((path, workspace)) = found else {
@@ -1038,6 +1046,14 @@ impl AppCore {
         }
     }
 
+    /// The window could not be closed after all (`closing` was set for it): it stays, so the next
+    /// quit waits on it and reopens it again.
+    pub fn close_failed(&self, label: &str) {
+        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+            window.closing = false;
+        }
+    }
+
     pub fn has_windows(&self) -> bool {
         !lock(&self.inner).windows.is_empty()
     }
@@ -1134,10 +1150,16 @@ impl AppCore {
             }
             // A window whose new page is not up has nothing to write — its tabs were written
             // before it switched — and a page reloading may not answer at all.
+            // A window whose page is not up yet (no layout, never focused) has nothing to write
+            // either, and would only hold the round to its timeout.
             FlushGoal::Quit => inner
                 .windows
                 .iter()
-                .filter(|(_, window)| !window.closing && !window.switching)
+                .filter(|(label, window)| {
+                    !window.closing
+                        && !window.switching
+                        && (window.layout.is_some() || inner.focus.contains(*label))
+                })
                 .map(|(label, _)| label.clone())
                 .collect(),
         };
@@ -1171,7 +1193,7 @@ impl AppCore {
         let mut loading: Vec<(&String, &OpenWindow)> = inner
             .windows
             .iter()
-            .filter(|(label, _)| !inner.focus.contains(label))
+            .filter(|(label, window)| window.layout.is_some() && !inner.focus.contains(*label))
             .collect();
         loading.sort_by_key(|(_, window)| window.serial);
         let order: Vec<(String, PathBuf)> = loading
@@ -1337,7 +1359,7 @@ mod tests {
         let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
         let label = core.next_label();
         let path = workspace.root().to_path_buf();
-        core.register_window(&label, &path, Some(workspace), None);
+        assert!(core.register_window(&label, &path, Some(workspace), None));
         core.opened(&label);
         label
     }
@@ -1345,7 +1367,7 @@ mod tests {
     /// Another window on the workspace at `path`, already open.
     fn attach(core: &AppCore, path: &Path) -> String {
         let label = core.next_label();
-        core.register_window(&label, path, None, None);
+        assert!(core.register_window(&label, path, None, None));
         core.opened(&label);
         label
     }
@@ -1926,7 +1948,7 @@ mod tests {
         let label = core.reserve(&path).unwrap();
         // The second request is told which window is opening the folder, and cleans up nothing.
         assert_eq!(core.reserve(&path), Err(label.clone()));
-        core.register_window(&label, &path, Some(workspace), None);
+        assert!(core.register_window(&label, &path, Some(workspace), None));
         assert!(core.workspace(&label).is_some());
         core.release(&label);
         assert!(core.workspace(&label).is_none());
@@ -1945,7 +1967,7 @@ mod tests {
         let w2 = core.reserve(&path).unwrap();
         core.closed(&w1);
         assert!(core.is_open_path(&path));
-        core.register_window(&w2, &path, None, None);
+        assert!(core.register_window(&w2, &path, None, None));
         assert!(core.workspace(&w2).is_some());
         // Had it failed instead, its release would have closed the workspace.
         let w3 = core.reserve(&path).unwrap();
@@ -2079,9 +2101,9 @@ mod tests {
         crate::session::write_layouts(&path, &core.machine.device_id, &[a.clone(), b.clone()])
             .unwrap();
         let w1 = core.next_label();
-        core.register_window(&w1, &path, Some(workspace), Some(0));
+        assert!(core.register_window(&w1, &path, Some(workspace), Some(0)));
         let w2 = core.next_label();
-        core.register_window(&w2, &path, None, Some(1));
+        assert!(core.register_window(&w2, &path, None, Some(1)));
         assert_eq!(core.saved_layout(&path, 0), Some(a.clone()));
         assert_eq!(core.saved_layout(&path, 2), None);
         assert_eq!(core.layout_of(&w2), Some(b.clone()));
@@ -2160,6 +2182,52 @@ mod tests {
     }
 
     #[test]
+    fn a_window_that_fails_to_close_stays_in_the_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let path = core.path_of(&a).unwrap();
+        core.set_layout(&a, json!({"focusedPane": 0})).unwrap();
+        core.closing(&a);
+        core.close_failed(&a);
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { windows, .. } if windows == vec![a.clone()]
+        ));
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![path]);
+    }
+
+    #[test]
+    fn registering_a_window_without_its_workspace_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let label = core.next_label();
+        let path = dir.path().join("없음");
+        assert!(!core.register_window(&label, &path, None, None));
+        assert!(core.window_labels().is_empty());
+    }
+
+    #[test]
+    fn a_window_still_loading_is_left_out_of_the_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let path = core.path_of(&a).unwrap();
+        core.set_layout(&a, json!({"focusedPane": 0})).unwrap();
+        // A second window of the folder, registered but its page has not come up: no layout, never focused.
+        let loading = core.next_label();
+        assert!(core.register_window(&loading, &path, None, None));
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { windows, .. } if windows == vec![a.clone()]
+        ));
+        core.start_quit();
+        assert_eq!(saved(&core).open_windows, vec![path.clone()]);
+        assert_eq!(layouts(&core, &path), vec![json!({"focusedPane": 0})]);
+    }
+
+    #[test]
     fn closing_a_window_already_gone_marks_nothing() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
@@ -2168,7 +2236,7 @@ mod tests {
         core.closed(&a);
         core.closing(&a);
         // Even a window registered again under the same label is not marked.
-        core.register_window(&a, &path, Some(Workspace::open(&path).unwrap()), None);
+        assert!(core.register_window(&a, &path, Some(Workspace::open(&path).unwrap()), None));
         core.opened(&a);
         assert!(matches!(
             core.begin_flush(FlushGoal::Quit),
@@ -2259,6 +2327,9 @@ mod tests {
             vec![Err(w1.clone()), Err(w1.clone())]
         );
         core.closed(&w1);
+        assert_eq!(core.claim_tabs(&w2, &tabs).unwrap(), vec![Ok(()), Ok(())]);
+        // The closed window is not registered: its claims all pass and leave no record.
+        assert_eq!(core.claim_tabs(&w1, &tabs).unwrap(), vec![Ok(()), Ok(())]);
         assert_eq!(core.claim_tabs(&w2, &tabs).unwrap(), vec![Ok(()), Ok(())]);
     }
 

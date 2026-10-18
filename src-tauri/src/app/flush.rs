@@ -321,6 +321,11 @@ mod tests {
             Ack::DoneThenQuit(FlushGoal::CloseWindow("a".into()))
         );
         assert_eq!(f.window_gone("a"), vec![]);
+        // The quit joined to the close is not still running: it opens its own round.
+        assert!(matches!(
+            f.begin(FlushGoal::Quit, labels(&["b"])),
+            Begin::Started { .. }
+        ));
     }
 
     #[test]

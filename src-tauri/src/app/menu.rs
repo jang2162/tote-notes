@@ -15,11 +15,12 @@ use super::flush::FlushGoal;
 use super::windows::{frame_of, near_frame, WindowPlan};
 use super::{lifecycle, lock, windows, AppCore};
 
+use crate::cli::front::app_bundle;
+use crate::cli::install::{install, Installed};
+
 /// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
 /// and never act as the menu bar's items of the same name.
 const TAB_MENU: &str = "tab-menu:";
-use crate::cli::front::app_bundle;
-use crate::cli::install::{install, Installed};
 
 fn item(
     app: &AppHandle,

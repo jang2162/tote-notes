@@ -146,7 +146,13 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
                 }
             };
             let fresh = opened.is_some();
-            core.register_window(&label, &path, opened, Some(k));
+            if !core.register_window(&label, &path, opened, Some(k)) {
+                core.release(&label);
+                return Err(CommandError::new(
+                    "not-a-workspace",
+                    format!("{} is not open as a workspace", path.display()),
+                ));
+            }
             let frame = core.saved_layout(&path, k).as_ref().and_then(layout_frame);
             (label, fresh, frame, Undo::Release)
         }

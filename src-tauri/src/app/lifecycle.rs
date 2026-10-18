@@ -218,6 +218,7 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
             match app.get_webview_window(label).map(|window| window.destroy()) {
                 Some(Err(err)) => {
                     eprintln!("tote: {label}: could not close: {err}");
+                    app.state::<AppCore>().close_failed(label);
                     Exit::NotClosed
                 }
                 _ => Exit::Done,
