@@ -152,52 +152,56 @@ test("recovering a vanished memo moves the sidebar highlight to the new memo", a
   await expect(page.locator(".memo-row.active")).toHaveCount(1);
 });
 
-type SlowCall = "readMemo" | "openExternal" | "scanText" | "issueFileToken";
+/** Calls `slowCalls` may delay. File reads are not among them: a loading tab is made with
+ * `holdReads`, which a slow run cannot outlast. */
+type SlowCall = "scanText" | "issueFileToken";
+
+/** Makes each of `names` on the fake wait before it answers: 150 ms (`"timer"`), or until the page's
+ * `releaseCalls` is called (`"held"`). */
+async function gateCalls(
+  page: Page,
+  names: readonly string[],
+  gate: "timer" | "held",
+): Promise<void> {
+  await page.evaluate(
+    ([names, gate]) => {
+      const backend = window.__tote.backend as unknown as Record<
+        string,
+        (...args: unknown[]) => Promise<unknown>
+      >;
+      const held =
+        gate === "held"
+          ? new Promise<void>((resolve) => Object.assign(window, { releaseCalls: resolve }))
+          : null;
+      for (const name of names) {
+        const call = backend[name];
+        backend[name] = async (...args) => {
+          await (held ?? new Promise((resolve) => setTimeout(resolve, 150)));
+          return call.apply(backend, args);
+        };
+      }
+    },
+    [names, gate] as const,
+  );
+}
 
 /** The app calls the backend over IPC, the fake answers at once: without a delay there is never
  * a moment between a tab switch and what the tab shows. */
-async function slowCalls(page: Page, ...names: SlowCall[]): Promise<void> {
-  await page.evaluate((names) => {
-    const backend = window.__tote.backend as unknown as Record<
-      string,
-      (...args: unknown[]) => Promise<unknown>
-    >;
-    for (const name of names) {
-      const call = backend[name];
-      backend[name] = async (...args) => {
-        await new Promise((resolve) => setTimeout(resolve, 150));
-        return call.apply(backend, args);
-      };
-    }
-  }, names);
+function slowCalls(page: Page, ...names: SlowCall[]): Promise<void> {
+  return gateCalls(page, names, "timer");
 }
 
-/** Holds every file read until the returned function is called: a tab picked meanwhile is still
- * loading however long the test takes to type, where a delay ends on its own and lets the keys of
- * a slow run land after the read. */
+/** Holds memo reads (`readMemo`) and external opens (`openExternal`) until the returned function
+ * is called: a tab picked meanwhile is still loading however long the test takes to type, where a
+ * delay ends on its own and lets the keys of a slow run land after the read. */
 async function holdReads(page: Page): Promise<() => Promise<void>> {
-  await page.evaluate(() => {
-    const backend = window.__tote.backend as unknown as Record<
-      string,
-      (...args: unknown[]) => Promise<unknown>
-    >;
-    let release!: () => void;
-    const held = new Promise<void>((resolve) => (release = resolve));
-    Object.assign(window, { releaseReads: release });
-    for (const name of ["readMemo", "openExternal"]) {
-      const call = backend[name];
-      backend[name] = async (...args) => {
-        await held;
-        return call.apply(backend, args);
-      };
-    }
-  });
-  return () => page.evaluate(() => (window as unknown as { releaseReads(): void }).releaseReads());
+  await gateCalls(page, ["readMemo", "openExternal"], "held");
+  return () => page.evaluate(() => (window as unknown as { releaseCalls(): void }).releaseCalls());
 }
 
 // A tab still reading its file is not yet in the editor; keys typed meanwhile must not land in
 // the tab left behind, which would save them into a document the person no longer sees. They are
-// dropped: the new tab's exact text also shows a run whose keys came after the read.
+// dropped: the new tab's exact text shows that none of them went into it either.
 test("keys typed while a file opened with ⌘O loads do not reach the tab left, nor its memo", async ({
   page,
 }) => {

@@ -33,9 +33,11 @@ describe("perf fixtures", () => {
     expect(readFileSync(join(dir, "code.md"), "utf8")).toBe("```ts\n" + code + "```\n");
   });
 
-  // Ten thousand files written and read back: 1.2–2.4 s alone (`pnpm exec vitest run
-  // scripts/perf-fixtures.test.ts`), and past vitest's default 5 s when other work shares the disk.
-  // What is checked is the files, not how fast they are made.
+  // Ten thousand files written and read back: 1.2–2.4 s (`pnpm exec vitest run
+  // scripts/perf-fixtures.test.ts`, 20 runs at load 9–28). The test is synchronous, so vitest's
+  // default 5 s could only time out on its speed, which is not what is checked here. That timeout
+  // was never reproduced; when to look again: docs/guides/development.md 「부하에서만 실패하는
+  // 테스트는」.
   it("the memo workspace has ten thousand indexed memos", { timeout: 30_000 }, () => {
     const root = join(scratch(), "memos-10k");
     writeMemoWorkspace(root, 10_000);
