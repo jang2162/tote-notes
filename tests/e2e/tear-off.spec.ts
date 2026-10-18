@@ -76,10 +76,12 @@ test("keys typed while the tab is being torn off do not reach it", async ({ page
   await typeInto(page);
   const release = await hold(page, "tearOffGate");
   await menu(page, MOVE);
-  // The tab is let go of and the backend is still handing it over.
+  // The tab is let go of and the backend is still handing it over. What blocks the keys is the
+  // editor showing nothing (`showNothing`), which turns contenteditable off.
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
   await page.keyboard.insertText("x");
-  // Nothing is waiting to be saved: a key that reached the tab would have scheduled a write.
+  // Nothing is waiting to be saved: `unwritten` is what a key reaching the tab would have set by
+  // scheduling a write, so `false` means no key got in.
   expect(await page.evaluate(() => window.__tote.app.focused.tabs.active!.unwritten)).toBe(false);
   await release();
   await expect(page.locator(".tab")).toHaveCount(0);
@@ -189,6 +191,8 @@ test("a tab with a save failure and a conflict banner says the banner", async ({
   );
   await outside(page, { kind: "modified", id: "a" });
   await expect(page.locator(".banner")).toBeVisible();
+  // The failed save is what makes this more than the banner test above.
+  await expect(page.locator(".tab.active")).toHaveClass(/\bfailed\b/);
   await menu(page, MOVE);
   // Both hold the tab; the banner is what the person has to answer first.
   await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);

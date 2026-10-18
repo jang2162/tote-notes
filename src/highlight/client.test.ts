@@ -219,6 +219,7 @@ describe("HighlightClient grammar read failures", () => {
    * request cut by a reload does. */
   async function failing(unload: boolean) {
     const listeners: Record<string, () => void> = {};
+    // Relies on `leaving.ts` registering its `pagehide` listener when the module loads.
     vi.stubGlobal("addEventListener", (type: string, listener: () => void) => {
       listeners[type] = listener;
     });

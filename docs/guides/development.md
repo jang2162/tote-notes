@@ -21,6 +21,8 @@
 - 종료 질문 `저장하지 못한 메모가 있습니다`(Dock·⌘Q·AppleScript 종료)는 tote 가 아니라 `UserNotificationCenter` 프로세스의 창이다. 접근성 트리·`orca computer` 창 목록에 없으니 `tell application "System Events" to tell process "UserNotificationCenter" to click button "취소" of window 1` 로 누른다.
 - CLI 로 파일을 메모로 가져오는 옵션은 `--import` 다(`-i` 는 없다).
 - 화면 확인 중 대화상자가 아무도 누르지 않았는데 답해지면 먼저 사람·다른 도구의 클릭을 의심한다. NSAlert 시트 버튼은 tote 가 맨 앞이 아니어도 첫 클릭에 눌린다. 누가 눌렀는지는 `DYLD_INSERT_LIBRARIES` 로 `-[NSApplication sendEvent:]` 를 감싸 이벤트의 `kCGEventSourceUnixProcessID` 를 보면 갈린다(0 이면 실제 HID 입력, 합성 이벤트는 보낸 프로세스 pid). 이때 번들 실행 파일을 `nohup` 으로 띄우지 않는다 — SIP 보호 바이너리를 거치면 `DYLD_*` 가 지워진다.
+- `orca computer set-value` 로 편집기에 글을 넣기 전에 편집기를 `click --element-index` 로 포커스한다. 포커스가 검색 입력 같은 다른 입력에 있으면 `ok` 를 돌려주면서 값이 그 입력으로 가거나 아무 데도 들어가지 않는다. 넣은 뒤 트리에서 편집기 값을 읽어 확인한다.
+- 접근성(System Events·`orca computer`)으로는 창을 메뉴 막대 밑(y < 메뉴 막대 높이)에 둘 수 없다. 그런 저장 자리가 필요하면 앱을 끈 뒤 워크스페이스 `.tote/sessions/<id>.json` 의 `windows[].frame` 을 고치고 다시 켠다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
@@ -54,6 +56,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
 - **Why:** 부하는 IPC·개발 서버 응답·디스크를 모두 느리게 하므로 「보통은 먼저 끝난다」 는 가정이 깨진다. 지연을 늘리면 실패율만 줄고, 늦은 응답이 상태를 덮어쓰는 앱 결함은 가려진다.
 - **How to apply:**
   - 재현: `uptime` 을 적고 `TOTE_E2E_PORT=<워크트리 전용 포트> pnpm exec playwright test <파일> -g "<제목>" --repeat-each=20` 을 돈다. vitest 는 `--repeat-each` 가 없으니 `pnpm exec vitest run <파일>` 을 20번 돌린다. 부하는 결과마다 함께 적는다. 부하 15~28 에서 20번에 1~2번 나던 실패가 부하 10 에서는 0번일 수 있다.
+  - e2e 가 실패하면 다시 돌리기 전에 그 실행의 `test-results/` 를 다른 이름으로 옮기거나, 다시 돌릴 때 `--output <다른 폴더>` 를 준다. 다음 실행이 `test-results/` 를 지우고 새로 쓰므로 처음 실패한 메시지와 trace 가 남지 않는다. 보고에는 실패 메시지 첫 줄을 함께 적는다.
   - 원인을 찾을 때는 바뀌는 상태에 계측을 건다. 메모 목록이면 `window.__tote.app.memoList` 의 `upsert`·`setMemos`·`remove` 를 감싸 시각과 스택을 남기면 누가 늦게 무엇을 넣는지 보인다. 이 계측은 그 창의 메모 목록 하나만 본다. 다른 창이나 다른 상태(탭·배너)가 늦게 바뀌는 것은 그 객체를 따로 감싸야 보인다.
   - 가짜 백엔드의 「불러오는 중」 은 타이머(`setTimeout`) 대신 테스트가 풀어 줄 때까지 붙잡아 만든다(`tests/e2e/memo.spec.ts` 의 `holdReads`). 타이머는 혼자 끝나서, 느린 실행에서는 그 상태가 이미 지나간 뒤에 키가 들어간다. `holdReads` 는 `readMemo`·`openExternal` 만 붙잡는다. 다른 읽기로 불러오는 중을 만들려면 그 호출을 더한다.
   - 개발 서버에서 받는 것(`readExtensionFile` 이 받는 언어 설정 등)은 부하에서 늦게 도착한다. 늦은 응답의 효과를 시험하려면 `page.route` 로 그 요청을 붙잡았다가 풀어 준다. 실제 앱에서는 같은 데이터가 IPC 로 와서 이 방법이 닿지 않는다.

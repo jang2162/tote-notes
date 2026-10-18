@@ -21,8 +21,6 @@ const DEFAULT_WIDTH: f64 = 1100.0;
 const DEFAULT_HEIGHT: f64 = 760.0;
 /// How far right and down a new window sits from the window it came from.
 const NEAR_OFFSET: f64 = 24.0;
-/// The title bar sits above a frame's inner `height`, so the window is this much taller outside.
-const TITLE_BAR_HEIGHT: f64 = 28.0;
 
 /// Debug builds started with `TOTE_BACKGROUND=1` — smoke checks run by agents — open windows
 /// without taking focus, so a check never pulls the person's screen away.
@@ -66,11 +64,13 @@ pub fn cascade(source: WindowFrame, monitors: &[MonitorRect]) -> WindowFrame {
     };
     WindowFrame {
         x: step(source.x, source.width, wx, ww),
-        y: step(source.y, source.height + TITLE_BAR_HEIGHT, wy, wh),
+        y: step(source.y, source.height, wy, wh),
         ..source
     }
 }
 
+// Tauri's default title bar style on macOS gives the window a full-size content view, so a
+// frame's inner height is the whole window's.
 /// Where `window` is, as the session keeps it: logical outer position and inner size.
 pub fn frame_of(window: &WebviewWindow) -> Option<WindowFrame> {
     let scale = window.scale_factor().ok()?;
@@ -398,10 +398,10 @@ fn monitor_at(frame: WindowFrame, monitors: &[MonitorRect]) -> Option<MonitorRec
 pub fn place(frame: WindowFrame, monitors: &[MonitorRect]) -> Option<WindowFrame> {
     let (mx, my, mw, mh) = monitor_at(frame, monitors)?.work;
     let width = frame.width.min(mw);
-    let height = frame.height.min(mh - TITLE_BAR_HEIGHT);
+    let height = frame.height.min(mh);
     Some(WindowFrame {
         x: frame.x.min(mx + mw - width).max(mx),
-        y: frame.y.min(my + mh - height - TITLE_BAR_HEIGHT).max(my),
+        y: frame.y.min(my + mh - height).max(my),
         width,
         height,
     })
@@ -449,8 +449,8 @@ mod tests {
     #[test]
     fn a_new_window_at_the_corner_steps_back_up_and_left() {
         assert_eq!(
-            stepped(at(4180.0, 1038.0, 1100.0, 760.0), &m()),
-            Some(at(4156.0, 1014.0, 1100.0, 760.0))
+            stepped(at(4180.0, 1066.0, 1100.0, 760.0), &m()),
+            Some(at(4156.0, 1042.0, 1100.0, 760.0))
         );
     }
 
@@ -473,8 +473,8 @@ mod tests {
     #[test]
     fn a_new_window_at_the_bottom_edge_only_steps_up() {
         assert_eq!(
-            stepped(at(500.0, 800.0, 1100.0, 760.0), &m()),
-            Some(at(524.0, 776.0, 1100.0, 760.0))
+            stepped(at(500.0, 830.0, 1100.0, 760.0), &m()),
+            Some(at(524.0, 806.0, 1100.0, 760.0))
         );
     }
 
@@ -503,7 +503,7 @@ mod tests {
     #[test]
     fn a_window_taller_than_the_work_area_shrinks_to_it() {
         let placed = place(at(100.0, 100.0, 900.0, 1600.0), &m()).unwrap();
-        assert_eq!((placed.y, placed.height), (33.0, 1539.0));
+        assert_eq!((placed.y, placed.height), (33.0, 1567.0));
     }
 
     #[test]
@@ -538,7 +538,7 @@ mod tests {
     fn a_window_larger_than_its_monitor_shrinks_to_fit() {
         assert_eq!(
             place(at(3840.0, -734.0, 2000.0, 3000.0), &flat(&OLD)),
-            Some(at(3840.0, -734.0, 1440.0, 2532.0))
+            Some(at(3840.0, -734.0, 1440.0, 2560.0))
         );
     }
 

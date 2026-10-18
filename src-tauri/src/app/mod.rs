@@ -1158,9 +1158,9 @@ impl AppCore {
             FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => {
                 vec![label.clone()]
             }
-            // A window whose page is not up has nothing to write and may not answer, so it would only
-            // hold the round to its timeout: one that switched wrote its tabs before it did, and one
-            // still loading has no layout and was never focused.
+            // A window whose page is not up has nothing to write and may not answer, so it would
+            // only hold the round to its timeout: one that switched wrote its tabs before it did,
+            // and one still loading has no layout and was never focused.
             FlushGoal::Quit => inner
                 .windows
                 .iter()
@@ -1179,8 +1179,8 @@ impl AppCore {
         lock(&self.inner).flush.ack(id, label, blocked)
     }
 
-    /// Round `id` ran out of time. A window it ends as a switch or a close is marked going under the
-    /// same lock: an answer coming before `lifecycle::finish` marks it would find the window
+    /// Round `id` ran out of time. A window it ends as a switch or a close is marked going under
+    /// the same lock: an answer coming before `lifecycle::finish` marks it would find the window
     /// staying and take its panes back, just before it reloads or goes (`lifecycle::ack`).
     pub fn expire_flush(&self, id: u64) -> Ack {
         let mut inner = lock(&self.inner);
