@@ -351,8 +351,9 @@ fn monitor_rects(app: &AppHandle) -> Vec<(f64, f64, f64, f64)> {
 }
 
 /// `frame` moved onto the monitor its title bar is on, as a whole: shrunk to the monitor when
-/// larger, then moved left and up until its far edges are inside, and right and down until its near edges are. `None` when no monitor holds
-/// that spot, so the caller opens the window at the default size in the middle.
+/// larger, then moved left and up until its far edges are inside, and right and down until its
+/// near edges are. `None` when no monitor holds that spot, so the caller opens the window at the
+/// default size in the middle.
 pub fn place(frame: WindowFrame, monitors: &[(f64, f64, f64, f64)]) -> Option<WindowFrame> {
     let (px, py) = (frame.x + 40.0, frame.y + 10.0);
     let &(mx, my, mw, mh) = monitors

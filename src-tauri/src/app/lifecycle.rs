@@ -548,8 +548,9 @@ mod system_quit {
         }
     }
 
-    /// Lets a held quit event go, with `error` in its reply. Main thread only. Nothing here may
-    /// panic before the resume: the sender would wait for good.
+    /// Lets a held quit event go, with `error` in its reply. Main thread only. A panic before the
+    /// resume would leave the sender waiting for good, so the only `Retained` result taken without
+    /// a nil check is `sharedAppleEventManager`, which AppKit never returns as nil.
     fn resume(event: SuspendedEvent, error: Option<i16>) {
         // SAFETY: `event.id` came from `suspendCurrentAppleEvent`, is not null (`suspend`) and is
         // resumed once — `answer` takes it out of `WAITING` first.
