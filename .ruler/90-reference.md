@@ -13,4 +13,5 @@
 | tote-notes 안전망 후속 계획을 실행할 때                                                            | `docs/superpowers/plans/2026-10-16-tote-notes-safety-net-followups.md`     |
 | tote-notes 칸 분할·새 창·워크스페이스 전환을 고치거나 그 설계를 바꿀 때                            | `docs/superpowers/specs/2026-10-16-tote-notes-panes-and-windows-design.md` |
 | tote-notes 칸·창 계획을 실행하거나, 그 다음 계획을 쓸 때                                           | `docs/superpowers/plans/2026-10-17-tote-notes-panes-and-windows.md`        |
+| tote-notes 칸·창 후속 계획을 실행할 때                                                             | `docs/superpowers/plans/2026-10-18-tote-notes-panes-followups.md`          |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                | `docs/guides/development.md`                                               |
