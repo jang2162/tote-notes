@@ -185,14 +185,14 @@ test("a tab with a conflict banner stays and says why", async ({ page }) => {
 test("a tab with a save failure and a conflict banner says the banner", async ({ page }) => {
   await quietErrors(page, WRITE_FAILED);
   await typeInto(page, { failWrites: 1000 });
+  // The autosave has failed before the file changes outside, so the tab holds both.
+  await expect(page.locator(".tab.active")).toHaveClass(/\bfailed\b/);
   await page.evaluate(
     (text) => Object.assign(window.__tote.backend.data.memos.a, { data: text, modifiedMs: 900 }),
     fakeFile("두유"),
   );
   await outside(page, { kind: "modified", id: "a" });
   await expect(page.locator(".banner")).toBeVisible();
-  // The failed save is what makes this more than the banner test above.
-  await expect(page.locator(".tab.active")).toHaveClass(/\bfailed\b/);
   await menu(page, MOVE);
   // Both hold the tab; the banner is what the person has to answer first.
   await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);
