@@ -1,6 +1,7 @@
 import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import type { LanguageInfo } from "../backend/types";
+import { pageLeaving } from "../core/leaving";
 import type { Registry } from "../extensions/registry";
 import { collectGrammars } from "./grammars";
 import type { GrammarSource, WorkerReply, WorkerRequest } from "./protocol";
@@ -203,7 +204,7 @@ export class HighlightClient {
         return true;
       })
       .catch((error: unknown) => {
-        console.warn(`grammar for ${lang.id} could not be loaded`, error);
+        if (!pageLeaving()) console.warn(`grammar for ${lang.id} could not be loaded`, error);
         return false;
       })
       // Only its own entry: one started after a forget may stand there now.

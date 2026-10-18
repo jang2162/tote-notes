@@ -286,3 +286,31 @@ test("a composition in progress lands before its tab moves", async ({ page }) =>
   await expect(editor(page, 0)).toHaveText("첫째가");
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째가");
 });
+
+test("a pane the move empties closes and the session follows, though the target cannot show the tab", async ({
+  page,
+}) => {
+  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가"]);
+  await expect(titles(page, 1)).toHaveText(["나"]);
+  await page.evaluate(async () => {
+    const { app } = window.__tote;
+    const [left, right] = app.panes;
+    right.activate = () => Promise.reject(new Error("cannot show"));
+    await app.moveTab(left.tabs.active!, right, 0).catch(() => {});
+  });
+  await expect(panes(page)).toHaveCount(1);
+  await expect
+    .poll(() =>
+      page.evaluate(() => JSON.parse(window.__tote.backend.data.session!).windows[0].panes.length),
+    )
+    .toBe(1);
+});
+
+test("closePane leaves a pane that still has tabs", async ({ page }) => {
+  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await expect(titles(page, 1)).toHaveText(["나"]);
+  await page.evaluate(() => window.__tote.app.closePane(window.__tote.app.panes[1]));
+  await expect(panes(page)).toHaveCount(2);
+  await expect(titles(page, 1)).toHaveText(["나"]);
+});

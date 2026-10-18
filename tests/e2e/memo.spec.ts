@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT, RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, ready, sessionPane, start } from "./helpers";
+import { menu, quietErrors, ready, sessionPane, start } from "./helpers";
 
 test("a new memo is named after its first line once the cursor leaves it", async ({ page }) => {
   await start(page);
@@ -389,4 +389,15 @@ test("another window's change to the memo list shows here", async ({ page }) => 
   // Past the 300ms the three were gathered in: still one listing.
   await page.waitForTimeout(500);
   expect(await calls()).toBe(before + 1);
+});
+
+test("a memo still opens when claiming its place fails", async ({ page }) => {
+  await quietErrors(page, "claim refused");
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째") } });
+  await page.evaluate(() => {
+    window.__tote.backend.claimTabs = () => Promise.reject(new Error("claim refused"));
+  });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+  await expect(page.locator(".cm-content")).toHaveText("첫째");
 });

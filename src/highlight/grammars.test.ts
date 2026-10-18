@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 
 import type { ExtensionRegistry, LanguageInfo } from "../backend/types";
 import { Registry } from "../extensions/registry";
@@ -128,5 +128,40 @@ describe("collectGrammars", () => {
     const { send, batches } = worker();
     expect(await collectGrammars(registry, { ...lang, grammar: null }, read, send)).toEqual([]);
     expect(batches).toEqual([]);
+  });
+
+  describe("an included grammar cut off while the page unloads", () => {
+    afterEach(() => vi.unstubAllGlobals());
+
+    /** The module with `pagehide` heard (or not) as it is loaded: it listens on the page's window. */
+    async function load(unload: boolean) {
+      const listeners: Record<string, () => void> = {};
+      vi.stubGlobal("addEventListener", (type: string, listener: () => void) => {
+        listeners[type] = listener;
+      });
+      vi.resetModules();
+      const module = await import("./grammars");
+      if (unload) listeners.pagehide();
+      return module.collectGrammars;
+    }
+    const partial = async (ext: string, path: string) =>
+      path === "c.json" ? Promise.reject(new TypeError("Load failed")) : read(ext, path);
+
+    it("is warned about when the page stays, not when it is going", async () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      try {
+        await (
+          await load(false)
+        )(registry, lang, partial, worker().send);
+        expect(warn).toHaveBeenCalledTimes(1);
+        warn.mockClear();
+        await (
+          await load(true)
+        )(registry, lang, partial, worker().send);
+        expect(warn).not.toHaveBeenCalled();
+      } finally {
+        warn.mockRestore();
+      }
+    });
   });
 });

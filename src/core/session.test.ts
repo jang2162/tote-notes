@@ -1,7 +1,13 @@
 import { Text } from "@codemirror/state";
 import { describe, expect, it } from "vitest";
 
-import { normalizeWidths, parseSessionFile, parseWindowSession, restoreSelection } from "./session";
+import {
+  normalizeWidths,
+  parsePane,
+  parseSessionFile,
+  parseWindowSession,
+  restoreSelection,
+} from "./session";
 
 /** The tabs of a window with one pane, read as the session's only window. */
 const onePane = (pane: object) => parseWindowSession({ panes: [pane] }).panes[0];
@@ -68,6 +74,13 @@ describe("parseWindowSession", () => {
     expect(widths(1, 0)).toEqual([0.5, 0.5]);
     expect(widths(1, "x")).toEqual([0.5, 0.5]);
     expect(widths(undefined)).toEqual([1]);
+  });
+
+  it("a width that is not a number is kept as NaN, never a string typed as a number", () => {
+    // Before `normalizeWidths` judges it, which a window parse always does.
+    const { width } = parsePane({ tabs: [], width: "x" });
+    expect(typeof width).toBe("number");
+    expect(Number.isNaN(width)).toBe(true);
   });
 
   it("focusedPane out of range is 0", () => {

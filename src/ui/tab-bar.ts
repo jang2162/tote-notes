@@ -128,8 +128,13 @@ export class TabBar {
         const dy = event.clientY - down.clientY;
         if (Math.hypot(dx, dy) <= DRAG_START_PX) return;
         drag = this.actions.drag(id);
-        // Over a viewer's frame the moves would go to the frame's document.
-        this.el.setPointerCapture(event.pointerId);
+        // Over a viewer's frame the moves would go to the frame's document. Without the capture the
+        // drag still follows the pointer over the page.
+        try {
+          this.el.setPointerCapture(event.pointerId);
+        } catch {
+          // The pointer is gone already (InvalidStateError): its pointerup ends the drag.
+        }
       }
       drag.over(event.clientX, event.clientY);
     };

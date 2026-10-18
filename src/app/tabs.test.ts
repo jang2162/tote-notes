@@ -55,6 +55,21 @@ describe("Tabs", () => {
     expect(tabs.list).toEqual([a, m2, m1, b]);
   });
 
+  it("place corrects the index for the tab's own removal", () => {
+    const h = host();
+    const tabs = new Tabs();
+    const [a, b, c, d] = ["a", "b", "c", "d"].map((id) => tabs.insertAfterActive(memo(h, id)));
+    tabs.active = null;
+    // The list is a, b, c, d (inserted after the end each time): `index` counts the tabs as they were.
+    expect(tabs.list).toEqual([a, b, c, d]);
+    tabs.place(a, 3); // from before the index: it lands between c and d
+    expect(tabs.list).toEqual([b, c, a, d]);
+    tabs.place(d, 0); // from after the index: no correction
+    expect(tabs.list).toEqual([d, b, c, a]);
+    tabs.place(b, 1); // onto its own place
+    expect(tabs.list).toEqual([d, b, c, a]);
+  });
+
   it("removing the active tab names the neighbour to show", () => {
     const h = host();
     const tabs = new Tabs();

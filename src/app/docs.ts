@@ -402,8 +402,10 @@ export abstract class Doc {
 export class MemoDoc extends Doc {
   readonly kind = "memo" as const;
   private savedText: Text | null = null;
-  /** Set while the banner says 「내 버전」 was saved as this memo; `memoId` is the memo that kept
-   * the other app's text. Ends with the tab: the session carries it, a reopened memo has none. */
+  /** Set from the time 「내 버전」 was saved as this memo until 「닫기」 on its note; `memoId` is the
+   * memo that kept the other app's text. A question about the file takes the banner meanwhile and
+   * the note comes back after it (`setBanner`). Ends with the tab: the session carries it, a
+   * reopened memo has none. */
   conflictKept: { memoId: string } | null = null;
   /** The original's info when the listing did not have it, for raising the note again. */
   private keptKnown: MemoInfo | undefined;
@@ -1086,7 +1088,7 @@ export class ExternalDoc extends Doc {
 }
 
 /** A banner whose answer would be lost on the way: another window would read the file afresh. */
-function asksAboutFile(banner: BannerState | null): boolean {
+export function asksAboutFile(banner: BannerState | null): boolean {
   return banner?.kind === "conflict" || banner?.kind === "deleted";
 }
 

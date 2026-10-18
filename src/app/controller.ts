@@ -11,6 +11,7 @@ import type {
   TabRef,
 } from "../backend/types";
 import { decodeText } from "../core/codec";
+import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
 import { settleComposition } from "../editor/compose";
 import {
@@ -45,6 +46,7 @@ import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
 import type { LargeTextViewer } from "../viewer/large-text";
 import {
+  asksAboutFile,
   CHOOSE_VERSION_FIRST,
   ExternalDoc,
   importExternal,
@@ -56,7 +58,7 @@ import {
 import { describeError } from "./errors";
 import { canSplit, remove, resize, split } from "./layout";
 import { Pane, type PaneHost } from "./pane";
-import { sessionTab, SessionSync } from "./session-sync";
+import { claimPlaces, sessionTab, SessionSync } from "./session-sync";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
@@ -176,6 +178,8 @@ export class AppController implements DocHost, PaneHost {
     this.theme = new ThemeManager(backend, () => this.registry);
     this.focused = this.makePane();
     this.panes = [this.focused];
+    // The strip the style draws is the strip `dropTarget` judges by.
+    this.panesEl.style.setProperty("--pane-drop-edge", `${DROP_EDGE_PX}px`);
     this.panesEl.append(this.focused.el);
     this.syncPanes();
     root.replaceChildren(
@@ -461,7 +465,8 @@ export class AppController implements DocHost, PaneHost {
         .readExtensionFile(lang.extension, lang.configuration)
         .then((bytes) => languageData(parseLanguageConfiguration(new TextDecoder().decode(bytes))))
         .catch((error: unknown) => {
-          console.warn(`language configuration of ${lang.id} could not be read`, error);
+          if (!pageLeaving())
+            console.warn(`language configuration of ${lang.id} could not be read`, error);
           return {};
         });
       this.languageConfigs.set(key, pending);
@@ -504,7 +509,9 @@ export class AppController implements DocHost, PaneHost {
     return this.memoList.get(id);
   }
 
-  async openMemo(id: string): Promise<void> {
+  /** `line` (a search result) is the line a large text viewer opens at: set on the pane the tab
+   * lands in, which is the focused one only until the claim and the listing have answered. */
+  async openMemo(id: string, line?: number): Promise<void> {
     let doc: Doc | undefined = this.memoTab(id);
     if (!doc) {
       let info: MemoInfo | undefined = this.memoList.get(id);
@@ -517,6 +524,8 @@ export class AppController implements DocHost, PaneHost {
       // Another request may have opened it while the claim was on its way.
       doc = this.memoTab(id) ?? this.insertClaimed(new MemoDoc(this, info));
     }
+    // Before the tab is shown: its viewer may be on show before `openMemo` returns.
+    if (line !== undefined) this.paneOf(doc).pendingLine = { memoId: id, line };
     await this.showTab(doc);
   }
 
@@ -549,6 +558,12 @@ export class AppController implements DocHost, PaneHost {
       if (doc === pane.tabs.active) pane.view.focus();
       return;
     }
+    await this.takeOut(pane, doc);
+  }
+
+  /** Takes `doc` out of `pane` for good (closed, or gone to another window): its place is let go
+   * of unless it is no longer held, and a pane left empty closes. */
+  private async takeOut(pane: Pane, doc: Doc): Promise<void> {
     const shown = pane.detach(doc);
     this.release(doc);
     this.dropHighlight(doc);
@@ -625,7 +640,7 @@ export class AppController implements DocHost, PaneHost {
     if (!handed) {
       stay();
       // After `show`, which puts the tab's own notice in the status bar.
-      const asks = doc.banner?.kind === "conflict" || doc.banner?.kind === "deleted";
+      const asks = asksAboutFile(doc.banner);
       this.statusBar.setMessage(asks ? NOT_MOVED_WITH_BANNER : NOT_MOVED_TO_NEW_WINDOW, "error");
       return false;
     }
@@ -641,13 +656,8 @@ export class AppController implements DocHost, PaneHost {
     }
     // The backend gave its place to the new window: there is nothing to release.
     this.held.delete(doc);
-    const shown = pane.detach(doc);
     if (doc instanceof ExternalDoc) doc.stopWatching();
-    this.dropHighlight(doc);
-    this.coloured.delete(doc.tabId);
-    await shown;
-    if (pane.tabs.list.length === 0) this.closePane(pane);
-    this.saveSessionSoon();
+    await this.takeOut(pane, doc);
     return true;
   }
 
@@ -675,9 +685,13 @@ export class AppController implements DocHost, PaneHost {
       if (left !== from) void left.tabs.active?.leave();
     }
     to.renderTabs();
-    await Promise.all([shown, to.activate(doc)]);
-    if (from.tabs.list.length === 0) this.closePane(from);
-    this.saveSessionSoon();
+    try {
+      await Promise.all([shown, to.activate(doc)]);
+    } finally {
+      // The tab has moved whether or not it could be shown: the empty pane goes, the session follows.
+      if (from.tabs.list.length === 0) this.closePane(from);
+      this.saveSessionSoon();
+    }
   }
 
   dragTab(tabId: string): TabDrag {
@@ -828,7 +842,7 @@ export class AppController implements DocHost, PaneHost {
    * neighbour (the right one when it is leftmost), and so does the focus when it had it. */
   closePane(pane: Pane): void {
     const at = this.panes.indexOf(pane);
-    if (at < 0 || this.panes.length < 2) return;
+    if (at < 0 || this.panes.length < 2 || pane.tabs.list.length) return;
     this.panes.splice(at, 1);
     this.widths = remove(this.widths, at);
     // Its divider is the one on its left, or on its right when it was leftmost.
@@ -865,15 +879,8 @@ export class AppController implements DocHost, PaneHost {
   /** Claims `tab` for this window before a tab is made for it. False when another window holds
    * it: the backend has brought that window forward to show it, and nothing opens here. */
   private async claim(tab: TabRef): Promise<boolean> {
-    try {
-      const [claimed] = await this.backend.claimTabs([tab], true);
-      return claimed;
-    } catch (error) {
-      // A place that cannot be asked for is taken as given: the tab opens here rather than not at
-      // all, and the console says why it may be open twice.
-      console.error(error);
-      return true;
-    }
+    const [claimed] = await claimPlaces(this.backend, [tab], true);
+    return claimed;
   }
 
   private insertClaimed<D extends Doc>(doc: D): D {
@@ -1100,11 +1107,7 @@ export class AppController implements DocHost, PaneHost {
 
   /** A search result (spec 「워크스페이스 검색」): the memo's tab, its cursor on the match. */
   private async openMatch(id: string, line: number, column: number): Promise<void> {
-    // Set before the tab opens, on the pane it opens in: its viewer may be on show before
-    // `openMemo` returns.
-    const open = this.memoTab(id);
-    (open ? this.paneOf(open) : this.focused).pendingLine = { memoId: id, line };
-    await this.openMemo(id);
+    await this.openMemo(id, line);
     const doc = this.memoTab(id);
     if (!doc) return;
     await doc.ensureLoaded();

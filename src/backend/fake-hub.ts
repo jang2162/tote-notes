@@ -1,6 +1,6 @@
 import { parseSessionFile } from "../core/session";
 import type { FakeData } from "./fake";
-import type { FlushGoal, OutsideChange, TabRef } from "./types";
+import type { FlushGoal, TabRef } from "./types";
 
 /** Windows for the fake backend: the pages of one browser context stand for the app's windows on
  * one workspace. They share the fake's data through `localStorage` and hear what the native side
@@ -16,7 +16,6 @@ export type HubEvent =
   | { type: "flush"; id: number; goal: FlushGoal }
   | { type: "memos" }
   | { type: "reveal"; tab: TabRef }
-  | { type: "outside"; change: OutsideChange }
   | { type: "workspaces" };
 
 interface HubMessage {

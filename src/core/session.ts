@@ -107,8 +107,12 @@ export function normalizeWidths(widths: number[]): number[] {
 }
 
 /** `width` is taken as it is, for `normalizeWidths` to judge. */
-function parsePane(raw: Json): PaneSession {
-  const pane: PaneSession = { tabs: [], activeTab: -1, width: raw.width as number };
+export function parsePane(raw: Json): PaneSession {
+  const pane: PaneSession = {
+    tabs: [],
+    activeTab: -1,
+    width: isNumber(raw.width) ? raw.width : Number.NaN,
+  };
   if (!Array.isArray(raw.tabs)) return pane;
   const active = raw.activeTab;
   raw.tabs.forEach((value: unknown, index: number) => {

@@ -66,7 +66,13 @@ export class SessionSync {
         if (doc) found.push({ doc, tab, pane, index });
       }
     }
-    const claims = found.length ? await this.claim(found.map(({ doc }) => doc.tabRef)) : [];
+    const claims = found.length
+      ? await claimPlaces(
+          this.backend,
+          found.map(({ doc }) => doc.tabRef),
+          false,
+        )
+      : [];
     const panes = window.panes.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
     for (const [at, { doc, tab, pane, index }] of found.entries()) {
       if (!claims[at]) continue;
@@ -84,17 +90,6 @@ export class SessionSync {
       widths: window.panes.map((pane) => pane.width),
       focusedPane: window.focusedPane,
     };
-  }
-
-  /** The places of `refs`; when they cannot be asked for, all are taken as given: the tabs come
-   * back here rather than not at all, and the console says why one may be open twice. */
-  private async claim(refs: TabRef[]): Promise<boolean[]> {
-    try {
-      return await this.backend.claimTabs(refs, false);
-    } catch (error) {
-      console.error(error);
-      return refs.map(() => true);
-    }
   }
 
   async build(captureActive: () => void): Promise<WindowSession> {
@@ -128,6 +123,22 @@ export class SessionSync {
     const doc = this.makeExternal(tab.path);
     doc.language = tab.language ?? null;
     return doc;
+  }
+}
+
+/** The places of `refs` among every window's tabs (`Backend.claimTabs`); `reveal` brings forward
+ * the window holding one. When they cannot be asked for, all are taken as given: the tabs open
+ * here rather than not at all, and the console says why one may be open twice. */
+export async function claimPlaces(
+  backend: Backend,
+  refs: TabRef[],
+  reveal: boolean,
+): Promise<boolean[]> {
+  try {
+    return await backend.claimTabs(refs, reveal);
+  } catch (error) {
+    console.error(error);
+    return refs.map(() => true);
   }
 }
 

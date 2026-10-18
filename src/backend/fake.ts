@@ -352,9 +352,12 @@ export class FakeBackend implements Backend {
    * src-tauri/src/app/mod.rs): the old page's last writes — its blur, its timers — must not land in
    * the workspace it is leaving for. */
   private switching = false;
-  /** Runs once as the next window layout is written — the last write of a flush round — so a test
-   * can type while the round writes the tabs. */
+  /** Runs once as the next window layout is written while a switch's flush round is open — the
+   * round's last write — so a test can type while the round writes the tabs. A write of the
+   * session's own timer before the round does not use it up. */
   whileWritingLayout: (() => void) | null = null;
+  /** The switch's flush round is waiting for this window's answer (`flushThisWindow`). */
+  private roundOpen = false;
   /** How long a switch waits after this window's answer before it swaps the workspace and reloads
    * the page: the gap between the round's answer and `switch_window` on the native side, where
    * writes are still taken. */
@@ -452,12 +455,12 @@ export class FakeBackend implements Backend {
   }
   /** Another window changed the memo list, as the native side tells this one. The test changes
    * `data` first. */
+  memosChanged(): void {
+    for (const handler of this.handlers.memos) handler();
+  }
   /** Another window asked for a tab this one holds. */
   reveal(tab: TabRef): void {
     for (const handler of this.handlers.reveal) handler(tab);
-  }
-  memosChanged(): void {
-    for (const handler of this.handlers.memos) handler();
   }
   /** A workspace was made, or a window came to show another one. */
   workspacesChanged(): void {
@@ -468,7 +471,6 @@ export class FakeBackend implements Backend {
     if (event.type === "flush") this.requestFlush(event.id, event.goal);
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "reveal") this.reveal(event.tab);
-    else if (event.type === "outside") this.outside(event.change);
     else if (event.type === "workspaces") this.workspacesChanged();
   }
   /** The memo list changed: the other windows read it again, as the native side tells them. */
@@ -617,9 +619,11 @@ export class FakeBackend implements Backend {
 
   async writeWindowLayout(json: string) {
     this.refuseWhileSwitching();
-    const typing = this.whileWritingLayout;
-    this.whileWritingLayout = null;
-    typing?.();
+    if (this.roundOpen) {
+      const typing = this.whileWritingLayout;
+      this.whileWritingLayout = null;
+      typing?.();
+    }
     if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
     else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
     this.commit();
@@ -841,8 +845,11 @@ export class FakeBackend implements Backend {
     const answered = new Promise<string | undefined>((resolve) =>
       this.flushWaiters.set(id, resolve),
     );
+    this.roundOpen = true;
     this.requestFlush(id, "switch");
-    return answered;
+    return answered.finally(() => {
+      this.roundOpen = false;
+    });
   }
 
   async openWorkspace(path: string) {

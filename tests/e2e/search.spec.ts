@@ -238,3 +238,54 @@ test("too many results say so", async ({ page }) => {
   // The backend's cap of one file (`MAX_MATCHES_PER_FILE` in src-tauri/src/search/mod.rs).
   await expect(page.locator(".search-match")).toHaveCount(200);
 });
+
+test("a found line opens in the pane the tab lands in", async ({ page }) => {
+  const rows = Array.from({ length: 300 }, (_, i) => `row ${i}`).join("\n");
+  const pane = (index: number) => ({
+    tabs: [{ kind: "memo", memoId: index ? "b" : "a" }],
+    activeTab: 0,
+  });
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "첫째", { modifiedMs: 3 }),
+      b: fakeMemo("나.md", "둘째", { modifiedMs: 2 }),
+      long: fakeMemo("long.txt", `${"L".repeat(LONG_LINE_LIMIT + 1)}\n${rows}\nneedle here`),
+    },
+    session: JSON.stringify({
+      version: 2,
+      windows: [
+        {
+          panes: [
+            { ...pane(0), width: 0.5 },
+            { ...pane(1), width: 0.5 },
+          ],
+          focusedPane: 0,
+        },
+      ],
+    }),
+  });
+  await expect(page.locator(".pane")).toHaveCount(2);
+  await openSearch(page);
+  await page.keyboard.type("needle");
+  const result = page.locator(".search-match");
+  await expect(result).toHaveCount(1);
+  // The claim is on its way when the person picks the other pane: the tab lands there.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const claim = backend.claimTabs.bind(backend);
+    backend.claimTabs = async (tabs, reveal) => {
+      await new Promise<void>((resolve) => Object.assign(window, { releaseClaim: resolve }));
+      return claim(tabs, reveal);
+    };
+  });
+  await result.click();
+  await page.locator(".pane").nth(1).locator(".cm-content").click();
+  await expect(page.locator(".pane.focused")).toHaveCount(1);
+  await expect(page.locator(".pane").nth(1)).toHaveClass(/\bfocused\b/);
+  await page.evaluate(() => (window as unknown as { releaseClaim: () => void }).releaseClaim());
+  await expect(
+    page.locator(".pane").nth(1).locator(".large-text .large-text-line.current"),
+  ).toHaveText("needle here");
+  // Nothing is left waiting in the pane it was asked from.
+  expect(await page.evaluate(() => window.__tote.app.panes[0].pendingLine)).toBeNull();
+});

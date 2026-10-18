@@ -1,4 +1,5 @@
 import type { LanguageInfo } from "../backend/types";
+import { pageLeaving } from "../core/leaving";
 import type { Registry } from "../extensions/registry";
 import type { GrammarSource } from "./protocol";
 
@@ -52,7 +53,7 @@ export async function collectGrammars(
     try {
       return { scopeName: scope, text: await load(ref.extension, ref.path) };
     } catch (error) {
-      console.warn(`grammar ${scope} could not be read`, error);
+      if (!pageLeaving()) console.warn(`grammar ${scope} could not be read`, error);
       return null;
     }
   };
