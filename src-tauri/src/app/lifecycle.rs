@@ -139,33 +139,35 @@ fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
     }
 }
 
+/// What 「그래도」 reads for this goal: the dialog's button, and the head of the sentence that says
+/// the text is lost.
+fn blocked_labels(goal: &FlushGoal) -> (&'static str, &'static str) {
+    match goal {
+        FlushGoal::CloseWindow(_) => ("그래도 닫기", "그래도 닫으면"),
+        FlushGoal::SwitchWorkspace { .. } => ("그래도 바꾸기", "그래도 바꾸면"),
+        FlushGoal::Quit => ("그래도 종료", "그래도 종료하면"),
+    }
+}
+
 /// The question's text: the reasons, then what 「그래도」 costs for this goal.
 fn blocked_message(goal: &FlushGoal, reasons: &[String]) -> String {
-    let anyway = match goal {
-        FlushGoal::CloseWindow(_) => "닫으면",
-        FlushGoal::SwitchWorkspace { .. } => "바꾸면",
-        FlushGoal::Quit => "종료하면",
-    };
+    let (_, anyway) = blocked_labels(goal);
     format!(
-        "{}\n그래도 {anyway} 저장하지 못한 글은 사라집니다.",
+        "{}\n{anyway} 저장하지 못한 글은 사라집니다.",
         reasons.join("\n")
     )
 }
 
 /// The text is still only in memory: going now loses it, so the person decides.
 fn ask_blocked(app: &AppHandle, id: u64, goal: FlushGoal, reasons: &[String]) {
-    let anyway = match goal {
-        FlushGoal::CloseWindow(_) => "그래도 닫기",
-        FlushGoal::SwitchWorkspace { .. } => "그래도 바꾸기",
-        FlushGoal::Quit => "그래도 종료",
-    };
+    let (button, _) = blocked_labels(&goal);
     let mut dialog = app
         .dialog()
         .message(blocked_message(&goal, reasons))
         .title("저장하지 못한 메모가 있습니다")
         .kind(MessageDialogKind::Warning)
         .buttons(MessageDialogButtons::OkCancelCustom(
-            anyway.to_string(),
+            button.to_string(),
             "취소".to_string(),
         ));
     if let Some(window) = goal
@@ -808,6 +810,28 @@ mod system_quit {
 mod tests {
     use super::*;
 
+    fn close() -> FlushGoal {
+        FlushGoal::CloseWindow("a".into())
+    }
+
+    fn switch() -> FlushGoal {
+        FlushGoal::SwitchWorkspace {
+            label: "a".into(),
+            to: "/w/나".into(),
+        }
+    }
+
+    #[test]
+    fn every_goal_has_one_button_and_one_sentence() {
+        for (goal, labels) in [
+            (close(), ("그래도 닫기", "그래도 닫으면")),
+            (switch(), ("그래도 바꾸기", "그래도 바꾸면")),
+            (FlushGoal::Quit, ("그래도 종료", "그래도 종료하면")),
+        ] {
+            assert_eq!(blocked_labels(&goal), labels);
+        }
+    }
+
     #[test]
     fn the_blocked_question_says_the_text_is_lost() {
         let reasons = ["저장하지 못한 메모 1개".to_string()];
@@ -823,17 +847,6 @@ mod tests {
                 blocked_message(&goal, &reasons),
                 format!("저장하지 못한 메모 1개\n{text}")
             );
-        }
-    }
-
-    fn close() -> FlushGoal {
-        FlushGoal::CloseWindow("a".into())
-    }
-
-    fn switch() -> FlushGoal {
-        FlushGoal::SwitchWorkspace {
-            label: "a".into(),
-            to: "/w/나".into(),
         }
     }
 

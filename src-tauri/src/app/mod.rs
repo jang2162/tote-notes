@@ -1158,10 +1158,9 @@ impl AppCore {
             FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => {
                 vec![label.clone()]
             }
-            // A window whose new page is not up has nothing to write — its tabs were written
-            // before it switched — and a page reloading may not answer at all.
-            // A window whose page is not up yet (no layout, never focused) has nothing to write
-            // either, and would only hold the round to its timeout.
+            // A window whose page is not up has nothing to write and may not answer, so it would only
+            // hold the round to its timeout: one that switched wrote its tabs before it did, and one
+            // still loading has no layout and was never focused.
             FlushGoal::Quit => inner
                 .windows
                 .iter()
@@ -2245,7 +2244,8 @@ mod tests {
         let a = open(&core, "가");
         let path = core.path_of(&a).unwrap();
         core.set_layout(&a, json!({"focusedPane": 0})).unwrap();
-        // A second window of the folder, registered but its page has not come up: no layout, never focused.
+        // A second window of the folder, registered but its page has not come up: no layout,
+        // never focused.
         let loading = core.next_label();
         assert!(core.register_window(&loading, &path, None, None));
         assert!(matches!(
@@ -2255,6 +2255,18 @@ mod tests {
         core.start_quit();
         assert_eq!(saved(&core).open_windows, vec![path.clone()]);
         assert_eq!(layouts(&core, &path), vec![json!({"focusedPane": 0})]);
+    }
+
+    #[test]
+    fn a_focused_window_without_a_layout_joins_the_quit() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        assert_eq!(core.layout_of(&a), None);
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { windows, .. } if windows == vec![a.clone()]
+        ));
     }
 
     #[test]

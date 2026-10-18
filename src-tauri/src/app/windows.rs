@@ -50,12 +50,20 @@ pub enum WindowPlan {
 /// its size, except that an axis which would run past the work area of the monitor `source` is on
 /// steps left or up instead. The caller still fits it onto a monitor (`place`).
 pub fn cascade(source: WindowFrame, monitors: &[MonitorRect]) -> WindowFrame {
-    let work = monitor_at(source, monitors).map(|m| m.work);
-    let step = |at: f64, extent: f64, start: f64, size: f64| match work {
-        Some(_) if at + NEAR_OFFSET + extent > start + size => at - NEAR_OFFSET,
-        _ => at + NEAR_OFFSET,
+    let Some((wx, wy, ww, wh)) = monitor_at(source, monitors).map(|m| m.work) else {
+        return WindowFrame {
+            x: source.x + NEAR_OFFSET,
+            y: source.y + NEAR_OFFSET,
+            ..source
+        };
     };
-    let (wx, wy, ww, wh) = work.unwrap_or_default();
+    let step = |at: f64, extent: f64, start: f64, size: f64| {
+        if at + NEAR_OFFSET + extent > start + size {
+            at - NEAR_OFFSET
+        } else {
+            at + NEAR_OFFSET
+        }
+    };
     WindowFrame {
         x: step(source.x, source.width, wx, ww),
         y: step(source.y, source.height + TITLE_BAR_HEIGHT, wy, wh),
@@ -460,6 +468,20 @@ mod tests {
             stepped(at(2740.0, 300.0, 1100.0, 760.0), &m()),
             Some(at(2716.0, 324.0, 1100.0, 760.0))
         );
+    }
+
+    #[test]
+    fn a_new_window_at_the_bottom_edge_only_steps_up() {
+        assert_eq!(
+            stepped(at(500.0, 800.0, 1100.0, 760.0), &m()),
+            Some(at(524.0, 776.0, 1100.0, 760.0))
+        );
+    }
+
+    #[test]
+    fn a_new_window_on_no_monitor_steps_down_and_right() {
+        let source = at(6000.0, 100.0, 1100.0, 760.0);
+        assert_eq!(cascade(source, &m()), at(6024.0, 124.0, 1100.0, 760.0));
     }
 
     #[test]
