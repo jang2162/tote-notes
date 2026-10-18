@@ -230,6 +230,17 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
 /// it meanwhile — that one comes forward and this one stays — or it cannot be opened, which the
 /// window's status bar says. Returns how the switch left the window.
 fn switch_window(app: &AppHandle, label: &str, to: &Path) -> Exit {
+    let exit = switch_window_inner(app, label, to);
+    // Whichever way it ended: a CLI request that came meanwhile is handled as if it came now.
+    let core = app.state::<AppCore>();
+    core.end_switch(label);
+    for request in core.take_held(label) {
+        super::requests::handle(app, request);
+    }
+    exit
+}
+
+fn switch_window_inner(app: &AppHandle, label: &str, to: &Path) -> Exit {
     let core = app.state::<AppCore>();
     let opened = match core.prepare_switch(label, to) {
         Ok(opened) => opened,

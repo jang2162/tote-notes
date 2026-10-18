@@ -25,6 +25,7 @@ use serde_json::Value;
 use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
 use crate::backup::snapshot::{self, Taken};
 use crate::backup::{retention, BackupDir, SnapshotName};
+use crate::cli::CliRequest;
 use crate::extensions::registry::{self, Registry};
 use crate::extensions::{ExtensionStore, Scan};
 use crate::files::TokenStore;
@@ -164,6 +165,12 @@ struct OpenWindow {
     /// Meanwhile the old page is still up and its timers may still fire; the backend finds a
     /// window's workspace by its label, so what that page writes would land in the new workspace.
     switching: bool,
+    /// Set by `prepare_switch` until `end_switch`: the window writes its tabs for a switch, and
+    /// its `path` is still the workspace it leaves while `reserved` already names it for the
+    /// target. A CLI request for the target would land in the workspace left and be cleared by
+    /// `switch_window`, so it waits in `held`.
+    in_switch: bool,
+    held: Vec<CliRequest>,
 }
 
 impl OpenWindow {
@@ -226,6 +233,8 @@ impl Inner {
                 closing: false,
                 layout,
                 switching: false,
+                in_switch: false,
+                held: Vec::new(),
             },
         );
     }
@@ -608,6 +617,15 @@ impl AppCore {
         Ok(open.workspace.clone())
     }
 
+    /// `InvalidInput` while window `label` switches workspaces (`page_started`); for the commands
+    /// that bind a window to something of its workspace without changing the workspace itself.
+    pub fn ensure_writable(&self, label: &str) -> io::Result<()> {
+        match lock(&self.inner).windows.get(label) {
+            Some(window) => window.check_writable(label),
+            None => Ok(()),
+        }
+    }
+
     /// What window `label` asking to show the workspace at `to` calls for.
     pub fn switch_target(&self, label: &str, to: &Path) -> SwitchTarget {
         let shown = {
@@ -637,11 +655,17 @@ impl AppCore {
                 return Err(SwitchError::Shown(window.clone()));
             }
             inner.reserved.insert(to.to_path_buf(), label.to_string());
+            if let Some(window) = inner.windows.get_mut(label) {
+                window.in_switch = true;
+            }
         }
         Workspace::open(to).map_err(|err| {
             let mut inner = lock(&self.inner);
             if inner.reserved.get(to).is_some_and(|l| l == label) {
                 inner.reserved.remove(to);
+            }
+            if let Some(window) = inner.windows.get_mut(label) {
+                window.in_switch = false;
             }
             SwitchError::Open(err)
         })
@@ -657,15 +681,16 @@ impl AppCore {
     pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
         let (fresh, closed) = {
             let mut inner = lock(&self.inner);
+            // Before the lookup: a window gone must not leave its claim on `to` behind.
+            if inner.reserved.get(to).is_some_and(|l| l == label) {
+                inner.reserved.remove(to);
+            }
             let Some(from) = inner.windows.get(label).map(|w| w.path.clone()) else {
                 return Err(io::Error::new(
                     io::ErrorKind::NotFound,
                     format!("{label} is not open"),
                 ));
             };
-            if inner.reserved.get(to).is_some_and(|l| l == label) {
-                inner.reserved.remove(to);
-            }
             let fresh = !inner.workspaces.contains_key(to);
             if fresh {
                 let saved = read_layouts(to, &self.machine.device_id).unwrap_or_else(|err| {
@@ -1023,11 +1048,51 @@ impl AppCore {
         }
     }
 
+    /// What the window should open now. Nothing while it switches (`in_switch`, `switching`): the
+    /// page asking is the old one, and the reload would lose what it took.
     pub fn take_pending(&self, label: &str) -> Vec<PendingOpen> {
         lock(&self.inner)
             .windows
             .get_mut(label)
+            .filter(|w| !w.in_switch && !w.switching)
             .map(|w| std::mem::take(&mut w.pending))
+            .unwrap_or_default()
+    }
+
+    /// Whether the window is between `prepare_switch` and `end_switch`.
+    pub fn is_switching(&self, label: &str) -> bool {
+        lock(&self.inner)
+            .windows
+            .get(label)
+            .is_some_and(|w| w.in_switch)
+    }
+
+    /// Keeps `request`, meant for window `label`, until its switch ends. `false` when the window
+    /// is not switching (the check and the hold are one step, so the end cannot slip between):
+    /// the caller handles the request itself.
+    pub fn hold_request(&self, label: &str, request: CliRequest) -> bool {
+        match lock(&self.inner).windows.get_mut(label) {
+            Some(window) if window.in_switch => {
+                window.held.push(request);
+                true
+            }
+            _ => false,
+        }
+    }
+
+    /// The switch of window `label` is over, whichever way it ended.
+    pub fn end_switch(&self, label: &str) {
+        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+            window.in_switch = false;
+        }
+    }
+
+    /// The requests `hold_request` kept for the window, in the order they came.
+    pub fn take_held(&self, label: &str) -> Vec<CliRequest> {
+        lock(&self.inner)
+            .windows
+            .get_mut(label)
+            .map(|w| std::mem::take(&mut w.held))
             .unwrap_or_default()
     }
 
@@ -2418,6 +2483,115 @@ mod tests {
         );
         assert_eq!(core.switch_target(&w3, &ga), SwitchTarget::Focus(w2));
         assert_eq!(core.switch_target(&w1, &da), SwitchTarget::Open);
+    }
+
+    fn request_for(name: &str) -> CliRequest {
+        CliRequest {
+            workspace: Some(name.into()),
+            files: vec![PathBuf::from("/tmp/a.md")],
+            import: true,
+            stdin_file: None,
+        }
+    }
+
+    #[test]
+    fn a_request_during_a_switch_waits_for_its_end() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let w2 = closed_workspace(&core, "나", &[]);
+        let opened = core.prepare_switch(&a, &w2).unwrap();
+
+        // `handle` finds the switching window as the label of the target (`reserve` names it).
+        assert!(core.is_switching(&a));
+        assert!(core.hold_request(&a, request_for("나")));
+        assert_eq!(core.take_held(&a), vec![request_for("나")]);
+        assert!(core.hold_request(&a, request_for("나")));
+        core.switch_window(&a, &w2, opened).unwrap();
+        core.end_switch(&a);
+
+        // Handled again, the window shows the target: nothing holds it, and it lands there.
+        assert!(!core.is_switching(&a));
+        let held = core.take_held(&a);
+        assert_eq!(held, vec![request_for("나")]);
+        assert!(!core.hold_request(&a, held[0].clone()));
+        assert_eq!(core.path_of(&a), Some(w2));
+        core.push_pending(&a, PendingOpen::Memo { id: "m".into() });
+        core.page_started(&a);
+        assert_eq!(
+            core.take_pending(&a),
+            vec![PendingOpen::Memo { id: "m".into() }]
+        );
+    }
+
+    #[test]
+    fn a_request_held_by_a_failed_switch_is_told() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let ga = core.path_of(&a).unwrap();
+        let gone = closed_workspace(&core, "나", &[]);
+        fs::remove_dir_all(&gone).unwrap();
+        // Held while `Workspace::open` runs, which then fails.
+        let opening = core.prepare_switch(&a, &gone);
+        assert!(matches!(opening, Err(SwitchError::Open(_))));
+
+        // The failure is the end of the switch: the same rule as for any window handles what came.
+        assert!(!core.is_switching(&a));
+        assert!(!core.hold_request(&a, request_for("나")));
+        assert_eq!(core.path_of(&a), Some(ga));
+        // The claim on the target is gone too, so `show` opens it or says it cannot.
+        assert!(core.reserve(&gone).is_ok());
+    }
+
+    #[test]
+    fn pending_opens_wait_while_the_window_switches() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        let opened = core.prepare_switch(&a, &na).unwrap();
+        let memo = PendingOpen::Memo { id: "m".into() };
+        core.push_pending(&a, memo.clone());
+        assert!(core.take_pending(&a).is_empty());
+
+        // After the core switch, until the new page asks for its workspace.
+        core.switch_window(&a, &na, opened).unwrap();
+        core.end_switch(&a);
+        core.push_pending(&a, memo.clone());
+        assert!(core.take_pending(&a).is_empty());
+        core.page_started(&a);
+        assert_eq!(core.take_pending(&a), vec![memo]);
+    }
+
+    #[test]
+    fn a_switch_to_a_window_gone_frees_its_reservation() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        let opened = core.prepare_switch(&a, &na).unwrap();
+        core.closed(&a);
+
+        let err = core.switch_window(&a, &na, opened).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::NotFound);
+        assert!(core.reserve(&na).is_ok());
+    }
+
+    #[test]
+    fn watching_and_tokens_are_refused_while_switching() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        assert!(core.ensure_writable(&a).is_ok());
+        switch(&core, &a, &na);
+
+        // `watch_external` and `issue_file_token` ask this before they bind the old page.
+        let err = core.ensure_writable(&a).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::InvalidInput);
+        core.page_started(&a);
+        assert!(core.ensure_writable(&a).is_ok());
     }
 
     #[test]

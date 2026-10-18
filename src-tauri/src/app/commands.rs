@@ -502,6 +502,7 @@ pub async fn watch_external(
     window: WebviewWindow,
     path: String,
 ) -> CmdResult<()> {
+    core.ensure_writable(window.label())?;
     core.watch_external(window.label(), &absolute_path(&path)?)?;
     Ok(())
 }
@@ -780,6 +781,7 @@ pub fn issue_file_token(
     source: FileSource,
     owner: String,
 ) -> CmdResult<String> {
+    core.ensure_writable(window.label())?;
     let path = source_path(&core, &window, &source)?;
     Ok(files::token_url(&core.files.issue(
         window.label(),
