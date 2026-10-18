@@ -214,6 +214,95 @@ test("a switch that cannot open its target after writing gives the panes back", 
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
 });
 
+test("a late answer after the round ended gives the panes back", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  // The native side settled the round at its timeout and the window stays: the answer finds no
+  // round, and no 「stay」 comes after it.
+  await page.evaluate(() => {
+    const { app, backend } = window.__tote;
+    const flushDone = backend.flushDone.bind(backend);
+    backend.flushDone = (id, blocked) => {
+      Object.assign(window, { emptyAtAnswer: app.leaving });
+      return flushDone(id, blocked);
+    };
+    backend.staleFlush = true;
+    backend.requestFlush(77, "switch");
+  });
+  await expect
+    .poll(() =>
+      page.evaluate(() => (window as unknown as { emptyAtAnswer?: boolean }).emptyAtAnswer),
+    )
+    .toBe(true);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText(" 셋");
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
+});
+
+test("a cancelled switch gives focus back to the search box", async ({ page }) => {
+  await quietErrors(page, "no space left on device");
+  // Every write fails: the round answers with 저장 실패, and the fake takes 「취소」.
+  await open(page, { failWrites: 1000 });
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  await page.keyboard.insertText(" 셋");
+  await menu(page, "search-workspace");
+  const search = page.locator(".search-input");
+  await expect(search).toBeFocused();
+  await railItem(page, "개인").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.blocked)))
+    .toEqual(["저장하지 못한 메모 1개"]);
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  await expect(search).toBeFocused();
+  expect(
+    await page.evaluate(() => document.activeElement?.classList.contains("search-input")),
+  ).toBe(true);
+});
+
+test("a rail click while the window leaves does nothing", async ({ page }) => {
+  await open(page);
+  await page.evaluate(() => {
+    const { backend } = window.__tote;
+    const switches: string[] = [];
+    const switchWorkspace = backend.switchWorkspace.bind(backend);
+    backend.switchWorkspace = (path) => {
+      switches.push(path);
+      return switchWorkspace(path);
+    };
+    Object.assign(window, { switches });
+  });
+  const release = await hold(page, "switchGate");
+  await railItem(page, "개인").click();
+  await answered(page);
+  // The click is handled as it is dispatched: a switch would have reached the backend by now.
+  await railItem(page, "가계부").click();
+  expect(await page.evaluate(() => (window as unknown as { switches: string[] }).switches)).toEqual(
+    ["/fake/개인"],
+  );
+  // `+` would ask for a name in a dialog shown as it is clicked.
+  await page.locator(".rail-add").click();
+  expect(await page.evaluate(() => document.querySelectorAll(".modal").length)).toBe(0);
+  await release();
+  await switchedTo(page, "개인");
+});
+
+test("a rail switch titles a memo from its first line", async ({ page }) => {
+  await open(page, { memos: { m: fakeMemo("회의.md", "안건", { autoTitle: true }) } });
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
+  await page.keyboard.insertText(" 정리");
+  // The cursor never leaves the title line and the rail click keeps the editor focused: only the
+  // switch's writing of the tabs names the memo.
+  await railItem(page, "개인").click();
+  await switchedTo(page, "개인");
+  expect(
+    await page.evaluate(() => window.__tote.backend.data.otherWorkspaces?.["/fake/업무"]?.memos.m),
+  ).toMatchObject({ file: "안건 정리.md" });
+});
+
 test("⌃2 does nothing while a dialog is open", async ({ page }) => {
   await open(page);
   await expect(page.locator(".cm-content")).toHaveText("안건");

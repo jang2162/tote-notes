@@ -367,6 +367,9 @@ export class FakeBackend implements Backend {
   switchGate: Promise<void> | null = null;
   /** Set by a test to hold the next `tearOffTab` until it resolves the promise. */
   tearOffGate: Promise<void> | null = null;
+  /** Set by a test to answer `flushDone` as the native side does for a round its timeout already
+   * settled while the window stays: the page takes its panes back. */
+  staleFlush = false;
 
   constructor(
     private readonly storage: FakeStorage = memoryStorage(),
@@ -918,6 +921,7 @@ export class FakeBackend implements Backend {
     this.commit();
     this.flushWaiters.get(id)?.(blocked);
     this.flushWaiters.delete(id);
+    return !this.staleFlush;
   }
 
   async closeWindow() {

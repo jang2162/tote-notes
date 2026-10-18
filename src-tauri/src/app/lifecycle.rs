@@ -35,7 +35,7 @@ pub enum Step {
 
 pub fn steps_for_ack(ack: Ack) -> Vec<Step> {
     match ack {
-        Ack::Pending => vec![],
+        Ack::Pending | Ack::Stale => vec![],
         Ack::Done(goal) => vec![Step::Finish(goal)],
         Ack::DoneThenQuit(goal) => vec![Step::Finish(goal), Step::BeginQuit],
         Ack::Blocked { goal, reasons } => vec![Step::Ask { goal, reasons }],
@@ -94,10 +94,24 @@ fn run(app: &AppHandle, round: Begin, kind: &'static str) {
 }
 
 /// A window's frontend answered round `id` (`flush_done`), with why it is `blocked` if it could
-/// not write everything.
-pub fn ack(app: &AppHandle, id: u64, label: &str, blocked: Option<String>) {
-    let ack = app.state::<AppCore>().ack_flush(id, label, blocked);
+/// not write everything. Returns whether the page keeps its panes empty (`keeps_leaving`).
+pub fn ack(app: &AppHandle, id: u64, label: &str, blocked: Option<String>) -> bool {
+    let core = app.state::<AppCore>();
+    let ack = core.ack_flush(id, label, blocked);
+    let leaving = keeps_leaving(&ack, core.window_is_leaving(label));
     settle(app, id, ack);
+    leaving
+}
+
+/// Whether a page that answered with `ack` keeps its panes empty. An answer to a round that is
+/// over came after the round was settled without it — the timeout ran out first — so a
+/// `tote://stay` for it either never comes or came before the page let go of its panes: the page
+/// takes them back unless its window is going.
+fn keeps_leaving(ack: &Ack, window_is_leaving: bool) -> bool {
+    match ack {
+        Ack::Stale => window_is_leaving,
+        _ => true,
+    }
 }
 
 /// Carries out what the end of round `id` calls for.
@@ -867,6 +881,14 @@ mod tests {
                 "{goal:?}, anyway {anyway}, quit waiting {quit_waiting}"
             );
         }
+    }
+
+    #[test]
+    fn a_late_answer_keeps_a_switching_window_empty() {
+        // The round ended without this answer: the page stays empty only while its window goes.
+        assert!(keeps_leaving(&Ack::Stale, true));
+        assert!(!keeps_leaving(&Ack::Stale, false));
+        assert!(keeps_leaving(&Ack::Done(switch()), false));
     }
 
     #[test]

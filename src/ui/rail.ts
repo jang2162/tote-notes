@@ -51,7 +51,10 @@ export function railShortcut(
 export class WorkspaceRail {
   readonly el = h("nav", { class: "rail" });
 
-  constructor(private readonly actions: { pick: (item: RailItem) => void; add: () => void }) {}
+  constructor(private readonly actions: { pick: (item: RailItem) => void; add: () => void }) {
+    // The keys stay where they were: a switch that is called off gives them back there.
+    this.el.addEventListener("mousedown", (event) => event.preventDefault());
+  }
 
   render(items: RailItem[]): void {
     const buttons = items.map((item) => {

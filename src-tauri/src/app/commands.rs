@@ -650,9 +650,8 @@ pub async fn flush_done(
     window: WebviewWindow,
     id: u64,
     blocked: Option<String>,
-) -> CmdResult<()> {
-    lifecycle::ack(&app, id, window.label(), blocked);
-    Ok(())
+) -> CmdResult<bool> {
+    Ok(lifecycle::ack(&app, id, window.label(), blocked))
 }
 
 #[tauri::command]

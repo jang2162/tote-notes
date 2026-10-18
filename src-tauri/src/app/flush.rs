@@ -61,8 +61,11 @@ pub enum Begin {
 /// What an answer, a timeout or a closed window leaves to do.
 #[derive(Debug, PartialEq, Eq)]
 pub enum Ack {
-    /// Nothing yet: windows are still to answer, or the round is no longer running.
+    /// Nothing yet: windows are still to answer, the round asks, or it is no longer running.
     Pending,
+    /// An answer to a round that is over: it timed out, or its question was answered. The page
+    /// that answered emptied its panes for nothing if its window is not going after all.
+    Stale,
     /// Every window wrote what it had: carry the goal out.
     Done(FlushGoal),
     /// The window round a quit joined wrote everything: carry it out, then start the quit.
@@ -141,9 +144,12 @@ impl FlushCoordinator {
 
     /// `window` answered round `id`, with why it is `blocked` if it could not write everything.
     pub fn ack(&mut self, id: u64, window: &str, blocked: Option<String>) -> Ack {
-        let Some(round) = self.rounds.get_mut(&id).filter(|round| !round.asking) else {
-            return Ack::Pending;
+        let Some(round) = self.rounds.get_mut(&id) else {
+            return Ack::Stale;
         };
+        if round.asking {
+            return Ack::Pending;
+        }
         // A second answer from the same window adds nothing.
         if round.waiting.remove(window) {
             round.reasons.extend(blocked);
@@ -243,7 +249,7 @@ mod tests {
             f.ack(id, "a", None),
             Ack::Done(FlushGoal::CloseWindow("a".into()))
         );
-        assert_eq!(f.ack(id, "a", None), Ack::Pending);
+        assert_eq!(f.ack(id, "a", None), Ack::Stale);
     }
 
     #[test]
@@ -290,7 +296,20 @@ mod tests {
         };
         assert_eq!(f.expire(id), Ack::Done(FlushGoal::Quit));
         assert_eq!(f.expire(id), Ack::Pending);
-        assert_eq!(f.ack(id, "hung", None), Ack::Pending);
+        assert_eq!(f.ack(id, "hung", None), Ack::Stale);
+    }
+
+    #[test]
+    fn an_answer_for_an_ended_round_is_stale() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(switch("a"), labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        assert_eq!(f.expire(id), Ack::Done(switch("a")));
+        assert_eq!(f.ack(id, "a", None), Ack::Stale);
+        // A round still asking is not over: its question gives the window back or carries it out.
+        let id = asking_close(&mut f);
+        assert_eq!(f.ack(id, "a", None), Ack::Pending);
     }
 
     #[test]
@@ -374,8 +393,8 @@ mod tests {
             Begin::AlreadyRunning
         );
         f.cancel(id);
-        // A late answer to the dropped round is ignored, and a new quit starts afresh.
-        assert_eq!(f.ack(id, "a", None), Ack::Pending);
+        // A late answer to the dropped round is stale, and a new quit starts afresh.
+        assert_eq!(f.ack(id, "a", None), Ack::Stale);
         assert_eq!(f.expire(id), Ack::Pending);
         assert!(matches!(
             f.begin(FlushGoal::Quit, labels(&["a"])),

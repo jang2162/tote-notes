@@ -179,7 +179,7 @@ export class TauriBackend implements Backend {
   }
 
   flushDone(id: number, blocked?: string) {
-    return call<void>("flush_done", { id, blocked });
+    return call<boolean>("flush_done", { id, blocked });
   }
   closeWindow() {
     return call<void>("close_window");

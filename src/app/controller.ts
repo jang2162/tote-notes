@@ -105,6 +105,9 @@ export class AppController implements DocHost, PaneHost {
   focused: Pane;
   /** The window wrote its tabs to close or to switch its workspace (`leave`). */
   leaving = false;
+  /** What had the keys outside the panes as the window left — the search box, the memo list's
+   * filter — for `stay` to give them back to. */
+  private keysBeforeLeaving: HTMLElement | null = null;
   /** The panes' shares of the editing area's width (`layout.ts`), one per pane. */
   private widths = [1];
   private readonly panesEl = h("div", { class: "panes" });
@@ -943,7 +946,13 @@ export class AppController implements DocHost, PaneHost {
       if (this.docs.some((doc) => doc.unwritten)) await this.flushAll(true);
     } finally {
       const failed = this.docs.filter((doc) => doc.saveFailed).length;
-      await this.backend.flushDone(id, failed ? `저장하지 못한 메모 ${failed}개` : undefined);
+      const leaving = await this.backend.flushDone(
+        id,
+        failed ? `저장하지 못한 메모 ${failed}개` : undefined,
+      );
+      // The round was settled at its timeout, before this answer, and the window stays: no
+      // `tote://stay` comes after it.
+      if (!leaving && goal !== "quit") this.stay();
     }
   }
 
@@ -952,6 +961,11 @@ export class AppController implements DocHost, PaneHost {
    * either (`Pane.show`). */
   leave(): void {
     this.leaving = true;
+    const active = document.activeElement;
+    this.keysBeforeLeaving =
+      active instanceof HTMLElement && active !== document.body && !this.panesEl.contains(active)
+        ? active
+        : null;
     for (const pane of this.panes) {
       const active = pane.tabs.active;
       if (active) pane.capture(active);
@@ -959,8 +973,9 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
-  /** The close or switch is off (`tote://stay`): each pane shows its tab again, and the focused
-   * pane takes the keys. */
+  /** The close or switch is off (`tote://stay`): each pane shows its tab again, and the keys go
+   * back where they were before the window left — the focused pane, unless they were outside the
+   * panes. */
   stay(): void {
     if (!this.leaving) return;
     this.leaving = false;
@@ -969,7 +984,10 @@ export class AppController implements DocHost, PaneHost {
       if (active) pane.show(active);
       else pane.showEmptyText();
     }
-    this.focused.takeKeys();
+    const before = this.keysBeforeLeaving;
+    this.keysBeforeLeaving = null;
+    if (before?.isConnected) before.focus({ preventScroll: true });
+    else this.focused.takeKeys();
   }
 
   private onUpdate(doc: Doc, update: ViewUpdate): void {
@@ -1196,6 +1214,8 @@ export class AppController implements DocHost, PaneHost {
    * write its tabs (`onFlush`), then reloads it; a workspace another window shows comes forward
    * instead. */
   private async switchTo(path: string): Promise<void> {
+    // The window answered a close or a switch: it has no tabs left to write.
+    if (this.leaving) return;
     this.mark("switch-click");
     try {
       await this.backend.switchWorkspace(path);
@@ -1209,6 +1229,7 @@ export class AppController implements DocHost, PaneHost {
   /** The rail's `+` and 「새 워크스페이스…」: a workspace made wherever it is asked for opens in
    * this window. */
   private async newWorkspace(): Promise<void> {
+    if (this.leaving) return;
     const name = (await promptText(NEW_WORKSPACE_NAME, ""))?.trim();
     if (!name) {
       if (this.focused.tabs.active) this.focused.view.focus();

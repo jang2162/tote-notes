@@ -352,8 +352,10 @@ export interface Backend {
   windowFrame(): Promise<WindowFrame | null>;
   /** The 「파일 열기」 dialog; empty when cancelled. */
   pickFiles(): Promise<string[]>;
-  /** Answers flush round `id`; `blocked` says what could not be written (the quit asks first). */
-  flushDone(id: number, blocked?: string): Promise<void>;
+  /** Answers flush round `id`; `blocked` says what could not be written (the quit asks first).
+   * `false` when the round was settled without this answer — its timeout ran out — and the window
+   * is not going: a page that let go of its panes for it takes them back. */
+  flushDone(id: number, blocked?: string): Promise<boolean>;
   closeWindow(): Promise<void>;
   extensionRegistry(): Promise<ExtensionRegistry>;
   /** A file inside an installed extension, by the path its manifest uses. */

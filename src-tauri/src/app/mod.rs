@@ -1079,6 +1079,16 @@ impl AppCore {
             .unwrap_or_default()
     }
 
+    /// Whether window `label` is going: it switches workspaces (`in_switch`, then `switching`
+    /// until its new page is up) or is being closed. A page that answered a round too late keeps
+    /// its panes empty then (`lifecycle::ack`).
+    pub fn window_is_leaving(&self, label: &str) -> bool {
+        lock(&self.inner)
+            .windows
+            .get(label)
+            .is_some_and(|w| w.in_switch || w.switching || w.closing)
+    }
+
     /// Whether the window is between `prepare_switch` and `finish_switch`. Not the page-side
     /// `switching` (`page_started`), which outlasts it.
     #[cfg(test)]
@@ -2031,7 +2041,7 @@ mod tests {
         };
         assert_eq!(windows, vec![a.clone()]);
         assert_eq!(core.closed(&a), vec![(id, Ack::Done(FlushGoal::Quit))]);
-        assert_eq!(core.ack_flush(id, &a, None), Ack::Pending);
+        assert_eq!(core.ack_flush(id, &a, None), Ack::Stale);
         // A window that is not registered has nothing to write: closing it needs no round.
         assert_eq!(
             core.begin_flush(FlushGoal::CloseWindow("gone".into())),
@@ -2653,6 +2663,29 @@ mod tests {
         );
         assert_eq!(core.path_of(&a), Some(ga));
         assert!(core.reserve(&gone).is_ok());
+    }
+
+    #[test]
+    fn a_window_is_leaving_while_it_switches_or_closes() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        assert!(!core.window_is_leaving(&a));
+
+        let opened = core.prepare_switch(&a, &na).unwrap();
+        assert!(core.window_is_leaving(&a));
+        core.switch_window(&a, &na, opened).unwrap();
+        // The old page is still up until the new one asks for its workspace.
+        core.finish_switch(&a);
+        assert!(core.window_is_leaving(&a));
+        core.page_started(&a);
+        assert!(!core.window_is_leaving(&a));
+
+        core.closing(&a);
+        assert!(core.window_is_leaving(&a));
+        core.close_failed(&a);
+        assert!(!core.window_is_leaving(&a));
     }
 
     #[test]
