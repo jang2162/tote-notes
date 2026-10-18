@@ -17,6 +17,17 @@
 - 생겼으면 안을 확인해 사람에게 알리고, 동의를 받아 지운다.
 - `TOTE_BACKGROUND=1` 로 띄운 창은 포커스만 안 가져가는 것이 아니라 **화면에 올라오지 않는다.** 접근성 트리·computer-use·스크린샷으로 보는 확인에는 쓸 수 없으니, 그런 확인은 사람에게 알린 뒤 이 변수 없이 띄운다.
 - 번들 안의 `tote` CLI(`TOTE_CLI=1`)는 `open -n` 으로 요청을 넘겨서, 셸의 환경 변수가 새 프로세스에 **가지 않는다.** 실행 중인 디버그 앱에 요청을 보내려면 CLI 대신 번들 실행 파일에 같은 `TOTE_DATA_DIR` 을 주고 `--tote-request=<json>` 을 직접 넘긴다(`stdinFile` 은 `$TOTE_DATA_DIR/inbox/` 안의 파일이어야 한다).
+- `orca computer` 의 `--restore-window` 는 앱이 끝나 있으면 LaunchServices 로 다시 띄워 이 변수가 빠진다. 앱을 끝낼 수 있는 동작(「그래도 닫기」·「그래도 바꾸기」·종료 질문의 버튼)에는 `--restore-window` 를 주지 않는다.
+- 종료 질문 `저장하지 못한 메모가 있습니다`(Dock·⌘Q·AppleScript 종료)는 tote 가 아니라 `UserNotificationCenter` 프로세스의 창이다. 접근성 트리·`orca computer` 창 목록에 없으니 `tell application "System Events" to tell process "UserNotificationCenter" to click button "취소" of window 1` 로 누른다.
+- CLI 로 파일을 메모로 가져오는 옵션은 `--import` 다(`-i` 는 없다).
+- 화면 확인 중 대화상자가 아무도 누르지 않았는데 답해지면 먼저 사람·다른 도구의 클릭을 의심한다. NSAlert 시트 버튼은 tote 가 맨 앞이 아니어도 첫 클릭에 눌린다. 누가 눌렀는지는 `DYLD_INSERT_LIBRARIES` 로 `-[NSApplication sendEvent:]` 를 감싸 이벤트의 `kCGEventSourceUnixProcessID` 를 보면 갈린다(0 이면 실제 HID 입력, 합성 이벤트는 보낸 프로세스 pid). 이때 번들 실행 파일을 `nohup` 으로 띄우지 않는다 — SIP 보호 바이너리를 거치면 `DYLD_*` 가 지워진다.
+
+## zsh 에서 파일 목록은 배열로 넘긴다
+
+`oxfmt`·`oxlint` 에 파일 여러 개를 넘길 때는 `FILES=(a b c)` 로 담아 `"${FILES[@]}"` 로 넘긴다.
+
+- **Why:** zsh 는 따옴표 없는 `$VAR` 를 공백으로 쪼개지 않는다. 문자열 하나로 담으면 엉뚱한 경로 하나가 넘어가고, oxfmt 는 「1 files」, oxlint 는 「No files found」 라고 하면서 둘 다 exit 0 으로 끝난다. 실패가 없어서 포맷·린트가 돈 것으로 읽힌다.
+- **How to apply:** 출력의 파일 개수가 넘긴 개수와 같은지 본다.
 
 ## NFD 를 뜻하는 한글 리터럴은 `.normalize("NFD")` 로 쓴다
 
