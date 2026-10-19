@@ -103,6 +103,11 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     if (!(event.target instanceof Node && keysOf(recording)?.contains(event.target))) stop();
   };
   const onLeave = () => stop();
+  // A dialog opened from the menu while recording puts the focus in its own input.
+  const onFocus = (event: FocusEvent) => {
+    if (recording === null) return;
+    if (!(event.target instanceof Node && keysOf(recording)?.contains(event.target))) stop();
+  };
 
   const start = (id: string) => {
     if (!table || recording === id) return;
@@ -116,6 +121,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     window.addEventListener("blur", onLeave);
     window.addEventListener("pagehide", onLeave);
     document.addEventListener("pointerdown", onOutside, true);
+    document.addEventListener("focusin", onFocus, true);
     void backend.suspendShortcuts(true).catch(fail);
   };
   /** Ends a recording, every way one ends, with the menu's shortcuts given back once. Only the row's
@@ -129,6 +135,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     window.removeEventListener("blur", onLeave);
     window.removeEventListener("pagehide", onLeave);
     document.removeEventListener("pointerdown", onOutside, true);
+    document.removeEventListener("focusin", onFocus, true);
     void backend.suspendShortcuts(false).catch(fail);
     const keys = keysOf(id);
     const command = commandOf(id);
@@ -217,10 +224,8 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     let reset: HTMLButtonElement | null = null;
     if (changed) {
       reset = h("button", { class: "shortcut-reset", textContent: "되돌리기" });
-      reset.addEventListener(
-        "click",
-        () => void commit(command.id, { [command.id]: command.default }),
-      );
+      // The default may be another command's by now: it goes the way a recorded key does.
+      reset.addEventListener("click", () => take(command.id, command.default));
     }
     return h(
       "div",

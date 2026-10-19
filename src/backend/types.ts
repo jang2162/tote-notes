@@ -207,7 +207,7 @@ export interface EditorSettings {
   fontFamily: string;
 }
 
-/** The smallest and largest editor font size (`FONT_SIZE_RANGE` in src-tauri/src/appdata.rs). */
+/** The smallest and largest editor font size (`FONT_SIZES` in src-tauri/src/appdata.rs). */
 export const EDITOR_FONT_SIZE_MIN = 11;
 export const EDITOR_FONT_SIZE_MAX = 24;
 

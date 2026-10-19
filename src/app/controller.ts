@@ -512,8 +512,9 @@ export class AppController implements DocHost, PaneHost {
     const { fontSize, fontFamily } = this.settings.editor;
     const style = document.documentElement.style;
     style.setProperty("--editor-size", `${fontSize}px`);
+    // A value CSS cannot read is dropped by setProperty, so the last one is removed first.
+    style.removeProperty("--editor-font");
     if (fontFamily) style.setProperty("--editor-font", fontFamily);
-    else style.removeProperty("--editor-font");
   }
 
   /** Settings or extensions changed (this window's settings screen or another's). */

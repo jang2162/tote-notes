@@ -433,6 +433,14 @@ test("the editor font size follows the setting but the large text viewer stays a
       page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
     )
     .toBe("");
+  // A value CSS cannot read falls back to the default font instead of keeping the last one.
+  await patch(page, { editorFontFamily: '"Fira' });
+  await patch(page, { editorFontFamily: "Fira Code; color: red" });
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
+    )
+    .toBe("");
 });
 
 test("settings open on 일반 and remember the last section in the window", async ({ page }) => {

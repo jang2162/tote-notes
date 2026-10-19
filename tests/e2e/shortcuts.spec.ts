@@ -111,6 +111,26 @@ test("a key another command uses offers 바꾸기 and swaps them in one save", a
   await expect(row(panel, "rename").locator(".shortcut-note")).toHaveCount(0);
 });
 
+test("resetting a key another command took on the way offers 바꾸기 like recording does", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page, {
+    settings: {
+      ...defaultFakeData().settings,
+      shortcuts: { "new-memo": null, rename: "CmdOrCtrl+N" },
+    },
+  });
+  await row(panel, "new-memo").getByRole("button", { name: "되돌리기", exact: true }).click();
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
+    /이름 바꾸기… 에 이미 쓰고 있습니다/,
+  );
+  expect(await patches(page)).toEqual([]);
+  await row(panel, "new-memo").getByRole("button", { name: "바꾸기", exact: true }).click();
+  await expect.poll(() => savedMap(page)).toEqual({});
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  await expect(keys(panel, "rename")).toHaveText("없음");
+});
+
 test("swapping back a default leaves it out of the map", async ({ page }) => {
   const panel = await startShortcuts(page, {
     settings: {
@@ -279,6 +299,24 @@ test("recording ends when the page goes away", async ({ page }) => {
   await record(panel, "new-memo");
   await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await suspendCalls(page)).toEqual([true, false]);
+});
+
+test("recording ends when the focus goes to an input outside the row, which then gets the keys", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "new-memo");
+  await page.evaluate(() => {
+    const input = document.createElement("input");
+    input.id = "elsewhere";
+    document.body.append(input);
+    input.focus();
+  });
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await suspendCalls(page)).toEqual([true, false]);
+  await page.keyboard.type("abc");
+  await expect(page.locator("#elsewhere")).toHaveValue("abc");
   expect(await suspendCalls(page)).toEqual([true, false]);
 });
 
