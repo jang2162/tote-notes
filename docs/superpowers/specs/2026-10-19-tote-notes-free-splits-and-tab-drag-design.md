@@ -1,6 +1,6 @@
 # tote-notes 자유 분할·탭 끌어 떼어 내기·워크스페이스 고르개 설계
 
-칸·창 설계(`docs/superpowers/specs/2026-10-16-tote-notes-panes-and-windows-design.md`)를 이어 고친다. 이 문서가 정한 규칙은 그 문서의 「하지 않는 것」 중 **위아래 분할·다른 창으로 옮기기·끌어서 떼어 내기**를 뒤집고, 「칸 분할」·「워크스페이스 띠」 절과 코어 스펙(`docs/superpowers/specs/2026-10-07-tote-note-core-design.md`)의 「창 배치」·「워크스페이스 띠」·「세션」 절을 바꾼다. 구현 계획은 마지막 태스크에서 두 문서의 그 절들을 이 문서대로 고친다.
+칸·창 설계(`docs/superpowers/specs/2026-10-16-tote-notes-panes-and-windows-design.md`)를 이어 고친다. 이 문서가 정한 규칙은 그 문서의 「하지 않는 것」 중 **위아래 분할·다른 창으로 옮기기·끌어서 떼어 내기**를 뒤집고, 「칸 분할」·「워크스페이스 띠」 절과 코어 스펙(`docs/superpowers/specs/2026-10-07-tote-note-core-design.md`)의 「창 배치」·「워크스페이스 띠」·「세션」 절을 바꾼다. 두 문서의 그 절들은 이 문서대로 고쳐져 있다.
 
 ## 왜
 
@@ -109,8 +109,8 @@
 
 `WindowSession` 은 칸 배열과 너비 대신 나눔 나무를 저장한다.
 
-- **세션 파일 버전을 3으로 올린다.** 칸은 잎에 지금의 `PaneSession`(탭·활성 탭)을 두고, 가지는 `{ axis: "row" | "column", children, shares }` 로 둔다. 포커스된 칸은 잎의 순서(깊이 우선) 번호로 적는다.
-- **버전 2(좌우 칸 배열)는 읽어서 `row` 가지 하나로 바꾼다.** 버전 1 을 읽던 길도 그대로 둔다.
+- **세션 파일 봉투 `{ version: 2, windows }` 는 그대로다.** Rust 가 봉투를 쓰고 창 레이아웃은 Rust 에게 불투명하므로, 창 레이아웃만 `{ frame?, layout, focusedPane }` 으로 바꾼다. `layout` 의 잎은 지금의 `PaneSession`(탭·활성 탭)이고, 가지는 `{ axis: "row" | "column", children, shares }` 다. 포커스된 칸은 잎의 순서(깊이 우선) 번호로 적는다.
+- **옛 모양 `{ panes, focusedPane }`(좌우 칸 배열)도 읽어 `row` 가지 하나로 바꾼다.** Rust `adopt_tab` 이 쓰는 한 칸 모양도 읽는다. 창 하나·탭 목록 하나를 읽던 길도 그대로 둔다.
 - 몫이 깨진 파일(합이 1이 아님, 음수, 칸 0개)은 지금의 `normalizeWidths` 처럼 바로잡는다. 읽을 수 없는 가지는 그 안의 탭을 한 칸에 모은다. 탭을 버리지 않는다.
 
 ## 지켜야 할 제약

@@ -6,10 +6,11 @@
 
 - **Why:** 설치가 없으면 브라우저를 찾지 못해 테스트가 시작도 못 한다. 캐시는 사용자 단위라 워크트리마다 다시 받지 않는다.
 - E2E 의 Vite 서버 포트는 `TOTE_E2E_PORT` 다(기본 1430, `strictPort`). 포트가 잡혀 있으면 다른 서버에 붙지 않고 실패한다. 워크트리를 여럿 동시에 돌리면 워크트리마다 다른 값을 준다.
+- 전체 `pnpm test:e2e` 를 여러 worker 로 돌리면 `[WebServer] … [Unhandled error] Error: Script error.` 줄이 섞일 수 있다. base 에서도 나오는, 시험 결과와 무관한 알려진 잡음이다(단독 파일 실행에서는 나오지 않는다). 시험이 통과했는데 이 줄만 있으면 실패로 보지 않는다. `Cross-origin script load denied …` 줄은 base 에서 재현되지 않았다. 이 줄이 새로 보이면 변경을 의심한다.
 
 ## 디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다
 
-에이전트든 사람이든 디버그 번들(`tote-dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> <번들 경로>` 로 연다. 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/Tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다.
+에이전트든 사람이든 디버그 번들(`tote-dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> <번들 경로>` 로 연다. 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/Tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다. 띄우기 전에 두 폴더가 이미 있으면(사람이 `pnpm app:dev` 로 띄운 개발 앱의 것일 수 있다) 지우지 말고, 띄우기 직전에 기준 파일(`touch "$S/start-marker"`)을 만들어 끝난 뒤 `find ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
 
 디버그 번들은 `pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json` 으로 만든다. 결과는 `src-tauri/target/debug/bundle/macos/tote-dev.app` 이고 번들 안 실행 파일은 `Contents/MacOS/tote` 다. `--config` 를 빼면 배포 앱과 identifier 가 같은 `tote.app` 이 나와 `tell application "tote-dev"` 같은 절차가 맞지 않는다.
 
@@ -60,6 +61,8 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - e2e 가 실패하면 다시 돌리기 전에 그 실행의 `test-results/` 를 다른 이름으로 옮기거나, 다시 돌릴 때 `--output <다른 폴더>` 를 준다. 다음 실행이 `test-results/` 를 지우고 새로 쓰므로 처음 실패한 메시지와 trace 가 남지 않는다. 보고에는 실패 메시지 첫 줄을 함께 적는다.
   - 원인을 찾을 때는 바뀌는 상태에 계측을 건다. 메모 목록이면 `window.__tote.app.memoList` 의 `upsert`·`setMemos`·`remove` 를 감싸 시각과 스택을 남기면 누가 늦게 무엇을 넣는지 보인다. 이 계측은 그 창의 메모 목록 하나만 본다. 다른 창이나 다른 상태(탭·배너)가 늦게 바뀌는 것은 그 객체를 따로 감싸야 보인다.
   - 가짜 백엔드의 「불러오는 중」 은 타이머(`setTimeout`) 대신 테스트가 풀어 줄 때까지 붙잡아 만든다(`tests/e2e/memo.spec.ts` 의 `holdReads`). 타이머는 혼자 끝나서, 느린 실행에서는 그 상태가 이미 지나간 뒤에 키가 들어간다. `holdReads` 는 `readMemo`·`openExternal` 만 붙잡는다. 다른 읽기로 불러오는 중을 만들려면 그 호출을 더한다.
+  - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
+  - 목록·메뉴처럼 포커스를 가져가는 오버레이가 있는 화면에서는 포커스 이동의 부수 효과(조합 확정 등)가 구분력 시험을 조용히 약하게 만들 수 있다. 시험이 정말 보호 대상 코드 때문에 통과하는지 그 코드를 지워 실패하는지 본다.
   - 개발 서버에서 받는 것(`readExtensionFile` 이 받는 언어 설정 등)은 부하에서 늦게 도착한다. 늦은 응답의 효과를 시험하려면 `page.route` 로 그 요청을 붙잡았다가 풀어 준다. 실제 앱에서는 같은 데이터가 IPC 로 와서 이 방법이 닿지 않는다.
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
