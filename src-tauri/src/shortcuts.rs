@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 
-use muda::accelerator::Accelerator;
+use muda::accelerator::{Accelerator, Code, Modifiers};
 
 /// An app command: a menu bar item with an id, other than 설정….
 #[derive(Debug, PartialEq, Eq)]
@@ -164,6 +164,30 @@ pub fn same(a: &str, b: &str) -> bool {
     matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
+/// Whether the settings screen could have recorded it (spec 「화면」): ⌘, ⌃ or ⌥ with a key, or
+/// F1–F12 with no modifier at all. A letter alone, or with only ⇧, would be taken from typing.
+fn recordable(accelerator: &Accelerator) -> bool {
+    let mods = accelerator.modifiers();
+    // The parser reads `Cmd`, `Super` and `CmdOrCtrl` (on macOS) all as META.
+    mods.intersects(Modifiers::META | Modifiers::CONTROL | Modifiers::ALT)
+        || (mods.is_empty()
+            && matches!(
+                accelerator.key(),
+                Code::F1
+                    | Code::F2
+                    | Code::F3
+                    | Code::F4
+                    | Code::F5
+                    | Code::F6
+                    | Code::F7
+                    | Code::F8
+                    | Code::F9
+                    | Code::F10
+                    | Code::F11
+                    | Code::F12
+            ))
+}
+
 /// The overrides of `saved` that can stand, each judged on its own: an unknown command, a string
 /// that does not parse, a fixed shortcut, or one another command ends up with is dropped and the
 /// rest kept. Between a default and an override the override goes; between two overrides, the one
@@ -174,7 +198,8 @@ pub fn sanitize(saved: &BTreeMap<String, Option<String>>) -> BTreeMap<String, Op
         .filter(|(id, keys)| {
             COMMANDS.iter().any(|command| command.id == id.as_str())
                 && keys.as_deref().is_none_or(|keys| {
-                    parse(keys).is_some() && !FIXED.iter().any(|f| same(keys, f.accelerator))
+                    parse(keys).is_some_and(|keys| recordable(&keys))
+                        && !FIXED.iter().any(|f| same(keys, f.accelerator))
                 })
         })
         .map(|(id, keys)| (id.clone(), keys.clone()))
@@ -258,6 +283,8 @@ mod tests {
         assert!(same("CmdOrCtrl+N", "Super+N"));
         assert!(same("Command+N", "cmdorctrl+n"));
         assert!(!same("CmdOrCtrl+N", "CmdOrCtrl+Shift+N"));
+        // Off macOS `CmdOrCtrl` is Ctrl.
+        #[cfg(target_os = "macos")]
         assert!(!same("Ctrl+N", "CmdOrCtrl+N"));
         assert!(!same("Cmd+++", "Cmd+++"));
     }
@@ -276,6 +303,22 @@ mod tests {
             sanitize(&saved),
             overrides(&[("new-memo", Some("CmdOrCtrl+Shift+M")), ("close-tab", None)])
         );
+    }
+
+    #[test]
+    fn a_shortcut_typing_would_hit_is_dropped() {
+        for keys in [
+            "K", "Shift+K", "Shift+F5", "Enter", "Space", "Left", "Shift+Up", "1",
+        ] {
+            let saved = overrides(&[("rename", Some(keys))]);
+            assert_eq!(sanitize(&saved), BTreeMap::new(), "{keys}");
+            assert!(validate(&saved).unwrap_err().contains("rename"), "{keys}");
+        }
+        for keys in ["F5", "F12", "Alt+K", "Ctrl+Shift+K", "Cmd+Enter", "Alt+F5"] {
+            let saved = overrides(&[("rename", Some(keys))]);
+            assert_eq!(sanitize(&saved), saved, "{keys}");
+            assert_eq!(validate(&saved), Ok(()), "{keys}");
+        }
     }
 
     #[test]
@@ -383,14 +426,14 @@ mod tests {
     }
 
     #[test]
-    fn every_built_in_shortcut_parses_and_none_is_taken_twice() {
+    fn every_built_in_shortcut_parses_is_recordable_and_none_is_taken_twice() {
         let all: Vec<&str> = COMMANDS
             .iter()
             .filter_map(|c| c.default)
             .chain(FIXED.iter().map(|f| f.accelerator))
             .collect();
         for (i, a) in all.iter().enumerate() {
-            assert!(parse(a).is_some(), "{a}");
+            assert!(parse(a).is_some_and(|a| recordable(&a)), "{a}");
             for b in &all[i + 1..] {
                 assert!(!same(a, b), "{a} and {b}");
             }

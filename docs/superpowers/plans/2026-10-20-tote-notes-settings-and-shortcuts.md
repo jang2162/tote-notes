@@ -74,7 +74,7 @@
 **Interfaces:**
 
 - Produces (Rust):
-  - `pub struct EditorSettings { pub line_numbers: bool, pub font_size: u8, pub font_family: String }` — serde camelCase, 기본 `true / 14 / ""`, 필드마다 `lenient`. `font_size` 는 읽을 때와 패치할 때 11..=24 로 묶는다(범위 밖은 가장 가까운 끝, 숫자 아님은 14).
+  - `pub struct EditorSettings { pub line_numbers: bool, pub font_size: u8, pub font_family: String }` — serde camelCase, 기본 `true / 14 / ""`, 필드마다 `lenient`. `font_size` 는 읽을 때와 패치할 때 11..=24 로 묶는다(범위 밖은 가장 가까운 끝). 숫자 아님은 읽을 때 14, 패치에서는 거절.
   - `Settings.editor: EditorSettings`, `Settings.shortcuts: BTreeMap<String, Option<String>>` — 둘 다 `#[serde(default, deserialize_with = "lenient")]`. `shortcuts` 는 비어 있으면 쓰지 않는다(`skip_serializing_if = "BTreeMap::is_empty"`).
   - `SettingsPatch` 에 `editor_line_numbers: Option<bool>`, `editor_font_size: Option<u8>`, `editor_font_family: Option<String>`, `shortcuts: Option<BTreeMap<String, Option<String>>>`.
   - `shortcuts.rs`:
