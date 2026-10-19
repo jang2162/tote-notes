@@ -195,8 +195,8 @@ fn recordable(accelerator: &Accelerator) -> bool {
 /// The overrides of `saved` that can stand, each judged on its own: an unknown command, a string
 /// that does not parse, one the settings screen could not have recorded (it records ⌘, ⌃ or ⌥
 /// with a key, or F1–F12 alone), a fixed shortcut, or one another command ends up with is dropped
-/// and the rest kept. Between a default and an override the override goes; between two overrides, the one
-/// later in `COMMANDS`.
+/// and the rest kept. Between a default and an override the override goes; between two overrides,
+/// the one later in `COMMANDS`.
 pub fn sanitize(saved: &BTreeMap<String, Option<String>>) -> BTreeMap<String, Option<String>> {
     let mut kept: BTreeMap<String, Option<String>> = saved
         .iter()

@@ -66,3 +66,17 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - 개발 서버에서 받는 것(`readExtensionFile` 이 받는 언어 설정 등)은 부하에서 늦게 도착한다. 늦은 응답의 효과를 시험하려면 `page.route` 로 그 요청을 붙잡았다가 풀어 준다. 실제 앱에서는 같은 데이터가 IPC 로 와서 이 방법이 닿지 않는다.
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
+
+## `Function.name` 에 기대는 코드는 `keepNames` 와 `check-build` 에 묶여 있다
+
+함수의 `name` 을 읽는 코드(지금은 `src/shortcuts/keys.ts` 의 `editorBindings` 가 편집기 키의 이름을 얻는 자리)는 `vite.config.ts` 의 `keepNames: true` 가 있어야 배포 빌드에서 동작한다. `pnpm build` 는 `vite build` 뒤에 `scripts/check-build.ts` 로 번들에 `selectLine=` 이 남았는지 보고, 없으면 실패한다.
+
+- **Why:** 배포 빌드(vite 8/rolldown 압축)가 함수 이름을 `Qp` 같은 것으로 바꾼다. vitest·e2e 는 압축 전 코드를 돌려서 이 문제를 잡지 못한다. 그대로 두면 설정 화면의 경고가 「편집기의 Qp 을 가립니다」 가 된다.
+- **How to apply:** `keepNames` 를 끄거나 다른 이름에 기대는 코드를 더할 때는 `check-build.ts` 가 그 이름도 보게 한다(지금은 `selectLine` 하나만 본다). `pnpm build` 는 Tauri `beforeBuildCommand` 라서 검사가 실패하면 앱 빌드도 실패한다.
+
+## e2e 는 메뉴 단축키를 누르지 못한다
+
+가짜 백엔드가 메뉴 항목의 id 를 페이지로 직접 보낸다. 그래서 e2e 는 「단축키가 메뉴 항목에 실제로 걸리는가」 「눌렀을 때 그 항목이 실행되는가」 를 보지 못한다.
+
+- **Why:** accelerator 는 네이티브 메뉴(muda)가 받는다. Playwright 의 키 입력은 웹뷰 안으로만 들어가므로 메뉴를 지나지 않는다.
+- **How to apply:** 단축키 연결은 Rust 시험(`menu.rs`·`shortcuts.rs`)과 화면 확인(`docs/superpowers/reports/2026-10-20-tote-notes-settings-and-shortcuts-smoke.md`)으로 본다. e2e 가 통과했다는 것을 메뉴 단축키가 동작한다는 증거로 쓰지 않는다.
