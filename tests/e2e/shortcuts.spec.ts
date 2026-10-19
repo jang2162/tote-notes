@@ -143,12 +143,27 @@ test("a fixed key is refused", async ({ page }) => {
 
 test("an editor key is saved with a warning", async ({ page }) => {
   const panel = await startShortcuts(page);
+  // The save answers after the change is heard, as the native side may: the table is read before
+  // the save returns.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    backend.patchSettings = async (change) => {
+      await patchSettings(change);
+      await new Promise((done) => setTimeout(done, 100));
+    };
+  });
   await record(panel, "rename");
   await page.keyboard.press("Meta+L");
   await expect.poll(() => savedMap(page)).toEqual({ rename: "CmdOrCtrl+L" });
   await expect(keys(panel, "rename")).toHaveText("⌘L");
-  await expect(row(panel, "rename").locator(".shortcut-note")).toHaveText(
-    "편집기의 selectLine 을 가립니다",
+  const warning = row(panel, "rename").locator(".shortcut-note");
+  await expect(warning).toHaveText("편집기의 selectLine 을 가립니다");
+  // Read out, being news; the warnings of the rows not touched are not.
+  await expect(warning).toHaveAttribute("role", "status");
+  await expect(row(panel, "split-pane-down").locator(".shortcut-note")).not.toHaveAttribute(
+    "role",
+    "status",
   );
 });
 
@@ -206,11 +221,15 @@ test("the keys pressed while recording reach nothing else", async ({ page }) => 
   await expect.poll(() => heard).toEqual(["Shift"]);
 });
 
-test("recording ends and shortcuts resume when the dialog closes or the window loses focus", async ({
+// The screen has no way to close or change section while a row records that does not end the
+// recording first: Esc is the recording's (the first one cancels it), and 닫기 or a tab is clicked
+// outside the row (its pointerdown cancels it). This test goes those ways.
+test("recording ends and shortcuts resume before the dialog closes or the section changes, and when the window loses focus", async ({
   page,
 }) => {
   let panel = await startShortcuts(page);
   await record(panel, "new-memo");
+  // The first Esc ends the recording, the second closes the screen.
   await page.keyboard.press("Escape");
   await expect(page.locator(".modal.settings")).toBeVisible();
   expect(await suspendCalls(page)).toEqual([true, false]);
@@ -224,7 +243,7 @@ test("recording ends and shortcuts resume when the dialog closes or the window l
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
   expect(await suspendCalls(page)).toEqual([true, false, true, false]);
 
-  // A click outside, 닫기, another section and another row each end it once.
+  // A click outside, another row, another section and 닫기 each end it once, on the pointerdown.
   await record(panel, "new-memo");
   await page.locator(".modal.settings h1").click();
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
@@ -342,15 +361,68 @@ test("a save that fails says so under the row and the same key can be tried agai
   await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveCount(0);
 });
 
-test("a change from another window reloads the table and ends a recording", async ({ context }) => {
+test("a shortcut change from another window reloads the table and ends a recording, another setting does not", async ({
+  context,
+}) => {
   const first = await startWindows(context);
   const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
   const panel = await openShortcuts(first);
   await record(panel, "new-memo");
+  // A setting other than the shortcuts leaves the recording on.
+  await second.evaluate(() =>
+    window.__tote.backend.patchSettings({
+      themeDark: { extension: "tote.themes", label: "Light+" },
+    }),
+  );
+  await expect(first.locator(".modal.settings select[name=dark]")).toHaveValue(
+    JSON.stringify(["tote.themes", "Light+"]),
+  );
+  await first.evaluate(() => window.__tote.backend.shortcutTable());
+  await expect(keys(panel, "new-memo")).toHaveText("키를 누르세요");
+  expect(await suspendCalls(first)).toEqual([true]);
   await second.evaluate(() =>
     window.__tote.backend.patchSettings({ shortcuts: { save: "CmdOrCtrl+Shift+S" } }),
   );
   await expect(keys(panel, "save")).toHaveText("⇧⌘S");
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
   expect(await suspendCalls(first)).toEqual([true, false]);
+});
+
+test("모두 기본값으로 that fails says so and keeps the shortcuts", async ({ page }) => {
+  const panel = await startShortcuts(page, {
+    settings: { ...defaultFakeData().settings, shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } },
+  });
+  await page.evaluate(() => {
+    window.__tote.backend.patchSettings = () => Promise.reject(new Error("디스크가 가득 찼습니다"));
+  });
+  await panel.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
+  await page.locator(".modal.confirm").getByRole("button", { name: "되돌리기" }).click();
+  await expect(panel.locator(".shortcut-problem")).toHaveText("오류: 디스크가 가득 찼습니다");
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+  expect(await savedMap(page)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+});
+
+test("a row puts its name, shortcut, default and 되돌리기 on one line, in columns", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page, {
+    settings: { ...defaultFakeData().settings, shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } },
+  });
+  const box = async (locator: Locator) => (await locator.boundingBox())!;
+  const changed = row(panel, "new-memo");
+  const name = await box(changed.locator(".shortcut-name"));
+  const menuName = await box(changed.locator(".shortcut-menu"));
+  const shortcut = await box(keys(panel, "new-memo"));
+  const reset = await box(changed.getByRole("button", { name: "되돌리기", exact: true }));
+  const middle = (b: { y: number; height: number }) => b.y + b.height / 2;
+  expect(Math.abs(middle(reset) - middle(name))).toBeLessThanOrEqual(4);
+  expect(reset.x).toBeGreaterThan(name.x + name.width);
+  // Name first, its menu after it; then the shortcut, the default, and 되돌리기 last.
+  expect(menuName.x).toBeGreaterThan(name.x);
+  expect(shortcut.x).toBeGreaterThan(menuName.x + menuName.width);
+  expect(reset.x).toBeGreaterThan(shortcut.x + shortcut.width);
+  // A row without 되돌리기 has its shortcut in the same column.
+  const plain = await box(keys(panel, "save"));
+  expect(plain.x).toBeCloseTo(shortcut.x, 0);
+  expect(plain.width).toBeCloseTo(shortcut.width, 0);
 });

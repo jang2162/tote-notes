@@ -14,8 +14,6 @@ export interface ShortcutsSectionOptions {
   backend: Backend;
   /** Subscribes to config changes; returns the unsubscribe. */
   onConfigChanged: (handler: () => void) => () => void;
-  /** Hears the section being hidden or the settings screen closing: a recording ends there. */
-  onHide?: (handler: () => void) => void;
 }
 
 /** What a row says under it after a key it did not take, or a save that failed. */
@@ -58,6 +56,11 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
   const notes = new Map<string, Note>();
   /** The row saved last, whose editor warning is news to read out. */
   let announced: string | null = null;
+  /** What the rows were last drawn from: a table read again that is the same still redraws them
+   * when a note or the row saved last changed since, as when the change was heard (and the table
+   * read) before the save returned. */
+  const drawing = () => JSON.stringify([table, [...notes], announced]);
+  let drawn = "";
 
   const search = h("input", { type: "search", name: "shortcutSearch", placeholder: "명령 검색" });
   search.spellcheck = false;
@@ -222,8 +225,12 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     return h(
       "div",
       { class: `shortcut-row${changed ? " changed" : ""}`, data: { command: command.id } },
-      h("span", { class: "shortcut-name", id: nameId, textContent: command.label }),
-      h("span", { class: "shortcut-menu", textContent: command.menu }),
+      h(
+        "span",
+        { class: "shortcut-label" },
+        h("span", { class: "shortcut-name", id: nameId, textContent: command.label }),
+        h("span", { class: "shortcut-menu", textContent: command.menu }),
+      ),
       keys,
       h("span", {
         class: "shortcut-default",
@@ -236,6 +243,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
 
   function render() {
     if (!table) return;
+    drawn = drawing();
     // A rebuilt row takes the focus its old one had, or its reset button that is gone now.
     const active = document.activeElement;
     const focused =
@@ -290,7 +298,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
       const next = await backend.shortcutTable();
       if (at !== loads) return;
       problem.textContent = "";
-      if (table && JSON.stringify(next) === JSON.stringify(table)) return;
+      if (table && JSON.stringify(next) === JSON.stringify(table)) {
+        if (drawing() !== drawn) render();
+        return;
+      }
       stop();
       if (table) notes.clear();
       table = next;
@@ -300,7 +311,6 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     }
   };
   options.onConfigChanged(() => void load());
-  options.onHide?.(() => stop());
 
   resetAll.addEventListener("click", async () => {
     stop();

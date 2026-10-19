@@ -983,25 +983,44 @@ button.danger {
   border-radius: 6px;
 }
 
-/* Name and menu on the left, the shortcut and its default on the right; a note below. */
-.shortcut-row,
-.shortcut-fixed-row {
+/* The rows share the list's columns (subgrid), so a row without 되돌리기 lines up with one that has
+   it: name and menu | shortcut | default | 되돌리기; a note goes below on its own line. */
+.shortcut-list {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto 64px;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  column-gap: 8px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-column: 1 / -1;
+  grid-template-columns: subgrid;
   align-items: center;
-  gap: 4px 8px;
+  row-gap: 4px;
   padding: 5px 10px;
   border-bottom: 1px solid var(--border);
 }
 
 .shortcut-fixed-row {
+  display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
   color: var(--muted);
 }
 
 .shortcut-row:last-child,
 .shortcut-fixed-row:last-child {
   border-bottom: 0;
+}
+
+.shortcut-label {
+  display: flex;
+  min-width: 0;
+  align-items: baseline;
+  gap: 8px;
 }
 
 .shortcut-name {
@@ -1011,9 +1030,7 @@ button.danger {
 }
 
 .shortcut-menu {
-  grid-row: 1;
-  grid-column: 1;
-  justify-self: end;
+  flex: none;
   color: var(--muted);
   font-size: 11px;
 }
@@ -1036,10 +1053,6 @@ button.danger {
 
 .shortcut-row.changed .shortcut-name {
   font-weight: 600;
-}
-
-.shortcut-reset {
-  grid-column: 4;
 }
 
 .shortcut-note {

@@ -38,8 +38,6 @@ const themeRef = (value: string): ThemeRef | null => {
 /** The settings screen: a list of sections on the left, the picked one's settings on the right.
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
-  /** Told when the 단축키 section is left or the screen closes, however it closes. */
-  const leaving: (() => void)[] = [];
   return modal<true>((close) => {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
@@ -337,11 +335,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       general: generalSection(),
       editor: editorSection,
       appearance: appearanceSection,
-      shortcuts: shortcutsSection({
-        backend,
-        onConfigChanged: options.onConfigChanged,
-        onHide: (handler) => leaving.push(handler),
-      }),
+      shortcuts: shortcutsSection({ backend, onConfigChanged: options.onConfigChanged }),
       extensions: extensionSection,
     };
     const tabs = SECTIONS.map(([section, label]) => {
@@ -370,7 +364,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         each.body.hidden = !shown;
         if (shown && focus) each.tab.focus();
       }
-      if (section !== "shortcuts") for (const handler of leaving) handler();
       options.onSection?.(section);
     };
     const tabList = h(
@@ -409,7 +402,5 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     );
     void refresh();
     return panel;
-  }).then(() => {
-    for (const handler of leaving) handler();
-  });
+  }).then(() => undefined);
 }
