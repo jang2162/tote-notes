@@ -109,8 +109,8 @@ export class TauriBackend implements Backend {
   releaseTab(tab: TabRef) {
     return call<void>("release_tab", { tab });
   }
-  tearOffTab(tab: string, ref: TabRef) {
-    return call<void>("tear_off_tab", { tab, tabRef: ref });
+  tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }) {
+    return call<"moved" | "window">("tear_off_tab", { tab, tabRef: ref, at: at ?? null });
   }
   showTabMenu(items: { id: string; text: string }[]) {
     return call<string | null>("show_tab_menu", { items });
@@ -282,6 +282,11 @@ export class TauriBackend implements Backend {
   }
   onReveal(handler: (tab: TabRef) => void) {
     void this.window.listen<TabRef>("tote://reveal", (event) => handler(event.payload));
+  }
+  onAdopt(handler: (tab: string, x: number, y: number) => void) {
+    void this.window.listen<{ tab: string; x: number; y: number }>("tote://adopt", (event) =>
+      handler(event.payload.tab, event.payload.x, event.payload.y),
+    );
   }
   onWorkspacesChanged(handler: () => void) {
     void this.window.listen("tote://workspaces", () => handler());

@@ -4,6 +4,7 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
+use serde::Deserialize;
 use serde_json::Value;
 use tauri::{
     AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
@@ -12,7 +13,7 @@ use tauri::{
 use super::commands::CommandError;
 use super::flush::FlushGoal;
 use super::places::TabKey;
-use super::{lifecycle, requests, AppCore, SwitchTarget};
+use super::{lifecycle, requests, AppCore, DropCandidate, SwitchTarget};
 use crate::cli::CliRequest;
 use crate::session::{layout_frame, WindowFrame};
 use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
@@ -407,6 +408,87 @@ pub fn place(frame: WindowFrame, monitors: &[MonitorRect]) -> Option<WindowFrame
     })
 }
 
+/// A point on the screen in logical pixels, where a tab was let go outside its window.
+#[derive(Debug, Deserialize, Clone, Copy, PartialEq)]
+pub struct ScreenPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+/// A window a tab dragged out of window `from` may land on (`window_at`).
+pub struct WindowSpot<'a> {
+    pub label: &'a str,
+    pub frame: WindowFrame,
+    /// Whether it shows the workspace of the window the tab comes from.
+    pub same_workspace: bool,
+    /// `AppCore::window_is_leaving`.
+    pub leaving: bool,
+}
+
+/// The window a tab let go at `at`, outside window `from`, joins. `spots` are the windows most
+/// recently focused first, which stands for front to back. The front one under the point decides:
+/// when it shows another workspace or is leaving the tab gets a window of its own (`None`) rather
+/// than going to a window it hides. `from` is passed over, as the point is outside it.
+pub fn window_at<'a>(spots: &[WindowSpot<'a>], at: ScreenPoint, from: &str) -> Option<&'a str> {
+    let spot = spots.iter().filter(|s| s.label != from).find(|s| {
+        let f = s.frame;
+        at.x >= f.x && at.x < f.x + f.width && at.y >= f.y && at.y < f.y + f.height
+    })?;
+    (spot.same_workspace && !spot.leaving).then_some(spot.label)
+}
+
+/// Where a window for a tab let go at `at` goes: its top-left corner at the point, at the size of
+/// the window `source` the tab came from. The caller still fits it onto a monitor (`place`).
+pub fn frame_at(at: ScreenPoint, source: WindowFrame) -> WindowFrame {
+    WindowFrame {
+        x: at.x,
+        y: at.y,
+        ..source
+    }
+}
+
+/// `at` in the window at `frame`, from its top-left corner. The window's content covers its title
+/// bar (`frame_of`), so this is where the point is in its page too.
+///
+/// Assumed until the real app is checked (the free splits plan, Task 1): the page's
+/// `PointerEvent.screenX/screenY` are in the logical space `frame_of` reports — the main monitor's
+/// top-left at 0,0, y down, another monitor's negative where it sits left or above. When the check
+/// finds otherwise, only this function changes.
+pub fn to_window_point(at: ScreenPoint, frame: WindowFrame) -> (f64, f64) {
+    (at.x - frame.x, at.y - frame.y)
+}
+
+/// The window of `from`'s workspace a tab let go at `at` lands on, with its frame (`window_at`). A
+/// window hidden or minimized is not on the screen there.
+pub fn drop_target(app: &AppHandle, from: &str, at: ScreenPoint) -> Option<(String, WindowFrame)> {
+    let shown: Vec<(DropCandidate, WindowFrame)> = app
+        .state::<AppCore>()
+        .drop_candidates(from)
+        .into_iter()
+        .filter_map(|candidate| {
+            let window = app.get_webview_window(&candidate.label)?;
+            let on_screen =
+                window.is_visible().unwrap_or(false) && !window.is_minimized().unwrap_or(true);
+            let frame = frame_of(&window).filter(|_| on_screen)?;
+            Some((candidate, frame))
+        })
+        .collect();
+    let spots: Vec<WindowSpot> = shown
+        .iter()
+        .map(|(candidate, frame)| WindowSpot {
+            label: &candidate.label,
+            frame: *frame,
+            same_workspace: candidate.same_workspace,
+            leaving: candidate.leaving,
+        })
+        .collect();
+    let label = window_at(&spots, at, from)?;
+    shown
+        .iter()
+        .find(|(candidate, _)| candidate.label == label)
+        .map(|(candidate, frame)| (candidate.label.clone(), *frame))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -574,5 +656,118 @@ mod tests {
     fn a_frame_inside_a_monitor_is_kept() {
         let frame = at(100.0, 100.0, 900.0, 600.0);
         assert_eq!(place(frame, &flat(&OLD)), Some(frame));
+    }
+
+    fn point(x: f64, y: f64) -> ScreenPoint {
+        ScreenPoint { x, y }
+    }
+
+    fn spot(label: &str, frame: WindowFrame) -> WindowSpot<'_> {
+        WindowSpot {
+            label,
+            frame,
+            same_workspace: true,
+            leaving: false,
+        }
+    }
+
+    #[test]
+    fn window_at_picks_the_most_recent_window_under_the_point() {
+        let spots = [
+            spot("ws-3", at(400.0, 300.0, 900.0, 600.0)),
+            spot("ws-2", at(100.0, 100.0, 900.0, 600.0)),
+        ];
+        assert_eq!(window_at(&spots, point(500.0, 400.0), "ws-1"), Some("ws-3"));
+        assert_eq!(window_at(&spots, point(200.0, 200.0), "ws-1"), Some("ws-2"));
+        assert_eq!(window_at(&spots, point(1400.0, 1000.0), "ws-1"), None);
+    }
+
+    #[test]
+    fn window_at_finds_a_window_on_the_monitor_to_the_left() {
+        let spots = [spot("ws-2", at(-2000.0, 200.0, 900.0, 600.0))];
+        assert_eq!(
+            window_at(&spots, point(-1500.0, 500.0), "ws-1"),
+            Some("ws-2")
+        );
+        assert_eq!(window_at(&spots, point(-500.0, 500.0), "ws-1"), None);
+    }
+
+    #[test]
+    fn window_at_skips_leaving_and_other_workspace_windows() {
+        let frame = at(100.0, 100.0, 900.0, 600.0);
+        let spots = [
+            WindowSpot {
+                leaving: true,
+                ..spot("ws-2", frame)
+            },
+            WindowSpot {
+                same_workspace: false,
+                ..spot("ws-3", frame)
+            },
+            spot("ws-1", frame),
+        ];
+        assert_eq!(window_at(&spots, point(500.0, 400.0), "ws-1"), None);
+        // Each on its own as well.
+        assert_eq!(window_at(&spots[1..], point(500.0, 400.0), "ws-1"), None);
+        assert_eq!(window_at(&spots[..1], point(500.0, 400.0), "ws-1"), None);
+    }
+
+    #[test]
+    fn window_at_sends_the_tab_away_from_a_window_hidden_behind_another_workspace() {
+        let frame = at(100.0, 100.0, 900.0, 600.0);
+        let spots = [
+            WindowSpot {
+                same_workspace: false,
+                ..spot("ws-3", frame)
+            },
+            spot("ws-2", frame),
+        ];
+        assert_eq!(window_at(&spots, point(500.0, 400.0), "ws-1"), None);
+    }
+
+    #[test]
+    fn window_at_looks_through_the_window_the_tab_comes_from() {
+        let frame = at(100.0, 100.0, 900.0, 600.0);
+        let spots = [spot("ws-1", frame), spot("ws-2", frame)];
+        assert_eq!(window_at(&spots, point(500.0, 400.0), "ws-1"), Some("ws-2"));
+    }
+
+    #[test]
+    fn frame_at_puts_the_top_left_at_the_point_with_the_source_size() {
+        let source = at(100.0, 100.0, 900.0, 600.0);
+        assert_eq!(
+            frame_at(point(1200.0, 300.0), source),
+            at(1200.0, 300.0, 900.0, 600.0)
+        );
+        assert_eq!(
+            frame_at(point(-2000.0, 50.0), source),
+            at(-2000.0, 50.0, 900.0, 600.0)
+        );
+    }
+
+    #[test]
+    fn a_new_window_dropped_near_the_far_corner_stays_on_its_monitor() {
+        let monitors = flat(&[(0.0, 0.0, 2560.0, 1440.0), (-2560.0, 0.0, 2560.0, 1440.0)]);
+        let source = at(100.0, 100.0, 900.0, 600.0);
+        assert_eq!(
+            place(frame_at(point(2400.0, 1300.0), source), &monitors),
+            Some(at(1660.0, 840.0, 900.0, 600.0))
+        );
+        assert_eq!(
+            place(frame_at(point(-1000.0, 1300.0), source), &monitors),
+            Some(at(-1000.0, 840.0, 900.0, 600.0))
+        );
+    }
+
+    #[test]
+    fn a_drop_point_is_taken_from_the_window_top_left() {
+        assert_eq!(
+            to_window_point(point(500.0, 400.0), at(100.0, 150.0, 900.0, 600.0)),
+            (400.0, 250.0)
+        );
+        assert_eq!(
+            to_window_point(point(-1500.0, 500.0), at(-2000.0, 200.0, 900.0, 600.0)),
+            (500.0, 300.0)
+        );
     }
 }

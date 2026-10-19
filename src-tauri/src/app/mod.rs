@@ -82,6 +82,14 @@ pub enum SwitchError {
     Open(WorkspaceError),
 }
 
+/// A window a tab dragged out of another may land on (`AppCore::drop_candidates`).
+#[derive(Debug, PartialEq, Eq)]
+pub struct DropCandidate {
+    pub label: String,
+    pub same_workspace: bool,
+    pub leaving: bool,
+}
+
 /// What `tote://outside` tells a window another app did (spec 「외부 변경」).
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(tag = "kind", rename_all = "camelCase")]
@@ -179,6 +187,11 @@ struct OpenWindow {
 }
 
 impl OpenWindow {
+    /// `AppCore::window_is_leaving`.
+    fn is_leaving(&self) -> bool {
+        self.in_switch || self.switching || self.closing
+    }
+
     /// Changes to the workspace from the window's page are refused while the page is the one of
     /// the workspace it left.
     fn check_writable(&self, label: &str) -> io::Result<()> {
@@ -1079,6 +1092,45 @@ impl AppCore {
             .unwrap_or_default()
     }
 
+    /// The windows a tab dragged out of window `from` may land on, most recently focused first:
+    /// whether each shows `from`'s workspace and whether it is leaving (`window_is_leaving`).
+    /// `from` is among them. A window not up yet (`opened`) is not.
+    pub fn drop_candidates(&self, from: &str) -> Vec<DropCandidate> {
+        let inner = lock(&self.inner);
+        let path = inner.windows.get(from).map(|w| &w.path);
+        inner
+            .focus
+            .iter()
+            .filter_map(|label| {
+                let window = inner.windows.get(label)?;
+                Some(DropCandidate {
+                    label: label.clone(),
+                    same_workspace: path == Some(&window.path),
+                    leaving: window.is_leaving(),
+                })
+            })
+            .collect()
+    }
+
+    /// Hands the tab `key` from window `from` to window `to`, which shows the same workspace and
+    /// is not leaving, checked under the lock the transfer takes: a window that began to close or
+    /// switch since `drop_candidates` takes nothing. False, changing nothing, then, when `from`
+    /// does not hold the tab, or while quitting. The session file is left to the two windows'
+    /// next layouts.
+    pub fn move_tab(&self, from: &str, to: &str, key: &TabKey) -> bool {
+        let mut inner = lock(&self.inner);
+        if inner.quitting {
+            return false;
+        }
+        let (Some(source), Some(target)) = (inner.windows.get(from), inner.windows.get(to)) else {
+            return false;
+        };
+        if source.path != target.path || target.is_leaving() {
+            return false;
+        }
+        inner.places.transfer(key, from, to)
+    }
+
     /// Whether window `label` is going: it switches workspaces (`in_switch`, then `switching`
     /// until its new page is up) or is being closed. A page that answered a round too late keeps
     /// its panes empty then (`lifecycle::ack`).
@@ -1086,7 +1138,7 @@ impl AppCore {
         lock(&self.inner)
             .windows
             .get(label)
-            .is_some_and(|w| w.in_switch || w.switching || w.closing)
+            .is_some_and(OpenWindow::is_leaving)
     }
 
     /// Whether the window is between its round ending as a switch and `finish_switch`. Not the
@@ -2467,6 +2519,73 @@ mod tests {
         assert_eq!(core.claim_tabs(&w1, &[memo_b()]).unwrap(), vec![Ok(())]);
         let other = attach(&core, &path);
         assert_eq!(core.claim_tabs(&other, &[memo_b()]).unwrap(), vec![Err(w1)]);
+    }
+
+    #[test]
+    fn a_tab_moved_to_another_window_belongs_to_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, _) = two_tabs(&core);
+        let w2 = attach(&core, &path);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        assert!(core.move_tab(&w1, &w2, &key));
+        assert_eq!(core.key_for(&w2, &memo_b()), Some(key.clone()));
+        assert_eq!(
+            core.claim_tabs(&w1, &[memo_b()]).unwrap(),
+            vec![Err(w2.clone())]
+        );
+        // The tab is no longer the first window's to give.
+        let w3 = attach(&core, &path);
+        assert!(!core.move_tab(&w1, &w3, &key));
+        // A window that is leaving, or shows another workspace, takes nothing.
+        core.closing(&w3);
+        assert!(!core.move_tab(&w2, &w3, &key));
+        let other = open(&core, "나");
+        assert!(!core.move_tab(&w2, &other, &key));
+        assert_eq!(
+            core.claim_tabs(&w1, &[memo_b()]).unwrap(),
+            vec![Err(w2.clone())]
+        );
+    }
+
+    #[test]
+    fn a_tab_is_not_moved_into_a_window_switching_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, _) = two_tabs(&core);
+        let w2 = attach(&core, &path);
+        let na = closed_workspace(&core, "나", &[]);
+        core.prepare_switch(&w2, &na).unwrap();
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        assert!(!core.move_tab(&w1, &w2, &key));
+        assert_eq!(core.claim_tabs(&w1, &[memo_b()]).unwrap(), vec![Ok(())]);
+    }
+
+    #[test]
+    fn drop_candidates_follow_focus_and_say_what_each_window_is() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let other = open(&core, "나");
+        let w2 = attach(&core, &path);
+        let w3 = attach(&core, &path);
+        core.closing(&w3);
+        core.focused(&w2);
+        let candidate = |label: &str, same_workspace: bool, leaving: bool| DropCandidate {
+            label: label.to_string(),
+            same_workspace,
+            leaving,
+        };
+        assert_eq!(
+            core.drop_candidates(&w1),
+            vec![
+                candidate(&w2, true, false),
+                candidate(&w3, true, true),
+                candidate(&other, false, false),
+                candidate(&w1, true, false),
+            ]
+        );
     }
 
     /// A workspace named `name` beside the open ones, not open, its session file holding

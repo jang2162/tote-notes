@@ -308,10 +308,13 @@ export interface Backend {
   claimTabs(tabs: TabRef[], reveal: boolean): Promise<boolean[]>;
   /** This window closed the tab: another window may open it. */
   releaseTab(tab: TabRef): Promise<void>;
-  /** Moves the tab `ref` into a new window of this workspace, which opens with it alone: `tab` is
-   * its session entry (`SessionTab`, as JSON). The tab's place and its line in the session are the
-   * new window's before the window is made; when it cannot be made the tab stays here. */
-  tearOffTab(tab: string, ref: TabRef): Promise<void>;
+  /** Moves the tab `ref` out of this window: `tab` is its session entry (`SessionTab`, as JSON).
+   * Without `at` it goes into a new window of this workspace, which opens with it alone, a little
+   * off this one. With `at`, the screen point it was let go on outside this window, it joins the
+   * window of this workspace there (`"moved"`: that window gets it through `onAdopt`), else a new
+   * window opens with its top-left corner there. A new window's tab has its place and its line in
+   * the session before the window is made; when it cannot be made the tab stays here. */
+  tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }): Promise<"moved" | "window">;
   /** A tab's context menu at the pointer: the `id` of the item picked, `null` when it closed
    * without a pick. */
   showTabMenu(items: { id: string; text: string }[]): Promise<string | null>;
@@ -423,6 +426,10 @@ export interface Backend {
   onMemosChanged(handler: () => void): void;
   /** Another window asked for a tab this window holds: show it. */
   onReveal(handler: (tab: TabRef) => void): void;
+  /** Another window of this workspace let its tab go on this one (`tearOffTab`): its session entry
+   * as JSON, and where it was let go in this window, in CSS pixels from the top-left corner. The
+   * tab's place is this window's already. */
+  onAdopt(handler: (tab: string, x: number, y: number) => void): void;
   /** A workspace was made, or a window came to show another workspace: the switcher lists
    * them again. */
   onWorkspacesChanged(handler: () => void): void;

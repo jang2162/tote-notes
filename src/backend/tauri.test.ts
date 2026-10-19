@@ -57,7 +57,12 @@ describe("TauriBackend", () => {
       [
         () => backend.tearOffTab("{}", { kind: "memo", id: "m" }),
         "tear_off_tab",
-        { tab: "{}", tabRef: { kind: "memo", id: "m" } },
+        { tab: "{}", tabRef: { kind: "memo", id: "m" }, at: null },
+      ],
+      [
+        () => backend.tearOffTab("{}", { kind: "memo", id: "m" }, { x: -1500, y: 400 }),
+        "tear_off_tab",
+        { tab: "{}", tabRef: { kind: "memo", id: "m" }, at: { x: -1500, y: 400 } },
       ],
       [
         () => backend.showTabMenu([{ id: "x", text: "엑스" }]),

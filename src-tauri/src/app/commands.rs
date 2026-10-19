@@ -403,10 +403,34 @@ pub fn release_tab(core: State<'_, AppCore>, window: WebviewWindow, tab: TabRef)
     core.release_tab(window.label(), &tab);
 }
 
-/// Moves this window's tab `tab_ref` into a new window of the workspace, a little off this one.
-/// `tab` is its session entry (`SessionTab`), what the new window opens; `bad-request` when it is
-/// not a JSON object. The tab is in the session and its place is the new window's before the
-/// window is made; when it cannot be made the tab stays here.
+/// Where `tear_off_tab` put the tab.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TornOff {
+    /// Into the window of this workspace it was let go on, which gets `tote://adopt`.
+    Moved,
+    /// Into a new window.
+    Window,
+}
+
+/// What `tote://adopt` hands the window a tab was let go on: the tab's session entry, as the JSON
+/// the page sent, and where it was let go, from the window's top-left corner
+/// (`windows::to_window_point`).
+#[derive(Clone, Serialize)]
+struct Adopt {
+    tab: String,
+    x: f64,
+    y: f64,
+}
+
+/// Moves this window's tab `tab_ref` out of it. `tab` is its session entry (`SessionTab`), what the
+/// window taking it opens; `bad-request` when it is not a JSON object.
+///
+/// Without `at` the tab goes into a new window of the workspace, a little off this one. With `at`,
+/// the screen point it was let go on outside this window, it joins the window of this workspace
+/// there (`windows::drop_target`), else a new window opens with its corner there. Before the new
+/// window is made the tab is in the session and its place is the window's; when it cannot be made
+/// the tab stays here.
 #[tauri::command]
 pub async fn tear_off_tab(
     app: AppHandle,
@@ -414,9 +438,10 @@ pub async fn tear_off_tab(
     window: WebviewWindow,
     tab: String,
     tab_ref: TabRef,
-) -> CmdResult<()> {
-    let tab = match serde_json::from_str(&tab) {
-        Ok(tab @ serde_json::Value::Object(_)) => tab,
+    at: Option<windows::ScreenPoint>,
+) -> CmdResult<TornOff> {
+    let entry = match serde_json::from_str(&tab) {
+        Ok(entry @ serde_json::Value::Object(_)) => entry,
         _ => return Err(CommandError::new("bad-request", "a tab is a JSON object")),
     };
     let label = window.label();
@@ -426,16 +451,34 @@ pub async fn tear_off_tab(
             format!("{label} shows no workspace"),
         ));
     };
-    let near =
-        windows::frame_of(&window).map(|f| windows::cascade(f, &windows::monitor_rects(&app)));
+    let source = windows::frame_of(&window);
+    let near = match at {
+        None => source.map(|f| windows::cascade(f, &windows::monitor_rects(&app))),
+        Some(at) => {
+            // A target that began to leave since it was picked takes nothing (`move_tab`): the tab
+            // gets a window of its own instead.
+            if let Some((target, frame)) = windows::drop_target(&app, label, at) {
+                if core.move_tab(label, &target, &key) {
+                    let (x, y) = windows::to_window_point(at, frame);
+                    let _ = app.emit_to(
+                        EventTarget::webview_window(&target),
+                        "tote://adopt",
+                        Adopt { tab, x, y },
+                    );
+                    return Ok(TornOff::Moved);
+                }
+            }
+            source.map(|f| windows::frame_at(at, f))
+        }
+    };
     let plan = windows::WindowPlan::Tab {
-        tab,
+        tab: entry,
         near,
         from: label.to_string(),
         key,
     };
     windows::open_window(&app, &path, plan)?;
-    Ok(())
+    Ok(TornOff::Window)
 }
 
 /// Shows a tab's context menu at the pointer: the id of the item picked, `None` when it closed

@@ -663,7 +663,7 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
-  async tearOffTab(tab: string, ref: TabRef) {
+  async tearOffTab(tab: string, ref: TabRef): Promise<"moved" | "window"> {
     this.refuseWhileSwitching();
     const gate = this.tearOffGate;
     this.tearOffGate = null;
@@ -679,10 +679,11 @@ export class FakeBackend implements Backend {
       const label = this.hub.adopt(this.data, entry, ref);
       this.commit();
       this.hub.open(label);
-      return;
+      return "window";
     }
     places[placeKey(ref)] = `ws-${this.data.tornOff.length + 1}`;
     this.commit();
+    return "window";
   }
 
   async showTabMenu(items: { id: string; text: string }[]) {
@@ -1229,6 +1230,8 @@ export class FakeBackend implements Backend {
   onWorkspacesChanged(handler: () => void) {
     this.handlers.workspaces.push(handler);
   }
+  /** Never called: `tearOffTab` here takes no point, so every tab goes into a new window. */
+  onAdopt() {}
 
   private memo(id: string): FakeMemo {
     const memo = this.data.memos[id];
