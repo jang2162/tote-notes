@@ -100,6 +100,12 @@ export const NOT_MOVED_WITH_BANNER = "충돌·삭제 알림이 떠 있어 새 �
 export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기지 않았습니다";
 /** 「탭을 새 창으로 옮기기」: an item of the window menu and of a tab's context menu. */
 export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
+const SPLIT_TAB_ITEMS: { id: string; text: string; side: Side }[] = [
+  { id: "split-tab-left", text: "왼쪽으로 나누기", side: "left" },
+  { id: "split-tab-right", text: "오른쪽으로 나누기", side: "right" },
+  { id: "split-tab-top", text: "위로 나누기", side: "top" },
+  { id: "split-tab-bottom", text: "아래로 나누기", side: "bottom" },
+];
 const NEW_WORKSPACE_NAME = "새 워크스페이스 이름";
 
 /** Where a dragged tab would go (`AppController.dropTarget`): a place in a pane's tab bar, or a
@@ -600,10 +606,17 @@ export class AppController implements DocHost, PaneHost {
   }
 
   async newMemo(): Promise<void> {
+    await this.newMemoIn(this.focused, "after-active");
+  }
+
+  async newMemoIn(pane: Pane, at: "after-active" | "end"): Promise<void> {
+    await this.focusOn(pane);
+    // Closed, or the focus went elsewhere while a composition ended.
+    if (this.focused !== pane || !this.panes.includes(pane)) return;
     const info = await this.backend.createMemo();
     this.memoList.upsert(info);
     if (!(await this.claim({ kind: "memo", id: info.id }))) return;
-    const doc = this.insertClaimed(new MemoDoc(this, info));
+    const doc = this.insertClaimed(new MemoDoc(this, info), at);
     doc.startEmpty();
     await this.showTab(doc);
   }
@@ -711,9 +724,15 @@ export class AppController implements DocHost, PaneHost {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
     const picked = await this.backend.showTabMenu([
+      ...SPLIT_TAB_ITEMS.map(({ id, text }) => ({ id, text })),
       { id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" },
     ]);
     if (picked === MOVE_TAB_TO_NEW_WINDOW) await this.tearOff(doc);
+    const split = SPLIT_TAB_ITEMS.find((item) => item.id === picked);
+    if (!split || !this.docs.includes(doc)) return;
+    // The split is of the pane the tab is in, which is the focused one from here.
+    await this.focusOn(this.paneOf(doc));
+    await this.splitPane(split.side, doc);
   }
 
   /** `moveTab` once any composition has ended. */
@@ -804,7 +823,8 @@ export class AppController implements DocHost, PaneHost {
   }
 
   /** Splits `to` and puts `doc` in the new pane on `side` — a tab dropped on that edge of `to` —
-   * once any composition has ended, as `moveTab` does. A pane it leaves empty closes. */
+   * once any composition has ended, as `moveTab` does. It splits as the mask showed when the tab
+   * was let go; the pane is not measured again. A pane it leaves empty closes. */
   private async splitWithTab(doc: Doc, to: Pane, side: Side): Promise<void> {
     await settleComposition(this.focused.view);
     // Closed, or its pane closed, while the composition ended.
@@ -988,8 +1008,9 @@ export class AppController implements DocHost, PaneHost {
     return claimed;
   }
 
-  private insertClaimed<D extends Doc>(doc: D): D {
+  private insertClaimed<D extends Doc>(doc: D, at: "after-active" | "end" = "after-active"): D {
     this.held.set(doc, doc.tabRef);
+    if (at === "end") return this.focused.tabs.place(doc, this.focused.tabs.list.length);
     return this.focused.tabs.insertAfterActive(doc);
   }
 

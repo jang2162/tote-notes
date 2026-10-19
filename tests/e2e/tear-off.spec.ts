@@ -269,7 +269,15 @@ test("the tab's context menu offers 탭을 새 창으로 옮기기", async ({ pa
   await page.locator(".tab", { hasText: "가" }).click({ button: "right" });
   await expect
     .poll(async () => (await data(page)).tabMenus)
-    .toEqual([[{ id: MOVE, text: "탭을 새 창으로 옮기기" }]]);
+    .toEqual([
+      [
+        { id: "split-tab-left", text: "왼쪽으로 나누기" },
+        { id: "split-tab-right", text: "오른쪽으로 나누기" },
+        { id: "split-tab-top", text: "위로 나누기" },
+        { id: "split-tab-bottom", text: "아래로 나누기" },
+        { id: MOVE, text: "탭을 새 창으로 옮기기" },
+      ],
+    ]);
   await expect(page.locator(".tab")).toHaveCount(2);
   await page.evaluate((pick) => {
     window.__tote.backend.data.tabMenuPick = pick;

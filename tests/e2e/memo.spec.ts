@@ -24,7 +24,7 @@ test("closing an empty new memo leaves no file behind", async ({ page }) => {
   await menu(page, "close-tab");
   await expect(page.locator(".tab")).toHaveCount(0);
   expect(await page.evaluate(() => Object.keys(window.__tote.backend.data.memos))).toEqual([]);
-  await expect(page.locator(".editor-placeholder")).toHaveText("⌘N 으로 새 메모를 만드세요");
+  await expect(page.locator(".editor-placeholder")).toContainText("새 메모를 만드세요");
 });
 
 test("restoring a session reads only the active tab", async ({ page }) => {

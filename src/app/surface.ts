@@ -28,7 +28,7 @@ export class Surface {
       this.banner.el,
       h("div", { class: "editor-area" }, this.editorHost, this.placeholder, this.panelHost),
     );
-    this.showEmpty();
+    this.showNothing();
   }
 
   get showsEditor(): boolean {
@@ -54,9 +54,10 @@ export class Surface {
     this.view.requestMeasure();
   }
 
-  showPlaceholder(text: string, action?: { label: string; run: () => void }): void {
+  showPlaceholder(text: string, action?: { label: string; run: () => void }, hint?: string): void {
     this.only(this.placeholder);
     const children: (Node | string)[] = [h("p", { textContent: text })];
+    if (hint) children.push(h("p", { class: "editor-placeholder-hint", textContent: hint }));
     if (action) {
       const button = h("button", { textContent: action.label });
       button.addEventListener("click", action.run);
@@ -75,8 +76,13 @@ export class Surface {
     this.showPlaceholder("");
   }
 
-  showEmpty(text = "⌘N 으로 새 메모를 만드세요"): void {
-    this.showPlaceholder(text);
+  /** What a pane with no tab says: how to start, and a button that does. */
+  showEmpty(view: {
+    title: string;
+    hint: string;
+    action: { label: string; run: () => void };
+  }): void {
+    this.showPlaceholder(view.title, view.action, view.hint);
   }
 
   private only(shown: HTMLElement): void {

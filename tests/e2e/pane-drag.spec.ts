@@ -221,6 +221,11 @@ test("dropping on the top edge of another pane splits that pane", async ({ page 
   const before = await boxOf(pane(page, 1));
   await drag(page, tab(page, 0, "나"), await inBody(pane(page, 1), 1 / 2, 1 / 16), false);
   await expectMask(page, { ...before, height: before.height / 2 });
+  // The edge is the body's top quarter (the part under the tab bar), not the whole pane's: 0.24 of
+  // the body is still the top half's.
+  const near = await inBody(pane(page, 1), 1 / 2, 0.24);
+  await page.mouse.move(near.x, near.y);
+  await expectMask(page, { ...before, height: before.height / 2 });
   await page.mouse.up();
   await expect(panes(page)).toHaveCount(3);
   const [left, upper, lower] = await panesByPosition(page);

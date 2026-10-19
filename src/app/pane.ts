@@ -16,8 +16,10 @@ import { Tabs } from "./tabs";
 
 export const NOT_OPENABLE = "열 수 없음";
 export const OPEN_AS_TEXT = "텍스트로 열기";
-/** What an empty pane says while the window has others; a window of one pane says how to start. */
-export const EMPTY_PANE = "빈 칸입니다. 메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
+/** What an empty pane says, however many panes the window has. */
+export const EMPTY_TITLE = "새 메모를 만드세요";
+export const EMPTY_NEW_MEMO = "새 메모";
+export const EMPTY_HINT = "메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
 
 const PROBLEM_TEXT: Record<Problem, string> = {
   binary: NOT_OPENABLE,
@@ -64,6 +66,8 @@ export interface PaneHost {
   dragTab(tabId: string): TabDrag;
   /** Tab `tabId` of a pane was right-clicked: its context menu. */
   tabMenu(tabId: string): Promise<void>;
+  /** A new memo in `pane`, which takes the focus: after its active tab, or as its last tab. */
+  newMemoIn(pane: Pane, at: "after-active" | "end"): Promise<void>;
   saveSessionSoon(): void;
   report(error: unknown): void;
   mark(name: string): void;
@@ -81,6 +85,7 @@ export class Pane {
     close: (id) => void this.host.closeTab(id),
     drag: (id) => this.host.dragTab(id),
     menu: (id) => void this.host.tabMenu(id),
+    newTab: () => void this.host.newMemoIn(this, "end"),
   });
   /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
   readonly el: HTMLElement = h(
@@ -228,10 +233,13 @@ export class Pane {
     if (this.host.focused === this && document.activeElement?.closest(".pane")) this.takeKeys();
   }
 
-  /** The placeholder of a pane with no tabs, whose sentence depends on whether the window has
-   * other panes. */
+  /** The placeholder of a pane with no tabs. */
   showEmptyText(): void {
-    this.surface.showEmpty(this.host.panes.length > 1 ? EMPTY_PANE : undefined);
+    this.surface.showEmpty({
+      title: EMPTY_TITLE,
+      hint: EMPTY_HINT,
+      action: { label: EMPTY_NEW_MEMO, run: () => void this.host.newMemoIn(this, "after-active") },
+    });
   }
 
   /** The status bar has just come to speak for this pane: it shows what `show` put there. */

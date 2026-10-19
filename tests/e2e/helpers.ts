@@ -130,7 +130,7 @@ export async function hold(
 
 /** The window's panes from the top down, left to right on one level. A split leaves the panes'
  * elements where they are, so their order in the DOM is not the layout's. Read once: a pane opened
- * or closed after the call is not in it. */
+ * or closed after the call shifts what these point at. */
 export async function panesByPosition(page: Page): Promise<Locator[]> {
   const all = page.locator(".pane");
   const places = await all.evaluateAll((els) =>

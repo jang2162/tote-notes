@@ -672,6 +672,10 @@ button.danger {
   margin: 0 0 12px;
 }
 
+.editor-placeholder .editor-placeholder-hint {
+  font-size: 12px;
+}
+
 .large-text {
   display: grid;
   grid-template-rows: auto minmax(0, 1fr);

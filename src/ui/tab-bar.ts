@@ -40,8 +40,15 @@ export class TabBar {
       drag(id: string): TabDrag;
       /** Tab `id` was right-clicked: its context menu. */
       menu(id: string): void;
+      /** The bar itself, not a tab, was double clicked. */
+      newTab(): void;
     },
-  ) {}
+  ) {
+    // Only the bar's own free space: a tab or its close button is the event's target there.
+    this.el.addEventListener("dblclick", (event) => {
+      if (event.target === this.el) this.actions.newTab();
+    });
+  }
 
   render(tabs: TabView[]): void {
     this.el.replaceChildren(...tabs.map((tab) => this.tab(tab)));
