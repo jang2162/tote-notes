@@ -1,9 +1,11 @@
 import { describe, expect, it } from "vitest";
 
+import fixture from "../../src-tauri/tests/fixtures/shortcut-table.json";
 import { FAKE_FIXED_SHORTCUTS, FAKE_SHORTCUT_COMMANDS } from "../backend/fake-shortcuts";
 import type { ShortcutTable } from "../backend/types";
 import {
   acceleratorFromEvent,
+  bindingsOf,
   conflict,
   editorBindings,
   formatAccelerator,
@@ -147,12 +149,46 @@ describe("editorBindings", () => {
     // `mac:` wins: Mod-ArrowLeft is ⌥← on macOS, and ⌘← is another command's.
     expect(named("Alt+Left")).toContain("cursorGroupLeft");
     expect(named("CmdOrCtrl+Left")).toEqual(["cursorLineBoundaryLeft"]);
-    // historyKeymap's Alt-u is ⇧⌘U on macOS; its command is an anonymous function.
-    expect(named("CmdOrCtrl+Shift+U")).toEqual(["편집기 명령"]);
+    // historyKeymap's Alt-u is ⇧⌘U on macOS.
     expect(named("Alt+U")).toEqual([]);
     // A binding's `shift:` is the same key with ⇧.
     expect(named("Alt+Shift+Left")).toContain("selectGroupLeft");
     expect(bindings.every((b) => b.name !== "")).toBe(true);
+  });
+});
+
+describe("bindingsOf", () => {
+  it("names a key after its function, and a function without a name 편집기 명령", () => {
+    function named() {
+      return true;
+    }
+    // A function a function returns has no name (an arrow written as `run:` would be `run`).
+    const make = () => () => true;
+    expect(
+      bindingsOf([
+        { key: "Mod-k", run: named },
+        { key: "Mod-j", run: make(), shift: make() },
+      ]),
+    ).toEqual([
+      { accelerator: "CmdOrCtrl+K", name: "named" },
+      { accelerator: "CmdOrCtrl+J", name: "편집기 명령" },
+      { accelerator: "Shift+CmdOrCtrl+J", name: "편집기 명령" },
+    ]);
+  });
+});
+
+describe("Rust's shortcut table", () => {
+  // The fixture is what `shortcut_table` answers with nothing saved. A key TS cannot read would be
+  // shown as the string it is (`formatAccelerator`), silently.
+  it("has only shortcuts TS reads", () => {
+    const shortcuts = [
+      ...fixture.commands.flatMap((command) => (command.default ? [command.default] : [])),
+      ...fixture.fixed.map((fixed) => fixed.accelerator),
+    ];
+    expect(shortcuts.length).toBeGreaterThan(30);
+    // A bare F key is written as it is either way.
+    for (const keys of shortcuts.filter((keys) => !/^F\d+$/.test(keys)))
+      expect(formatAccelerator(keys), keys).not.toBe(keys);
   });
 });
 

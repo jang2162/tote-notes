@@ -841,6 +841,26 @@ test("a window's only pane shows the same help", async ({ page }) => {
   await expect(page.locator(".cm-content")).toBeFocused();
 });
 
+test("the empty pane hint is the default sentence from the start, or none yet", async ({
+  page,
+}) => {
+  // Every hint text the page ever shows, from before the app's first paint.
+  await page.addInitScript(() => {
+    const seen: string[] = [];
+    (window as unknown as { hintsSeen: string[] }).hintsSeen = seen;
+    new MutationObserver(() => {
+      for (const hint of document.querySelectorAll(".editor-placeholder-hint")) {
+        const text = hint.textContent ?? "";
+        if (seen.at(-1) !== text) seen.push(text);
+      }
+    }).observe(document, { childList: true, subtree: true, characterData: true });
+  });
+  await start(page);
+  await expect(page.locator(".editor-placeholder p").nth(1)).toHaveText(EMPTY_HINT);
+  const seen = await page.evaluate(() => (window as unknown as { hintsSeen: string[] }).hintsSeen);
+  expect(seen.filter((text) => text !== "")).toEqual([EMPTY_HINT]);
+});
+
 /** What the settings screen does: save the whole shortcut map, then the backend's change event. */
 async function saveShortcuts(page: Page, shortcuts: Record<string, string | null>) {
   await page.evaluate((map) => window.__tote.backend.patchSettings({ shortcuts: map }), shortcuts);

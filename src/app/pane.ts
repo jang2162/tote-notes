@@ -20,8 +20,10 @@ export const OPEN_AS_TEXT = "텍스트로 열기";
 export const EMPTY_TITLE = "새 메모를 만드세요";
 export const EMPTY_NEW_MEMO = "새 메모";
 
-/** The empty pane's hint, naming the shortcut `new-memo` has now (`shortcut`, as written). */
-export function emptyHint(shortcut: string | null): string {
+/** The empty pane's hint, naming the shortcut `new-memo` has now (`shortcut`, as written); none
+ * while the shortcuts are not read, rather than a sentence that may change (`undefined`). */
+export function emptyHint(shortcut: string | null | undefined): string {
+  if (shortcut === undefined) return "";
   return shortcut
     ? `메모 목록에서 메모를 열거나 ${shortcut} 을 누르세요`
     : "메모 목록에서 메모를 여세요";
@@ -37,7 +39,7 @@ const PROBLEM_TEXT: Record<Problem, string> = {
 };
 
 /** The status bar's hint over a preview, naming the shortcut `toggle-preview` has now. */
-function previewHint(shortcut: string | null): string {
+function previewHint(shortcut: string | null | undefined): string {
   return shortcut ? `미리보기 · ${shortcut} 로 편집` : "미리보기";
 }
 const LARGE_TEXT_HINT = "읽기 전용 · 대용량 텍스트 뷰어";
@@ -68,8 +70,8 @@ export interface PaneHost {
   /** Tells the highlight worker which documents are on screen: every pane's active tab. */
   syncHighlightVisibility(): void;
   /** The shortcut app command `id` has now, as written (`shortcutHint` in src/shortcuts/keys.ts);
-   * null when it has none or the table is not read yet. */
-  shortcutHint(id: string): string | null;
+   * null when it has none, undefined while the table is not read. */
+  shortcutHint(id: string): string | null | undefined;
   /** Numbers the large text searches of the window: the backend keeps only the latest one
    * running, so two viewers in one window must not reuse a number. */
   nextTextSearch(): number;

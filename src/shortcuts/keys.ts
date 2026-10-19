@@ -237,8 +237,7 @@ const CM_MODIFIERS: Record<string, string> = {
 function cmKeyToAccelerator(name: string): string | null {
   if (/ (?!$)/.test(name)) return null;
   const parts = name.split(/-(?!$)/);
-  let key = parts.pop()!;
-  if (key === "Space") key = " ";
+  const key = parts.pop()!;
   const mods: string[] = [];
   for (const part of parts) {
     const mod = CM_MODIFIERS[part.toLowerCase()];
@@ -246,7 +245,7 @@ function cmKeyToAccelerator(name: string): string | null {
     mods.push(mod);
   }
   let token: string | null;
-  if (key === " ") token = "Space";
+  if (key === "Space" || key === " ") token = "Space";
   else if (/^[a-z0-9]$/i.test(key)) token = key.toUpperCase();
   else if ("`\\[],=-.';/".includes(key) && key.length === 1) token = key;
   else if (key.startsWith("Arrow")) token = key.slice(5);
@@ -273,13 +272,10 @@ function cmKeyToAccelerator(name: string): string | null {
 
 const UNNAMED_EDITOR_COMMAND = "편집기 명령";
 
-let bindings: { accelerator: string; name: string }[] | null = null;
-
-/** The editor's keys as macOS has them (a binding's `mac` before its `key`; its `shift` is the
- * same key with ⇧), named after the command they run. Read from the keymap itself, so a keymap
- * that changes leaves it current. */
-export function editorBindings(): { accelerator: string; name: string }[] {
-  bindings ??= editorKeymap.flatMap((binding: KeyBinding) => {
+/** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
+ * same key with ⇧), named after the function they run, or 편집기 명령 for one without a name. */
+export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string; name: string }[] {
+  return keymap.flatMap((binding) => {
     const name = binding.mac ?? binding.key;
     if (!name) return [];
     const found: { accelerator: string; name: string }[] = [];
@@ -291,6 +287,14 @@ export function editorBindings(): { accelerator: string; name: string }[] {
     if (binding.shift) add(`Shift-${name}`, binding.shift);
     return found;
   });
+}
+
+let bindings: { accelerator: string; name: string }[] | null = null;
+
+/** The editor's keys (`bindingsOf`). Read from the keymap itself, so a keymap that changes leaves
+ * it current. */
+export function editorBindings(): { accelerator: string; name: string }[] {
+  bindings ??= bindingsOf(editorKeymap);
   return bindings;
 }
 

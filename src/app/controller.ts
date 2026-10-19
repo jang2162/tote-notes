@@ -198,7 +198,7 @@ export class AppController implements DocHost, PaneHost {
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
-   * Null until it is first read. */
+   * Null until it is first read (a failed first read too: the empty panes then show no hint). */
   private shortcuts: ShortcutTable | null = null;
   private readonly configListeners = new Set<() => void>();
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
@@ -328,7 +328,7 @@ export class AppController implements DocHost, PaneHost {
   }
 
   async start(): Promise<void> {
-    const [info, perf] = await Promise.all([
+    const first = Promise.all([
       // The first call of a page: after a switch it lets the window write again
       // (`AppCore::page_started`). The switcher and ⌃1–⌃9 are wired after it, so an old page has
       // always made it before its window switches.
@@ -336,6 +336,11 @@ export class AppController implements DocHost, PaneHost {
       // A mark must never be what fails a window.
       this.backend.perfConfig().catch(() => this.perf),
     ]);
+    // Alongside everything up to the session: the empty panes show no hint until it is read.
+    const shortcutsRead = this.loadShortcuts().then((changed) => {
+      if (changed) this.shortcutsChanged();
+    });
+    const [info, perf] = await first;
     this.perf = perf;
     this.deviceId = info.deviceId;
     this.workspacePath = info.path;
@@ -358,8 +363,7 @@ export class AppController implements DocHost, PaneHost {
       true,
     );
     await this.loadRegistry();
-    const [, shortcuts] = await Promise.all([this.loadSettings(), this.loadShortcuts()]);
-    if (shortcuts) this.shortcutsChanged();
+    await Promise.all([this.loadSettings(), shortcutsRead]);
     this.applyEditorFont();
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
@@ -491,8 +495,8 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
-  shortcutHint(id: string): string | null {
-    return this.shortcuts && shortcutHint(this.shortcuts, id);
+  shortcutHint(id: string): string | null | undefined {
+    return this.shortcuts ? shortcutHint(this.shortcuts, id) : undefined;
   }
 
   /** The empty panes and the status bar name the shortcuts there are now. */
