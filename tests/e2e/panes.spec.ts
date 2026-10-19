@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange } from "../../src/backend/types";
-import { menu, ready, sessionPane, start } from "./helpers";
+import { menu, ready, sessionPane, sessionWidth, start } from "./helpers";
 
 // Side-by-side panes of one window (⌘\, ⌥⌘← / ⌥⌘→) on the fake backend. The rail is 48px and the
 // sidebar 240px, so the editing area is the viewport's width less 288.
@@ -64,8 +64,7 @@ async function shares(page: Page): Promise<number[]> {
 
 async function sessionWidths(page: Page, count: number): Promise<number[]> {
   const widths: number[] = [];
-  for (let index = 0; index < count; index++)
-    widths.push((await sessionPane(page, 0, index)).width);
+  for (let index = 0; index < count; index++) widths.push(await sessionWidth(page, 0, index));
   return widths;
 }
 
@@ -362,7 +361,7 @@ test("dragging the divider resizes and stops at 320px", async ({ page }) => {
   // And on the other side.
   await drag(1000);
   expect(await width(1)).toBeCloseTo(320, 0);
-  await expect.poll(async () => (await sessionPane(page, 0, 1)).width).toBeCloseTo(320 / area, 3);
+  await expect.poll(async () => await sessionWidth(page, 0, 1)).toBeCloseTo(320 / area, 3);
 });
 
 test("the panes, their widths and the focused pane come back after a restart", async ({ page }) => {
@@ -391,7 +390,7 @@ test("the panes, their widths and the focused pane come back after a restart", a
   expectClose(await shares(page), [0.7, 0.3]);
   const second = await sessionPane(page, 0, 1);
   expect(second.tabs.map((tab) => tab.kind === "memo" && tab.memoId)).toEqual(["c"]);
-  expect(second.width).toBeCloseTo(0.3);
+  expect(await sessionWidth(page, 0, 1)).toBeCloseTo(0.3);
 });
 
 test("a session listing one memo in two panes restores it once", async ({ page }) => {

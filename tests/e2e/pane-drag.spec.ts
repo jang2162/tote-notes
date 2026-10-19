@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { sessionPane, start } from "./helpers";
+import { sessionPane, sessionPaneCount, sessionWidth, start } from "./helpers";
 
 // Dragging a tab between the panes of one window, on the fake backend. The drag is made of pointer
 // events (the spike could not confirm HTML5 drag and drop between tab bars in the app's webview), so
@@ -134,7 +134,7 @@ test("dropping on the right edge makes a new pane", async ({ page }) => {
   await expect(editor(page, 1)).toHaveText("둘째");
   await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
   await expect(titles(page, 0)).toHaveText(["가"]);
-  await expect.poll(async () => (await sessionPane(page, 0, 1)).width).toBeCloseTo(0.5, 3);
+  await expect.poll(async () => await sessionWidth(page, 0, 1)).toBeCloseTo(0.5, 3);
 });
 
 test("dragging the last tab out closes its pane", async ({ page }) => {
@@ -300,11 +300,7 @@ test("a pane the move empties closes and the session follows, though the target 
     await app.moveTab(left.tabs.active!, right, 0).catch(() => {});
   });
   await expect(panes(page)).toHaveCount(1);
-  await expect
-    .poll(() =>
-      page.evaluate(() => JSON.parse(window.__tote.backend.data.session!).windows[0].panes.length),
-    )
-    .toBe(1);
+  await expect.poll(() => sessionPaneCount(page)).toBe(1);
 });
 
 test("closePane leaves a pane that still has tabs", async ({ page }) => {

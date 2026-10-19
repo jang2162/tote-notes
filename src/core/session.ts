@@ -1,5 +1,6 @@
 import { EditorSelection, type Text } from "@codemirror/state";
 
+import type { Axis } from "../app/layout";
 import type { WindowFrame } from "../backend/types";
 
 /** The windows of one workspace on one device, `.tote/sessions/<device ID>.json` (spec 「세션」),
@@ -14,9 +15,8 @@ export interface SessionFile {
 export interface WindowSession {
   /** Outer position and inner size in logical pixels. */
   frame?: WindowFrame;
-  /** Left to right; at least one. */
-  panes: PaneSession[];
-  /** Index into `panes`. */
+  layout: SessionNode;
+  /** Index of the focused pane among the panes read depth first. */
   focusedPane: number;
 }
 
@@ -24,8 +24,25 @@ export interface PaneSession {
   tabs: SessionTab[];
   /** Index into `tabs`; 0 when the active tab was dropped or unset, -1 only when no tab is left. */
   activeTab: number;
-  /** The share of the editing area's width; the panes' widths sum to 1. */
-  width: number;
+}
+
+export interface SessionSplit {
+  axis: Axis;
+  /** At least two. */
+  children: SessionNode[];
+  /** One share of the branch's extent per child, summing to 1. */
+  shares: number[];
+}
+
+export type SessionNode = PaneSession | SessionSplit;
+
+export function isSessionPane(node: SessionNode): node is PaneSession {
+  return Array.isArray((node as PaneSession).tabs);
+}
+
+/** The panes of `node`, depth first. */
+export function sessionPanes(node: SessionNode): PaneSession[] {
+  return isSessionPane(node) ? [node] : node.children.flatMap(sessionPanes);
 }
 
 /** `EditorSelection.toJSON()`. */
@@ -74,27 +91,65 @@ export function parseSessionFile(text: string | null): SessionFile {
   if (Array.isArray(raw.windows)) {
     file.windows = raw.windows.filter(isObject).map(parseWindowSession);
   } else if (Array.isArray(raw.tabs)) {
-    const pane = { tabs: raw.tabs, activeTab: raw.activeTab, width: 1 };
-    file.windows = [parseWindowSession({ frame: raw.window, panes: [pane], focusedPane: 0 })];
+    const pane = { tabs: raw.tabs, activeTab: raw.activeTab };
+    file.windows = [parseWindowSession({ frame: raw.window, layout: pane, focusedPane: 0 })];
   }
   return file;
 }
 
-/** Lenient: a tab that does not parse is dropped; at least one pane; widths sum to 1. */
+/** Lenient: a tab that does not parse is dropped; at least one pane. The layout is read as a tree,
+ * or as the row of `panes` with `width`s that windows wrote before panes could be stacked. */
 export function parseWindowSession(value: unknown): WindowSession {
   const raw = isObject(value) ? value : {};
-  const panes = (Array.isArray(raw.panes) ? raw.panes : []).filter(isObject).map(parsePane);
-  if (panes.length === 0) panes.push({ tabs: [], activeTab: -1, width: 1 });
-  const widths = normalizeWidths(panes.map((pane) => pane.width));
-  panes.forEach((pane, index) => (pane.width = widths[index]));
+  const layout = isObject(raw.layout) ? parseNode(raw.layout) : parseOldPanes(raw.panes);
   const focused = raw.focusedPane;
   const window: WindowSession = {
-    panes,
-    focusedPane: isPosition(focused) && focused >= 0 && focused < panes.length ? focused : 0,
+    layout,
+    focusedPane:
+      isPosition(focused) && focused >= 0 && focused < sessionPanes(layout).length ? focused : 0,
   };
   const frame = parseFrame(raw.frame);
   if (frame) window.frame = frame;
   return window;
+}
+
+function parseOldPanes(value: unknown): SessionNode {
+  const raw = (Array.isArray(value) ? value : []).filter(isObject);
+  if (raw.length === 0) return parsePane({});
+  if (raw.length === 1) return parsePane(raw[0]);
+  return {
+    axis: "row",
+    children: raw.map(parsePane),
+    shares: normalizeWidths(raw.map((pane) => (isNumber(pane.width) ? pane.width : Number.NaN))),
+  };
+}
+
+/** A pane, or a branch whose children are read the same way. A branch that cannot be laid out
+ * keeps all the tabs it holds in one pane. */
+function parseNode(raw: Json): SessionNode {
+  if (Array.isArray(raw.tabs)) return parsePane(raw);
+  const children = Array.isArray(raw.children) ? raw.children : [];
+  if ((raw.axis !== "row" && raw.axis !== "column") || children.length === 0) {
+    return parsePane({ tabs: tabsOf(raw), activeTab: 0 });
+  }
+  const shares =
+    Array.isArray(raw.shares) && raw.shares.length === children.length ? raw.shares : [];
+  const kept = children
+    .map((child: unknown, index: number) => ({ child, share: shares[index] }))
+    .filter((entry): entry is { child: Json; share: unknown } => isObject(entry.child));
+  if (kept.length === 0) return parsePane({});
+  if (kept.length === 1) return parseNode(kept[0].child);
+  return {
+    axis: raw.axis,
+    children: kept.map(({ child }) => parseNode(child)),
+    shares: normalizeWidths(kept.map(({ share }) => (isNumber(share) ? share : Number.NaN))),
+  };
+}
+
+/** Every tab listed under `raw`, depth first, as written. */
+function tabsOf(raw: Json): unknown[] {
+  if (Array.isArray(raw.tabs)) return raw.tabs;
+  return (Array.isArray(raw.children) ? raw.children : []).filter(isObject).flatMap(tabsOf);
 }
 
 /** Shares that sum to 1: `widths` over their sum, or equal shares when any of them is not a
@@ -106,13 +161,8 @@ export function normalizeWidths(widths: number[]): number[] {
   return widths.map((width) => width / sum);
 }
 
-/** `width` is taken as it is, for `normalizeWidths` to judge. */
 export function parsePane(raw: Json): PaneSession {
-  const pane: PaneSession = {
-    tabs: [],
-    activeTab: -1,
-    width: isNumber(raw.width) ? raw.width : Number.NaN,
-  };
+  const pane: PaneSession = { tabs: [], activeTab: -1 };
   if (!Array.isArray(raw.tabs)) return pane;
   const active = raw.activeTab;
   raw.tabs.forEach((value: unknown, index: number) => {

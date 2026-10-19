@@ -1,7 +1,13 @@
 import type { BrowserContext, Page } from "@playwright/test";
 
 import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
-import { parseSessionFile, type PaneSession } from "../../src/core/session";
+import {
+  isSessionPane,
+  parseSessionFile,
+  sessionPanes,
+  type PaneSession,
+  type SessionNode,
+} from "../../src/core/session";
 
 /** Opens the app on the fake backend seeded with `patch`. The seed is written once per test, so
  * reloading keeps the fake's data — that is how these specs simulate a restart. */
@@ -71,14 +77,37 @@ export function paneSession(tabs: object[][], focusedPane = 0): string {
   });
 }
 
-/** Pane `pane` of window `window` in the fake's session file, as the app reads it back; an empty
- * pane while the file has none, so a poll waits for it. */
-export async function sessionPane(page: Page, window = 0, pane = 0): Promise<PaneSession> {
+/** A version 2 session of one window with the layout tree `layout` (`{ axis, shares, children }`
+ * branches over `{ tabs, activeTab }` panes) and `focusedPane` focused, counted depth first. */
+export function layoutSession(layout: object, focusedPane = 0): string {
+  return JSON.stringify({ version: 2, windows: [{ layout, focusedPane }] });
+}
+
+async function sessionLayout(page: Page, window: number): Promise<SessionNode | undefined> {
   // `self`: the browser's window, which the `window` parameter hides here.
   const text = await page.evaluate(() => self.__tote.backend.data.session);
-  return (
-    parseSessionFile(text).windows[window]?.panes[pane] ?? { tabs: [], activeTab: -1, width: 1 }
-  );
+  return parseSessionFile(text).windows[window]?.layout;
+}
+
+/** Pane `pane` (depth first) of window `window` in the fake's session file, as the app reads it
+ * back; an empty pane while the file has none, so a poll waits for it. */
+export async function sessionPane(page: Page, window = 0, pane = 0): Promise<PaneSession> {
+  const layout = await sessionLayout(page, window);
+  return (layout && sessionPanes(layout)[pane]) ?? { tabs: [], activeTab: -1 };
+}
+
+/** How many panes window `window` has in the fake's session file; 0 while the file has none. */
+export async function sessionPaneCount(page: Page, window = 0): Promise<number> {
+  const layout = await sessionLayout(page, window);
+  return layout ? sessionPanes(layout).length : 0;
+}
+
+/** The share of the editing area's width that pane `pane` has in a row of panes; 1 for a lone
+ * pane, NaN while the file has no such pane. */
+export async function sessionWidth(page: Page, window = 0, pane = 0): Promise<number> {
+  const layout = await sessionLayout(page, window);
+  if (!layout || isSessionPane(layout)) return layout ? 1 : Number.NaN;
+  return layout.shares[pane] ?? Number.NaN;
 }
 
 /** Holds the fake at `gate` — set on it now, taken by its next switch or tear-off — until the

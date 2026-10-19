@@ -4,7 +4,9 @@ import { describe, expect, it, vi } from "vitest";
 import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "../backend/fake";
 import type { MemoInfo } from "../backend/types";
 import { WriteScheduler } from "../core/scheduler";
+import { sessionPanes } from "../core/session";
 import { conflictKeptText, ExternalDoc, MemoDoc, type DocHost } from "./docs";
+import { leaf } from "./layout";
 import { SessionSync, sessionTab } from "./session-sync";
 import { Tabs } from "./tabs";
 
@@ -45,7 +47,7 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const tabs = new Tabs();
   const sync = new SessionSync(
     backend,
-    () => ({ panes: [{ tabs }], widths: [1], focusedPane: 0 }),
+    () => ({ layout: leaf("p"), panes: new Map([["p", { tabs }]]), focusedPane: 0 }),
     "device-1",
     (id) => infos.get(id),
     (info) => new MemoDoc(host, info),
@@ -117,13 +119,13 @@ describe("SessionSync.restore", () => {
       },
       { a: fakeMemo("가.md", ""), b: fakeMemo("나.md", "") },
     );
-    const { panes, widths, focusedPane } = await sync.restore();
+    const { panes, layout, focusedPane } = await sync.restore();
     expect(panes.map(({ tabs }) => tabs.map((d) => (d as MemoDoc).info?.id))).toEqual([
       ["a"],
       ["b"],
     ]);
     expect(panes.map(({ tabs, active }) => active === tabs[0])).toEqual([true, true]);
-    expect(widths).toEqual([0.25, 0.75]);
+    expect(layout).toMatchObject({ axis: "row", shares: [0.25, 0.75] });
     expect(focusedPane).toBe(1);
   });
 
@@ -286,7 +288,7 @@ describe("SessionSync.build and sessionTab", () => {
     let captured = 0;
     const session = await sync.build(() => void captured++);
     expect(captured).toBe(1);
-    const [pane] = session.panes;
+    const [pane] = sessionPanes(session.layout);
     expect(pane.activeTab).toBe(1);
     expect(pane.tabs[0]).toEqual({
       kind: "memo",
@@ -308,11 +310,73 @@ describe("SessionSync.build and sessionTab", () => {
   it("builds a window of one pane with the whole width and the window's frame", async () => {
     const { backend, sync } = setup(null);
     expect(await sync.build(() => {})).toEqual({
-      panes: [{ tabs: [], activeTab: -1, width: 1 }],
+      layout: { tabs: [], activeTab: -1 },
       focusedPane: 0,
     });
     const frame = { x: 1, y: 2, width: 800, height: 600 };
     backend.windowFrame = async () => frame;
     expect((await sync.build(() => {})).frame).toEqual(frame);
+  });
+
+  it("builds the layout tree with each pane's tabs", async () => {
+    const { backend, host, tabs } = setup(null, {
+      a: fakeMemo("가.md", ""),
+      b: fakeMemo("나.md", ""),
+      c: fakeMemo("다.md", ""),
+    });
+    const tabsOf = (id: string, own: Tabs) => {
+      const info = host.memoInfo(id)!;
+      own.active = own.insertAfterActive(new MemoDoc(host, info));
+      return own;
+    };
+    const [a, b, c] = [tabsOf("a", tabs), tabsOf("b", new Tabs()), tabsOf("c", new Tabs())];
+    const layout = {
+      kind: "split" as const,
+      axis: "row" as const,
+      shares: [0.4, 0.6],
+      children: [
+        leaf("a"),
+        {
+          kind: "split" as const,
+          axis: "column" as const,
+          shares: [0.5, 0.5],
+          children: [leaf("b"), leaf("c")],
+        },
+      ],
+    };
+    const built = new SessionSync(
+      backend,
+      () => ({
+        layout,
+        panes: new Map([
+          ["a", { tabs: a }],
+          ["b", { tabs: b }],
+          ["c", { tabs: c }],
+        ]),
+        focusedPane: 2,
+      }),
+      "device-1",
+      (id) => host.memoInfo(id),
+      (info) => new MemoDoc(host, info),
+      (path) => new ExternalDoc(host, path),
+    );
+    const session = await built.build(() => {});
+    const memo = (id: string) => ({ kind: "memo", memoId: id, scrollAnchor: 0 });
+    expect(session.layout).toEqual({
+      axis: "row",
+      shares: [0.4, 0.6],
+      children: [
+        { tabs: [memo("a")], activeTab: 0 },
+        {
+          axis: "column",
+          shares: [0.5, 0.5],
+          children: [
+            { tabs: [memo("b")], activeTab: 0 },
+            { tabs: [memo("c")], activeTab: 0 },
+          ],
+        },
+      ],
+    });
+    expect(session.focusedPane).toBe(2);
   });
 });

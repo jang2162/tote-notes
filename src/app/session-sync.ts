@@ -1,6 +1,13 @@
 import type { Backend, MemoInfo, TabRef } from "../backend/types";
-import { parseWindowSession, type SessionTab, type WindowSession } from "../core/session";
+import {
+  parseWindowSession,
+  sessionPanes,
+  type SessionNode,
+  type SessionTab,
+  type WindowSession,
+} from "../core/session";
 import { ExternalDoc, MemoDoc, type Doc } from "./docs";
+import type { LayoutNode } from "./layout";
 import type { Tabs } from "./tabs";
 
 /** The session tab for `doc`. Defaults are left out so a session written by an older build and
@@ -25,20 +32,20 @@ export function sessionTab(doc: Doc, deviceId: string): SessionTab {
 
 /** The window a session is built from. */
 export interface SessionLayout {
-  /** Left to right. */
-  readonly panes: readonly { readonly tabs: Tabs }[];
-  /** The panes' shares of the editing area's width. */
-  readonly widths: readonly number[];
+  readonly layout: LayoutNode;
+  /** The pane of each of `layout`'s leaves, by id. */
+  readonly panes: ReadonlyMap<string, { readonly tabs: Tabs }>;
+  /** Index of the focused pane among the leaves, depth first. */
   readonly focusedPane: number;
 }
 
 /** What `restore` brings back for the window to lay out. */
 export interface RestoredLayout {
-  /** Left to right, at least one: each pane's tabs in order and the one to activate — the pane's
-   * active tab, else its last one, else null. */
+  /** The session's tree, whose panes are `panes`, depth first. */
+  layout: SessionNode;
+  /** One per pane of `layout`: its tabs in order and the one to activate — the pane's active tab,
+   * else its last one, else null. */
   panes: { tabs: Doc[]; active: Doc | null }[];
-  /** Shares summing to 1, one per pane. */
-  widths: number[];
   focusedPane: number;
 }
 
@@ -60,7 +67,8 @@ export class SessionSync {
   async restore(): Promise<RestoredLayout> {
     const window = parseWindowSession(parseJson(await this.backend.readWindowLayout()));
     const found: { doc: Doc; tab: SessionTab; pane: number; index: number }[] = [];
-    for (const [pane, { tabs }] of window.panes.entries()) {
+    const sessionPaneList = sessionPanes(window.layout);
+    for (const [pane, { tabs }] of sessionPaneList.entries()) {
       for (const [index, tab] of tabs.entries()) {
         const doc = this.docFor(tab, found);
         if (doc) found.push({ doc, tab, pane, index });
@@ -73,7 +81,7 @@ export class SessionSync {
           false,
         )
       : [];
-    const panes = window.panes.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
+    const panes = sessionPaneList.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
     for (const [at, { doc, tab, pane, index }] of found.entries()) {
       if (!claims[at]) continue;
       doc.restoreSelection = tab.selection;
@@ -82,27 +90,26 @@ export class SessionSync {
       if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
         doc.keepConflict(tab.conflictKept.memoId);
       panes[pane].tabs.push(doc);
-      if (index === window.panes[pane].activeTab) panes[pane].active = doc;
+      if (index === sessionPaneList[pane].activeTab) panes[pane].active = doc;
     }
     for (const pane of panes) pane.active ??= pane.tabs.at(-1) ?? null;
-    return {
-      panes,
-      widths: window.panes.map((pane) => pane.width),
-      focusedPane: window.focusedPane,
-    };
+    return { layout: window.layout, panes, focusedPane: window.focusedPane };
   }
 
   async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
-    const { panes, widths, focusedPane } = this.layout();
-    const window: WindowSession = {
-      panes: panes.map(({ tabs }, index) => ({
+    const { layout, panes, focusedPane } = this.layout();
+    const nodeOf = (node: LayoutNode): SessionNode => {
+      if (node.kind === "split") {
+        return { axis: node.axis, children: node.children.map(nodeOf), shares: [...node.shares] };
+      }
+      const tabs = panes.get(node.id)!.tabs;
+      return {
         tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
         activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,
-        width: widths[index],
-      })),
-      focusedPane,
+      };
     };
+    const window: WindowSession = { layout: nodeOf(layout), focusedPane };
     const frame = await this.backend.windowFrame();
     if (frame) window.frame = frame;
     return window;

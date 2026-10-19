@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
-import { parseSessionFile } from "../../src/core/session";
+import { parseSessionFile, sessionPanes } from "../../src/core/session";
 import { menu, nextWindow, openWindow, startWindows } from "./helpers";
 
 // Windows of one workspace on the fake backend: each page is a window (`FakeHub`), sharing the
@@ -21,7 +21,7 @@ const activeTitle = (page: Page) => page.locator(".tab.active .tab-title");
 async function sessionWindows(page: Page): Promise<string[][]> {
   const text = await page.evaluate(() => window.__tote.backend.data.session);
   return parseSessionFile(text).windows.map((window) =>
-    window.panes.flatMap((pane) =>
+    sessionPanes(window.layout).flatMap((pane) =>
       pane.tabs.flatMap((tab) => (tab.kind === "memo" ? [tab.memoId] : [])),
     ),
   );

@@ -13,6 +13,7 @@ import type {
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
+import { isSessionPane, normalizeWidths } from "../core/session";
 import { settleComposition } from "../editor/compose";
 import {
   languageData,
@@ -56,7 +57,7 @@ import {
   type DocHost,
 } from "./docs";
 import { describeError } from "./errors";
-import { canSplit, remove, resize, split } from "./layout";
+import { canSplit, leaf, remove, resize, split } from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { claimPlaces, sessionTab, SessionSync } from "./session-sync";
 
@@ -292,8 +293,16 @@ export class AppController implements DocHost, PaneHost {
     this.session = new SessionSync(
       this.backend,
       () => ({
-        panes: this.panes,
-        widths: this.widths,
+        layout:
+          this.panes.length === 1
+            ? leaf("0")
+            : {
+                kind: "split",
+                axis: "row",
+                children: this.panes.map((_, index) => leaf(String(index))),
+                shares: this.widths,
+              },
+        panes: new Map(this.panes.map((pane, index) => [String(index), pane])),
         focusedPane: this.panes.indexOf(this.focused),
       }),
       this.deviceId,
@@ -350,7 +359,13 @@ export class AppController implements DocHost, PaneHost {
       this.panes.push(pane);
       this.mountPane(pane);
     }
-    this.widths = restored.widths;
+    this.widths = isSessionPane(restored.layout)
+      ? [1]
+      : normalizeWidths(
+          restored.layout.children.length === restored.panes.length
+            ? restored.layout.shares
+            : restored.panes.map(() => 1),
+        );
     restored.panes.forEach(({ tabs }, index) => {
       for (const doc of tabs) {
         this.panes[index].tabs.push(doc);

@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
 import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
-import { parseSessionFile } from "../../src/core/session";
+import { parseSessionFile, sessionPanes } from "../../src/core/session";
 import { hold, menu, nextWindow, quietErrors, ready, start, startWindows } from "./helpers";
 
 // The workspace rail (spec 「워크스페이스 띠」): the fake's `otherWorkspaces` stand for the
@@ -106,7 +106,7 @@ test("the tabs left behind are written before the switch", async ({ page }) => {
     return { text: new TextDecoder().decode(bytes), session: workspace?.session ?? null };
   });
   expect(left.text).toBe("안건 셋");
-  const tabs = parseSessionFile(left.session).windows[0].panes[0].tabs;
+  const tabs = sessionPanes(parseSessionFile(left.session).windows[0].layout)[0].tabs;
   expect(tabs).toEqual([expect.objectContaining({ kind: "memo", memoId: "m" })]);
 });
 
