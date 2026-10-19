@@ -66,15 +66,14 @@ pub fn run() {
         .menu(menu::build)
         .on_menu_event(menu::on_event)
         .on_window_event(windows::on_event)
+        .on_page_load(windows::on_page_load)
         .setup(|app| {
             app.manage(AppCore::load(
                 app.path().resource_dir()?.join("extensions"),
             )?);
-            // The menu was built before the settings were read, with the default shortcuts.
-            app.state::<menu::MenuShortcuts>()
-                .apply(&shortcuts::effective(
-                    &app.state::<AppCore>().settings().shortcuts,
-                ));
+            // The menu was built before the settings were read, with the default shortcuts. On
+            // the main thread this runs at once, before any window opens.
+            menu::follow_settings(app.handle());
             perf::mark("core-loaded");
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());

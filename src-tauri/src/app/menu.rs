@@ -5,7 +5,8 @@
 use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
-use std::sync::{mpsc, Mutex};
+use std::sync::{mpsc, Mutex, MutexGuard};
+use std::thread::ThreadId;
 
 use serde::Deserialize;
 use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder};
@@ -18,7 +19,7 @@ use super::{lifecycle, lock, windows, AppCore};
 
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
-use crate::shortcuts::{self, Command, SETTINGS_ACCELERATOR};
+use crate::shortcuts::{self, Command, COMMANDS, SETTINGS_ACCELERATOR};
 
 /// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
 /// and never act as the menu bar's items of the same name.
@@ -152,32 +153,53 @@ const MENUS: &[(&str, &[Slot])] = &[
     ),
 ];
 
+/// The id of the item `slot` makes whose shortcut `MenuShortcuts` keeps: every command, and
+/// 설정….
+fn shortcut_item(slot: &Slot) -> Option<&'static str> {
+    match slot {
+        Slot::Command(id) => Some(id),
+        Slot::Settings => Some(SETTINGS),
+        _ => None,
+    }
+}
+
+/// Every item whose shortcut `MenuShortcuts` keeps, in menu order.
+fn shortcut_items() -> Vec<&'static str> {
+    MENUS
+        .iter()
+        .flat_map(|(_, slots)| slots.iter().filter_map(shortcut_item))
+        .collect()
+}
+
 /// Builds the menu bar with the default shortcuts and manages its items as `MenuShortcuts`. The
 /// settings are not loaded yet: setup applies the saved shortcuts (src/lib.rs).
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let table = shortcuts::effective(&BTreeMap::new());
-    let mut items = Vec::new();
+    let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
+    let items = shortcut_items()
+        .into_iter()
+        .map(|id| {
+            let label = COMMANDS
+                .iter()
+                .find(|command| command.id == id)
+                .map_or("설정…", |command| command.label);
+            let (_, keys) = keys
+                .iter()
+                .find(|(item, _)| *item == id)
+                .expect("MENUS names only commands of shortcuts::COMMANDS, and 설정…");
+            Ok((id, item(app, id, label, keys.as_deref())?))
+        })
+        .collect::<tauri::Result<Vec<_>>>()?;
     let mut bar = MenuBuilder::new(app);
     for (title, slots) in MENUS {
         let mut menu = SubmenuBuilder::new(app, *title);
         for slot in *slots {
+            if let Some(id) = shortcut_item(slot) {
+                let (_, made) = items.iter().find(|(item, _)| *item == id).unwrap();
+                menu = menu.item(made);
+                continue;
+            }
             menu = match slot {
-                Slot::Command(id) => {
-                    let (command, keys) = table
-                        .iter()
-                        .find(|(command, _)| command.id == *id)
-                        .expect("MENUS names only commands of shortcuts::COMMANDS");
-                    let made = item(app, id, command.label, keys.as_deref())?;
-                    let menu = menu.item(&made);
-                    items.push((command.id, made));
-                    menu
-                }
-                Slot::Settings => {
-                    let made = item(app, SETTINGS, "설정…", Some(SETTINGS_ACCELERATOR))?;
-                    let menu = menu.item(&made);
-                    items.push((SETTINGS, made));
-                    menu
-                }
+                Slot::Command(_) | Slot::Settings => unreachable!("an item with a shortcut"),
                 Slot::Separator => menu.separator(),
                 Slot::About => menu.about(None),
                 Slot::Services => menu.services(),
@@ -219,10 +241,14 @@ impl AcceleratorSlot for MenuItem<Wry> {
 /// settings, and come off while a window records a shortcut so the keys reach the recorder instead
 /// of running a command (spec 「녹음 중에 명령이 실행되지 않게」).
 ///
-/// Call it on the main thread only (`change_shortcuts`): it sets the items while holding its lock,
-/// and an item's setter waits for the main thread.
-pub struct MenuShortcuts<I = MenuItem<Wry>> {
+/// Use it on the main thread only, where `build` made it: in setup, a window or page-load event,
+/// or a closure handed over with `change_shortcuts` (a command or another thread). It sets the
+/// items while holding its lock, and an item's setter waits for the main thread: called from
+/// elsewhere it would wait for the main thread while the main thread waits for the lock. Debug
+/// builds check the thread.
+pub(crate) struct MenuShortcuts<I = MenuItem<Wry>> {
     state: Mutex<ShortcutState<I>>,
+    thread: ThreadId,
 }
 
 struct ShortcutState<I> {
@@ -235,20 +261,30 @@ struct ShortcutState<I> {
 
 impl<I: AcceleratorSlot> MenuShortcuts<I> {
     /// `items` as `build` made them, with the default shortcuts.
-    pub fn new(items: Vec<(&'static str, I)>) -> Self {
+    pub(crate) fn new(items: Vec<(&'static str, I)>) -> Self {
         Self {
             state: Mutex::new(ShortcutState {
                 items,
                 table: shortcuts::effective(&BTreeMap::new()),
                 suspended_by: None,
             }),
+            thread: std::thread::current().id(),
         }
+    }
+
+    fn state(&self) -> MutexGuard<'_, ShortcutState<I>> {
+        debug_assert_eq!(
+            std::thread::current().id(),
+            self.thread,
+            "MenuShortcuts used off the main thread"
+        );
+        lock(&self.state)
     }
 
     /// The commands' shortcuts are now `effective`. While they are off only the table changes;
     /// they come back with it.
-    pub fn apply(&self, effective: &[(&'static Command, Option<String>)]) {
-        let mut state = lock(&self.state);
+    pub(crate) fn apply(&self, effective: &[(&'static Command, Option<String>)]) {
+        let mut state = self.state();
         state.table = effective.to_vec();
         if state.suspended_by.is_none() {
             state.put();
@@ -256,15 +292,17 @@ impl<I: AcceleratorSlot> MenuShortcuts<I> {
     }
 
     /// Window `label` records a shortcut: every item's comes off.
-    pub fn suspend(&self, label: &str) {
-        let mut state = lock(&self.state);
+    pub(crate) fn suspend(&self, label: &str) {
+        let mut state = self.state();
         state.suspended_by = Some(label.to_string());
         state.put();
     }
 
-    /// Puts the shortcuts back, whichever window took them off.
-    pub fn resume(&self) {
-        let mut state = lock(&self.state);
+    /// Puts the shortcuts back, whichever window took them off. For the tests and a way out: the
+    /// app puts them back with `resume_if`, by the window that took them off.
+    #[cfg_attr(not(test), allow(dead_code))] // Nothing in the app needs it yet.
+    pub(crate) fn resume(&self) {
+        let mut state = self.state();
         if state.suspended_by.take().is_some() {
             state.put();
         }
@@ -272,8 +310,8 @@ impl<I: AcceleratorSlot> MenuShortcuts<I> {
 
     /// Puts the shortcuts back if window `label` took them off: another window losing focus or
     /// closing leaves the recording window's alone.
-    pub fn resume_if(&self, label: &str) {
-        let mut state = lock(&self.state);
+    pub(crate) fn resume_if(&self, label: &str) {
+        let mut state = self.state();
         if state.suspended_by.as_deref() == Some(label) {
             state.suspended_by = None;
             state.put();
@@ -307,12 +345,25 @@ fn accelerators_while(
 
 /// Runs `change` on the main thread, where `MenuShortcuts` has to be used. On the main thread it
 /// runs at once.
-pub fn change_shortcuts(app: &AppHandle, change: impl FnOnce(&MenuShortcuts) + Send + 'static) {
+pub(crate) fn change_shortcuts(
+    app: &AppHandle,
+    change: impl FnOnce(&MenuShortcuts) + Send + 'static,
+) {
     let handle = app.clone();
     let _ = app.run_on_main_thread(move || {
         if let Some(shortcuts) = handle.try_state::<MenuShortcuts>() {
             change(&shortcuts);
         }
+    });
+}
+
+/// Puts the saved shortcuts on the menu. Reads the settings when it runs on the main thread, so of
+/// two saves close together the one that runs last puts the newest map.
+pub(crate) fn follow_settings(app: &AppHandle) {
+    let handle = app.clone();
+    change_shortcuts(app, move |menu| {
+        let saved = handle.state::<AppCore>().settings().shortcuts;
+        menu.apply(&shortcuts::effective(&saved));
     });
 }
 
@@ -486,7 +537,6 @@ fn link_cli(app: &AppHandle) -> io::Result<Installed> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::shortcuts::COMMANDS;
 
     #[test]
     fn a_tab_menu_item_does_not_reach_the_menu_bar_actions() {
@@ -537,10 +587,8 @@ mod tests {
 
     impl Menu {
         fn new() -> Self {
-            let items: Vec<_> = COMMANDS
-                .iter()
-                .map(|command| command.id)
-                .chain([SETTINGS])
+            let items: Vec<_> = shortcut_items()
+                .into_iter()
                 .map(|id| (id, std::sync::Arc::new(Recorder::default())))
                 .collect();
             let shortcuts = MenuShortcuts::new(items.clone());
@@ -691,5 +739,27 @@ mod tests {
         let json = serde_json::to_value(&table).unwrap();
         assert_eq!(json["commands"][0]["default"], serde_json::Value::Null);
         assert_eq!(json["fixed"][0]["accelerator"], "CmdOrCtrl+,");
+    }
+
+    #[test]
+    fn every_item_the_table_puts_a_shortcut_on_is_kept() {
+        let mut kept = shortcut_items();
+        assert!(kept.contains(&SETTINGS));
+        let mut put: Vec<&str> = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()))
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        kept.sort_unstable();
+        put.sort_unstable();
+        assert_eq!(kept, put);
+    }
+
+    #[test]
+    #[cfg(debug_assertions)]
+    fn the_shortcuts_are_used_on_the_thread_that_built_them_only() {
+        let menu = std::sync::Arc::new(Menu::new());
+        let elsewhere = std::sync::Arc::clone(&menu);
+        let call = std::thread::spawn(move || elsewhere.shortcuts.suspend("ws-1")).join();
+        assert!(call.is_err());
     }
 }

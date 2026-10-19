@@ -6,13 +6,15 @@ use std::path::{Path, PathBuf};
 
 use serde::Deserialize;
 use serde_json::Value;
+use tauri::webview::{PageLoadEvent, PageLoadPayload};
 use tauri::{
-    AppHandle, Manager, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window, WindowEvent,
+    AppHandle, Manager, Webview, WebviewUrl, WebviewWindow, WebviewWindowBuilder, Window,
+    WindowEvent,
 };
 
 use super::commands::CommandError;
 use super::flush::FlushGoal;
-use super::menu::MenuShortcuts;
+use super::menu::{change_shortcuts, MenuShortcuts};
 use super::places::TabKey;
 use super::{lifecycle, requests, AppCore, DropCandidate, SwitchTarget};
 use crate::cli::CliRequest;
@@ -343,6 +345,15 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
             }
         }
         _ => {}
+    }
+}
+
+/// A page starting to load in a window recording a shortcut (a reload, as a workspace switch makes)
+/// gives the menu its shortcuts back: the old page's word that it was done may not have arrived.
+pub fn on_page_load(webview: &Webview, payload: &PageLoadPayload<'_>) {
+    if payload.event() == PageLoadEvent::Started {
+        let label = webview.label().to_string();
+        change_shortcuts(webview.app_handle(), move |menu| menu.resume_if(&label));
     }
 }
 

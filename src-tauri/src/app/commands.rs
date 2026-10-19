@@ -808,8 +808,7 @@ pub async fn patch_settings(
     let shortcuts_changed = patch.shortcuts.is_some();
     core.patch_settings(patch)?;
     if shortcuts_changed {
-        let saved = core.settings().shortcuts;
-        menu::change_shortcuts(&app, move |menu| menu.apply(&shortcuts::effective(&saved)));
+        menu::follow_settings(&app);
     }
     broadcast_config(&app);
     Ok(())
