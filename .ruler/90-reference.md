@@ -16,4 +16,5 @@
 | tote-notes 칸·창 후속 계획을 실행할 때                                                             | `docs/superpowers/plans/2026-10-18-tote-notes-panes-followups.md`                 |
 | tote-notes 칸·창 후속 2 계획을 실행할 때                                                           | `docs/superpowers/plans/2026-10-19-tote-notes-panes-followups-2.md`               |
 | tote-notes 자유 분할·탭 끌어 떼어 내기·워크스페이스 고르개를 고치거나 그 설계를 바꿀 때            | `docs/superpowers/specs/2026-10-19-tote-notes-free-splits-and-tab-drag-design.md` |
+| tote-notes 자유 분할·탭 끌어 떼어 내기 계획을 실행할 때                                            | `docs/superpowers/plans/2026-10-19-tote-notes-free-splits-and-tab-drag.md`        |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                | `docs/guides/development.md`                                                      |
