@@ -2,12 +2,14 @@
 //! ID, settings, and which workspace windows to reopen. Where they live is decided here and
 //! nowhere else.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
 use crate::persist::{read_json, write_json};
+use crate::shortcuts;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppPaths {
@@ -145,6 +147,15 @@ pub struct Settings {
     pub theme: ThemeSettings,
     #[serde(default, deserialize_with = "lenient")]
     pub extensions: ExtensionSettings,
+    #[serde(default, deserialize_with = "lenient")]
+    pub editor: EditorSettings,
+    /// Command id → the shortcut it has instead of its default, `None` for none (src/shortcuts.rs).
+    #[serde(
+        default,
+        deserialize_with = "shortcut_overrides",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub shortcuts: BTreeMap<String, Option<String>>,
 }
 
 /// A field whose value has the wrong shape (a hand-edit typo) falls back to its default instead of
@@ -156,6 +167,25 @@ where
 {
     let value = serde_json::Value::deserialize(deserializer)?;
     Ok(serde_json::from_value(value).unwrap_or_default())
+}
+
+/// The saved shortcut overrides, each entry judged on its own: one that is not a string or `null`,
+/// or that `shortcuts::sanitize` drops, goes and the rest stay. Kept in memory as read, a bad
+/// entry would ride along in every patch the settings screen makes and get each one refused.
+fn shortcut_overrides<'de, D>(deserializer: D) -> Result<BTreeMap<String, Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries: BTreeMap<String, serde_json::Value> = lenient(deserializer)?;
+    let saved = entries
+        .into_iter()
+        .filter_map(|(id, keys)| match keys {
+            serde_json::Value::Null => Some((id, None)),
+            serde_json::Value::String(keys) => Some((id, Some(keys))),
+            _ => None,
+        })
+        .collect();
+    Ok(shortcuts::sanitize(&saved))
 }
 
 /// Which theme to use under each OS appearance (spec 「테마」). `None` means the bundled default.
@@ -184,6 +214,65 @@ pub struct ExtensionSettings {
     pub precedence: Precedence,
 }
 
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct EditorSettings {
+    #[serde(deserialize_with = "lenient_on")]
+    pub line_numbers: bool,
+    /// Within `FONT_SIZES`, however it was written.
+    #[serde(deserialize_with = "font_size")]
+    pub font_size: u8,
+    /// A CSS font family; empty is the bundled default.
+    #[serde(deserialize_with = "lenient")]
+    pub font_family: String,
+}
+
+const DEFAULT_FONT_SIZE: u8 = 14;
+const FONT_SIZES: std::ops::RangeInclusive<u8> = 11..=24;
+
+impl Default for EditorSettings {
+    fn default() -> Self {
+        EditorSettings {
+            line_numbers: true,
+            font_size: DEFAULT_FONT_SIZE,
+            font_family: String::new(),
+        }
+    }
+}
+
+/// `lenient` for a switch that is on by default.
+fn lenient_on<'de, D>(deserializer: D) -> Result<bool, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)?
+        .as_bool()
+        .unwrap_or(true))
+}
+
+/// A number out of range goes to the nearer end; anything but a number is the default.
+fn font_size<'de, D>(deserializer: D) -> Result<u8, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(serde_json::Value::deserialize(deserializer)?
+        .as_f64()
+        .map_or(DEFAULT_FONT_SIZE, clamp_font_size))
+}
+
+/// A patch's size, held to the range the way a hand-edited file's is. Not a number is refused.
+fn patch_font_size<'de, D>(deserializer: D) -> Result<Option<u8>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    f64::deserialize(deserializer).map(|size| Some(clamp_font_size(size)))
+}
+
+fn clamp_font_size(size: f64) -> u8 {
+    let (min, max) = (*FONT_SIZES.start(), *FONT_SIZES.end());
+    size.round().clamp(f64::from(min), f64::from(max)) as u8
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum Precedence {
@@ -206,6 +295,15 @@ pub struct SettingsPatch {
     pub theme_dark: Option<Option<ThemeRef>>,
     #[serde(default)]
     pub precedence: Option<Precedence>,
+    #[serde(default)]
+    pub editor_line_numbers: Option<bool>,
+    #[serde(default, deserialize_with = "patch_font_size")]
+    pub editor_font_size: Option<u8>,
+    #[serde(default)]
+    pub editor_font_family: Option<String>,
+    /// The whole map: what is not in it goes back to its default.
+    #[serde(default)]
+    pub shortcuts: Option<BTreeMap<String, Option<String>>>,
 }
 
 /// A key that is present, `null` included, becomes `Some`; a missing key stays `None` through
@@ -219,7 +317,12 @@ where
 }
 
 impl SettingsPatch {
-    pub fn apply(&self, settings: &mut Settings) {
+    /// Refuses the whole patch, changing nothing, when its shortcuts break a rule
+    /// (`shortcuts::validate`).
+    pub fn apply(&self, settings: &mut Settings) -> Result<(), String> {
+        if let Some(overrides) = &self.shortcuts {
+            shortcuts::validate(overrides)?;
+        }
         if let Some(root) = &self.workspace_root {
             settings.workspace_root = root.clone();
         }
@@ -232,6 +335,19 @@ impl SettingsPatch {
         if let Some(precedence) = self.precedence {
             settings.extensions.precedence = precedence;
         }
+        if let Some(on) = self.editor_line_numbers {
+            settings.editor.line_numbers = on;
+        }
+        if let Some(size) = self.editor_font_size {
+            settings.editor.font_size = size.clamp(*FONT_SIZES.start(), *FONT_SIZES.end());
+        }
+        if let Some(family) = &self.editor_font_family {
+            settings.editor.font_family = family.clone();
+        }
+        if let Some(overrides) = &self.shortcuts {
+            settings.shortcuts = overrides.clone();
+        }
+        Ok(())
     }
 }
 
@@ -500,10 +616,21 @@ mod tests {
                 disabled: vec!["someone.ext".into()],
                 precedence: Precedence::Bundled,
             },
+            editor: EditorSettings {
+                line_numbers: false,
+                font_size: 16,
+                font_family: "D2Coding".into(),
+            },
+            shortcuts: BTreeMap::from([
+                ("rename".into(), Some("CmdOrCtrl+K".into())),
+                ("new-memo".into(), None),
+            ]),
         };
         settings.save(&file).unwrap();
         let text = fs::read_to_string(&file).unwrap();
         assert!(text.contains("\"precedence\": \"bundled\""));
+        assert!(text.contains("\"lineNumbers\": false"));
+        assert!(text.contains("\"new-memo\": null"));
         assert!(text.contains("\"dark\": null"));
         assert!(!text.contains("workspaceRoot"));
         assert_eq!(Settings::load(&file).unwrap(), settings);
@@ -512,6 +639,119 @@ mod tests {
             Settings::default()
         );
         assert_eq!(Settings::default().extensions.precedence, Precedence::User);
+        Settings::default().save(&file).unwrap();
+        assert!(!fs::read_to_string(&file).unwrap().contains("shortcuts"));
+    }
+
+    #[test]
+    fn editor_settings_default_to_line_numbers_on_14_and_the_default_font() {
+        let expected = EditorSettings {
+            line_numbers: true,
+            font_size: 14,
+            font_family: String::new(),
+        };
+        let settings = serde_json::from_str::<Settings>("{}").unwrap();
+        assert_eq!(settings.editor, expected);
+        assert_eq!(settings.shortcuts, BTreeMap::new());
+        let settings = serde_json::from_str::<Settings>(r#"{"editor": {}}"#).unwrap();
+        assert_eq!(settings.editor, expected);
+        // Each field on its own: a wrong one does not take the others with it.
+        let settings = serde_json::from_str::<Settings>(
+            r#"{"editor": {"lineNumbers": "no", "fontFamily": 3, "fontSize": 18}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.editor,
+            EditorSettings {
+                font_size: 18,
+                ..expected
+            }
+        );
+    }
+
+    #[test]
+    fn a_font_size_out_of_range_is_clamped() {
+        let read = |size: &str| {
+            serde_json::from_str::<Settings>(&format!(
+                r#"{{"workspaceRoot": "/x",
+                    "theme": {{"dark": {{"extension": "a", "label": "b"}}}},
+                    "editor": {{"lineNumbers": false, "fontSize": {size}}}}}"#
+            ))
+            .unwrap()
+        };
+        for (size, expected) in [
+            ("40", 24),
+            ("3", 11),
+            ("\"big\"", 14),
+            ("-5", 11),
+            ("300", 24),
+            ("16.6", 17),
+            ("null", 14),
+        ] {
+            let settings = read(size);
+            assert_eq!(settings.editor.font_size, expected, "{size}");
+            assert!(!settings.editor.line_numbers);
+            assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+            assert_eq!(settings.theme.dark.map(|t| t.label), Some("b".to_string()));
+        }
+        let mut settings = Settings::default();
+        for (size, expected) in [(40, 24), (3, 11), (20, 20)] {
+            SettingsPatch {
+                editor_font_size: Some(size),
+                ..Default::default()
+            }
+            .apply(&mut settings)
+            .unwrap();
+            assert_eq!(settings.editor.font_size, expected);
+        }
+        let patch = serde_json::from_str::<SettingsPatch>(r#"{"editorFontSize": 300}"#).unwrap();
+        assert_eq!(patch.editor_font_size, Some(24));
+    }
+
+    #[test]
+    fn a_bad_shortcut_entry_is_dropped_on_read_and_the_rest_kept() {
+        let settings = serde_json::from_str::<Settings>(
+            r#"{"workspaceRoot": "/x", "editor": {"fontSize": 18},
+                "shortcuts": {"new-memo": "CmdOrCtrl+Shift+M", "nope": "CmdOrCtrl+K",
+                              "save": "Cmd+++", "rename": 3, "close-tab": null}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([
+                (
+                    "new-memo".to_string(),
+                    Some("CmdOrCtrl+Shift+M".to_string())
+                ),
+                ("close-tab".to_string(), None),
+            ])
+        );
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+        assert_eq!(settings.editor.font_size, 18);
+        let settings = serde_json::from_str::<Settings>(r#"{"shortcuts": ["x"]}"#).unwrap();
+        assert_eq!(settings.shortcuts, BTreeMap::new());
+    }
+
+    #[test]
+    fn a_patch_with_an_unparsable_shortcut_is_refused_and_nothing_changes() {
+        let mut settings = Settings {
+            workspace_root: Some("/x".into()),
+            shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
+            ..Default::default()
+        };
+        let before = settings.clone();
+        let patch = SettingsPatch {
+            workspace_root: Some(Some("/y".into())),
+            editor_line_numbers: Some(false),
+            shortcuts: Some(BTreeMap::from([
+                ("quit".into(), None),
+                ("save".into(), Some("Cmd+++".into())),
+            ])),
+            ..Default::default()
+        };
+        let error = patch.apply(&mut settings).unwrap_err();
+        assert!(error.contains("save"), "{error}");
+        assert_eq!(settings, before);
     }
 
     #[test]
@@ -557,22 +797,82 @@ mod tests {
                 disabled: vec!["e".into()],
                 precedence: Precedence::User,
             },
+            editor: EditorSettings {
+                line_numbers: false,
+                font_size: 16,
+                font_family: "D2Coding".into(),
+            },
+            shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
         };
         SettingsPatch {
             theme_light: Some(Some(day.clone())),
             ..Default::default()
         }
-        .apply(&mut settings);
+        .apply(&mut settings)
+        .unwrap();
         assert_eq!(settings.theme.light, Some(day));
         assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
         assert_eq!(settings.theme.dark, Some(night));
         assert_eq!(settings.extensions.disabled, vec!["e"]);
+        assert_eq!(
+            settings.editor,
+            EditorSettings {
+                line_numbers: false,
+                font_size: 16,
+                font_family: "D2Coding".into(),
+            }
+        );
+        assert_eq!(settings.shortcuts.len(), 1);
         SettingsPatch {
             workspace_root: Some(None),
             ..Default::default()
         }
-        .apply(&mut settings);
+        .apply(&mut settings)
+        .unwrap();
         assert_eq!(settings.workspace_root, None);
+
+        SettingsPatch {
+            editor_line_numbers: Some(true),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert!(settings.editor.line_numbers);
+        assert_eq!(settings.editor.font_size, 16);
+        assert_eq!(settings.editor.font_family, "D2Coding");
+        SettingsPatch {
+            editor_font_size: Some(20),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(settings.editor.font_size, 20);
+        assert!(settings.editor.line_numbers);
+        SettingsPatch {
+            editor_font_family: Some("Menlo".into()),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(settings.editor.font_family, "Menlo");
+        assert_eq!(settings.editor.font_size, 20);
+        assert_eq!(settings.shortcuts.len(), 1);
+        // The map is replaced whole: `rename` is no longer in it.
+        SettingsPatch {
+            shortcuts: Some(BTreeMap::from([("new-memo".into(), None)])),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([("new-memo".to_string(), None)])
+        );
+        assert_eq!(settings.editor.font_family, "Menlo");
+        assert_eq!(
+            settings.theme.dark.as_ref().map(|t| t.label.as_str()),
+            Some("Night")
+        );
 
         let null = serde_json::from_str::<SettingsPatch>(r#"{"workspaceRoot": null}"#).unwrap();
         assert_eq!(null.workspace_root, Some(None));

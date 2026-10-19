@@ -333,19 +333,34 @@ impl AppCore {
     }
 
     /// Saves and applies the fields `patch` names: the workspace root moves at once (open windows
-    /// stay), the registry is rebuilt with the new switches.
+    /// stay), the registry is rebuilt with the new switches. A patch with a value the settings
+    /// refuse fails as `InvalidInput` and changes nothing, on disk or in memory.
     pub fn patch_settings(&self, patch: SettingsPatch) -> io::Result<()> {
-        self.modify_settings(|settings| patch.apply(settings))
+        self.try_modify_settings(|settings| {
+            patch
+                .apply(settings)
+                .map_err(|message| io::Error::new(io::ErrorKind::InvalidInput, message))
+        })
+    }
+
+    pub fn modify_settings(&self, change: impl FnOnce(&mut Settings)) -> io::Result<()> {
+        self.try_modify_settings(|settings| {
+            change(settings);
+            Ok(())
+        })
     }
 
     /// `change` runs on the current settings under the settings lock, and the result is saved and
     /// applied before the lock is released: two commands changing settings at once cannot lose
-    /// each other's change. A failed save leaves memory as it was.
-    pub fn modify_settings(&self, change: impl FnOnce(&mut Settings)) -> io::Result<()> {
+    /// each other's change. A failed change or save leaves memory as it was.
+    pub fn try_modify_settings(
+        &self,
+        change: impl FnOnce(&mut Settings) -> io::Result<()>,
+    ) -> io::Result<()> {
         {
             let mut current = lock(&self.settings);
             let mut next = current.clone();
-            change(&mut next);
+            change(&mut next)?;
             next.save(&self.paths.settings_file())?;
             *lock(&self.workspace_root) = next.workspace_root(&self.paths);
             *current = next;
@@ -1987,6 +2002,34 @@ mod tests {
             .disabled;
         on_disk.sort();
         assert_eq!(on_disk, expected);
+    }
+
+    #[test]
+    fn a_refused_patch_saves_nothing() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.patch_settings(SettingsPatch {
+            editor_font_size: Some(18),
+            ..Default::default()
+        })
+        .unwrap();
+        let saved = std::fs::read_to_string(core.paths.settings_file()).unwrap();
+        let error = core
+            .patch_settings(SettingsPatch {
+                editor_font_size: Some(20),
+                shortcuts: Some(std::collections::BTreeMap::from([(
+                    "save".into(),
+                    Some("Cmd+++".into()),
+                )])),
+                ..Default::default()
+            })
+            .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::InvalidInput);
+        assert_eq!(core.settings().editor.font_size, 18);
+        assert_eq!(
+            std::fs::read_to_string(core.paths.settings_file()).unwrap(),
+            saved
+        );
     }
 
     #[test]

@@ -8,6 +8,7 @@ pub mod perf;
 pub mod persist;
 pub mod search;
 pub mod session;
+pub mod shortcuts;
 pub mod watch;
 pub mod workspace;
 

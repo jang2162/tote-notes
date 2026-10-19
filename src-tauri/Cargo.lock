@@ -4093,6 +4093,7 @@ dependencies = [
  "grep-regex",
  "grep-searcher",
  "memchr",
+ "muda",
  "notify",
  "objc2",
  "objc2-app-kit",
