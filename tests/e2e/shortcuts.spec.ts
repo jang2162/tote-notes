@@ -1,0 +1,356 @@
+import { expect, test, type Locator, type Page } from "@playwright/test";
+
+import { defaultFakeData, type FakeData } from "../../src/backend/fake";
+import type { SettingsPatch } from "../../src/backend/types";
+import { menu, nextWindow, start, startWindows } from "./helpers";
+
+type Patches = { patches: SettingsPatch[] };
+
+/** Keeps every `patchSettings` the page sends, in `window.patches`. */
+async function trackPatches(page: Page): Promise<void> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    (window as unknown as Patches).patches = [];
+    backend.patchSettings = (change) => {
+      (window as unknown as Patches).patches.push(change);
+      return patchSettings(change);
+    };
+  });
+}
+
+const patches = (page: Page) =>
+  page.evaluate(() => (window as unknown as Patches).patches.filter((p) => "shortcuts" in p));
+const savedMap = (page: Page) =>
+  page.evaluate(() => window.__tote.backend.data.settings.shortcuts ?? {});
+const suspendCalls = (page: Page) =>
+  page.evaluate(() => window.__tote.backend.data.suspendShortcutCalls ?? []);
+
+/** Opens the settings screen on its 단축키 section. */
+async function openShortcuts(page: Page): Promise<Locator> {
+  await menu(page, "settings");
+  await page.locator(".modal.settings").getByRole("tab", { name: "단축키", exact: true }).click();
+  const panel = page.locator("#settings-panel-shortcuts");
+  await expect(panel.locator(".shortcut-row")).not.toHaveCount(0);
+  return panel;
+}
+
+async function startShortcuts(page: Page, seed: Partial<FakeData> = {}): Promise<Locator> {
+  await start(page, seed);
+  await trackPatches(page);
+  return openShortcuts(page);
+}
+
+const row = (panel: Locator, id: string) => panel.locator(`.shortcut-row[data-command="${id}"]`);
+const keys = (panel: Locator, id: string) => row(panel, id).locator(".shortcut-keys");
+
+/** Clicks the row's shortcut and waits for it to listen. */
+async function record(panel: Locator, id: string): Promise<void> {
+  await keys(panel, id).click();
+  await expect(keys(panel, id)).toHaveText("키를 누르세요");
+}
+
+test("recording a new shortcut saves it and the menu table follows", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  await expect(row(panel, "new-memo")).toContainText("새 메모");
+  await expect(row(panel, "new-memo")).toContainText("파일");
+  await expect(
+    row(panel, "new-memo").getByRole("button", { name: "되돌리기", exact: true }),
+  ).toHaveCount(0);
+
+  await record(panel, "new-memo");
+  await expect.poll(() => suspendCalls(page)).toEqual([true]);
+  await page.keyboard.press("Meta+Shift+M");
+  await expect.poll(() => savedMap(page)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+  expect(await suspendCalls(page)).toEqual([true, false]);
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+  await expect(
+    row(panel, "new-memo").getByRole("button", { name: "되돌리기", exact: true }),
+  ).toBeVisible();
+  // The table the menu and the pane hints read has it too.
+  const table = await page.evaluate(() => window.__tote.backend.shortcutTable());
+  expect(table.commands.find((c) => c.id === "new-memo")?.current).toBe("CmdOrCtrl+Shift+M");
+  expect(await patches(page)).toEqual([{ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } }]);
+});
+
+test("Backspace clears a shortcut and 되돌리기 brings the default back", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "save");
+  await page.keyboard.press("Backspace");
+  await expect.poll(() => savedMap(page)).toEqual({ save: null });
+  await expect(keys(panel, "save")).toHaveText("없음");
+  expect(await suspendCalls(page)).toEqual([true, false]);
+
+  await row(panel, "save").getByRole("button", { name: "되돌리기", exact: true }).click();
+  await expect.poll(() => savedMap(page)).toEqual({});
+  await expect(keys(panel, "save")).toHaveText("⌘S");
+  await expect(
+    row(panel, "save").getByRole("button", { name: "되돌리기", exact: true }),
+  ).toHaveCount(0);
+});
+
+test("a key another command uses offers 바꾸기 and swaps them in one save", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await expect(keys(panel, "rename")).toHaveText("없음");
+  await record(panel, "rename");
+  await page.keyboard.press("Meta+N");
+  await expect(row(panel, "rename").locator(".shortcut-note")).toHaveText(
+    /새 메모 에 이미 쓰고 있습니다/,
+  );
+  // Nothing is saved until 바꾸기, and the shortcuts are back already.
+  expect(await patches(page)).toEqual([]);
+  expect(await suspendCalls(page)).toEqual([true, false]);
+  await expect(keys(panel, "rename")).toHaveText("없음");
+
+  await row(panel, "rename").getByRole("button", { name: "바꾸기", exact: true }).click();
+  await expect.poll(() => savedMap(page)).toEqual({ "new-memo": null, rename: "CmdOrCtrl+N" });
+  expect(await patches(page)).toEqual([{ shortcuts: { "new-memo": null, rename: "CmdOrCtrl+N" } }]);
+  await expect(keys(panel, "rename")).toHaveText("⌘N");
+  await expect(keys(panel, "new-memo")).toHaveText("없음");
+  await expect(row(panel, "rename").locator(".shortcut-note")).toHaveCount(0);
+});
+
+test("swapping back a default leaves it out of the map", async ({ page }) => {
+  const panel = await startShortcuts(page, {
+    settings: {
+      ...defaultFakeData().settings,
+      shortcuts: { "new-memo": null, rename: "CmdOrCtrl+N" },
+    },
+  });
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+N");
+  await row(panel, "new-memo").getByRole("button", { name: "바꾸기", exact: true }).click();
+  // 새 메모 is on its default again; only 이름 바꾸기's none is saved.
+  await expect.poll(() => savedMap(page)).toEqual({});
+  expect(await patches(page)).toEqual([{ shortcuts: {} }]);
+});
+
+test("a fixed key is refused", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+C");
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
+    "복사하기 에 고정된 단축키입니다",
+  );
+  await expect(
+    row(panel, "new-memo").getByRole("button", { name: "바꾸기", exact: true }),
+  ).toHaveCount(0);
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await patches(page)).toEqual([]);
+  expect(await suspendCalls(page)).toEqual([true, false]);
+});
+
+test("an editor key is saved with a warning", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "rename");
+  await page.keyboard.press("Meta+L");
+  await expect.poll(() => savedMap(page)).toEqual({ rename: "CmdOrCtrl+L" });
+  await expect(keys(panel, "rename")).toHaveText("⌘L");
+  await expect(row(panel, "rename").locator(".shortcut-note")).toHaveText(
+    "편집기의 selectLine 을 가립니다",
+  );
+});
+
+test("an editor key whose command has no name is written as an editor shortcut", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page);
+  // ⇧⌘U is `redoSelection`, which CodeMirror makes with a function that has no name.
+  await record(panel, "rename");
+  await page.keyboard.press("Meta+Shift+U");
+  await expect.poll(() => savedMap(page)).toEqual({ rename: "CmdOrCtrl+Shift+U" });
+  await expect(row(panel, "rename").locator(".shortcut-note")).toHaveText(
+    "편집기 단축키를 가립니다",
+  );
+});
+
+test("letters without a modifier are not recorded and Esc cancels", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "new-memo");
+  await page.keyboard.press("N");
+  await page.keyboard.press("Shift+N");
+  await expect(keys(panel, "new-memo")).toHaveText("키를 누르세요");
+  await page.keyboard.press("Escape");
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  // The first Esc ends the recording only: the screen is still open.
+  await expect(page.locator(".modal.settings")).toBeVisible();
+  expect(await patches(page)).toEqual([]);
+  expect(await suspendCalls(page)).toEqual([true, false]);
+});
+
+test("the keys pressed while recording reach nothing else", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  const heard: string[] = [];
+  await page.exposeFunction("heardKey", (key: string) => heard.push(key));
+  await page.evaluate(() =>
+    document.addEventListener(
+      "keydown",
+      (event) => (window as unknown as { heardKey: (k: string) => void }).heardKey(event.key),
+      true,
+    ),
+  );
+  await record(panel, "new-memo");
+  // Not taken (a letter alone, ⇧ alone, Tab) or taken (⌃1, refused as a fixed key): none goes on.
+  await page.keyboard.press("N");
+  await page.keyboard.press("Shift");
+  await page.keyboard.press("Tab");
+  await expect(keys(panel, "new-memo")).toHaveText("키를 누르세요");
+  await page.keyboard.press("Control+1");
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
+    "워크스페이스 1 에 고정된 단축키입니다",
+  );
+  expect(heard).toEqual([]);
+  // Not recording, the keys go where they always went.
+  await page.keyboard.press("Shift");
+  await expect.poll(() => heard).toEqual(["Shift"]);
+});
+
+test("recording ends and shortcuts resume when the dialog closes or the window loses focus", async ({
+  page,
+}) => {
+  let panel = await startShortcuts(page);
+  await record(panel, "new-memo");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal.settings")).toBeVisible();
+  expect(await suspendCalls(page)).toEqual([true, false]);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal.settings")).toHaveCount(0);
+  expect(await suspendCalls(page)).toEqual([true, false]);
+
+  panel = await openShortcuts(page);
+  await record(panel, "new-memo");
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await suspendCalls(page)).toEqual([true, false, true, false]);
+
+  // A click outside, 닫기, another section and another row each end it once.
+  await record(panel, "new-memo");
+  await page.locator(".modal.settings h1").click();
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  await record(panel, "new-memo");
+  await record(panel, "save");
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  await page.locator(".modal.settings").getByRole("tab", { name: "일반", exact: true }).click();
+  await expect(panel).toBeHidden();
+  await page.locator(".modal.settings").getByRole("tab", { name: "단축키", exact: true }).click();
+  await expect(keys(panel, "save")).toHaveText("⌘S");
+  await record(panel, "save");
+  await page.locator(".modal.settings").getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(page.locator(".modal.settings")).toHaveCount(0);
+  expect(await suspendCalls(page)).toEqual([
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+    true,
+    false,
+  ]);
+  expect(await patches(page)).toEqual([]);
+});
+
+test("recording ends when the page goes away", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await record(panel, "new-memo");
+  await page.evaluate(() => window.dispatchEvent(new PageTransitionEvent("pagehide")));
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await suspendCalls(page)).toEqual([true, false]);
+});
+
+test("모두 기본값으로 asks first and clears the map", async ({ page }) => {
+  const panel = await startShortcuts(page, {
+    settings: {
+      ...defaultFakeData().settings,
+      shortcuts: { "new-memo": "CmdOrCtrl+Shift+M", save: null },
+    },
+  });
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+  await panel.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
+  const ask = page.locator(".modal.confirm");
+  await expect(ask).toContainText("모든 단축키를 기본값으로 되돌릴까요?");
+  await page.keyboard.press("Escape");
+  await expect(ask).toHaveCount(0);
+  expect(await patches(page)).toEqual([]);
+
+  await panel.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
+  await ask.getByRole("button", { name: "되돌리기", exact: true }).click();
+  await expect.poll(() => savedMap(page)).toEqual({});
+  expect(await patches(page)).toEqual([{ shortcuts: {} }]);
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  await expect(keys(panel, "save")).toHaveText("⌘S");
+  await expect(panel.getByRole("button", { name: "모두 기본값으로", exact: true })).toBeDisabled();
+});
+
+test("the search filters by name and by shortcut", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  const search = panel.getByPlaceholder("명령 검색");
+  await search.fill("나누기");
+  await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText([
+    "오른쪽으로 나누기",
+    "아래로 나누기",
+  ]);
+  await search.fill("⌘N");
+  await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
+  await search.fill("");
+  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(25);
+});
+
+test("the fixed group lists the fixed keys and cannot be edited", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  const fixed = panel.locator(".shortcut-fixed");
+  await expect(fixed.getByRole("heading")).toHaveText("고정");
+  const rows = fixed.locator(".shortcut-fixed-row");
+  await expect(rows).toHaveCount(20);
+  await expect(rows.first()).toHaveText(/설정….*⌘,/);
+  await expect(rows.filter({ hasText: "복사하기" })).toContainText("⌘C");
+  await expect(rows.filter({ hasText: "워크스페이스 1" })).toContainText("⌃1");
+  await expect(rows.filter({ hasText: "전체 화면" })).toContainText("⌃⌘F");
+  await expect(fixed.locator("button, input")).toHaveCount(0);
+  await rows.filter({ hasText: "복사하기" }).click();
+  expect(await suspendCalls(page)).toEqual([]);
+});
+
+test("a save that fails says so under the row and the same key can be tried again", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page);
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    let failures = 1;
+    backend.patchSettings = (change) =>
+      failures-- > 0 ? Promise.reject(new Error("디스크가 가득 찼습니다")) : patchSettings(change);
+  });
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+Shift+M");
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
+    "오류: 디스크가 가득 찼습니다",
+  );
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await savedMap(page)).toEqual({});
+
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+Shift+M");
+  await expect.poll(() => savedMap(page)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveCount(0);
+});
+
+test("a change from another window reloads the table and ends a recording", async ({ context }) => {
+  const first = await startWindows(context);
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  const panel = await openShortcuts(first);
+  await record(panel, "new-memo");
+  await second.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { save: "CmdOrCtrl+Shift+S" } }),
+  );
+  await expect(keys(panel, "save")).toHaveText("⇧⌘S");
+  await expect(keys(panel, "new-memo")).toHaveText("⌘N");
+  expect(await suspendCalls(first)).toEqual([true, false]);
+});

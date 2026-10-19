@@ -270,7 +270,8 @@ function cmKeyToAccelerator(name: string): string | null {
   return parse(accelerator) ? accelerator : null;
 }
 
-const UNNAMED_EDITOR_COMMAND = "편집기 명령";
+/** What `bindingsOf` names a function without a name. */
+export const UNNAMED_EDITOR_COMMAND = "편집기 명령";
 
 /** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
  * same key with ⇧), named after the function they run, or 편집기 명령 for one without a name. */

@@ -522,6 +522,54 @@ test("the editor section saves line numbers, font size and font at once", async 
   await expect(font).toHaveValue("Menlo");
 });
 
+test("a font size or font whose save failed is sent again as it is", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    const w = window as unknown as { patches: object[]; failures: number };
+    w.patches = [];
+    w.failures = 0;
+    backend.patchSettings = (change) => {
+      w.patches.push(change);
+      return w.failures-- > 0
+        ? Promise.reject(new Error("디스크가 가득 찼습니다"))
+        : patchSettings(change);
+    };
+  });
+  const failOnce = () =>
+    page.evaluate(() => ((window as unknown as { failures: number }).failures = 1));
+  const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
+  const editor = () => page.evaluate(() => window.__tote.backend.data.settings.editor);
+  const panel = await openSection(page, "편집기");
+  const error = panel.locator(".modal-error");
+  const size = panel.getByLabel("글꼴 크기");
+  const font = panel.getByLabel("글꼴", { exact: true });
+  await expect(size).toHaveValue("14");
+
+  await failOnce();
+  await size.fill("18");
+  await size.press("Enter");
+  await expect(error).toHaveText("오류: 디스크가 가득 찼습니다");
+  // The same value again goes out once more and is saved.
+  await size.press("Enter");
+  await expect.poll(editor).toEqual({ lineNumbers: true, fontSize: 18, fontFamily: "" });
+  await expect(error).toHaveText("");
+
+  await failOnce();
+  await font.fill("Menlo");
+  await font.press("Enter");
+  await expect(error).toHaveText("오류: 디스크가 가득 찼습니다");
+  await font.press("Enter");
+  await expect.poll(editor).toEqual({ lineNumbers: true, fontSize: 18, fontFamily: "Menlo" });
+  expect(await patches()).toEqual([
+    { editorFontSize: 18 },
+    { editorFontSize: 18 },
+    { editorFontFamily: "Menlo" },
+    { editorFontFamily: "Menlo" },
+  ]);
+});
+
 test("the root is saved with 적용 or Enter and only 닫기 is primary", async ({ page }) => {
   await start(page);
   await menu(page, "settings");

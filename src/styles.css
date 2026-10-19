@@ -971,6 +971,110 @@ button.danger {
   font-size: 12px;
 }
 
+.shortcut-settings {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.shortcut-list,
+.shortcut-fixed-list {
+  border: 1px solid var(--border);
+  border-radius: 6px;
+}
+
+/* Name and menu on the left, the shortcut and its default on the right; a note below. */
+.shortcut-row,
+.shortcut-fixed-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto 64px;
+  align-items: center;
+  gap: 4px 8px;
+  padding: 5px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+.shortcut-fixed-row {
+  grid-template-columns: minmax(0, 1fr) auto;
+  color: var(--muted);
+}
+
+.shortcut-row:last-child,
+.shortcut-fixed-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.shortcut-menu {
+  grid-row: 1;
+  grid-column: 1;
+  justify-self: end;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.shortcut-keys {
+  min-width: 96px;
+  font-variant-numeric: tabular-nums;
+}
+
+.shortcut-keys.recording {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shortcut-default {
+  color: var(--muted);
+  font-size: 11px;
+  white-space: nowrap;
+}
+
+.shortcut-row.changed .shortcut-name {
+  font-weight: 600;
+}
+
+.shortcut-reset {
+  grid-column: 4;
+}
+
+.shortcut-note {
+  display: flex;
+  grid-column: 1 / -1;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+}
+
+.shortcut-note.error {
+  color: var(--danger);
+}
+
+.shortcut-note.warning {
+  color: var(--muted);
+}
+
+.shortcut-fixed-title {
+  margin: 8px 0 4px;
+  color: var(--muted);
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.shortcut-problem {
+  margin: 0;
+  color: var(--danger);
+  font-size: 12px;
+}
+
+.shortcut-problem:empty {
+  display: none;
+}
+
 .extension-problems {
   margin: 4px 0;
   padding-left: 18px;

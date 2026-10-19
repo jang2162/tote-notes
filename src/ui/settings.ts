@@ -4,6 +4,7 @@ import { EDITOR_FONT_SIZE_MAX, EDITOR_FONT_SIZE_MIN, errorCode } from "../backen
 import { Registry } from "../extensions/registry";
 import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
+import { shortcutsSection } from "./shortcut-settings";
 
 export type SettingsSection = "general" | "editor" | "appearance" | "shortcuts" | "extensions";
 
@@ -37,6 +38,8 @@ const themeRef = (value: string): ThemeRef | null => {
 /** The settings screen: a list of sections on the left, the picked one's settings on the right.
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
+  /** Told when the 단축키 section is left or the screen closes, however it closes. */
+  const leaving: (() => void)[] = [];
   return modal<true>((close) => {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
@@ -68,13 +71,23 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     };
     // Only the field changed here is sent: a switch flipped a moment ago, or another window's
     // settings screen saving its own field, stays as the backend has it.
-    const save = async (patch: SettingsPatch) => {
+    const save = async (patch: SettingsPatch): Promise<boolean> => {
       try {
         await backend.patchSettings(patch);
         status.textContent = "";
+        return true;
       } catch (error) {
         fail(error);
+        return false;
       }
+    };
+    /** Saves a typed field's value, taken as saved at once: Enter and the `change` that may follow
+     * it send it once. A save that fails gives the field its saved value back, so the same value
+     * goes out again on the next Enter. */
+    const saveTyped = async (input: HTMLInputElement, sent: string, patch: SettingsPatch) => {
+      const before = synced.get(input) ?? "";
+      synced.set(input, sent);
+      if (!(await save(patch)) && synced.get(input) === sent) synced.set(input, before);
     };
 
     const rootInput = h("input", { name: "workspaceRoot", placeholder: "~/Tote" });
@@ -133,9 +146,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       );
       fontSize.value = String(size);
       if (fontSize.value === saved) return;
-      // Taken as saved: Enter and the `change` that may follow it send it once.
-      synced.set(fontSize, fontSize.value);
-      void save({ editorFontSize: size });
+      void saveTyped(fontSize, fontSize.value, { editorFontSize: size });
     };
     fontSize.addEventListener("change", commitFontSize);
     onEnter(fontSize, commitFontSize);
@@ -144,8 +155,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const commitFontFamily = () => {
       const font = fontFamily.value.trim();
       if (font === (synced.get(fontFamily) ?? "")) return;
-      synced.set(fontFamily, font);
-      void save({ editorFontFamily: font });
+      void saveTyped(fontFamily, font, { editorFontFamily: font });
     };
     fontFamily.addEventListener("change", commitFontFamily);
     onEnter(fontFamily, commitFontFamily);
@@ -323,12 +333,15 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       close(true);
     });
 
-    const contents: Record<SettingsSection, HTMLElement | null> = {
+    const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
       editor: editorSection,
       appearance: appearanceSection,
-      // Task 7's shortcut list goes here.
-      shortcuts: null,
+      shortcuts: shortcutsSection({
+        backend,
+        onConfigChanged: options.onConfigChanged,
+        onHide: (handler) => leaving.push(handler),
+      }),
       extensions: extensionSection,
     };
     const tabs = SECTIONS.map(([section, label]) => {
@@ -357,6 +370,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         each.body.hidden = !shown;
         if (shown && focus) each.tab.focus();
       }
+      if (section !== "shortcuts") for (const handler of leaving) handler();
       options.onSection?.(section);
     };
     const tabList = h(
@@ -395,5 +409,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     );
     void refresh();
     return panel;
-  }).then(() => undefined);
+  }).then(() => {
+    for (const handler of leaving) handler();
+  });
 }
