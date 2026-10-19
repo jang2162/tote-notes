@@ -141,6 +141,8 @@ export class TabBar {
     const ours = (event: PointerEvent) => event.pointerId === down.pointerId;
     const move = (event: PointerEvent) => {
       if (!ours(event)) return;
+      // The release out of the window may never arrive: a move with no button down is the end.
+      if (drag && event.buttons === 0) return cancel();
       if (!drag) {
         const dx = event.clientX - down.clientX;
         const dy = event.clientY - down.clientY;

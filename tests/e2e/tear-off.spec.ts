@@ -428,6 +428,37 @@ test("Esc outside the window calls the drag off", async ({ page }) => {
   expect((await data(page)).tornOff).toBeUndefined();
 });
 
+test("a drag whose pointerup never came is called off by the next move without a button", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(twoTabs),
+  });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await dragOut(page, tab(page, "가"), false);
+  await expect(tab(page, "가")).toHaveClass(/\bdragging-out\b/);
+  // The release out there was lost: the pointer comes back with no button down, and a later click
+  // would end with a pointerup on the pane's right edge.
+  const edge = (await page.locator(".pane").boundingBox())!;
+  const x = edge.x + edge.width - 4;
+  const y = edge.y + edge.height / 2;
+  await page.evaluate(
+    ({ x, y }) => {
+      for (const type of ["pointermove", "pointerup"])
+        window.dispatchEvent(
+          new PointerEvent(type, { pointerId: 1, buttons: 0, clientX: x, clientY: y }),
+        );
+    },
+    { x, y },
+  );
+  await expect(page.locator(".tab.dragging-out")).toHaveCount(0);
+  await expect(page.locator(".drop-mask")).toHaveCount(0);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await expect(page.locator(".pane")).toHaveCount(1);
+  expect((await data(page)).tornOff).toBeUndefined();
+});
+
 test("dragging back over the tab bar and letting go keeps the tab where it was", async ({
   page,
 }) => {
