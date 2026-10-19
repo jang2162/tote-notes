@@ -38,13 +38,18 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
-import { railItems, railShortcut, WorkspaceRail, type RailItem } from "../ui/rail";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings } from "../ui/settings";
 import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
 import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
+import {
+  switcherItems,
+  switcherShortcut,
+  WorkspaceSwitcher,
+  type SwitcherItem,
+} from "../ui/workspace-switcher";
 import type { LargeTextViewer } from "../viewer/large-text";
 import {
   asksAboutFile,
@@ -148,7 +153,7 @@ function place(el: HTMLElement, rect: Rect, thin?: "width" | "height"): void {
   el.style.height = thin === "height" ? "" : percent(rect.height);
 }
 
-/** One workspace window: the workspace rail, the sidebar, the status bar, menu actions, opening and
+/** One workspace window: the sidebar with its workspace switcher, the status bar, menu actions, opening and
  * closing tabs, the session and the places its tabs hold. Each editor pane — its tabs, tab bar and
  * editor area — is a `Pane`; the session is read and written by `SessionSync`. */
 export class AppController implements DocHost, PaneHost {
@@ -209,13 +214,14 @@ export class AppController implements DocHost, PaneHost {
     onEscape: () => this.closeSearch(),
     mark: (name) => this.mark(name),
   });
-  private readonly sidebar = new Sidebar(this.memoList, this.searchPanel);
-  private readonly rail = new WorkspaceRail({
+  private readonly switcher = new WorkspaceSwitcher({
     pick: (item) => void this.switchTo(item.path),
-    add: () => void this.newWorkspace(),
+    create: () => void this.newWorkspace(),
+    open: () => void this.showPicker().catch((error: unknown) => this.report(error)),
   });
-  /** What the rail shows, for ⌃1 – ⌃9. */
-  private railList: RailItem[] = [];
+  private readonly sidebar = new Sidebar(this.switcher, this.memoList, this.searchPanel);
+  /** What the switcher lists, for ⌃1 – ⌃9. */
+  private switcherList: SwitcherItem[] = [];
   /** The folder of the workspace the window shows. */
   private workspacePath = "";
   private readonly statusBar = new StatusBar();
@@ -244,7 +250,6 @@ export class AppController implements DocHost, PaneHost {
     this.panesEl.append(this.focused.el);
     this.syncPanes();
     root.replaceChildren(
-      this.rail.el,
       this.sidebar.el,
       h("main", { class: "main" }, this.panesEl, this.statusBar.el),
     );
@@ -312,7 +317,7 @@ export class AppController implements DocHost, PaneHost {
   async start(): Promise<void> {
     const [info, perf] = await Promise.all([
       // The first call of a page: after a switch it lets the window write again
-      // (`AppCore::page_started`). The rail and ⌃1–⌃9 are wired after it, so an old page has
+      // (`AppCore::page_started`). The switcher and ⌃1–⌃9 are wired after it, so an old page has
       // always made it before its window switches.
       this.backend.workspaceInfo(),
       // A mark must never be what fails a window.
@@ -322,14 +327,14 @@ export class AppController implements DocHost, PaneHost {
     this.deviceId = info.deviceId;
     this.workspacePath = info.path;
     document.title = info.title;
-    void this.refreshRail();
-    this.backend.onWorkspacesChanged(() => void this.refreshRail());
+    void this.refreshSwitcher();
+    this.backend.onWorkspacesChanged(() => void this.refreshSwitcher());
     // In the capture phase: the editor and the dialogs see the keys after this.
     document.addEventListener(
       "keydown",
       (event) => {
-        const index = railShortcut(event);
-        const item = index === null ? undefined : this.railList[index];
+        const index = switcherShortcut(event);
+        const item = index === null ? undefined : this.switcherList[index];
         // A window that answered a close or a switch has no tabs left to write; a dialog keeps the
         // window until it is answered.
         if (!item || this.leaving || document.querySelector(".modal")) return;
@@ -382,7 +387,7 @@ export class AppController implements DocHost, PaneHost {
     });
     window.addEventListener("focus", () => {
       void this.refreshMemos();
-      void this.refreshRail();
+      void this.refreshSwitcher();
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll(false);
@@ -1341,35 +1346,35 @@ export class AppController implements DocHost, PaneHost {
     await doc.rename(file);
   }
 
-  private async refreshRail(): Promise<void> {
+  private async refreshSwitcher(): Promise<void> {
     try {
-      this.railList = railItems(await this.backend.listWorkspaces(), this.workspacePath);
-      this.rail.render(this.railList);
+      this.switcherList = switcherItems(await this.backend.listWorkspaces(), this.workspacePath);
+      this.switcher.render(this.switcherList);
     } catch (error) {
       console.warn(error);
     }
   }
 
-  /** The rail and ⌃1 – ⌃9: this window shows the workspace at `path`. The backend has the window
+  /** The switcher and ⌃1 – ⌃9: this window shows the workspace at `path`. The backend has the window
    * write its tabs (`onFlush`), then reloads it; a workspace another window shows comes forward
    * instead. */
   private async switchTo(path: string): Promise<void> {
     // The window answered a close or a switch: it has no tabs left to write.
     if (this.leaving) return;
     this.mark("switch-click");
-    // The rail takes no focus, and a workspace another window shows comes forward without a round
+    // The switcher takes no focus, and a workspace another window shows comes forward without a round
     // (`onFlush`) to end the composition.
     await this.settleCompositions();
     try {
       await this.backend.switchWorkspace(path);
     } catch (error) {
       this.report(error);
-      // The folder may be gone since the list was read: ask again so the rail drops it.
-      void this.refreshRail();
+      // The folder may be gone since the list was read: ask again so the switcher drops it.
+      void this.refreshSwitcher();
     }
   }
 
-  /** The rail's `+` and 「새 워크스페이스…」: a workspace made wherever it is asked for opens in
+  /** The switcher's 「새 워크스페이스…」 and the menu's: a workspace made wherever it is asked for opens in
    * this window. */
   private async newWorkspace(): Promise<void> {
     if (this.leaving) return;

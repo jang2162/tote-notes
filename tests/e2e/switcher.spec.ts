@@ -5,7 +5,7 @@ import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
 import { parseSessionFile, sessionPanes } from "../../src/core/session";
 import { hold, menu, nextWindow, quietErrors, ready, start, startWindows } from "./helpers";
 
-// The workspace rail (spec 「워크스페이스 띠」): the fake's `otherWorkspaces` stand for the
+// The workspace switcher (spec 「워크스페이스 고르개」): the fake's `otherWorkspaces` stand for the
 // workspaces this window is not showing, and a switch reloads the page as the app's does.
 
 const info = (name: string): WorkspaceInfo => ({
@@ -53,7 +53,21 @@ async function open(page: Page, patch: Partial<FakeData> = {}): Promise<void> {
   await start(page, seed(patch));
 }
 
-const railItem = (page: Page, name: string) => page.locator(`.rail-item[title="${name}"]`);
+const button = (page: Page) => page.locator(".ws-switcher-button");
+const option = (page: Page, name: string) =>
+  page.locator(".ws-switcher-item", { has: page.locator(".ws-switcher-label", { hasText: name }) });
+
+/** Opens the list, if it is not, and clicks the workspace `name`. */
+async function pickWorkspace(page: Page, name: string): Promise<void> {
+  if (!(await page.locator(".ws-switcher-list").isVisible())) await button(page).click();
+  await option(page, name).click();
+}
+
+/** Opens the list and clicks one of the two commands. */
+async function pickCommand(page: Page, text: string): Promise<void> {
+  if (!(await page.locator(".ws-switcher-list").isVisible())) await button(page).click();
+  await page.locator(".ws-switcher-command", { hasText: text }).click();
+}
 const activeTitle = (page: Page) => page.locator(".tab.active .tab-title");
 
 /** Waits for the page the switch reloaded to show workspace `name`. */
@@ -62,23 +76,87 @@ async function switchedTo(page: Page, name: string): Promise<void> {
   await ready(page);
 }
 
-test("the rail lists the workspaces by name with the current one marked", async ({ page }) => {
+test("the switcher lists the workspaces by name with the current one marked", async ({ page }) => {
   await open(page);
-  const rail = page.locator(".rail");
-  expect((await rail.boundingBox())?.width).toBe(48);
-  const items = page.locator(".rail-item");
-  await expect(items).toHaveText(["가계", "개인", "업무"]);
-  expect(await items.evaluateAll((all) => all.map((each) => each.getAttribute("title")))).toEqual([
-    "가계부",
-    "개인",
-    "업무",
+  await expect(button(page)).toContainText("업무");
+  await expect(button(page)).toHaveAttribute("aria-haspopup", "listbox");
+  await expect(button(page)).toHaveAttribute("aria-expanded", "false");
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await button(page).click();
+  await expect(button(page)).toHaveAttribute("aria-expanded", "true");
+  const items = page.locator(".ws-switcher-item .ws-switcher-label");
+  await expect(items).toHaveText(["가계부", "개인", "업무"]);
+  await expect(page.locator(".ws-switcher-item.current")).toHaveCount(1);
+  await expect(page.locator(".ws-switcher-item.current")).toContainText("업무");
+  await expect(page.locator(".ws-switcher-item.current")).toHaveAttribute("aria-selected", "true");
+  await expect(page.locator(".ws-switcher-dot")).toHaveCount(0);
+  await expect(page.locator(".ws-switcher-command")).toHaveText([
+    "새 워크스페이스…",
+    "워크스페이스 열기…",
   ]);
-  await expect(page.locator(".rail-item.current")).toHaveAttribute("title", "업무");
-  await expect(page.locator(".rail-dot")).toHaveCount(0);
-  await expect(page.locator(".rail-add")).toHaveText("+");
-  // Left of the sidebar.
-  const sidebar = await page.locator(".sidebar").boundingBox();
-  expect((await rail.boundingBox())!.x).toBeLessThan(sidebar!.x);
+});
+
+test("the switcher sits above the title filter and stays while searching", async ({ page }) => {
+  await open(page);
+  const switcher = page.locator(".ws-switcher");
+  const list = page.locator(".memo-pane");
+  await expect(switcher).toBeVisible();
+  expect((await switcher.boundingBox())!.y).toBeLessThan((await list.boundingBox())!.y);
+  expect((await switcher.boundingBox())!.x).toBe((await page.locator(".sidebar").boundingBox())!.x);
+  await menu(page, "search-workspace");
+  await expect(page.locator(".search-input")).toBeFocused();
+  await expect(switcher).toBeVisible();
+  await expect(button(page)).toContainText("업무");
+});
+
+test("the rail is gone", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".rail")).toHaveCount(0);
+  expect((await page.locator(".sidebar").boundingBox())!.x).toBe(0);
+});
+
+test("arrow keys and Enter switch, Esc closes without switching", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.evaluate(() => {
+    const { backend } = window.__tote;
+    const switches: string[] = [];
+    const switchWorkspace = backend.switchWorkspace.bind(backend);
+    backend.switchWorkspace = (path) => {
+      switches.push(path);
+      return switchWorkspace(path);
+    };
+    Object.assign(window, { switches });
+  });
+  const switches = () =>
+    page.evaluate(() => (window as unknown as { switches: string[] }).switches);
+  // The list has the keys: they go into no editor, and the editor has them back when it closes.
+  await button(page).click();
+  await page.keyboard.press("ArrowUp");
+  await page.keyboard.insertText("x");
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  expect(await switches()).toEqual([]);
+  // A click outside closes it the same way.
+  await button(page).click();
+  await page.locator(".status-message").click({ force: true });
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  expect(await switches()).toEqual([]);
+  // 업무 is the third; one up is 개인.
+  await button(page).click();
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".ws-switcher-list .highlight")).toContainText("개인");
+  await page.keyboard.press("Enter");
+  await switchedTo(page, "개인");
+});
+
+test("「워크스페이스 열기…」 opens the picker", async ({ page }) => {
+  await open(page);
+  await pickCommand(page, "워크스페이스 열기…");
+  await expect(page.locator(".modal.picker")).toBeVisible();
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
 });
 
 test("clicking a workspace switches this window to it and restores its session", async ({
@@ -86,11 +164,11 @@ test("clicking a workspace switches this window to it and restores its session",
 }) => {
   await open(page);
   await expect(activeTitle(page)).toHaveText("회의");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await switchedTo(page, "개인");
   await expect(activeTitle(page)).toHaveText("일기");
   await expect(page.locator(".cm-content")).toHaveText("오늘");
-  await expect(page.locator(".rail-item.current")).toHaveAttribute("title", "개인");
+  await expect(button(page)).toContainText("개인");
 });
 
 test("the tabs left behind are written before the switch", async ({ page }) => {
@@ -98,7 +176,7 @@ test("the tabs left behind are written before the switch", async ({ page }) => {
   await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await page.keyboard.insertText(" 셋");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await switchedTo(page, "개인");
   const left = await page.evaluate(() => {
     const workspace = window.__tote.backend.data.otherWorkspaces?.["/fake/업무"];
@@ -153,7 +231,7 @@ test("keys typed after the switch round answers do not reach the memo left", asy
   await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   const release = await hold(page, "switchGate");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await answered(page);
   await page.keyboard.insertText("x");
   // Typed into the gap before the window switches: written nowhere, so taken nowhere.
@@ -171,7 +249,7 @@ test("a switch the person cancels gives the editor back", async ({ page }) => {
   await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await page.keyboard.insertText(" 셋");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.blocked)))
     .toEqual(["저장하지 못한 메모 1개"]);
@@ -185,7 +263,7 @@ test("a switch the person cancels gives the editor back", async ({ page }) => {
 test("a memo opened while the window leaves shows nothing", async ({ page }) => {
   await open(page);
   const release = await hold(page, "switchGate");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await answered(page);
   await menu(page, "new-memo");
   await expect(page.locator(".tab")).toHaveCount(2);
@@ -202,7 +280,7 @@ test("a switch that cannot open its target after writing gives the panes back", 
   await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   const release = await hold(page, "switchGate");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await answered(page);
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
   await release();
@@ -251,7 +329,7 @@ test("a cancelled switch gives focus back to the search box", async ({ page }) =
   await menu(page, "search-workspace");
   const search = page.locator(".search-input");
   await expect(search).toBeFocused();
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.blocked)))
     .toEqual(["저장하지 못한 메모 1개"]);
@@ -303,7 +381,7 @@ test("a second round while the window leaves keeps where the keys were", async (
   await expect(search).toBeFocused();
 });
 
-test("a rail click while the window leaves does nothing", async ({ page }) => {
+test("a switcher click while the window leaves does nothing", async ({ page }) => {
   await open(page);
   await page.evaluate(() => {
     const { backend } = window.__tote;
@@ -316,28 +394,28 @@ test("a rail click while the window leaves does nothing", async ({ page }) => {
     Object.assign(window, { switches });
   });
   const release = await hold(page, "switchGate");
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await answered(page);
   // The click is handled as it is dispatched: a switch would have reached the backend by now.
-  await railItem(page, "가계부").click();
+  await pickWorkspace(page, "가계부");
   expect(await page.evaluate(() => (window as unknown as { switches: string[] }).switches)).toEqual(
     ["/fake/개인"],
   );
   // `+` would ask for a name in a dialog shown as it is clicked.
-  await page.locator(".rail-add").click();
+  await pickCommand(page, "새 워크스페이스…");
   expect(await page.evaluate(() => document.querySelectorAll(".modal").length)).toBe(0);
   await release();
   await switchedTo(page, "개인");
 });
 
-test("a rail switch titles a memo from its first line", async ({ page }) => {
+test("a switcher switch titles a memo from its first line", async ({ page }) => {
   await open(page, { memos: { m: fakeMemo("회의.md", "안건", { autoTitle: true }) } });
   await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await page.keyboard.insertText(" 정리");
-  // The cursor never leaves the title line and the rail click keeps the editor focused: only the
+  // The cursor never leaves the title line and the switcher click keeps the editor focused: only the
   // switch's writing of the tabs names the memo.
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await switchedTo(page, "개인");
   expect(
     await page.evaluate(() => window.__tote.backend.data.otherWorkspaces?.["/fake/업무"]?.memos.m),
@@ -381,7 +459,7 @@ test("a workspace open in another window is brought forward and this window stay
 }) => {
   await open(page, { workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)] });
   await page.evaluate(() => Object.assign(window, { notReloaded: true }));
-  await railItem(page, "가계부").click();
+  await pickWorkspace(page, "가계부");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.focusedWorkspace))
     .toBe("/fake/가계부");
@@ -389,39 +467,42 @@ test("a workspace open in another window is brought forward and this window stay
   await expect(page).toHaveTitle("업무");
   await expect(activeTitle(page)).toHaveText("회의");
   // Its own workspace: nothing happens, not even a sibling window coming forward.
-  await railItem(page, "업무").click();
+  await pickWorkspace(page, "업무");
   expect(await page.evaluate(() => window.__tote.backend.data.focusedWorkspace)).toBe(
     "/fake/가계부",
   );
   expect(await page.evaluate(() => "notReloaded" in window)).toBe(true);
 });
 
-test("a workspace that cannot be found leaves the rail after a failed switch", async ({ page }) => {
+test("a workspace that cannot be found leaves the switcher after a failed switch", async ({
+  page,
+}) => {
   await quietErrors(page, "is switching workspaces", "is not a tote workspace");
   await start(page, seed());
-  // The folder went since the list was read: the rail still shows it.
+  // The folder went since the list was read: the switcher still shows it.
   await page.evaluate(() => {
     const data = window.__tote.backend.data;
     data.workspaces[1].missing = true;
     delete data.otherWorkspaces!["/fake/개인"];
   });
-  await expect(railItem(page, "개인")).toHaveCount(1);
-  await railItem(page, "개인").click();
-  await expect(railItem(page, "개인")).toHaveCount(0);
+  await button(page).click();
+  await expect(option(page, "개인")).toHaveCount(1);
+  await option(page, "개인").click();
+  await expect(option(page, "개인")).toHaveCount(0);
   await expect(page.locator(".status-message")).toHaveText("워크스페이스가 아닌 폴더입니다");
-  await expect(railItem(page, "가계부")).toHaveCount(1);
+  await expect(option(page, "가계부")).toHaveCount(1);
 });
 
-test("+ creates a workspace and switches this window to it", async ({ page }) => {
+test("새 워크스페이스… creates a workspace and switches this window to it", async ({ page }) => {
   await open(page);
-  await page.locator(".rail-add").click();
+  await pickCommand(page, "새 워크스페이스…");
   await expect(page.locator(".modal")).toContainText("새 워크스페이스 이름");
   await page.locator(".modal input").fill("여행");
   await page.locator(".modal input").press("Enter");
   await switchedTo(page, "여행");
   await expect(page.locator(".pane")).toHaveCount(1);
   await expect(page.locator(".tab")).toHaveCount(0);
-  await expect(page.locator(".rail-item.current")).toHaveAttribute("title", "여행");
+  await expect(button(page)).toContainText("여행");
 });
 
 test("새 워크스페이스… in the menu switches this window too", async ({ page }) => {
@@ -445,7 +526,7 @@ test("만들기 in the workspace picker switches this window too", async ({ page
 
 test("a switch is marked for the timing", async ({ page }) => {
   await open(page, { perf: true });
-  await railItem(page, "개인").click();
+  await pickWorkspace(page, "개인");
   await switchedTo(page, "개인");
   const marks = await page.evaluate(() => window.__tote.backend.data.marks ?? []);
   expect(marks).toContain("switch-click");
@@ -458,10 +539,11 @@ test("the dot follows a workspace opened in another window", async ({ context })
     seed({ workspaces: [listed("업무", 2), listed("개인"), listed("가계부")] }),
   );
   const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
-  await expect(first.locator(".rail-item.current .rail-dot")).toHaveCount(1);
-  await railItem(second, "개인").click();
-  await expect(railItem(first, "개인").locator(".rail-dot")).toHaveCount(1);
-  await expect(first.locator(".rail-item.current .rail-dot")).toHaveCount(0);
+  await button(first).click();
+  await expect(first.locator(".ws-switcher-item.current .ws-switcher-dot")).toHaveCount(1);
+  await pickWorkspace(second, "개인");
+  await expect(option(first, "개인").locator(".ws-switcher-dot")).toHaveCount(1);
+  await expect(first.locator(".ws-switcher-item.current .ws-switcher-dot")).toHaveCount(0);
 });
 
 test("onFlush writes a composition in progress before it answers", async ({ page }) => {
@@ -475,6 +557,7 @@ test("onFlush writes a composition in progress before it answers", async ({ page
     }),
   });
   await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("안건");
   // The input method's events as tests/e2e/tear-off.spec.ts sends them; the switch's flush round
   // (`onFlush`) comes mid-composition.
   const seen = await page.evaluate(async () => {
@@ -546,6 +629,7 @@ async function composeUntilBlur(page: Page, patch: Partial<FakeData> = {}): Prom
     ...patch,
   });
   await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("안건");
   await page.evaluate(async () => {
     const { app, backend } = window.__tote;
     const view = app.view;
@@ -603,14 +687,14 @@ const composed = (page: Page) =>
         .composed,
   );
 
-test("a rail click on a workspace another window shows settles a composition first", async ({
+test("a switcher click on a workspace another window shows settles a composition first", async ({
   page,
 }) => {
-  // The rail takes no focus, and no flush round runs to end the composition.
+  // The switcher takes no focus, and no flush round runs to end the composition.
   await composeUntilBlur(page, {
     workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)],
   });
-  await railItem(page, "가계부").click();
+  await pickWorkspace(page, "가계부");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.focusedWorkspace))
     .toBe("/fake/가계부");
@@ -619,9 +703,9 @@ test("a rail click on a workspace another window shows settles a composition fir
   await expect(page).toHaveTitle("업무");
 });
 
-test("+ ends a composition as its dialog takes the keys", async ({ page }) => {
+test("새 워크스페이스… ends a composition as its dialog takes the keys", async ({ page }) => {
   await composeUntilBlur(page);
-  await page.locator(".rail-add").click();
+  await pickCommand(page, "새 워크스페이스…");
   await expect(page.locator(".modal input")).toBeFocused();
   expect((await composed(page)).ended).toBe(true);
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건가");

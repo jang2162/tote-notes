@@ -423,7 +423,7 @@ export interface Backend {
   onMemosChanged(handler: () => void): void;
   /** Another window asked for a tab this window holds: show it. */
   onReveal(handler: (tab: TabRef) => void): void;
-  /** A workspace was made, or a window came to show another workspace: the rail lists them
-   * again. */
+  /** A workspace was made, or a window came to show another workspace: the switcher lists
+   * them again. */
   onWorkspacesChanged(handler: () => void): void;
 }

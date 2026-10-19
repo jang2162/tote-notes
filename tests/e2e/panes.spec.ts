@@ -14,8 +14,7 @@ import {
 } from "./helpers";
 
 // The panes of one window, split side by side and stacked (⌘\, ⇧⌘\, ⌥⌘ and an arrow), on the fake
-// backend. The rail is 48px and the sidebar 240px, so the editing area is the viewport's width less
-// 288.
+// backend. The sidebar is 240px, so the editing area is the viewport's width less 240.
 
 const EMPTY_TITLE = "새 메모를 만드세요";
 const EMPTY_HINT = "메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
@@ -166,7 +165,7 @@ test("⌘\\ with one tab opens an empty pane and focuses it", async ({ page }) =
 
 test("⌘\\ in a narrow window says so and does nothing", async ({ page }) => {
   // An editing area of 572px: two halves of 286px are under the minimum.
-  await page.setViewportSize({ width: 860, height: 720 });
+  await page.setViewportSize({ width: 812, height: 720 });
   await start(page, {
     memos,
     session: JSON.stringify({ version: 1, activeTab: 1, tabs: [memoTab("a"), memoTab("b")] }),
@@ -387,9 +386,9 @@ test("each pane keeps its own banner and preview mode", async ({ page }) => {
 });
 
 test("dragging the divider resizes and stops at 320px", async ({ page }) => {
-  // An editing area of 992px — 1280px less the 48px rail and the 240px sidebar: two panes of
+  // An editing area of 992px — 1232px less the 240px sidebar: two panes of
   // 496px, the line between them the right one's border.
-  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.setViewportSize({ width: 1232, height: 720 });
   await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
   await expect(panes(page)).toHaveCount(2);
   const width = (index: number) =>
@@ -462,7 +461,7 @@ test("a session listing one memo in two panes restores it once", async ({ page }
 
 test("widths keep their ratios in a window too narrow for them", async ({ page }) => {
   // An editing area of 1312px: wide enough to make three panes by splitting.
-  await page.setViewportSize({ width: 1600, height: 800 });
+  await page.setViewportSize({ width: 1552, height: 800 });
   await start(page, {
     memos,
     session: JSON.stringify({ version: 1, activeTab: 1, tabs: [memoTab("a"), memoTab("b")] }),
@@ -473,7 +472,7 @@ test("widths keep their ratios in a window too narrow for them", async ({ page }
   await expect(panes(page)).toHaveCount(3);
   await expect.poll(() => sessionWidths(page, 3)).toEqual([0.5, 0.25, 0.25]);
   // An editing area of 812px: under 960, so the panes are below the minimum width.
-  await page.setViewportSize({ width: 1100, height: 800 });
+  await page.setViewportSize({ width: 1052, height: 800 });
   await page.reload();
   await ready(page);
   await expect(panes(page)).toHaveCount(3);
@@ -920,4 +919,51 @@ test("a tab's menu splits it into a new pane on the left", async ({ page }) => {
   await expect(first.locator(".tab .tab-title")).toHaveText(["가"]);
   await expect(second.locator(".tab .tab-title")).toHaveText(["다"]);
   await expect(third.locator(".tab .tab-title")).toHaveText(["나"]);
+});
+
+test("a tab's menu splits a pane's only tab into an empty new pane", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    session: session([[memoTab("a")]]),
+    tabMenuPick: "split-tab-right",
+  });
+  await expect(titles(page, 0)).toHaveText(["가"]);
+  await pane(page, 0).locator(".tab", { hasText: "가" }).click({ button: "right" });
+  await expect(panes(page)).toHaveCount(2);
+  const [left, right] = await panesByPosition(page);
+  await expect(left.locator(".tab .tab-title")).toHaveText(["가"]);
+  await expect(right.locator(".tab")).toHaveCount(0);
+  await expect(right.locator(".editor-placeholder")).toContainText(EMPTY_TITLE);
+});
+
+test("a tab's menu in a narrow window says so and splits nothing", async ({ page }) => {
+  // An editing area of 620px: two halves of 310px are under the minimum.
+  await page.setViewportSize({ width: 860, height: 720 });
+  await start(page, {
+    memos,
+    session: session([[memoTab("a"), memoTab("b")]]),
+    tabMenuPick: "split-tab-right",
+  });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  await pane(page, 0).locator(".tab", { hasText: "나" }).click({ button: "right" });
+  await expect(page.locator(".status-message")).toHaveText(TOO_NARROW);
+  await expect(panes(page)).toHaveCount(1);
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+});
+
+test("a press and a move on the tab bar's empty part start no drag", async ({ page }) => {
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  const bar = (await pane(page, 0).locator(".tabbar").boundingBox())!;
+  const last = (await pane(page, 0).locator(".tab").last().boundingBox())!;
+  const x = (last.x + last.width + bar.x + bar.width) / 2;
+  const y = bar.y + bar.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 100, y + 200, { steps: 8 });
+  await expect(page.locator(".drop-mask")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  await expect(panes(page)).toHaveCount(1);
 });

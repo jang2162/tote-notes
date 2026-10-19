@@ -257,7 +257,7 @@ test("a pane emptied by a drag closes", async ({ page }) => {
 
 test("a side too small to split shows the whole pane instead", async ({ page }) => {
   // An editing area of 600px: a half would be under 320px.
-  await page.setViewportSize({ width: 888, height: 720 });
+  await page.setViewportSize({ width: 840, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   const box = await boxOf(pane(page, 0));
@@ -322,7 +322,7 @@ test("a moved memo keeps its unsaved text and its undo", async ({ page }) => {
 
 test("a drop near the right edge of a narrow window goes into the pane too", async ({ page }) => {
   // An editing area of 572px, too narrow to split.
-  await page.setViewportSize({ width: 860, height: 720 });
+  await page.setViewportSize({ width: 812, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await drag(page, tab(page, 0, "가"), await rightEdge(page));

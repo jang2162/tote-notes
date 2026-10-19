@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { WorkspaceListItem } from "../backend/types";
-import { railItems, railShortcut } from "./rail";
+import { switcherItems, switcherShortcut } from "./workspace-switcher";
 
 const item = (name: string, path: string, windows = 0, missing = false): WorkspaceListItem => ({
   name,
@@ -11,9 +11,9 @@ const item = (name: string, path: string, windows = 0, missing = false): Workspa
   missing,
 });
 
-describe("railItems", () => {
+describe("switcherItems", () => {
   it("items are sorted by name, NFD names included, missing ones left out", () => {
-    const items = railItems(
+    const items = switcherItems(
       [
         item("업무", "/w/업무"),
         item("개인".normalize("NFD"), "/w/개인"),
@@ -26,16 +26,14 @@ describe("railItems", () => {
     expect(items.map((each) => each.path)).toEqual(["/w/가계부", "/w/개인", "/w/업무"]);
   });
 
-  it("the label is the first two characters", () => {
-    const label = (name: string) => railItems([item(name, "/w/x")], "/w/y")[0].label;
-    expect(label("업무 메모")).toBe("업무");
-    expect(label("a")).toBe("a");
-    expect(label("👩‍💻노트")).toBe("👩‍💻노");
+  it("an item is the name, the path and the two marks, nothing more", () => {
+    const [each] = switcherItems([item("업무 메모", "/w/x", 1)], "/w/y");
+    expect(each).toEqual({ name: "업무 메모", path: "/w/x", current: false, dot: true });
   });
 
   it("the current workspace is marked and other windows get a dot", () => {
     const mark = (windows: number, path: string) => {
-      const [each] = railItems([item("가", "/w/가", windows)], path);
+      const [each] = switcherItems([item("가", "/w/가", windows)], path);
       return { current: each.current, dot: each.dot };
     };
     expect(mark(1, "/w/가")).toEqual({ current: true, dot: false });
@@ -45,7 +43,7 @@ describe("railItems", () => {
   });
 });
 
-describe("railShortcut", () => {
+describe("switcherShortcut", () => {
   const key = (code: string, mods: Partial<KeyboardEvent> = {}) => ({
     ctrlKey: true,
     metaKey: false,
@@ -55,15 +53,15 @@ describe("railShortcut", () => {
     ...mods,
   });
 
-  it("⌃1–⌃9 pick the rail's items, nothing else does", () => {
-    expect(railShortcut(key("Digit3"))).toBe(2);
-    expect(railShortcut(key("Digit1"))).toBe(0);
-    expect(railShortcut(key("Digit9"))).toBe(8);
-    expect(railShortcut(key("Digit3", { metaKey: true }))).toBeNull();
-    expect(railShortcut(key("Digit3", { altKey: true }))).toBeNull();
-    expect(railShortcut(key("Digit3", { shiftKey: true }))).toBeNull();
-    expect(railShortcut(key("Digit3", { ctrlKey: false }))).toBeNull();
-    expect(railShortcut(key("Digit0"))).toBeNull();
-    expect(railShortcut(key("KeyA"))).toBeNull();
+  it("⌃1–⌃9 pick the switcher's items, nothing else does", () => {
+    expect(switcherShortcut(key("Digit3"))).toBe(2);
+    expect(switcherShortcut(key("Digit1"))).toBe(0);
+    expect(switcherShortcut(key("Digit9"))).toBe(8);
+    expect(switcherShortcut(key("Digit3", { metaKey: true }))).toBeNull();
+    expect(switcherShortcut(key("Digit3", { altKey: true }))).toBeNull();
+    expect(switcherShortcut(key("Digit3", { shiftKey: true }))).toBeNull();
+    expect(switcherShortcut(key("Digit3", { ctrlKey: false }))).toBeNull();
+    expect(switcherShortcut(key("Digit0"))).toBeNull();
+    expect(switcherShortcut(key("KeyA"))).toBeNull();
   });
 });
