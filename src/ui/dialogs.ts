@@ -3,8 +3,11 @@ import { h } from "./dom";
 
 /** The backdrops of the modals open now, the last one on top: Escape closes only that one. */
 const openModals: HTMLElement[] = [];
+let titles = 0;
 
-/** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape. */
+/** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape.
+ * The dialog is named by its own `aria-labelledby`, else by its first heading or paragraph. The
+ * element marked `data-autofocus` takes the focus, else the first input or primary button. */
 export function modal<T>(
   build: (close: (value: T | null) => void) => HTMLElement,
 ): Promise<T | null> {
@@ -24,11 +27,21 @@ export function modal<T>(
       event.stopPropagation();
       close(null);
     };
-    backdrop.append(build(close));
+    const dialog = build(close);
+    dialog.setAttribute("aria-modal", "true");
+    const title = dialog.hasAttribute("aria-labelledby") ? null : dialog.querySelector("h1, p");
+    if (title) {
+      title.id ||= `modal-title-${++titles}`;
+      dialog.setAttribute("aria-labelledby", title.id);
+    }
+    backdrop.append(dialog);
     openModals.push(backdrop);
     document.addEventListener("keydown", onKey, true);
     document.body.append(backdrop);
-    backdrop.querySelector<HTMLElement>("input, button.primary")?.focus();
+    (
+      backdrop.querySelector<HTMLElement>("[data-autofocus]") ??
+      backdrop.querySelector<HTMLElement>("input, button.primary")
+    )?.focus();
   });
 }
 
@@ -39,7 +52,7 @@ function isCompositionKey(event: KeyboardEvent): boolean {
   return event.isComposing || event.keyCode === 229;
 }
 
-function isSubmitEnter(event: KeyboardEvent): boolean {
+export function isSubmitEnter(event: KeyboardEvent): boolean {
   return event.key === "Enter" && !isCompositionKey(event);
 }
 
@@ -156,6 +169,7 @@ export async function workspacePicker(
     const input = h("input", { placeholder: "새 워크스페이스 이름" });
     input.spellcheck = false;
     const error = h("p", { class: "modal-error" });
+    error.setAttribute("aria-live", "polite");
     let relocating = false;
     const relocate = async (from: string) => {
       if (relocating) return;

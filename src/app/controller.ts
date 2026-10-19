@@ -43,7 +43,7 @@ import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dia
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { SearchPanel } from "../ui/search-panel";
-import { openSettings } from "../ui/settings";
+import { openSettings, type SettingsSection } from "../ui/settings";
 import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
 import type { TabDrag } from "../ui/tab-bar";
@@ -188,6 +188,8 @@ export class AppController implements DocHost, PaneHost {
   );
   /** Open settings screens listen here: the backend takes one config handler per window. */
   private settingsOpen = false;
+  /** The section the settings screen showed last; the window forgets it as it closes. */
+  private settingsSection: SettingsSection = "general";
   private versionsOpen = false;
   /** `extensionSignature` of the registry the caches were filled from. */
   private extensionSet = "";
@@ -1571,6 +1573,8 @@ export class AppController implements DocHost, PaneHost {
           this.configListeners.delete(handler);
         };
       },
+      section: this.settingsSection,
+      onSection: (section) => (this.settingsSection = section),
     });
     // Escape closes the screen without its unsubscribe.
     for (const handler of subscribers) this.configListeners.delete(handler);

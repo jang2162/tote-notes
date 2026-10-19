@@ -847,11 +847,14 @@ button.danger {
   font-family: inherit;
 }
 
+/* One height for every section: the panel scrolls, the screen does not change size. */
 .modal.settings {
-  width: min(720px, 90vw);
+  box-sizing: border-box;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto auto;
+  width: min(760px, 90vw);
   max-width: none;
-  max-height: 85vh;
-  overflow: auto;
+  height: min(560px, 85vh);
 }
 
 .modal.settings h1 {
@@ -859,10 +862,67 @@ button.danger {
   font-size: 16px;
 }
 
-.modal.settings h2 {
-  margin: 16px 0 8px;
-  font-size: 13px;
-  color: var(--muted);
+.settings-body {
+  display: grid;
+  grid-template-columns: 140px minmax(0, 1fr);
+  gap: 16px;
+  min-height: 0;
+}
+
+.settings-tabs {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding-right: 12px;
+  border-right: 1px solid var(--border);
+}
+
+.settings-tab {
+  padding: 6px 10px;
+  border: 0;
+  background: none;
+  text-align: left;
+}
+
+.settings-tab:hover {
+  background: var(--panel-bg);
+}
+
+.settings-tab[aria-selected="true"] {
+  background: var(--active-bg);
+  font-weight: 600;
+}
+
+.settings-panel {
+  min-height: 0;
+  overflow: auto;
+}
+
+/* Labels on the left, their controls on the right. */
+.settings-form {
+  display: grid;
+  grid-template-columns: max-content minmax(0, 1fr);
+  align-items: center;
+  gap: 10px 12px;
+}
+
+.settings-form > .settings-note {
+  grid-column: 2;
+  margin-top: -4px;
+}
+
+.settings-form input[type="checkbox"] {
+  justify-self: start;
+  width: auto;
+}
+
+.settings-form input[type="number"] {
+  justify-self: start;
+  width: 80px;
+}
+
+.settings-form select {
+  justify-self: start;
 }
 
 .settings-row {

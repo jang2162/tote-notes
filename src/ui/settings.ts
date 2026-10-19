@@ -1,15 +1,29 @@
 import type { Backend, ExtensionRegistry, SettingsPatch, ThemeRef } from "../backend/types";
 import { describeError } from "../app/errors";
-import { errorCode } from "../backend/types";
+import { EDITOR_FONT_SIZE_MAX, EDITOR_FONT_SIZE_MIN, errorCode } from "../backend/types";
 import { Registry } from "../extensions/registry";
-import { confirm, modal } from "./dialogs";
+import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
+
+export type SettingsSection = "general" | "editor" | "appearance" | "shortcuts" | "extensions";
+
+const SECTIONS: [SettingsSection, string][] = [
+  ["general", "일반"],
+  ["editor", "편집기"],
+  ["appearance", "모양"],
+  ["shortcuts", "단축키"],
+  ["extensions", "확장"],
+];
 
 export interface SettingsOptions {
   backend: Backend;
   registry: () => Registry;
   /** Subscribes to config changes; returns the unsubscribe. */
   onConfigChanged: (handler: () => void) => () => void;
+  /** The section shown first; 「일반」 without one. */
+  section?: SettingsSection;
+  /** Hears each section picked, for the next opening to start there. */
+  onSection?: (section: SettingsSection) => void;
 }
 
 const themeValue = (ref: ThemeRef | null) =>
@@ -20,16 +34,34 @@ const themeRef = (value: string): ThemeRef | null => {
   return { extension, label };
 };
 
-/** The minimal settings screen (spec 「프론트엔드」): workspace root, light and dark theme, the
- * extension list with install, enable and remove. Every change is saved as it is made. */
+/** The settings screen: a list of sections on the left, the picked one's settings on the right.
+ * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
   return modal<true>((close) => {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
     const status = h("p", { class: "modal-error" });
-    /** What the root input last got from the saved settings: input differing from it is an edit
-     * not saved yet, which another setting's change must not wipe. */
-    let syncedRoot = "";
+    status.setAttribute("aria-live", "polite");
+    /** What each typed field last got from the saved settings: input differing from it is an
+     * edit not saved yet, which another setting's change must not wipe. */
+    const synced = new Map<HTMLInputElement, string>();
+    const sync = (input: HTMLInputElement, saved: string) => {
+      if (input.value === (synced.get(input) ?? "") || input.value.trim() === saved)
+        input.value = saved;
+      synced.set(input, saved);
+    };
+    /** Saves a typed field on Enter as on leaving it. */
+    const onEnter = (input: HTMLInputElement, commit: () => void) => {
+      input.addEventListener("keydown", (event) => {
+        if (!isSubmitEnter(event)) return;
+        event.preventDefault();
+        commit();
+      });
+    };
+    const field = (label: string, control: HTMLInputElement | HTMLSelectElement) => {
+      control.id = `settings-${control.name}`;
+      return [h("label", { htmlFor: control.id, textContent: label }), control];
+    };
 
     const fail = (error: unknown) => {
       status.textContent = describeError(error);
@@ -46,7 +78,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     };
 
     const rootInput = h("input", { name: "workspaceRoot", placeholder: "~/Tote" });
-    const rootSection = () => {
+    rootInput.spellcheck = false;
+    const generalSection = () => {
       const pick = h("button", { textContent: "폴더 선택…" });
       pick.addEventListener("click", async () => {
         try {
@@ -56,22 +89,73 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           fail(error);
         }
       });
-      const saveRoot = h("button", { textContent: "루트 저장", class: "primary" });
-      saveRoot.addEventListener(
-        "click",
-        () => void save({ workspaceRoot: rootInput.value.trim() || null }),
-      );
+      // A path is saved once it is whole, not as it is typed.
+      const saveRoot = () => void save({ workspaceRoot: rootInput.value.trim() || null });
+      const apply = h("button", { textContent: "적용" });
+      apply.addEventListener("click", saveRoot);
+      onEnter(rootInput, saveRoot);
+      const [label] = field("워크스페이스 루트", rootInput);
       return h(
-        "section",
-        {},
-        h("h2", { textContent: "워크스페이스" }),
-        h("div", { class: "settings-row" }, rootInput, pick, saveRoot),
+        "div",
+        { class: "settings-form" },
+        label,
+        h("div", { class: "settings-row" }, rootInput, pick, apply),
         h("p", {
           class: "settings-note root-note",
           textContent: "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
         }),
       );
     };
+
+    const lineNumbers = h("input", { type: "checkbox", name: "editorLineNumbers" });
+    lineNumbers.addEventListener(
+      "change",
+      () => void save({ editorLineNumbers: lineNumbers.checked }),
+    );
+    const fontSize = h("input", {
+      type: "number",
+      name: "editorFontSize",
+      min: String(EDITOR_FONT_SIZE_MIN),
+      max: String(EDITOR_FONT_SIZE_MAX),
+      step: "1",
+    });
+    // The backend clamps as well; clamping here first is what lets the field show the size saved.
+    const commitFontSize = () => {
+      const typed = fontSize.value.trim() === "" ? NaN : Number(fontSize.value);
+      const saved = synced.get(fontSize) ?? "";
+      if (!Number.isFinite(typed)) {
+        fontSize.value = saved;
+        return;
+      }
+      const size = Math.min(
+        EDITOR_FONT_SIZE_MAX,
+        Math.max(EDITOR_FONT_SIZE_MIN, Math.round(typed)),
+      );
+      fontSize.value = String(size);
+      if (fontSize.value === saved) return;
+      // Taken as saved: Enter and the `change` that may follow it send it once.
+      synced.set(fontSize, fontSize.value);
+      void save({ editorFontSize: size });
+    };
+    fontSize.addEventListener("change", commitFontSize);
+    onEnter(fontSize, commitFontSize);
+    const fontFamily = h("input", { name: "editorFontFamily", placeholder: "기본 글꼴" });
+    fontFamily.spellcheck = false;
+    const commitFontFamily = () => {
+      const font = fontFamily.value.trim();
+      if (font === (synced.get(fontFamily) ?? "")) return;
+      synced.set(fontFamily, font);
+      void save({ editorFontFamily: font });
+    };
+    fontFamily.addEventListener("change", commitFontFamily);
+    onEnter(fontFamily, commitFontFamily);
+    const editorSection = h(
+      "div",
+      { class: "settings-form" },
+      ...field("줄번호 표시", lineNumbers),
+      ...field("글꼴 크기", fontSize),
+      ...field("글꼴", fontFamily),
+    );
 
     const themeSelect = (name: "light" | "dark") => {
       const select = h("select", { name });
@@ -108,16 +192,11 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const lightSelect = themeSelect("light");
     const darkSelect = themeSelect("dark");
     fillThemes(options.registry());
-    const themeSection = h(
-      "section",
-      {},
-      h("h2", { textContent: "테마" }),
-      h(
-        "div",
-        { class: "settings-row" },
-        h("label", {}, "라이트 ", lightSelect),
-        h("label", {}, "다크 ", darkSelect),
-      ),
+    const appearanceSection = h(
+      "div",
+      { class: "settings-form" },
+      ...field("라이트 테마", lightSelect),
+      ...field("다크 테마", darkSelect),
     );
 
     const list = h("div", { class: "extension-list" });
@@ -159,9 +238,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     );
     installFolder.addEventListener("click", () => void pickAndInstall(() => backend.pickFolder()));
     const extensionSection = h(
-      "section",
+      "div",
       {},
-      h("h2", { textContent: "확장" }),
       h(
         "div",
         { class: "settings-row" },
@@ -224,10 +302,10 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           backend.extensionRegistry(),
         ]);
         fillThemes(new Registry(registry));
-        const saved = current.workspaceRoot ?? "";
-        if (rootInput.value === syncedRoot || rootInput.value.trim() === saved)
-          rootInput.value = saved;
-        syncedRoot = saved;
+        sync(rootInput, current.workspaceRoot ?? "");
+        lineNumbers.checked = current.editor.lineNumbers;
+        sync(fontSize, String(current.editor.fontSize));
+        sync(fontFamily, current.editor.fontFamily);
         selectTheme(lightSelect, current.theme.light);
         selectTheme(darkSelect, current.theme.dark);
         panel.querySelector<HTMLInputElement>(
@@ -244,11 +322,74 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       unsubscribe();
       close(true);
     });
+
+    const contents: Record<SettingsSection, HTMLElement | null> = {
+      general: generalSection(),
+      editor: editorSection,
+      appearance: appearanceSection,
+      // Task 7's shortcut list goes here.
+      shortcuts: null,
+      extensions: extensionSection,
+    };
+    const tabs = SECTIONS.map(([section, label]) => {
+      const tab = h("button", {
+        class: "settings-tab",
+        id: `settings-tab-${section}`,
+        role: "tab",
+        textContent: label,
+      });
+      tab.setAttribute("aria-controls", `settings-panel-${section}`);
+      tab.addEventListener("click", () => show(section));
+      const body = h(
+        "div",
+        { class: "settings-panel", id: `settings-panel-${section}`, role: "tabpanel" },
+        contents[section],
+      );
+      body.setAttribute("aria-labelledby", tab.id);
+      return { section, tab, body };
+    });
+    const show = (section: SettingsSection, focus = false) => {
+      for (const each of tabs) {
+        const shown = each.section === section;
+        each.tab.setAttribute("aria-selected", String(shown));
+        // One stop for Tab in the list; the arrows move within it.
+        each.tab.tabIndex = shown ? 0 : -1;
+        each.body.hidden = !shown;
+        if (shown && focus) each.tab.focus();
+      }
+      options.onSection?.(section);
+    };
+    const tabList = h(
+      "div",
+      { class: "settings-tabs", role: "tablist" },
+      ...tabs.map((each) => each.tab),
+    );
+    tabList.setAttribute("aria-orientation", "vertical");
+    tabList.addEventListener("keydown", (event) => {
+      const at = tabs.findIndex((each) => each.tab.getAttribute("aria-selected") === "true");
+      const to =
+        event.key === "ArrowDown"
+          ? (at + 1) % tabs.length
+          : event.key === "ArrowUp"
+            ? (at - 1 + tabs.length) % tabs.length
+            : event.key === "Home"
+              ? 0
+              : event.key === "End"
+                ? tabs.length - 1
+                : -1;
+      if (to < 0) return;
+      event.preventDefault();
+      show(tabs[to].section, true);
+    });
+    const initial = options.section ?? "general";
+    show(initial);
+    tabs.find((each) => each.section === initial)!.tab.dataset.autofocus = "";
+
+    const title = h("h1", { id: "settings-title", textContent: "설정" });
+    panel.setAttribute("aria-labelledby", title.id);
     panel.append(
-      h("h1", { textContent: "설정" }),
-      rootSection(),
-      themeSection,
-      extensionSection,
+      title,
+      h("div", { class: "settings-body" }, tabList, ...tabs.map((each) => each.body)),
       status,
       h("div", { class: "modal-buttons" }, done),
     );

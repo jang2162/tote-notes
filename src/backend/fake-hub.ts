@@ -17,7 +17,8 @@ export type HubEvent =
   | { type: "memos" }
   | { type: "reveal"; tab: TabRef }
   | { type: "adopt"; tab: string; x: number; y: number }
-  | { type: "workspaces" };
+  | { type: "workspaces" }
+  | { type: "config" };
 
 interface HubMessage {
   to: string[];

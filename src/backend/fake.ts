@@ -505,6 +505,13 @@ export class FakeBackend implements Backend {
     else if (event.type === "adopt")
       for (const handler of this.handlers.adopt) handler(event.tab, event.x, event.y);
     else if (event.type === "workspaces") this.workspacesChanged();
+    else if (event.type === "config") this.config();
+  }
+  /** Settings or the extension set changed: every window hears it, as `broadcast_config` tells
+   * them all. */
+  private configTouched(): void {
+    this.config();
+    this.hub?.send(this.hub.siblings(this.data), { type: "config" });
   }
   /** The memo list changed: the other windows read it again, as the native side tells them. */
   private memosTouched(): void {
@@ -1019,7 +1026,7 @@ export class FakeBackend implements Backend {
     };
     this.data.userExtensions.push(summary);
     this.commit();
-    this.config();
+    this.configTouched();
     return summary;
   }
 
@@ -1030,7 +1037,7 @@ export class FakeBackend implements Backend {
       (d) => d !== id,
     );
     this.commit();
-    this.config();
+    this.configTouched();
   }
 
   async setExtensionEnabled(id: string, enabled: boolean) {
@@ -1038,7 +1045,7 @@ export class FakeBackend implements Backend {
     if (!enabled) disabled.push(id);
     this.data.settings.extensions.disabled = disabled;
     this.commit();
-    this.config();
+    this.configTouched();
   }
 
   async settings() {
@@ -1081,7 +1088,7 @@ export class FakeBackend implements Backend {
       else delete settings.shortcuts;
     }
     this.commit();
-    this.config();
+    this.configTouched();
   }
 
   async shortcutTable(): Promise<ShortcutTable> {
