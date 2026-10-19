@@ -63,7 +63,7 @@ export class Surface {
       button.addEventListener("click", action.run);
       children.push(button);
     }
-    this.placeholder.replaceChildren(...children);
+    this.placeholder.replaceChildren(h("div", { class: "editor-placeholder-body" }, ...children));
   }
 
   showPanel(el: HTMLElement): void {
@@ -83,6 +83,7 @@ export class Surface {
     action: { label: string; run: () => void };
   }): void {
     this.showPlaceholder(view.title, view.action, view.hint);
+    this.placeholder.querySelector("button")?.classList.add("primary");
   }
 
   private only(shown: HTMLElement): void {

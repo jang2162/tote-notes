@@ -967,3 +967,22 @@ test("a press and a move on the tab bar's empty part start no drag", async ({ pa
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await expect(panes(page)).toHaveCount(1);
 });
+
+// One block (title, hint, button) in the middle of the pane, not spread over its height.
+test("the empty pane notice sits together in the middle", async ({ page }) => {
+  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await menu(page, "split-pane");
+  const area = pane(page, 1).locator(".editor-placeholder");
+  const body = area.locator(".editor-placeholder-body");
+  await expect(body).toHaveCount(1);
+  await expect(body.locator("p")).toHaveCount(2);
+  await expect(body.locator("button")).toHaveCount(1);
+  const [outer, inner, title, button] = await Promise.all([
+    area.boundingBox(),
+    body.boundingBox(),
+    body.locator("p").first().boundingBox(),
+    body.locator("button").boundingBox(),
+  ]);
+  expect(Math.abs(inner!.y + inner!.height / 2 - (outer!.y + outer!.height / 2))).toBeLessThan(4);
+  expect(button!.y - (title!.y + title!.height)).toBeLessThan(80);
+});

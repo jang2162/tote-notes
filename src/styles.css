@@ -6,6 +6,7 @@
   --muted: #6e7781;
   --border: #d8dee4;
   --accent: #0969da;
+  --accent-fg: #ffffff;
   --danger: #cf222e;
   --sidebar-bg: #f6f8fa;
   --active-bg: #dbeafe;
@@ -30,6 +31,7 @@
     --muted: #8b9099;
     --border: #34363c;
     --accent: #4c9aff;
+    --accent-fg: #10151c;
     --danger: #ff7b72;
     --sidebar-bg: #191a1d;
     --active-bg: #263449;
@@ -578,8 +580,15 @@ body {
   position: absolute;
   inset: 0;
   display: grid;
-  place-items: center;
+  place-content: center;
   color: var(--muted);
+}
+
+.editor-placeholder-body {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 8px;
 }
 
 .statusbar {
@@ -622,7 +631,7 @@ button {
 button.primary {
   border-color: var(--accent);
   background: var(--accent);
-  color: #fff;
+  color: var(--accent-fg);
 }
 
 button.danger {
@@ -724,7 +733,9 @@ button.danger {
 }
 
 .editor-placeholder p {
-  margin: 0 0 12px;
+  margin: 0;
+  color: var(--fg);
+  font-size: 15px;
 }
 
 .editor-placeholder .editor-placeholder-hint {

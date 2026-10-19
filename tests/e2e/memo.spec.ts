@@ -429,3 +429,24 @@ test("a memo still opens when claiming its place fails", async ({ page }) => {
   await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
   await expect(page.locator(".cm-content")).toHaveText("첫째");
 });
+
+test("the not-openable notice sits together in the middle", async ({ page }) => {
+  await start(page, {
+    files: { "/x/doc.pdf": fakeFile(new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x00])) },
+    picks: ["/x/doc.pdf"],
+  });
+  await menu(page, "open-file");
+  const area = page.locator(".editor-placeholder");
+  const body = area.locator(".editor-placeholder-body");
+  await expect(body).toHaveCount(1);
+  await expect(body.locator("p")).toHaveText("열 수 없음");
+  await expect(body.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(1);
+  const [outer, inner, title, button] = await Promise.all([
+    area.boundingBox(),
+    body.boundingBox(),
+    body.locator("p").boundingBox(),
+    body.locator("button").boundingBox(),
+  ]);
+  expect(Math.abs(inner!.y + inner!.height / 2 - (outer!.y + outer!.height / 2))).toBeLessThan(4);
+  expect(button!.y - (title!.y + title!.height)).toBeLessThan(80);
+});
