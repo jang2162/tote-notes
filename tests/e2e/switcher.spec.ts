@@ -152,6 +152,59 @@ test("arrow keys and Enter switch, Esc closes without switching", async ({ page 
   await switchedTo(page, "개인");
 });
 
+test("typed keys go nowhere, ArrowDown stops at the end, Enter runs a command", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await button(page).click();
+  await page.keyboard.type("zq");
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
+  const highlight = page.locator(".ws-switcher-list .highlight");
+  await expect(highlight).toHaveText("워크스페이스 열기…");
+  await expect(page.locator(".ws-switcher-list")).toHaveAttribute(
+    "aria-activedescendant",
+    (await highlight.getAttribute("id"))!,
+  );
+  await page.keyboard.press("ArrowUp");
+  await expect(highlight).toHaveText("새 워크스페이스…");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".modal")).toContainText("새 워크스페이스 이름");
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+});
+
+test("a list opened from the search box gives it the keys back on Esc", async ({ page }) => {
+  await open(page);
+  await menu(page, "search-workspace");
+  const search = page.locator(".search-input");
+  await expect(search).toBeFocused();
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  await expect(search).not.toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await expect(search).toBeFocused();
+  // The Esc was the list's: the search is still on.
+  await expect(search).toBeVisible();
+});
+
+test("a list left by a menu action closes and the keys go where the action put them", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  // The native menu's shortcuts reach the page as menu events, not as keys the list could see.
+  await menu(page, "new-memo");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText("새 글");
+  await expect(page.locator(".cm-content")).toHaveText("새 글");
+});
+
 test("「워크스페이스 열기…」 opens the picker", async ({ page }) => {
   await open(page);
   await pickCommand(page, "워크스페이스 열기…");
@@ -687,14 +740,12 @@ const composed = (page: Page) =>
         .composed,
   );
 
-test("a switcher click on a workspace another window shows settles a composition first", async ({
-  page,
-}) => {
-  // The switcher takes no focus, and no flush round runs to end the composition.
+test("⌃1 on a workspace another window shows settles a composition first", async ({ page }) => {
+  // ⌃1 takes no focus, and no flush round runs to end the composition.
   await composeUntilBlur(page, {
     workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)],
   });
-  await pickWorkspace(page, "가계부");
+  await page.keyboard.press("Control+Digit1");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.focusedWorkspace))
     .toBe("/fake/가계부");

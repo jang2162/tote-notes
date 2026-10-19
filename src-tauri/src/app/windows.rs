@@ -107,7 +107,7 @@ pub enum Switched {
     Switching,
 }
 
-/// Window `label` asks to show the workspace at `to` (the rail, ⌃1–⌃9, a workspace just made).
+/// Window `label` asks to show the workspace at `to` (the switcher, ⌃1–⌃9, a workspace just made).
 /// `not-a-workspace` when `to` is not one.
 pub fn switch(app: &AppHandle, label: &str, to: &Path) -> Result<Switched, CommandError> {
     let core = app.state::<AppCore>();

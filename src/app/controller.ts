@@ -1362,7 +1362,7 @@ export class AppController implements DocHost, PaneHost {
     // The window answered a close or a switch: it has no tabs left to write.
     if (this.leaving) return;
     this.mark("switch-click");
-    // The switcher takes no focus, and a workspace another window shows comes forward without a round
+    // ⌃1 – ⌃9 take no focus, and a workspace another window shows comes forward without a round
     // (`onFlush`) to end the composition.
     await this.settleCompositions();
     try {

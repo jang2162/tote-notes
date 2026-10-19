@@ -67,6 +67,9 @@ export class WorkspaceSwitcher {
     this.el.append(this.button, this.list);
     // The keys stay where they were: a switch that is called off gives them back there.
     this.el.addEventListener("mousedown", (event) => event.preventDefault());
+    // The keys went elsewhere (a menu action put them in an editor): the list is no use to them, and
+    // they are not taken back.
+    this.list.addEventListener("focusout", () => this.close(false));
     this.button.addEventListener("click", () => (this.isOpen ? this.close() : this.openList()));
   }
 
@@ -98,7 +101,11 @@ export class WorkspaceSwitcher {
       return option;
     });
     const command = (text: string, run: () => void) => {
-      const each = h("div", { class: "ws-switcher-command", role: "option" }, text);
+      const each = h(
+        "div",
+        { class: "ws-switcher-command", role: "option", ariaSelected: "false" },
+        text,
+      );
       each.addEventListener("click", () => this.choose(run));
       return each;
     };
@@ -107,6 +114,7 @@ export class WorkspaceSwitcher {
       command("워크스페이스 열기…", () => this.actions.open()),
     ];
     this.entries = [...options, ...commands];
+    this.entries.forEach((entry, index) => (entry.id = `ws-switcher-entry-${index}`));
     this.list.replaceChildren(
       ...options,
       h("div", { class: "ws-switcher-separator", role: "separator" }),
@@ -117,7 +125,8 @@ export class WorkspaceSwitcher {
     this.paint();
   }
 
-  close(): void {
+  /** `restore`: give the keys back to where they were; not when they have been moved already. */
+  close(restore = true): void {
     if (!this.isOpen) return;
     this.list.hidden = true;
     this.button.ariaExpanded = "false";
@@ -126,7 +135,8 @@ export class WorkspaceSwitcher {
     document.removeEventListener("mousedown", this.onOutside, true);
     const back = this.restoreTo;
     this.restoreTo = null;
-    if (back && back.isConnected && document.activeElement !== back) back.focus();
+    this.list.removeAttribute("aria-activedescendant");
+    if (restore && back && back.isConnected && document.activeElement !== back) back.focus();
   }
 
   private openList(): void {
@@ -158,7 +168,9 @@ export class WorkspaceSwitcher {
     this.entries.forEach((entry, index) =>
       entry.classList.toggle("highlight", this.isOpen && index === this.highlighted),
     );
-    this.entries[this.highlighted]?.scrollIntoView?.({ block: "nearest" });
+    const entry = this.entries[this.highlighted];
+    if (this.isOpen && entry) this.list.setAttribute("aria-activedescendant", entry.id);
+    entry?.scrollIntoView?.({ block: "nearest" });
   }
 
   private readonly onKey = (event: KeyboardEvent): void => {
