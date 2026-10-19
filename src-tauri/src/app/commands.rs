@@ -455,6 +455,7 @@ pub async fn tear_off_tab(
     let near = match at {
         None => source.map(|f| windows::cascade(f, &windows::monitor_rects(&app))),
         Some(at) => {
+            let at = windows::screen_point(at);
             // A target that began to leave since it was picked takes nothing (`move_tab`): the tab
             // gets a window of its own instead.
             if let Some((target, frame)) = windows::drop_target(&app, label, at) {
@@ -972,6 +973,32 @@ pub fn perf_config() -> PerfConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use serde_json::json;
+
+    #[test]
+    fn a_tear_off_answers_in_the_words_the_page_reads() {
+        assert_eq!(
+            serde_json::to_value(TornOff::Moved).unwrap(),
+            json!("moved")
+        );
+        assert_eq!(
+            serde_json::to_value(TornOff::Window).unwrap(),
+            json!("window")
+        );
+    }
+
+    #[test]
+    fn an_adopted_tab_reaches_the_page_as_its_json_and_the_point() {
+        let adopt = Adopt {
+            tab: r#"{"kind":"memo","memoId":"b"}"#.to_string(),
+            x: 400.0,
+            y: -20.5,
+        };
+        assert_eq!(
+            serde_json::to_value(adopt).unwrap(),
+            json!({ "tab": r#"{"kind":"memo","memoId":"b"}"#, "x": 400.0, "y": -20.5 })
+        );
+    }
 
     #[test]
     fn a_recent_workspace_whose_folder_is_gone_is_listed_as_missing() {

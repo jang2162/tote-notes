@@ -1112,11 +1112,12 @@ impl AppCore {
             .collect()
     }
 
-    /// Hands the tab `key` from window `from` to window `to`, which shows the same workspace and
-    /// is not leaving, checked under the lock the transfer takes: a window that began to close or
-    /// switch since `drop_candidates` takes nothing. False, changing nothing, then, when `from`
-    /// does not hold the tab, or while quitting. The session file is left to the two windows'
-    /// next layouts.
+    /// Hands the tab `key` from window `from` to window `to`, which shows the same workspace,
+    /// neither of them leaving, checked under the lock the transfer takes: a window that began to
+    /// close or switch since `drop_candidates` takes nothing, and one switching away gives nothing
+    /// (its tab is in the session of the workspace it leaves already). False, changing nothing,
+    /// then, when `from` does not hold the tab, or while quitting. The session file is left to the
+    /// two windows' next layouts.
     pub fn move_tab(&self, from: &str, to: &str, key: &TabKey) -> bool {
         let mut inner = lock(&self.inner);
         if inner.quitting {
@@ -1125,7 +1126,7 @@ impl AppCore {
         let (Some(source), Some(target)) = (inner.windows.get(from), inner.windows.get(to)) else {
             return false;
         };
-        if source.path != target.path || target.is_leaving() {
+        if source.is_leaving() || source.path != target.path || target.is_leaving() {
             return false;
         }
         inner.places.transfer(key, from, to)
@@ -2546,6 +2547,11 @@ mod tests {
             core.claim_tabs(&w1, &[memo_b()]).unwrap(),
             vec![Err(w2.clone())]
         );
+        // Nothing moves once the app is quitting.
+        let w4 = attach(&core, &path);
+        core.start_quit();
+        assert!(!core.move_tab(&w2, &w4, &key));
+        assert_eq!(core.key_for(&w2, &memo_b()), Some(key));
     }
 
     #[test]
@@ -2559,6 +2565,22 @@ mod tests {
         let key = core.key_for(&w1, &memo_b()).unwrap();
         assert!(!core.move_tab(&w1, &w2, &key));
         assert_eq!(core.claim_tabs(&w1, &[memo_b()]).unwrap(), vec![Ok(())]);
+    }
+
+    #[test]
+    fn a_tab_is_not_moved_out_of_a_window_switching_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, _) = two_tabs(&core);
+        let w2 = attach(&core, &path);
+        let na = closed_workspace(&core, "나", &[]);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        core.prepare_switch(&w1, &na).unwrap();
+        assert!(!core.move_tab(&w1, &w2, &key));
+        assert_eq!(
+            core.claim_tabs(&w2, &[memo_b()]).unwrap(),
+            vec![Err(w1.clone())]
+        );
     }
 
     #[test]

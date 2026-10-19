@@ -447,13 +447,19 @@ pub fn frame_at(at: ScreenPoint, source: WindowFrame) -> WindowFrame {
     }
 }
 
-/// `at` in the window at `frame`, from its top-left corner. The window's content covers its title
-/// bar (`frame_of`), so this is where the point is in its page too.
+/// The point the page sent (`PointerEvent.screenX/screenY`) in the logical space `frame_of` and
+/// `monitor_rects` report, which `window_at`, `frame_at` and `to_window_point` all take it in.
 ///
-/// Assumed until the real app is checked (the free splits plan, Task 1): the page's
-/// `PointerEvent.screenX/screenY` are in the logical space `frame_of` reports — the main monitor's
-/// top-left at 0,0, y down, another monitor's negative where it sits left or above. When the check
-/// finds otherwise, only this function changes.
+/// Assumed until the real app is checked (the free splits plan, Task 1): the page's screen
+/// coordinates are that space already — the main monitor's top-left at 0,0, y down, another
+/// monitor's negative where it sits left or above. When the check finds otherwise, only this
+/// function changes.
+pub fn screen_point(at: ScreenPoint) -> ScreenPoint {
+    at
+}
+
+/// `at` (`screen_point`) in the window at `frame`, from its top-left corner. The window's content
+/// covers its title bar (`frame_of`), so this is where the point is in its page too.
 pub fn to_window_point(at: ScreenPoint, frame: WindowFrame) -> (f64, f64) {
     (at.x - frame.x, at.y - frame.y)
 }
@@ -757,6 +763,12 @@ mod tests {
             place(frame_at(point(-1000.0, 1300.0), source), &monitors),
             Some(at(-1000.0, 840.0, 900.0, 600.0))
         );
+    }
+
+    #[test]
+    fn a_screen_point_from_the_page_is_taken_as_frame_of_reports_it() {
+        assert_eq!(screen_point(point(500.0, 400.0)), point(500.0, 400.0));
+        assert_eq!(screen_point(point(-1500.0, 500.0)), point(-1500.0, 500.0));
     }
 
     #[test]
