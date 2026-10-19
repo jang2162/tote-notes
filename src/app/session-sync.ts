@@ -43,8 +43,8 @@ export interface SessionLayout {
 export interface RestoredLayout {
   /** The session's tree, whose panes are `panes`, depth first. */
   layout: SessionNode;
-  /** One per pane of `layout`: its tabs in order and the one to activate — the pane's active tab,
-   * else its last one, else null. */
+  /** One per pane of `layout`, in the order of its leaves (depth first): its tabs in order and the
+   * one to activate — the pane's active tab, else its last one, else null. */
   panes: { tabs: Doc[]; active: Doc | null }[];
   focusedPane: number;
 }

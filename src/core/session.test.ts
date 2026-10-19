@@ -270,6 +270,26 @@ describe("the layout tree", () => {
     expect(isSessionPane((w.layout as SessionSplit).children[1])).toBe(true);
     expect(w.focusedPane).toBe(0);
   });
+  it("a child that is not an object is dropped with its share and no tab is lost", () => {
+    const w = parseWindowSession({
+      layout: {
+        axis: "row",
+        shares: [1, 5, 2],
+        children: [
+          { tabs: [memoTab("a")], activeTab: 0 },
+          "x",
+          { tabs: [memoTab("b")], activeTab: 0 },
+        ],
+      },
+    });
+    expect(w.layout).toMatchObject({ axis: "row", shares: [1 / 3, 2 / 3] });
+    expect(sessionPanes(w.layout).map((p) => p.tabs)).toEqual([[memoTab("a")], [memoTab("b")]]);
+  });
+  it("reads three old panes with their widths as shares", () => {
+    const pane = (id: string, width: number) => ({ tabs: [memoTab(id)], activeTab: 0, width });
+    const w = parseWindowSession({ panes: [pane("a", 1), pane("b", 1), pane("c", 2)] });
+    expect(w.layout).toMatchObject({ axis: "row", shares: [0.25, 0.25, 0.5] });
+  });
 });
 
 describe("normalizeWidths", () => {
