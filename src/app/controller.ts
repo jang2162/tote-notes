@@ -683,7 +683,10 @@ export class AppController implements DocHost, PaneHost {
    * (`Backend.tearOffTab`). */
   async tearOff(doc: Doc, at?: { x: number; y: number }): Promise<boolean> {
     await settleComposition(this.focused.view);
-    if (!this.docs.includes(doc)) return false;
+    // Already on its way: the tab stays in its bar while it is written, and can be dragged out or
+    // picked from its menu again. A second hand-over would be refused by the backend once the first
+    // is through, and its `stay` would show a tab that is gone.
+    if (!this.docs.includes(doc) || doc.leaving) return false;
     // The editor lets go of the tab first: a key typed while it is written and handed over would
     // reach a tab that is leaving, and its late save would land after the new window has read it.
     const from = this.paneOf(doc);
@@ -729,6 +732,8 @@ export class AppController implements DocHost, PaneHost {
     this.held.delete(doc);
     if (doc instanceof ExternalDoc) doc.stopWatching();
     await this.takeOut(pane, doc);
+    // At once, not on its timer: the window the tab went to has it in its session already.
+    await this.saveSessionNow();
     return true;
   }
 
@@ -1087,11 +1092,16 @@ export class AppController implements DocHost, PaneHost {
    * pane, and is shown. The session is written at once, not on its timer: the other window has
    * written its own without the tab, and an app quitting between the two would lose its place. */
   async adoptTab(tab: SessionTab, x: number, y: number): Promise<void> {
-    let doc: Doc | null | undefined =
+    const open = () =>
       tab.kind === "memo" ? this.memoTab(tab.memoId) : this.externalTab(tab.path);
+    let doc: Doc | null | undefined = open();
+    // Made in the other window a moment ago, the memo may not be listed here yet. A reveal of the
+    // tab may open it meanwhile: then that tab is the one.
+    if (!doc && tab.kind === "memo" && !this.memoList.get(tab.memoId)) {
+      await this.refreshMemos();
+      doc = open();
+    }
     if (!doc) {
-      // Made in the other window a moment ago, the memo may not be listed here yet.
-      if (tab.kind === "memo" && !this.memoList.get(tab.memoId)) await this.refreshMemos();
       doc = this.session.tabFor(tab);
       if (!doc) return this.report(new Error("메모를 찾을 수 없습니다"));
       const hit = document.elementsFromPoint(x, y);

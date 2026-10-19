@@ -154,16 +154,20 @@ async function share(page: Page, patch: Partial<FakeData>): Promise<void> {
 }
 
 /** Window `label` stands on the screen so that the screen point `at` is (`inside`) in it, showing
- * `workspace` — this one unless given. */
+ * `workspace` — this one unless given. The windows `inFront` stand in front of it, in the same
+ * place. */
 function standAt(
   page: Page,
   label: string,
   at: { x: number; y: number },
   inside: { x: number; y: number },
-  workspace?: string,
+  { workspace, inFront = [] }: { workspace?: string; inFront?: string[] } = {},
 ): Promise<void> {
-  const target = { label, x: at.x - inside.x, y: at.y - inside.y, width: 1280, height: 720 };
-  return share(page, { dropTargets: [workspace ? { ...target, workspace } : target] });
+  const frame = { x: at.x - inside.x, y: at.y - inside.y, width: 1280, height: 720 };
+  const target = workspace ? { label, ...frame, workspace } : { label, ...frame };
+  return share(page, {
+    dropTargets: [...inFront.map((each) => ({ label: each, ...frame })), target],
+  });
 }
 
 test("a tab dropped on another window of the workspace joins it", async ({ context }) => {
@@ -185,7 +189,8 @@ test("a tab dropped on another window of the workspace joins it", async ({ conte
   const inLeft = { x: leftBox.x + leftBox.width / 2, y: leftBox.y + leftBox.height / 2 };
 
   const at = await dragOut(first, tab(first, "가"), false);
-  await standAt(first, "ws-2", at, inLeft);
+  // A window closed since stands in front of it: only the open windows take a tab.
+  await standAt(first, "ws-2", at, inLeft, { inFront: ["ws-9"] });
   await first.mouse.up();
   await expect(first.locator(".tab .tab-title")).toHaveText(["나"]);
   // The last tab of the pane it was let go over, shown and focused, with its text.
@@ -203,8 +208,10 @@ test("a tab dropped on another window of the workspace joins it", async ({ conte
   await expect
     .poll(() => sessionWindows(first).then((windows) => windows.at(-1)), { timeout: 500 })
     .toEqual(["c", "a", "d"]);
-  // The first window writes its own on its timer.
-  await expect.poll(() => sessionWindows(first)).toEqual([["b"], ["c", "a", "d"]]);
+  // The first window too: its tab is in the other's session now.
+  await expect
+    .poll(() => sessionWindows(first), { timeout: 500 })
+    .toEqual([["b"], ["c", "a", "d"]]);
   expect(await first.evaluate(() => window.__tote.backend.data.tornOff)).toBeUndefined();
 });
 
@@ -217,7 +224,7 @@ test("a tab dropped on a window of another workspace opens in a new window", asy
   const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
   await openMemo(second, "다");
   const at = await dragOut(first, tab(first, "가"), false);
-  await standAt(first, "ws-2", at, { x: 400, y: 300 }, "/fake/다른");
+  await standAt(first, "ws-2", at, { x: 400, y: 300 }, { workspace: "/fake/다른" });
   const [third] = await Promise.all([nextWindow(first), first.mouse.up()]);
   expect(new URL(third.url()).searchParams.get("window")).toBe("ws-3");
   await expect(third.locator(".tab .tab-title")).toHaveText(["가"]);

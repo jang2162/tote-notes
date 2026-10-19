@@ -461,3 +461,21 @@ test("a tab whose save fails stays when dropped outside", async ({ page }) => {
   expect(tornOff).toBeUndefined();
   expect(places).toEqual({ "memo:a": "ws-1" });
 });
+
+test("a tab dragged out again while it is being written goes once", async ({ page }) => {
+  await typeInto(page);
+  const release = await hold(page, "tearOffGate");
+  await dragOut(page, tab(page, "장보기"));
+  // Written and on its way: the tab is still in the bar, and is dragged out once more.
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+  await dragOut(page, tab(page, "장보기"));
+  await release();
+  await expect(page.locator(".tab")).toHaveCount(0);
+  // Past the memo save delay: anything the second drop set off has landed.
+  await page.waitForTimeout(600);
+  await expect(page.locator(".status-message")).not.toHaveText(/오류/);
+  const { tornOff, places } = await data(page);
+  expect(tornOff).toHaveLength(1);
+  expect(places).toEqual({ "memo:a": "ws-2" });
+  expect(await memoText(page, "a")).toBe("우유 계란");
+});

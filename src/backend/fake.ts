@@ -1267,11 +1267,14 @@ export class FakeBackend implements Backend {
   }
 
   /** The window a tab let go at `at` goes to: the first of `dropTargets` under it — the one in
-   * front — when that is another open window showing this workspace, else none (a new window). */
+   * front — when it shows this workspace, else none (a new window). Only the other open windows
+   * stand there, as the Rust side leaves out hidden and minimized ones. A window leaving (closing,
+   * switching) is not modelled: the Rust side's refusal of it is tested there. */
   private dropTarget(at: { x: number; y: number }): FakeDropTarget | undefined {
+    const open = this.hub?.siblings(this.data) ?? [];
     const front = (this.data.dropTargets ?? []).find(
       (each) =>
-        each.label !== this.label &&
+        open.includes(each.label) &&
         at.x >= each.x &&
         at.y >= each.y &&
         at.x < each.x + each.width &&
@@ -1279,7 +1282,7 @@ export class FakeBackend implements Backend {
     );
     if (!front || (front.workspace ?? this.data.workspace.path) !== this.data.workspace.path)
       return undefined;
-    return this.hub?.siblings(this.data).includes(front.label) ? front : undefined;
+    return front;
   }
 
   private memo(id: string): FakeMemo {
