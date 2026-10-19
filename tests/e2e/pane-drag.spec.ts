@@ -1,13 +1,11 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { sessionPane, sessionPaneCount, sessionWidth, start } from "./helpers";
+import { sessionPane, sessionPaneCount, start } from "./helpers";
 
 // Dragging a tab between the panes of one window, on the fake backend. The drag is made of pointer
 // events (the spike could not confirm HTML5 drag and drop between tab bars in the app's webview), so
 // the mouse goes down on a tab, moves and comes up where the tab is to go.
-
-const TOO_NARROW = "창이 좁아 나눌 수 없습니다";
 
 const panes = (page: Page) => page.locator(".pane");
 const pane = (page: Page, index: number) => panes(page).nth(index);
@@ -124,17 +122,20 @@ test("a tab dropped on an empty pane goes into it", async ({ page }) => {
   await expect(titles(page, 0)).toHaveText(["가"]);
 });
 
-test("dropping on the right edge makes a new pane", async ({ page }) => {
+test("a tab dropped near the right edge goes last in the pane under it", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
   await expect(panes(page)).toHaveCount(1);
-  await drag(page, tab(page, 0, "나"), await rightEdge(page));
-  await expect(panes(page)).toHaveCount(2);
-  await expect(titles(page, 1)).toHaveText(["나"]);
-  await expect(editor(page, 1)).toHaveText("둘째");
-  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
-  await expect(titles(page, 0)).toHaveText(["가"]);
-  await expect.poll(async () => await sessionWidth(page, 0, 1)).toBeCloseTo(0.5, 3);
+  await drag(page, tab(page, 0, "가"), await rightEdge(page));
+  await expect(titles(page, 0)).toHaveText(["나", "가"]);
+  await expect(activeTitle(page, 0)).toHaveText("가");
+  await expect(editor(page, 0)).toHaveText("첫째");
+  await expect(panes(page)).toHaveCount(1);
+  await expect
+    .poll(async () =>
+      (await sessionPane(page, 0, 0)).tabs.map((each) => each.kind === "memo" && each.memoId),
+    )
+    .toEqual(["b", "a"]);
 });
 
 test("dragging the last tab out closes its pane", async ({ page }) => {
@@ -171,15 +172,16 @@ test("a moved memo keeps its unsaved text and its undo", async ({ page }) => {
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째");
 });
 
-test("a drop that would split a narrow window does nothing and says so", async ({ page }) => {
-  // An editing area of 572px: two halves of 286px are under the minimum.
+test("a drop near the right edge of a narrow window goes into the pane too", async ({ page }) => {
+  // An editing area of 572px, too narrow to split.
   await page.setViewportSize({ width: 860, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
-  await drag(page, tab(page, 0, "나"), await rightEdge(page));
-  await expect(page.locator(".status-message")).toHaveText(TOO_NARROW);
+  await drag(page, tab(page, 0, "가"), await rightEdge(page));
+  await expect(titles(page, 0)).toHaveText(["나", "가"]);
+  await expect(activeTitle(page, 0)).toHaveText("가");
+  await expect(page.locator(".status-message")).toHaveText("");
   await expect(panes(page)).toHaveCount(1);
-  await expect(titles(page, 0)).toHaveText(["가", "나"]);
 });
 
 test("Esc during a drag calls it off", async ({ page }) => {
@@ -321,11 +323,12 @@ test("a drag goes on and ends cleanly when the pointer cannot be captured", asyn
       throw new DOMException("no such pointer", "InvalidStateError");
     };
   });
-  await drag(page, tab(page, 0, "나"), await rightEdge(page), false);
-  await expect(page.locator(".pane-drop-edge.active")).toHaveCount(1);
+  await drag(page, tab(page, 0, "가"), await rightEdge(page), false);
+  await expect(page.locator(".tab.drop-after")).toHaveCount(1);
   await page.keyboard.press("Escape");
-  await expect(page.locator(".pane-drop-edge")).toHaveCount(0);
+  await expect(page.locator(".tab.drop-after")).toHaveCount(0);
   await page.mouse.up();
   await expect(panes(page)).toHaveCount(1);
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
   expect(errors).toEqual([]);
 });

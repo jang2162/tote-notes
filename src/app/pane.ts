@@ -43,7 +43,7 @@ export interface PaneHost {
   readonly backend: Backend;
   readonly registry: Registry;
   readonly theme: ThemeManager;
-  /** The window's panes, left to right. */
+  /** The window's panes in the order of its layout's leaves (depth first). */
   readonly panes: readonly Pane[];
   /** The pane the keys, the menu and the status bar go to. */
   readonly focused: Pane;

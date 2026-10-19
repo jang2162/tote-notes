@@ -1,8 +1,6 @@
 // A window's panes as a split tree: leaves are panes, branches lay their children out along one
 // axis by shares that sum to 1.
 
-import { normalizeWidths } from "../core/session";
-
 export type Axis = "row" | "column";
 export type Side = "left" | "right" | "top" | "bottom";
 export type Zone = Side | "center";
@@ -128,6 +126,19 @@ export function removeLeaf(root: LayoutNode, id: string): LayoutNode {
     root.children.map((child) => removeLeaf(child, id)),
     root.shares,
   );
+}
+
+/** The pane that takes over when pane `id` is removed: the first pane of the sibling its share
+ * goes to (`removeLeaf`). Null for the root or an id not in the tree. */
+export function heirOf(root: LayoutNode, id: string): string | null {
+  if (root.kind === "pane") return null;
+  const at = root.children.findIndex((child) => isLeaf(child, id));
+  if (at >= 0) return leafIds(root.children[at > 0 ? at - 1 : at + 1])[0];
+  for (const child of root.children) {
+    const heir = heirOf(child, id);
+    if (heir) return heir;
+  }
+  return null;
 }
 
 function childRects(node: SplitNode, area: Rect): Rect[] {
@@ -271,43 +282,3 @@ export function neighbor(rects: Map<string, Rect>, id: string, side: Side): stri
   }
   return best ? best.id : null;
 }
-
-// The row-only helpers below stay until the controller stops using them.
-
-/** Whether pane `at` is wide enough for both its halves to be `MIN_PANE_PX` in an area of
- * `areaPx`. */
-export function canSplit(widths: number[], at: number, areaPx: number): boolean {
-  return (widths[at] * areaPx) / 2 >= MIN_PANE_PX;
-}
-
-/** Pane `at` gives the right half of its width to a new pane inserted at `at + 1`. */
-export function split(widths: number[], at: number): number[] {
-  const half = widths[at] / 2;
-  return [...widths.slice(0, at), half, half, ...widths.slice(at + 1)];
-}
-
-/** Pane `at`'s width goes to its left neighbour, the right one when it is leftmost. */
-export function remove(widths: number[], at: number): number[] {
-  if (widths.length < 2) return [1];
-  const next = [...widths];
-  next[at > 0 ? at - 1 : at + 1] += widths[at];
-  next.splice(at, 1);
-  return next;
-}
-
-/** Moves the boundary after pane `boundary` by `dxPx`; both sides stay at MIN_PANE_PX or more. */
-export function resize(widths: number[], boundary: number, dxPx: number, areaPx: number): number[] {
-  const pair = (widths[boundary] + widths[boundary + 1]) * areaPx;
-  // Two panes already too narrow for the minimum (a window made small) stay as they are.
-  if (pair < 2 * MIN_PANE_PX) return widths;
-  const left = Math.min(
-    Math.max(widths[boundary] * areaPx + dxPx, MIN_PANE_PX),
-    pair - MIN_PANE_PX,
-  );
-  const next = [...widths];
-  next[boundary] = left / areaPx;
-  next[boundary + 1] = (pair - left) / areaPx;
-  return next;
-}
-
-export { normalizeWidths as normalize };

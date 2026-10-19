@@ -13,7 +13,7 @@ import type {
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
-import { isSessionPane, normalizeWidths } from "../core/session";
+import { isSessionPane, type SessionNode } from "../core/session";
 import { settleComposition } from "../editor/compose";
 import {
   languageData,
@@ -57,7 +57,22 @@ import {
   type DocHost,
 } from "./docs";
 import { describeError } from "./errors";
-import { canSplit, leaf, remove, resize, split } from "./layout";
+import {
+  canSplitRect,
+  dividersOf,
+  heirOf,
+  leaf,
+  leafIds,
+  neighbor,
+  rectsOf,
+  removeLeaf,
+  resizeAt,
+  splitAt,
+  type Divider,
+  type LayoutNode,
+  type Rect,
+  type Side,
+} from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { claimPlaces, sessionTab, SessionSync } from "./session-sync";
 
@@ -84,23 +99,49 @@ export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기
 /** 「탭을 새 창으로 옮기기」: an item of the window menu and of a tab's context menu. */
 export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
 const NEW_WORKSPACE_NAME = "새 워크스페이스 이름";
-/** The strip along the editing area's right edge where a dragged tab opens a new pane. */
-export const DROP_EDGE_PX = 48;
 
 /** Where a dragged tab would go (`AppController.dropTarget`). */
-type DropTarget = "edge" | { pane: Pane; index: number } | null;
+type DropTarget = { pane: Pane; index: number } | null;
 
 const sameTab = (a: TabRef, b: TabRef) =>
   a.kind === "memo"
     ? b.kind === "memo" && a.id === b.id
     : b.kind === "external" && a.path === b.path;
 
+/** A pane this near the editing area's left or top edge (a fraction of it) is at that edge. */
+const EDGE = 1e-9;
+
+/** The session's tree with `ids` for its panes, depth first. */
+function layoutOf(node: SessionNode, ids: readonly string[]): LayoutNode {
+  let next = 0;
+  const walk = (each: SessionNode): LayoutNode =>
+    isSessionPane(each)
+      ? leaf(ids[next++])
+      : {
+          kind: "split",
+          axis: each.axis,
+          children: each.children.map(walk),
+          shares: [...each.shares],
+        };
+  return walk(node);
+}
+
+/** Puts `el` at `rect` of the editing area. A boundary's grip leaves its thin side (`thin`) to the
+ * style. */
+function place(el: HTMLElement, rect: Rect, thin?: "width" | "height"): void {
+  const percent = (fraction: number) => `${fraction * 100}%`;
+  el.style.left = percent(rect.x);
+  el.style.top = percent(rect.y);
+  el.style.width = thin === "width" ? "" : percent(rect.width);
+  el.style.height = thin === "height" ? "" : percent(rect.height);
+}
+
 /** One workspace window: the workspace rail, the sidebar, the status bar, menu actions, opening and
  * closing tabs, the session and the places its tabs hold. Each editor pane — its tabs, tab bar and
  * editor area — is a `Pane`; the session is read and written by `SessionSync`. */
 export class AppController implements DocHost, PaneHost {
   readonly writes = new WriteScheduler((_key, error) => this.report(error));
-  /** The window's panes, left to right; at least one. */
+  /** The window's panes in the order of `layout`'s leaves (depth first); at least one. */
   readonly panes: Pane[];
   /** The pane the keys, the menu, the memo list and the status bar act on. */
   focused: Pane;
@@ -109,8 +150,11 @@ export class AppController implements DocHost, PaneHost {
   /** What had the keys outside the panes as the window left — the search box, the memo list's
    * filter — for `stay` to give them back to. */
   private keysBeforeLeaving: HTMLElement | null = null;
-  /** The panes' shares of the editing area's width (`layout.ts`), one per pane. */
-  private widths = [1];
+  /** How the panes share the editing area (`layout.ts`); its leaves are the panes' ids. */
+  private layout: LayoutNode;
+  /** The boundaries between the panes as `layoutPanes` last put them, and their grips. */
+  private boundaries: Divider[] = [];
+  private readonly grips: HTMLElement[] = [];
   private readonly panesEl = h("div", { class: "panes" });
   registry = new Registry(EMPTY_REGISTRY);
   readonly theme: ThemeManager;
@@ -182,8 +226,7 @@ export class AppController implements DocHost, PaneHost {
     this.theme = new ThemeManager(backend, () => this.registry);
     this.focused = this.makePane();
     this.panes = [this.focused];
-    // The strip the style draws is the strip `dropTarget` judges by.
-    this.panesEl.style.setProperty("--pane-drop-edge", `${DROP_EDGE_PX}px`);
+    this.layout = leaf(this.focused.id);
     this.panesEl.append(this.focused.el);
     this.syncPanes();
     root.replaceChildren(
@@ -293,16 +336,8 @@ export class AppController implements DocHost, PaneHost {
     this.session = new SessionSync(
       this.backend,
       () => ({
-        layout:
-          this.panes.length === 1
-            ? leaf("0")
-            : {
-                kind: "split",
-                axis: "row",
-                children: this.panes.map((_, index) => leaf(String(index))),
-                shares: this.widths,
-              },
-        panes: new Map(this.panes.map((pane, index) => [String(index), pane])),
+        layout: this.layout,
+        panes: new Map(this.panes.map((pane) => [pane.id, pane])),
         focusedPane: this.panes.indexOf(this.focused),
       }),
       this.deviceId,
@@ -354,18 +389,17 @@ export class AppController implements DocHost, PaneHost {
 
   private async restoreSession(): Promise<void> {
     const restored = await this.session.restore();
-    while (this.panes.length < restored.panes.length) {
-      const pane = this.makePane();
-      this.panes.push(pane);
-      this.mountPane(pane);
-    }
-    this.widths = isSessionPane(restored.layout)
-      ? [1]
-      : normalizeWidths(
-          restored.layout.children.length === restored.panes.length
-            ? restored.layout.shares
-            : restored.panes.map(() => 1),
-        );
+    // A pane for each of the session's, in its order; the window's own come first.
+    const panes = restored.panes.map((_, index) => this.panes[index] ?? this.makePane());
+    for (const pane of panes) if (!this.panes.includes(pane)) this.panesEl.append(pane.el);
+    let layout = layoutOf(
+      restored.layout,
+      panes.map((pane) => pane.id),
+    );
+    // Split before the session was read: those panes stay, on the right.
+    for (const extra of this.panes.slice(panes.length))
+      layout = splitAt(layout, leafIds(layout).at(-1)!, "right", extra.id);
+    this.arrange(layout, panes);
     restored.panes.forEach(({ tabs }, index) => {
       for (const doc of tabs) {
         this.panes[index].tabs.push(doc);
@@ -609,21 +643,6 @@ export class AppController implements DocHost, PaneHost {
     await this.relocate(doc, to, index);
   }
 
-  /** Moves `doc` into a new pane right of the rightmost one, which gives it half its width. */
-  async moveTabToNewPane(doc: Doc): Promise<void> {
-    await settleComposition(this.focused.view);
-    const from = this.paneOf(doc);
-    if (!from.tabs.list.includes(doc)) return;
-    const at = this.panes.length - 1;
-    // The rightmost pane's only tab is where a new pane would put it already.
-    if (from === this.panes[at] && from.tabs.list.length === 1) return;
-    if (!canSplit(this.widths, at, this.areaWidth())) {
-      this.statusBar.setMessage(TOO_NARROW_TO_SPLIT);
-      return;
-    }
-    await this.relocate(doc, this.openPaneAfter(at), 0);
-  }
-
   /** Moves `doc` into a new window of this workspace (「탭을 새 창으로 옮기기」), which opens with
    * it alone and reads it afresh: a memo is saved first, an external file's edits kept as its
    * draft. When that fails, or a banner still asks about the file, the tab stays and the status
@@ -714,44 +733,30 @@ export class AppController implements DocHost, PaneHost {
   }
 
   dragTab(tabId: string): TabDrag {
-    const edge = h("div", { class: "pane-drop-edge" });
-    this.panesEl.append(edge);
     let marked: Pane | null = null;
     const mark = (target: DropTarget) => {
       marked?.tabBar.markDrop(null);
-      marked = null;
-      edge.classList.toggle("active", target === "edge");
-      if (!target || target === "edge") return;
-      marked = target.pane;
-      marked.tabBar.markDrop(target.index);
-    };
-    const end = () => {
-      mark(null);
-      edge.remove();
+      marked = target?.pane ?? null;
+      if (target) target.pane.tabBar.markDrop(target.index);
     };
     return {
       over: (x, y) => mark(this.dropTarget(x, y)),
       drop: (x, y) => {
         const target = this.dropTarget(x, y);
-        end();
+        mark(null);
         const doc = this.docs.find((each) => each.tabId === tabId);
         if (!doc || !target) return;
-        const moved =
-          target === "edge"
-            ? this.moveTabToNewPane(doc)
-            : this.moveTab(doc, target.pane, target.index);
-        void moved.catch((error: unknown) => this.report(error));
+        void this.moveTab(doc, target.pane, target.index).catch((error: unknown) =>
+          this.report(error),
+        );
       },
-      cancel: end,
+      cancel: () => mark(null),
     };
   }
 
-  /** Where a tab dropped at (`x`, `y`) goes: the right edge of the editing area (a new pane), a
-   * place in a pane's tab bar, or — anywhere else in a pane — the end of its tabs. */
+  /** Where a tab dropped at (`x`, `y`) goes: a place in a pane's tab bar, or — anywhere else in a
+   * pane — the end of its tabs. */
   private dropTarget(x: number, y: number): DropTarget {
-    const area = this.panesEl.getBoundingClientRect();
-    if (x < area.left || x > area.right || y < area.top || y > area.bottom) return null;
-    if (x >= area.right - DROP_EDGE_PX) return "edge";
     const hit = document.elementsFromPoint(x, y);
     const pane = this.panes.find((each) => hit.includes(each.el));
     if (!pane) return null;
@@ -766,44 +771,78 @@ export class AppController implements DocHost, PaneHost {
     return pane;
   }
 
-  /** Puts `pane`, already in `panes`, on screen in its place, a divider between it and its
-   * neighbour. The other panes stay where they are in the DOM: one moved would lose its focus, and
-   * its viewer frame would load again. */
-  private mountPane(pane: Pane): void {
-    const index = this.panes.indexOf(pane);
-    if (index > 0) this.panes[index - 1].el.after(this.divider(), pane.el);
-    else this.panesEl.prepend(pane.el, this.divider());
+  /** `layout` is the window's from now on: `panes` follows its leaves — the panes there are and
+   * `added` — and they are laid out by it. A pane no leaf names is no longer the window's. */
+  private arrange(layout: LayoutNode, added: readonly Pane[] = []): void {
+    const byId = new Map([...this.panes, ...added].map((pane) => [pane.id, pane]));
+    this.layout = layout;
+    this.panes.splice(0, this.panes.length, ...leafIds(layout).flatMap((id) => byId.get(id) ?? []));
+    this.syncPanes();
   }
 
-  /** The panes' widths, which is focused, and what an empty pane says, as they are now. */
+  /** Where the panes lie, which is focused, and what an empty pane says, as they are now. */
   private syncPanes(): void {
     this.panesEl.classList.toggle("split", this.panes.length > 1);
-    this.syncWidths();
+    this.layoutPanes();
     for (const pane of this.panes) {
       pane.el.classList.toggle("focused", pane === this.focused);
       if (pane.tabs.list.length === 0) pane.showEmptyText();
     }
   }
 
-  private syncWidths(): void {
-    this.panes.forEach((pane, index) => (pane.el.style.flexGrow = String(this.widths[index])));
+  /** Puts every pane and boundary grip where `layout` has it. In percentages of the editing area,
+   * so a window resized needs no new layout, and a pane under its minimum still shows. Panes keep
+   * their place in the DOM: one moved would lose its focus, and its viewer frame would load
+   * again. */
+  layoutPanes(): void {
+    const rects = rectsOf(this.layout);
+    for (const pane of this.panes) {
+      const rect = rects.get(pane.id);
+      if (!rect) continue;
+      place(pane.el, rect);
+      // The line between two panes is the border of the one right of it or below it.
+      pane.el.classList.toggle("after-left", rect.x > EDGE);
+      pane.el.classList.toggle("after-top", rect.y > EDGE);
+    }
+    this.boundaries = dividersOf(this.layout);
+    while (this.grips.length < this.boundaries.length) {
+      const grip = this.grip();
+      this.grips.push(grip);
+      this.panesEl.append(grip);
+    }
+    for (const grip of this.grips.splice(this.boundaries.length)) grip.remove();
+    this.boundaries.forEach((boundary, index) => {
+      const grip = this.grips[index];
+      const across = boundary.axis === "column";
+      grip.classList.toggle("column", across);
+      place(grip, boundary.rect, across ? "height" : "width");
+    });
   }
 
-  /** The editing area's width: the panes', without the dividers between them. */
-  private areaWidth(): number {
-    return this.panes.reduce((sum, pane) => sum + pane.el.getBoundingClientRect().width, 0);
+  /** The pane's place in the editing area, in pixels. */
+  private rectPx(pane: Pane): Rect {
+    const rect = rectsOf(this.layout).get(pane.id) ?? { x: 0, y: 0, width: 1, height: 1 };
+    const { width, height } = this.panesEl.getBoundingClientRect();
+    return {
+      x: rect.x * width,
+      y: rect.y * height,
+      width: rect.width * width,
+      height: rect.height * height,
+    };
   }
 
-  /** The boundary between the pane on its left and the one on its right; dragged, it moves. */
-  private divider(): HTMLElement {
+  /** A grip over a boundary between panes (`boundaries`, by its own place in `grips`); dragged, the
+   * boundary moves. */
+  private grip(): HTMLElement {
     const el = h("div", { class: "pane-divider" });
     el.addEventListener("pointerdown", (down) => {
-      const boundary = this.panes.findIndex((pane) => pane.el === el.previousElementSibling);
-      if (boundary < 0 || down.button !== 0) return;
+      const boundary = this.boundaries[this.grips.indexOf(el)];
+      if (!boundary || down.button !== 0) return;
       down.preventDefault();
       el.setPointerCapture(down.pointerId);
-      const start = this.widths;
-      const area = this.areaWidth();
+      const start = this.layout;
+      const { width, height } = this.panesEl.getBoundingClientRect();
+      let current = start;
       const end = () => {
         el.removeEventListener("pointermove", move);
         el.removeEventListener("pointerup", end);
@@ -811,10 +850,13 @@ export class AppController implements DocHost, PaneHost {
         this.saveSessionSoon();
       };
       const move = (event: PointerEvent) => {
-        // A pane opened or closed under the drag: its widths no longer fit.
-        if (this.widths.length !== start.length) return end();
-        this.widths = resize(start, boundary, event.clientX - down.clientX, area);
-        this.syncWidths();
+        // A pane opened or closed under the drag: the boundary is no longer the one taken.
+        if (this.layout !== current) return end();
+        const delta =
+          boundary.axis === "row" ? event.clientX - down.clientX : event.clientY - down.clientY;
+        current = resizeAt(start, boundary.path, boundary.index, delta, { width, height });
+        this.layout = current;
+        this.layoutPanes();
       };
       el.addEventListener("pointermove", move);
       el.addEventListener("pointerup", end);
@@ -823,54 +865,46 @@ export class AppController implements DocHost, PaneHost {
     return el;
   }
 
-  /** ⌘\: the focused pane gives the right half of its width to a new pane, which takes the
-   * active tab and the focus — or opens empty when that tab is the pane's only one. */
-  async splitPane(): Promise<void> {
+  /** ⌘\ and ⇧⌘\: the focused pane gives its half on `side` to a new pane, which takes `doc` — by
+   * default the focused pane's active tab — and the focus. The new pane opens empty for `null`, or
+   * when `doc` is the focused pane's only tab. */
+  async splitPane(side: Side = "right", doc?: Doc | null): Promise<void> {
     const from = this.focused;
     await settleComposition(from.view);
     if (this.focused !== from) return;
-    const at = this.panes.indexOf(from);
-    if (!canSplit(this.widths, at, this.areaWidth())) {
+    if (!canSplitRect(this.rectPx(from), side)) {
       this.statusBar.setMessage(TOO_NARROW_TO_SPLIT);
       return;
     }
-    const moving = from.tabs.list.length > 1 ? from.tabs.active : null;
-    const pane = this.openPaneAfter(at);
+    const chosen = doc === undefined ? from.tabs.active : doc;
+    const alone = from.tabs.list.length === 1 && from.tabs.list[0] === chosen;
+    const moving = chosen && !alone && this.docs.includes(chosen) ? chosen : null;
+    const pane = this.makePane();
+    this.panesEl.append(pane.el);
+    this.arrange(splitAt(this.layout, from.id, side, pane.id), [pane]);
     this.setFocused(pane);
     if (moving) await this.relocate(moving, pane, 0);
     else void from.tabs.active?.leave();
   }
 
-  /** A new, empty pane right of pane `at`, which gives it the right half of its width. */
-  private openPaneAfter(at: number): Pane {
-    const pane = this.makePane();
-    this.panes.splice(at + 1, 0, pane);
-    this.widths = split(this.widths, at);
-    this.mountPane(pane);
-    this.syncPanes();
-    return pane;
+  /** ⌥⌘ and an arrow: the pane on `side` of the focused one; nothing when there is none. */
+  focusPane(side: Side): void {
+    const id = neighbor(rectsOf(this.layout), this.focused.id, side);
+    const next = this.panes.find((pane) => pane.id === id);
+    if (next) void this.focusOn(next);
   }
 
-  /** ⌥⌘← / ⌥⌘→: the pane left or right of the focused one; nothing past either end. */
-  async focusPane(step: -1 | 1): Promise<void> {
-    const next = this.panes[this.panes.indexOf(this.focused) + step];
-    if (next) await this.focusOn(next);
-  }
-
-  /** Closes `pane`, which has no tabs; the window's only pane stays. Its width goes to its left
-   * neighbour (the right one when it is leftmost), and so does the focus when it had it. */
+  /** Closes `pane`, which has no tabs; the window's only pane stays. Its room goes as `removeLeaf`
+   * gives it — to the pane before it in its branch, the one after when it is first — and the focus,
+   * when it had it, to the first pane of what took the room. */
   closePane(pane: Pane): void {
-    const at = this.panes.indexOf(pane);
-    if (at < 0 || this.panes.length < 2 || pane.tabs.list.length) return;
-    this.panes.splice(at, 1);
-    this.widths = remove(this.widths, at);
-    // Its divider is the one on its left, or on its right when it was leftmost.
-    (pane.el.previousElementSibling ?? pane.el.nextElementSibling)?.remove();
+    if (!this.panes.includes(pane) || this.panes.length < 2 || pane.tabs.list.length) return;
+    const heir = this.panes.find((each) => each.id === heirOf(this.layout, pane.id));
     pane.el.remove();
     pane.closePanel();
     pane.view.destroy();
-    if (this.focused === pane) this.setFocused(this.panes[Math.max(at - 1, 0)]);
-    this.syncPanes();
+    this.arrange(removeLeaf(this.layout, pane.id));
+    if (this.focused === pane) this.setFocused(heir ?? this.panes[0]);
     this.saveSessionSoon();
   }
 
@@ -1112,11 +1146,17 @@ export class AppController implements DocHost, PaneHost {
           if (this.panes.length > 1) return this.closePane(this.focused);
           return await this.backend.closeWindow();
         case "split-pane":
-          return await this.splitPane();
+          return await this.splitPane("right");
+        case "split-pane-down":
+          return await this.splitPane("bottom");
         case "focus-pane-left":
-          return await this.focusPane(-1);
+          return this.focusPane("left");
         case "focus-pane-right":
-          return await this.focusPane(1);
+          return this.focusPane("right");
+        case "focus-pane-up":
+          return this.focusPane("top");
+        case "focus-pane-down":
+          return this.focusPane("bottom");
         case MOVE_TAB_TO_NEW_WINDOW:
           if (this.focused.tabs.active) await this.tearOff(this.focused.tabs.active);
           return;

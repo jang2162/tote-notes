@@ -2,10 +2,19 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange } from "../../src/backend/types";
-import { menu, ready, sessionPane, sessionWidth, start } from "./helpers";
+import {
+  layoutSession,
+  menu,
+  ready,
+  sessionPane,
+  sessionPaneCount,
+  sessionWidth,
+  start,
+} from "./helpers";
 
-// Side-by-side panes of one window (⌘\, ⌥⌘← / ⌥⌘→) on the fake backend. The rail is 48px and the
-// sidebar 240px, so the editing area is the viewport's width less 288.
+// The panes of one window, split side by side and stacked (⌘\, ⇧⌘\, ⌥⌘ and an arrow), on the fake
+// backend. The rail is 48px and the sidebar 240px, so the editing area is the viewport's width less
+// 288.
 
 const EMPTY_PANE = "빈 칸입니다. 메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
 const TOO_NARROW = "창이 좁아 나눌 수 없습니다";
@@ -76,6 +85,47 @@ async function expectKeysStayOut(page: Page): Promise<void> {
   await page.evaluate(() => window.__tote.app.flushAll());
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째");
 }
+
+interface Box {
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+}
+
+/** Each pane's box on screen, in the order of the panes' elements. */
+function boxes(page: Page): Promise<Box[]> {
+  return panes(page).evaluateAll((els) =>
+    els.map((el) => {
+      const { x, y, width, height } = el.getBoundingClientRect();
+      return { x, y, width, height };
+    }),
+  );
+}
+
+async function areaBox(page: Page): Promise<Box> {
+  return (await page.locator(".panes").boundingBox())!;
+}
+
+/** The same places, whichever pane holds each: a restart lays the panes' elements out in the
+ * layout's order, which a split need not have kept. */
+function expectBoxes(actual: Box[], expected: Box[]): void {
+  const byPlace = (boxes: Box[]) => [...boxes].sort((a, b) => a.x - b.x || a.y - b.y);
+  const [got, want] = [byPlace(actual), byPlace(expected)];
+  expect(got).toHaveLength(want.length);
+  want.forEach((box, index) => {
+    for (const key of ["x", "y", "width", "height"] as const)
+      expect(got[index][key]).toBeCloseTo(box[key], 0);
+  });
+}
+
+/** The memo ids of pane `index` (depth first) in the fake's session file. */
+async function sessionMemos(page: Page, index: number): Promise<(string | false)[]> {
+  return (await sessionPane(page, 0, index)).tabs.map((tab) => tab.kind === "memo" && tab.memoId);
+}
+
+/** A pane of the session tree holding `tabs`, its first tab active. */
+const leafOf = (tabs: object[]) => ({ tabs, activeTab: tabs.length ? 0 : -1 });
 
 function expectClose(actual: number[], expected: number[], digits = 2): void {
   expect(actual).toHaveLength(expected.length);
@@ -334,15 +384,15 @@ test("each pane keeps its own banner and preview mode", async ({ page }) => {
 });
 
 test("dragging the divider resizes and stops at 320px", async ({ page }) => {
-  // An editing area of 992px — 1280px less the 48px rail and the 240px sidebar — less the 1px
-  // divider: two panes of 495.5px.
+  // An editing area of 992px — 1280px less the 48px rail and the 240px sidebar: two panes of
+  // 496px, the line between them the right one's border.
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
   await expect(panes(page)).toHaveCount(2);
   const width = (index: number) =>
     pane(page, index).evaluate((el) => el.getBoundingClientRect().width);
   const area = (await width(0)) + (await width(1));
-  expect(area).toBeCloseTo(991, 0);
+  expect(area).toBeCloseTo(992, 0);
   /** Drags the divider by `dx` from where it is now. */
   const drag = async (dx: number) => {
     const box = (await page.locator(".pane-divider").boundingBox())!;
@@ -496,4 +546,255 @@ test("a composition in progress lands in its own pane before the focus moves", a
   await expect(editor(page, 1)).toHaveText("둘째");
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째가");
   expect(await page.evaluate(() => window.__tote.backend.memoText("b"))).toBe("둘째");
+});
+
+test("⇧⌘\\ splits the focused pane downwards", async ({ page }) => {
+  await start(page, {
+    memos,
+    session: JSON.stringify({ version: 1, activeTab: 1, tabs: [memoTab("a"), memoTab("b")] }),
+  });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  await menu(page, "split-pane-down");
+  await expect(panes(page)).toHaveCount(2);
+  const [top, bottom] = await boxes(page);
+  expect(bottom.x).toBeCloseTo(top.x, 0);
+  expect(bottom.width).toBeCloseTo(top.width, 0);
+  expect(bottom.y).toBeCloseTo(top.y + top.height, 0);
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await expect(titles(page, 1)).toHaveText(["나"]);
+  await expect(activeTitle(page, 1)).toHaveText("나");
+  await expect(editor(page, 1)).toBeFocused();
+  await expect(titles(page, 0)).toHaveText(["가"]);
+});
+
+test("panes split both ways come back after a restart", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    session: JSON.stringify({
+      version: 1,
+      activeTab: 2,
+      tabs: [memoTab("a"), memoTab("b"), memoTab("c")],
+    }),
+  });
+  await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+  await menu(page, "split-pane");
+  await expect(panes(page)).toHaveCount(2);
+  // The right pane's only tab stays: the pane under it opens empty, and the sidebar fills it.
+  await menu(page, "split-pane-down");
+  await expect(panes(page)).toHaveCount(3);
+  await page.locator(".memo-row", { hasText: "라" }).click();
+  await expect(titles(page, 2)).toHaveText(["라"]);
+  const before = await boxes(page);
+  await expect.poll(() => sessionMemos(page, 2)).toEqual(["d"]);
+  await page.reload();
+  await ready(page);
+  await expect(panes(page)).toHaveCount(3);
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  await expect(titles(page, 2)).toHaveText(["라"]);
+  await expect(pane(page, 2)).toHaveClass(/\bfocused\b/);
+  const [left, top, bottom] = await boxes(page);
+  // One pane on the left, two stacked on the right.
+  expect(top.x).toBeCloseTo(left.x + left.width, 0);
+  expect(bottom.x).toBeCloseTo(top.x, 0);
+  expect(top.y).toBeCloseTo(left.y, 0);
+  expect(bottom.y).toBeCloseTo(top.y + top.height, 0);
+  expect(top.height + bottom.height).toBeCloseTo(left.height, 0);
+  expectBoxes([left, top, bottom], before);
+  expect(await sessionMemos(page, 0)).toEqual(["a", "b"]);
+  expect(await sessionMemos(page, 1)).toEqual(["c"]);
+  expect(await sessionMemos(page, 2)).toEqual(["d"]);
+});
+
+test("⌥⌘↑ and ⌥⌘↓ move the focus between stacked panes", async ({ page }) => {
+  await start(page, {
+    memos,
+    session: layoutSession({
+      axis: "column",
+      shares: [0.5, 0.5],
+      children: [leafOf([memoTab("a")]), leafOf([memoTab("b")])],
+    }),
+  });
+  await expect(editor(page, 0)).toBeFocused();
+  await menu(page, "focus-pane-down");
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await expect(editor(page, 1)).toBeFocused();
+  // Nothing is below the bottom pane, nor beside it.
+  await menu(page, "focus-pane-down");
+  await menu(page, "focus-pane-left");
+  await menu(page, "focus-pane-right");
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await menu(page, "focus-pane-up");
+  await expect(pane(page, 0)).toHaveClass(/\bfocused\b/);
+  await expect(editor(page, 0)).toBeFocused();
+  await expect(pane(page, 1)).not.toHaveClass(/\bfocused\b/);
+});
+
+test("a horizontal boundary drags and keeps 160px", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    session: layoutSession({
+      axis: "column",
+      shares: [0.5, 0.5],
+      children: [leafOf([memoTab("a")]), leafOf([memoTab("b")])],
+    }),
+  });
+  await expect(panes(page)).toHaveCount(2);
+  const height = (index: number) =>
+    pane(page, index).evaluate((el) => el.getBoundingClientRect().height);
+  const total = (await height(0)) + (await height(1));
+  const divider = page.locator(".pane-divider");
+  await expect(divider).toHaveCount(1);
+  await expect(divider).toHaveCSS("cursor", "row-resize");
+  /** Drags the boundary by `dy` from where it is now. */
+  const drag = async (dy: number) => {
+    const box = (await divider.boundingBox())!;
+    const x = box.x + box.width / 2;
+    const y = box.y + box.height / 2;
+    await page.mouse.move(x, y);
+    await page.mouse.down();
+    await page.mouse.move(x, y + dy, { steps: 4 });
+    await page.mouse.up();
+  };
+  await drag(60);
+  expect(await height(0)).toBeCloseTo(total / 2 + 60, 0);
+  await drag(1000);
+  expect(await height(1)).toBeGreaterThanOrEqual(160);
+  expect(await height(1)).toBeCloseTo(160, 0);
+  expect(await height(0)).toBeCloseTo(total - 160, 0);
+  await drag(-1000);
+  expect(await height(0)).toBeCloseTo(160, 0);
+  await expect.poll(async () => await sessionWidth(page, 0, 0)).toBeCloseTo(160 / total, 3);
+});
+
+test("closing a pane gives its room to the pane before it", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    // The left 60% holds 가 over 나; 다 has the rest.
+    session: layoutSession(
+      {
+        axis: "row",
+        shares: [0.6, 0.4],
+        children: [
+          {
+            axis: "column",
+            shares: [0.5, 0.5],
+            children: [leafOf([memoTab("a")]), leafOf([memoTab("b")])],
+          },
+          leafOf([memoTab("c")]),
+        ],
+      },
+      1,
+    ),
+  });
+  await expect(panes(page)).toHaveCount(3);
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await menu(page, "close-tab");
+  await expect(panes(page)).toHaveCount(2);
+  await expect(pane(page, 0)).toHaveClass(/\bfocused\b/);
+  await expect(editor(page, 0)).toBeFocused();
+  await expect(titles(page, 0)).toHaveText(["가"]);
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  const area = await areaBox(page);
+  const [first, second] = await boxes(page);
+  // 가 took 나's room: the whole left 60%, top to bottom.
+  expect(Math.abs(first.width + second.width - area.width)).toBeLessThanOrEqual(2);
+  expect(first.width).toBeCloseTo(area.width * 0.6, 0);
+  expect(first.height).toBeCloseTo(area.height, 0);
+  expect(second.height).toBeCloseTo(area.height, 0);
+  await expect.poll(() => sessionPaneCount(page)).toBe(2);
+});
+
+test("the focus of a closed pane goes to the pane that took its room", async ({ page }) => {
+  await start(page, {
+    memos,
+    // 가 on the left; 나 over 다 on the right, 나 focused.
+    session: layoutSession(
+      {
+        axis: "row",
+        shares: [0.5, 0.5],
+        children: [
+          leafOf([memoTab("a")]),
+          {
+            axis: "column",
+            shares: [0.5, 0.5],
+            children: [leafOf([memoTab("b")]), leafOf([memoTab("c")])],
+          },
+        ],
+      },
+      1,
+    ),
+  });
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await menu(page, "close-tab");
+  await expect(panes(page)).toHaveCount(2);
+  // 다 took the right half, and the focus with it — not 가, the pane before 나 depth first.
+  await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  await expect(editor(page, 1)).toBeFocused();
+});
+
+test("panes stay visible when the window is made smaller than their minimum", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await start(page, {
+    memos,
+    session: JSON.stringify({
+      version: 1,
+      activeTab: 3,
+      tabs: [memoTab("a"), memoTab("b"), memoTab("c"), memoTab("d")],
+    }),
+  });
+  await expect(titles(page, 0)).toHaveText(["가", "나", "다", "라"]);
+  // Two by two: 라 goes right, an empty pane under it, then the left pane's tab below it.
+  await menu(page, "split-pane");
+  await expect(panes(page)).toHaveCount(2);
+  await menu(page, "split-pane-down");
+  await expect(panes(page)).toHaveCount(3);
+  await menu(page, "focus-pane-left");
+  await expect(pane(page, 0)).toHaveClass(/\bfocused\b/);
+  await menu(page, "split-pane-down");
+  await expect(panes(page)).toHaveCount(4);
+  const before = await boxes(page);
+  await expect.poll(() => sessionPaneCount(page)).toBe(4);
+  const expectAllShown = async () => {
+    for (const box of await boxes(page)) {
+      expect(box.width).toBeGreaterThan(0);
+      expect(box.height).toBeGreaterThan(0);
+    }
+  };
+  await page.setViewportSize({ width: 500, height: 300 });
+  await expectAllShown();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  expectBoxes(await boxes(page), before);
+  // And a restart in the small window keeps the shares too.
+  await page.setViewportSize({ width: 500, height: 300 });
+  await page.reload();
+  await ready(page);
+  await expect(panes(page)).toHaveCount(4);
+  await expectAllShown();
+  await page.setViewportSize({ width: 1280, height: 800 });
+  expectBoxes(await boxes(page), before);
+});
+
+test("the old right-edge drop target is gone", async ({ page }) => {
+  await start(page, {
+    memos,
+    session: JSON.stringify({ version: 1, activeTab: 0, tabs: [memoTab("a"), memoTab("b")] }),
+  });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  const from = (await pane(page, 0).locator(".tab", { hasText: "나" }).boundingBox())!;
+  const area = await areaBox(page);
+  await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(area.x + area.width - 10, area.y + area.height / 2, { steps: 8 });
+  // The drag is on: the pane under it marks the end of its tabs.
+  await expect(page.locator(".tab.drop-after")).toHaveCount(1);
+  await expect(page.locator(".pane-drop-edge")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await page.mouse.up();
+  await expect(panes(page)).toHaveCount(1);
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
 });

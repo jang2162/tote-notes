@@ -318,6 +318,36 @@ describe("SessionSync.build and sessionTab", () => {
     expect((await sync.build(() => {})).frame).toEqual(frame);
   });
 
+  it("writes a leaf without a pane as an empty pane rather than failing", async () => {
+    const { backend, host, tabs } = setup(null, { a: fakeMemo("가.md", "") });
+    tabs.active = tabs.insertAfterActive(new MemoDoc(host, host.memoInfo("a")!));
+    const built = new SessionSync(
+      backend,
+      () => ({
+        layout: {
+          kind: "split",
+          axis: "row",
+          shares: [0.5, 0.5],
+          children: [leaf("a"), leaf("x")],
+        },
+        panes: new Map([["a", { tabs }]]),
+        focusedPane: 0,
+      }),
+      "device-1",
+      (id) => host.memoInfo(id),
+      (info) => new MemoDoc(host, info),
+      (path) => new ExternalDoc(host, path),
+    );
+    expect((await built.build(() => {})).layout).toEqual({
+      axis: "row",
+      shares: [0.5, 0.5],
+      children: [
+        { tabs: [{ kind: "memo", memoId: "a", scrollAnchor: 0 }], activeTab: 0 },
+        { tabs: [], activeTab: -1 },
+      ],
+    });
+  });
+
   it("builds the layout tree with each pane's tabs", async () => {
     const { backend, host, tabs } = setup(null, {
       a: fakeMemo("가.md", ""),

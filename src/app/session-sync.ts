@@ -61,7 +61,7 @@ export class SessionSync {
   ) {}
 
   /** The tabs of the session's panes, made but not yet in any pane. A tab listed twice is kept
-   * where it comes first, the panes read left to right; a tab another window holds is left out.
+   * where it comes first, the panes read depth first; a tab another window holds is left out.
    * The places are claimed in one call, so fifty tabs are not fifty round trips. Nothing is read
    * from disk here (spec 「세션」 — lazy). A pane whose tabs are all left out comes back empty. */
   async restore(): Promise<RestoredLayout> {
@@ -103,7 +103,9 @@ export class SessionSync {
       if (node.kind === "split") {
         return { axis: node.axis, children: node.children.map(nodeOf), shares: [...node.shares] };
       }
-      const tabs = panes.get(node.id)!.tabs;
+      // A leaf no pane stands for is a slip of the window's: written empty, the rest still saves.
+      const tabs = panes.get(node.id)?.tabs;
+      if (!tabs) return { tabs: [], activeTab: -1 };
       return {
         tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
         activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,

@@ -324,19 +324,29 @@ body {
 
 .panes {
   position: relative;
-  display: flex;
   min-width: 0;
   min-height: 0;
 }
 
-/* `flex-grow` is the pane's share of the width (set by the controller); a window narrower than the
- * panes' minimum shrinks them by their shares, so `min-width` stays 0. */
+/* Placed by the controller from the layout tree, in percentages of the editing area: a window
+ * smaller than the panes' minimum shrinks them by their shares. */
 .pane {
+  position: absolute;
   display: grid;
-  flex: 1 1 0;
   grid-template-rows: auto minmax(0, 1fr);
+  box-sizing: border-box;
   min-width: 0;
   min-height: 0;
+  overflow: hidden;
+}
+
+/* The line between two panes, drawn by the one right of it or below it. */
+.pane.after-left {
+  border-left: 1px solid var(--border);
+}
+
+.pane.after-top {
+  border-top: 1px solid var(--border);
 }
 
 /* Focused only to hold the keys while it shows no editor; the marked tab says which pane it is. */
@@ -344,21 +354,22 @@ body {
   outline: none;
 }
 
+/* A grip over the boundary between two panes, wider than the line; the controller places it along
+ * the boundary, and its thin side straddles it. */
 .pane-divider {
-  position: relative;
+  position: absolute;
   z-index: 1;
-  flex: none;
-  width: 1px;
-  background: var(--border);
+  width: 6px;
+  margin-left: -3px;
   cursor: col-resize;
   touch-action: none;
 }
 
-/* A wider grip than the line it draws. */
-.pane-divider::after {
-  content: "";
-  position: absolute;
-  inset: 0 -3px;
+.pane-divider.column {
+  width: auto;
+  height: 6px;
+  margin: -3px 0 0;
+  cursor: row-resize;
 }
 
 /* With panes side by side, the focused one's active tab is marked. */
@@ -396,22 +407,6 @@ body {
 
 .tab.drop-after::after {
   right: -1px;
-}
-
-/* Shown while a tab is dragged: let go over it, the tab opens a new pane on the right. */
-.pane-drop-edge {
-  position: absolute;
-  z-index: 2;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  width: var(--pane-drop-edge);
-  pointer-events: none;
-}
-
-.pane-drop-edge.active {
-  background: color-mix(in srgb, var(--accent) 20%, transparent);
-  box-shadow: inset 2px 0 0 var(--accent);
 }
 
 .tab {
