@@ -194,6 +194,9 @@ export interface Settings {
   theme: { light: ThemeRef | null; dark: ThemeRef | null };
   extensions: { disabled: string[]; precedence: "user" | "bundled" };
   editor: EditorSettings;
+  /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
+   * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
+  shortcuts?: Record<string, string | null>;
 }
 
 /** `EditorSettings` in src-tauri/src/appdata.rs. `fontFamily` is empty for the stylesheet's own. */
@@ -218,6 +221,34 @@ export interface SettingsPatch {
   editorLineNumbers?: boolean;
   editorFontSize?: number;
   editorFontFamily?: string;
+  /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
+   * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
+  shortcuts?: Record<string, string | null>;
+}
+
+/** `ShortcutTable` in src-tauri/src/shortcuts.rs. Shortcuts are Tauri accelerators
+ * (`CmdOrCtrl+Shift+N`). */
+export interface ShortcutTable {
+  /** Every app command, in menu order. */
+  commands: ShortcutCommand[];
+  /** Shortcuts no command may take. */
+  fixed: FixedShortcut[];
+}
+
+export interface ShortcutCommand {
+  id: string;
+  /** The menu item's name. */
+  label: string;
+  /** The submenu it is in. */
+  menu: string;
+  default: string | null;
+  /** The shortcut it has now: a saved one, else the default. */
+  current: string | null;
+}
+
+export interface FixedShortcut {
+  name: string;
+  accelerator: string;
 }
 
 export interface WorkspaceListItem {
@@ -386,6 +417,11 @@ export interface Backend {
   settings(): Promise<Settings>;
   /** Saves only the fields `patch` names, so two windows changing different fields keep both. */
   patchSettings(patch: SettingsPatch): Promise<void>;
+  /** The app commands with their shortcuts as the saved settings make them. */
+  shortcutTable(): Promise<ShortcutTable>;
+  /** Takes the menu's shortcuts off while this window records one (`on`), and puts them back.
+   * The app also puts them back once this window loses focus or closes. */
+  suspendShortcuts(on: boolean): Promise<void>;
   /** Where a bundled viewer page loads from. */
   viewerUrl(extensionId: string, entry: string): string;
   /** A URL only this view may use for the file; revoked with `revokeFileTokens(owner)`. */

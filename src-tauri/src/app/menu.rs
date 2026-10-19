@@ -2,6 +2,7 @@
 //! paste only work through them. Tab actions go to the frontend of the focused window as
 //! `tote://menu`.
 
+use std::collections::BTreeMap;
 use std::io;
 use std::path::Path;
 use std::sync::{mpsc, Mutex};
@@ -17,6 +18,7 @@ use super::{lifecycle, lock, windows, AppCore};
 
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
+use crate::shortcuts::{self, Command, SETTINGS_ACCELERATOR};
 
 /// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
 /// and never act as the menu bar's items of the same name.
@@ -36,148 +38,282 @@ fn item(
     .build(app)
 }
 
+/// An entry of a submenu.
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Slot {
+    /// An app command, by its id in `shortcuts::COMMANDS`: its name and shortcut come from there.
+    Command(&'static str),
+    Settings,
+    Separator,
+    About,
+    Services,
+    Hide,
+    HideOthers,
+    ShowAll,
+    Undo,
+    Redo,
+    Cut,
+    Copy,
+    Paste,
+    SelectAll,
+    Fullscreen,
+    Minimize,
+    Maximize,
+    BringAllToFront,
+}
+
+/// The id of 설정…, whose shortcut is fixed.
+const SETTINGS: &str = "settings";
+
+/// The menu bar: each submenu's title and entries, the commands in `shortcuts::COMMANDS` order.
+const MENUS: &[(&str, &[Slot])] = &[
+    (
+        "tote",
+        &[
+            Slot::About,
+            Slot::Separator,
+            Slot::Settings,
+            Slot::Separator,
+            Slot::Command("install-cli"),
+            Slot::Separator,
+            Slot::Services,
+            Slot::Separator,
+            Slot::Hide,
+            Slot::HideOthers,
+            Slot::ShowAll,
+            Slot::Separator,
+            // Not the system Quit item: that one terminates at once, without writing pending edits.
+            Slot::Command("quit"),
+        ],
+    ),
+    (
+        "파일",
+        &[
+            Slot::Command("new-memo"),
+            Slot::Command("new-window"),
+            Slot::Command("open-file"),
+            Slot::Separator,
+            Slot::Command("save"),
+            Slot::Command("import"),
+            Slot::Command("rename"),
+            Slot::Separator,
+            Slot::Command("versions"),
+            Slot::Command("reveal-backups"),
+            Slot::Separator,
+            Slot::Command("close-tab"),
+            Slot::Command("close-window"),
+            Slot::Separator,
+            Slot::Command("open-workspace"),
+            Slot::Command("new-workspace"),
+        ],
+    ),
+    (
+        "편집",
+        &[
+            Slot::Undo,
+            Slot::Redo,
+            Slot::Separator,
+            Slot::Cut,
+            Slot::Copy,
+            Slot::Paste,
+            Slot::SelectAll,
+        ],
+    ),
+    (
+        "보기",
+        &[
+            Slot::Command("search-workspace"),
+            Slot::Separator,
+            Slot::Command("split-pane"),
+            Slot::Command("split-pane-down"),
+            Slot::Command("focus-pane-left"),
+            Slot::Command("focus-pane-right"),
+            Slot::Command("focus-pane-up"),
+            Slot::Command("focus-pane-down"),
+            Slot::Separator,
+            Slot::Command("next-tab"),
+            Slot::Command("prev-tab"),
+            Slot::Separator,
+            Slot::Command("toggle-preview"),
+            Slot::Separator,
+            Slot::Fullscreen,
+        ],
+    ),
+    (
+        "윈도우",
+        &[
+            Slot::Minimize,
+            Slot::Maximize,
+            Slot::Separator,
+            Slot::Command("move-tab-to-new-window"),
+            Slot::Separator,
+            Slot::BringAllToFront,
+        ],
+    ),
+];
+
+/// Builds the menu bar with the default shortcuts and manages its items as `MenuShortcuts`. The
+/// settings are not loaded yet: setup applies the saved shortcuts (src/lib.rs).
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
-    let tote = SubmenuBuilder::new(app, "tote")
-        .about(None)
-        .separator()
-        .item(&item(app, "settings", "설정…", Some("CmdOrCtrl+,"))?)
-        .separator()
-        .item(&item(app, "install-cli", "셸 명령 설치…", None)?)
-        .separator()
-        .services()
-        .separator()
-        .hide()
-        .hide_others()
-        .show_all()
-        .separator()
-        // Not the system Quit item: that one terminates at once, without writing pending edits.
-        .item(&item(app, "quit", "tote 종료", Some("CmdOrCtrl+Q"))?)
-        .build()?;
-    let file = SubmenuBuilder::new(app, "파일")
-        .item(&item(app, "new-memo", "새 메모", Some("CmdOrCtrl+N"))?)
-        .item(&item(app, "new-window", "새 창", Some("Alt+CmdOrCtrl+N"))?)
-        .item(&item(app, "open-file", "파일 열기…", Some("CmdOrCtrl+O"))?)
-        .separator()
-        .item(&item(app, "save", "저장", Some("CmdOrCtrl+S"))?)
-        .item(&item(app, "import", "워크스페이스로 가져오기", None)?)
-        .item(&item(app, "rename", "이름 바꾸기…", None)?)
-        .separator()
-        .item(&item(app, "versions", "이전 버전…", None)?)
-        .item(&item(app, "reveal-backups", "백업 폴더 열기", None)?)
-        .separator()
-        .item(&item(app, "close-tab", "탭 닫기", Some("CmdOrCtrl+W"))?)
-        .item(&item(
-            app,
-            "close-window",
-            "창 닫기",
-            Some("CmdOrCtrl+Shift+W"),
-        )?)
-        .separator()
-        .item(&item(
-            app,
-            "open-workspace",
-            "워크스페이스 열기…",
-            Some("CmdOrCtrl+Shift+O"),
-        )?)
-        .item(&item(
-            app,
-            "new-workspace",
-            "새 워크스페이스…",
-            Some("CmdOrCtrl+Shift+N"),
-        )?)
-        .build()?;
-    let edit = SubmenuBuilder::new(app, "편집")
-        .undo()
-        .redo()
-        .separator()
-        .cut()
-        .copy()
-        .paste()
-        .select_all()
-        .build()?;
-    let view = SubmenuBuilder::new(app, "보기")
-        .item(&item(
-            app,
-            "search-workspace",
-            "워크스페이스 검색",
-            Some("CmdOrCtrl+Shift+F"),
-        )?)
-        .separator()
-        .item(&item(
-            app,
-            "split-pane",
-            "오른쪽으로 나누기",
-            Some("CmdOrCtrl+\\"),
-        )?)
-        .item(&item(
-            app,
-            "split-pane-down",
-            "아래로 나누기",
-            Some("CmdOrCtrl+Shift+\\"),
-        )?)
-        .item(&item(
-            app,
-            "focus-pane-left",
-            "왼쪽 칸으로",
-            Some("Alt+CmdOrCtrl+Left"),
-        )?)
-        .item(&item(
-            app,
-            "focus-pane-right",
-            "오른쪽 칸으로",
-            Some("Alt+CmdOrCtrl+Right"),
-        )?)
-        .item(&item(
-            app,
-            "focus-pane-up",
-            "위쪽 칸으로",
-            Some("Alt+CmdOrCtrl+Up"),
-        )?)
-        .item(&item(
-            app,
-            "focus-pane-down",
-            "아래쪽 칸으로",
-            Some("Alt+CmdOrCtrl+Down"),
-        )?)
-        .separator()
-        .item(&item(
-            app,
-            "next-tab",
-            "다음 탭",
-            Some("CmdOrCtrl+Shift+]"),
-        )?)
-        .item(&item(
-            app,
-            "prev-tab",
-            "이전 탭",
-            Some("CmdOrCtrl+Shift+["),
-        )?)
-        .separator()
-        .item(&item(
-            app,
-            "toggle-preview",
-            "미리보기 전환",
-            Some("CmdOrCtrl+Shift+V"),
-        )?)
-        .separator()
-        .fullscreen()
-        .build()?;
-    let window = SubmenuBuilder::new(app, "윈도우")
-        .minimize()
-        .maximize()
-        .separator()
-        .item(&item(
-            app,
-            "move-tab-to-new-window",
-            "탭을 새 창으로 옮기기",
-            None,
-        )?)
-        .separator()
-        .bring_all_to_front()
-        .build()?;
-    MenuBuilder::new(app)
-        .items(&[&tote, &file, &edit, &view, &window])
-        .build()
+    let table = shortcuts::effective(&BTreeMap::new());
+    let mut items = Vec::new();
+    let mut bar = MenuBuilder::new(app);
+    for (title, slots) in MENUS {
+        let mut menu = SubmenuBuilder::new(app, *title);
+        for slot in *slots {
+            menu = match slot {
+                Slot::Command(id) => {
+                    let (command, keys) = table
+                        .iter()
+                        .find(|(command, _)| command.id == *id)
+                        .expect("MENUS names only commands of shortcuts::COMMANDS");
+                    let made = item(app, id, command.label, keys.as_deref())?;
+                    let menu = menu.item(&made);
+                    items.push((command.id, made));
+                    menu
+                }
+                Slot::Settings => {
+                    let made = item(app, SETTINGS, "설정…", Some(SETTINGS_ACCELERATOR))?;
+                    let menu = menu.item(&made);
+                    items.push((SETTINGS, made));
+                    menu
+                }
+                Slot::Separator => menu.separator(),
+                Slot::About => menu.about(None),
+                Slot::Services => menu.services(),
+                Slot::Hide => menu.hide(),
+                Slot::HideOthers => menu.hide_others(),
+                Slot::ShowAll => menu.show_all(),
+                Slot::Undo => menu.undo(),
+                Slot::Redo => menu.redo(),
+                Slot::Cut => menu.cut(),
+                Slot::Copy => menu.copy(),
+                Slot::Paste => menu.paste(),
+                Slot::SelectAll => menu.select_all(),
+                Slot::Fullscreen => menu.fullscreen(),
+                Slot::Minimize => menu.minimize(),
+                Slot::Maximize => menu.maximize(),
+                Slot::BringAllToFront => menu.bring_all_to_front(),
+            };
+        }
+        bar = bar.item(&menu.build()?);
+    }
+    app.manage(MenuShortcuts::new(items));
+    bar.build()
+}
+
+/// Sets a menu item's shortcut: a `MenuItem`, or a recorder in the tests.
+pub trait AcceleratorSlot {
+    fn put(&self, accelerator: Option<&str>);
+}
+
+impl AcceleratorSlot for MenuItem<Wry> {
+    fn put(&self, accelerator: Option<&str>) {
+        if let Err(err) = self.set_accelerator(accelerator) {
+            eprintln!("tote: menu item {}: {err}", self.id().0);
+        }
+    }
+}
+
+/// The menu items with a shortcut: every app command and 설정…. Their shortcuts follow the saved
+/// settings, and come off while a window records a shortcut so the keys reach the recorder instead
+/// of running a command (spec 「녹음 중에 명령이 실행되지 않게」).
+///
+/// Call it on the main thread only (`change_shortcuts`): it sets the items while holding its lock,
+/// and an item's setter waits for the main thread.
+pub struct MenuShortcuts<I = MenuItem<Wry>> {
+    state: Mutex<ShortcutState<I>>,
+}
+
+struct ShortcutState<I> {
+    items: Vec<(&'static str, I)>,
+    /// The commands' shortcuts as last applied, to put back on resume.
+    table: Vec<(&'static Command, Option<String>)>,
+    /// The window recording a shortcut, while the shortcuts are off.
+    suspended_by: Option<String>,
+}
+
+impl<I: AcceleratorSlot> MenuShortcuts<I> {
+    /// `items` as `build` made them, with the default shortcuts.
+    pub fn new(items: Vec<(&'static str, I)>) -> Self {
+        Self {
+            state: Mutex::new(ShortcutState {
+                items,
+                table: shortcuts::effective(&BTreeMap::new()),
+                suspended_by: None,
+            }),
+        }
+    }
+
+    /// The commands' shortcuts are now `effective`. While they are off only the table changes;
+    /// they come back with it.
+    pub fn apply(&self, effective: &[(&'static Command, Option<String>)]) {
+        let mut state = lock(&self.state);
+        state.table = effective.to_vec();
+        if state.suspended_by.is_none() {
+            state.put();
+        }
+    }
+
+    /// Window `label` records a shortcut: every item's comes off.
+    pub fn suspend(&self, label: &str) {
+        let mut state = lock(&self.state);
+        state.suspended_by = Some(label.to_string());
+        state.put();
+    }
+
+    /// Puts the shortcuts back, whichever window took them off.
+    pub fn resume(&self) {
+        let mut state = lock(&self.state);
+        if state.suspended_by.take().is_some() {
+            state.put();
+        }
+    }
+
+    /// Puts the shortcuts back if window `label` took them off: another window losing focus or
+    /// closing leaves the recording window's alone.
+    pub fn resume_if(&self, label: &str) {
+        let mut state = lock(&self.state);
+        if state.suspended_by.as_deref() == Some(label) {
+            state.suspended_by = None;
+            state.put();
+        }
+    }
+}
+
+impl<I: AcceleratorSlot> ShortcutState<I> {
+    fn put(&self) {
+        for (id, keys) in accelerators_while(self.suspended_by.is_some(), &self.table) {
+            if let Some((_, item)) = self.items.iter().find(|(item, _)| *item == id) {
+                item.put(keys.as_deref());
+            }
+        }
+    }
+}
+
+/// The shortcut each item gets: its command's in `effective`, and 설정…'s own; none at all while
+/// suspended.
+fn accelerators_while(
+    suspended: bool,
+    effective: &[(&'static Command, Option<String>)],
+) -> Vec<(&'static str, Option<String>)> {
+    effective
+        .iter()
+        .map(|(command, keys)| (command.id, keys.clone()))
+        .chain([(SETTINGS, Some(SETTINGS_ACCELERATOR.to_string()))])
+        .map(|(id, keys)| (id, keys.filter(|_| !suspended)))
+        .collect()
+}
+
+/// Runs `change` on the main thread, where `MenuShortcuts` has to be used. On the main thread it
+/// runs at once.
+pub fn change_shortcuts(app: &AppHandle, change: impl FnOnce(&MenuShortcuts) + Send + 'static) {
+    let handle = app.clone();
+    let _ = app.run_on_main_thread(move || {
+        if let Some(shortcuts) = handle.try_state::<MenuShortcuts>() {
+            change(&shortcuts);
+        }
+    });
 }
 
 /// Where a menu event goes.
@@ -350,6 +486,7 @@ fn link_cli(app: &AppHandle) -> io::Result<Installed> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::shortcuts::COMMANDS;
 
     #[test]
     fn a_tab_menu_item_does_not_reach_the_menu_bar_actions() {
@@ -381,5 +518,178 @@ mod tests {
         menu.record("move-tab-to-new-window");
         menu.begin();
         assert_eq!(menu.take(), None);
+    }
+
+    /// A menu item that keeps every shortcut it is given.
+    #[derive(Default)]
+    struct Recorder(Mutex<Vec<Option<String>>>);
+
+    impl AcceleratorSlot for std::sync::Arc<Recorder> {
+        fn put(&self, accelerator: Option<&str>) {
+            lock(&self.0).push(accelerator.map(str::to_string));
+        }
+    }
+
+    struct Menu {
+        shortcuts: MenuShortcuts<std::sync::Arc<Recorder>>,
+        items: Vec<(&'static str, std::sync::Arc<Recorder>)>,
+    }
+
+    impl Menu {
+        fn new() -> Self {
+            let items: Vec<_> = COMMANDS
+                .iter()
+                .map(|command| command.id)
+                .chain([SETTINGS])
+                .map(|id| (id, std::sync::Arc::new(Recorder::default())))
+                .collect();
+            let shortcuts = MenuShortcuts::new(items.clone());
+            Self { shortcuts, items }
+        }
+
+        /// The shortcut item `id` has now: the last one it was given.
+        fn shortcut(&self, id: &str) -> Option<String> {
+            let (_, item) = self.items.iter().find(|(item, _)| *item == id).unwrap();
+            lock(&item.0).last().cloned().flatten()
+        }
+
+        fn all(&self) -> Vec<Option<String>> {
+            self.items.iter().map(|(id, _)| self.shortcut(id)).collect()
+        }
+
+        fn puts(&self) -> usize {
+            self.items.iter().map(|(_, item)| lock(&item.0).len()).sum()
+        }
+    }
+
+    fn saved(entries: &[(&str, Option<&str>)]) -> BTreeMap<String, Option<String>> {
+        entries
+            .iter()
+            .map(|(id, keys)| (id.to_string(), keys.map(str::to_string)))
+            .collect()
+    }
+
+    #[test]
+    fn suspended_menus_carry_no_accelerators_and_resume_restores_them() {
+        let table = shortcuts::effective(&BTreeMap::new());
+        let on = accelerators_while(false, &table);
+        assert_eq!(on.len(), COMMANDS.len() + 1);
+        assert!(on.contains(&("new-memo", Some("CmdOrCtrl+N".into()))));
+        assert!(on.contains(&("settings", Some("CmdOrCtrl+,".into()))));
+        assert!(on.contains(&("rename", None)));
+        let off = accelerators_while(true, &table);
+        assert_eq!(off.len(), on.len());
+        assert!(off.iter().all(|(_, keys)| keys.is_none()));
+
+        let menu = Menu::new();
+        menu.shortcuts.apply(&table);
+        let before = menu.all();
+        assert_eq!(menu.shortcut("new-memo"), Some("CmdOrCtrl+N".into()));
+        assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+        menu.shortcuts.suspend("ws-1");
+        assert!(menu.all().iter().all(Option::is_none));
+        menu.shortcuts.resume();
+        assert_eq!(menu.all(), before);
+        // By the window that took them off, as when it closes.
+        menu.shortcuts.suspend("ws-1");
+        menu.shortcuts.resume_if("ws-1");
+        assert_eq!(menu.all(), before);
+    }
+
+    #[test]
+    fn a_settings_change_while_suspended_takes_effect_on_resume() {
+        let menu = Menu::new();
+        menu.shortcuts
+            .apply(&shortcuts::effective(&BTreeMap::new()));
+        menu.shortcuts.suspend("ws-1");
+        let puts = menu.puts();
+        let changed = saved(&[("new-memo", Some("CmdOrCtrl+Shift+M")), ("quit", None)]);
+        menu.shortcuts.apply(&shortcuts::effective(&changed));
+        assert_eq!(menu.puts(), puts, "nothing is put back while suspended");
+        assert!(menu.all().iter().all(Option::is_none));
+        menu.shortcuts.resume_if("ws-1");
+        assert_eq!(menu.shortcut("new-memo"), Some("CmdOrCtrl+Shift+M".into()));
+        assert_eq!(menu.shortcut("quit"), None);
+        assert_eq!(menu.shortcut("save"), Some("CmdOrCtrl+S".into()));
+        assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+    }
+
+    #[test]
+    fn only_the_window_that_suspended_can_resume_by_focus_or_close() {
+        let menu = Menu::new();
+        menu.shortcuts
+            .apply(&shortcuts::effective(&BTreeMap::new()));
+        let before = menu.all();
+        // Not suspended: a window losing focus changes nothing.
+        let puts = menu.puts();
+        menu.shortcuts.resume_if("ws-2");
+        menu.shortcuts.resume();
+        assert_eq!(menu.puts(), puts);
+        menu.shortcuts.suspend("ws-1");
+        let puts = menu.puts();
+        menu.shortcuts.resume_if("ws-2");
+        assert_eq!(menu.puts(), puts);
+        assert!(menu.all().iter().all(Option::is_none));
+        menu.shortcuts.resume_if("ws-1");
+        assert_eq!(menu.all(), before);
+        // Another window starts recording: the first one's focus or close leaves it suspended.
+        menu.shortcuts.suspend("ws-1");
+        menu.shortcuts.suspend("ws-2");
+        menu.shortcuts.resume_if("ws-1");
+        assert!(menu.all().iter().all(Option::is_none));
+        menu.shortcuts.resume_if("ws-2");
+        assert_eq!(menu.all(), before);
+    }
+
+    #[test]
+    fn the_table_lists_every_command_and_the_fixed_keys() {
+        let in_menus: Vec<(&str, &str)> = MENUS
+            .iter()
+            .flat_map(|(title, slots)| {
+                slots.iter().filter_map(move |slot| match slot {
+                    Slot::Command(id) => Some((*id, *title)),
+                    _ => None,
+                })
+            })
+            .collect();
+        let commands: Vec<(&str, &str)> = COMMANDS.iter().map(|c| (c.id, c.menu)).collect();
+        assert_eq!(in_menus, commands);
+        assert!(MENUS
+            .iter()
+            .any(|(_, slots)| slots.contains(&Slot::Settings)));
+
+        let table = shortcuts::table(&saved(&[("rename", Some("CmdOrCtrl+K"))]));
+        let ids: Vec<&str> = table.commands.iter().map(|row| row.id).collect();
+        let command_ids: Vec<&str> = COMMANDS.iter().map(|c| c.id).collect();
+        assert_eq!(ids, command_ids);
+        let rename = table
+            .commands
+            .iter()
+            .find(|row| row.id == "rename")
+            .unwrap();
+        assert_eq!(rename.label, "이름 바꾸기…");
+        assert_eq!(rename.menu, "파일");
+        assert_eq!(rename.default, None);
+        assert_eq!(rename.current, Some("CmdOrCtrl+K".into()));
+        let new_memo = table
+            .commands
+            .iter()
+            .find(|row| row.id == "new-memo")
+            .unwrap();
+        assert_eq!(new_memo.default, Some("CmdOrCtrl+N"));
+        assert_eq!(new_memo.current, Some("CmdOrCtrl+N".into()));
+        let fixed: Vec<(&str, &str)> = table
+            .fixed
+            .iter()
+            .map(|f| (f.name, f.accelerator))
+            .collect();
+        let expected: Vec<(&str, &str)> = shortcuts::FIXED
+            .iter()
+            .map(|f| (f.name, f.accelerator))
+            .collect();
+        assert_eq!(fixed, expected);
+        let json = serde_json::to_value(&table).unwrap();
+        assert_eq!(json["commands"][0]["default"], serde_json::Value::Null);
+        assert_eq!(json["fixed"][0]["accelerator"], "CmdOrCtrl+,");
     }
 }

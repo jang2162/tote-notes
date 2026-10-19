@@ -101,6 +101,8 @@ describe("TauriBackend", () => {
         { id: "p.x", enabled: false },
       ],
       [() => backend.settings(), "get_settings", undefined],
+      [() => backend.shortcutTable(), "shortcut_table", undefined],
+      [() => backend.suspendShortcuts(true), "suspend_shortcuts", { on: true }],
       [
         () => backend.issueFileToken({ kind: "memo", id: "m" }, "o"),
         "issue_file_token",

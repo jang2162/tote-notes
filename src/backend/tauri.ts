@@ -22,6 +22,7 @@ import {
   type SearchQuery,
   type Settings,
   type SettingsPatch,
+  type ShortcutTable,
   type TextQuery,
   type TextScan,
   type TextSearch,
@@ -205,6 +206,12 @@ export class TauriBackend implements Backend {
   }
   patchSettings(patch: SettingsPatch) {
     return call<void>("patch_settings", { patch });
+  }
+  shortcutTable() {
+    return call<ShortcutTable>("shortcut_table");
+  }
+  suspendShortcuts(on: boolean) {
+    return call<void>("suspend_shortcuts", { on });
   }
   viewerUrl(extensionId: string, entry: string) {
     return `tote-ext://localhost/${encodeURIComponent(extensionId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;

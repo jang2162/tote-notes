@@ -65,3 +65,41 @@ describe("FakeBackend editor settings", () => {
     });
   });
 });
+
+describe("FakeBackend shortcuts", () => {
+  it("answers the table with the saved shortcuts as the current ones", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    const before = await backend.shortcutTable();
+    expect(before.commands.find((c) => c.id === "new-memo")?.current).toBe("CmdOrCtrl+N");
+    expect(before.fixed[0]).toEqual({ name: "설정…", accelerator: "CmdOrCtrl+," });
+
+    await backend.patchSettings({ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M", quit: null } });
+    const after = await backend.shortcutTable();
+    const current = (id: string) => after.commands.find((c) => c.id === id)?.current;
+    expect(current("new-memo")).toBe("CmdOrCtrl+Shift+M");
+    expect(current("quit")).toBeNull();
+    expect(current("save")).toBe("CmdOrCtrl+S");
+    expect(after.commands.find((c) => c.id === "new-memo")?.default).toBe("CmdOrCtrl+N");
+    expect((await backend.settings()).shortcuts).toEqual({
+      "new-memo": "CmdOrCtrl+Shift+M",
+      quit: null,
+    });
+
+    // The whole map is replaced: what is left out goes back to its default.
+    await backend.patchSettings({ shortcuts: {} });
+    expect((await backend.shortcutTable()).commands.find((c) => c.id === "new-memo")?.current).toBe(
+      "CmdOrCtrl+N",
+    );
+    expect((await backend.settings()).shortcuts).toBeUndefined();
+  });
+
+  it("keeps whether the shortcuts are off and every ask", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    expect(backend.data.shortcutsSuspended).toBeUndefined();
+    await backend.suspendShortcuts(true);
+    expect(backend.data.shortcutsSuspended).toBe(true);
+    await backend.suspendShortcuts(false);
+    expect(backend.data.shortcutsSuspended).toBe(false);
+    expect(backend.data.suspendShortcutCalls).toEqual([true, false]);
+  });
+});

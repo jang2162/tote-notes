@@ -24,6 +24,7 @@ use crate::files::{self, FileSource};
 use crate::perf::{self, PerfConfig};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
+use crate::shortcuts::{self, ShortcutTable};
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
 
 /// What a rejected command returns. `code` is what the frontend branches on (`BackendError`).
@@ -804,9 +805,33 @@ pub async fn patch_settings(
     core: State<'_, AppCore>,
     patch: SettingsPatch,
 ) -> CmdResult<()> {
+    let shortcuts_changed = patch.shortcuts.is_some();
     core.patch_settings(patch)?;
+    if shortcuts_changed {
+        let saved = core.settings().shortcuts;
+        menu::change_shortcuts(&app, move |menu| menu.apply(&shortcuts::effective(&saved)));
+    }
     broadcast_config(&app);
     Ok(())
+}
+
+#[tauri::command]
+pub fn shortcut_table(core: State<'_, AppCore>) -> ShortcutTable {
+    shortcuts::table(&core.settings().shortcuts)
+}
+
+/// The settings screen of `window` records a shortcut (`on`) or is done: the menu's shortcuts come
+/// off meanwhile. Done from another window leaves them off for the one recording.
+#[tauri::command]
+pub fn suspend_shortcuts(app: AppHandle, window: WebviewWindow, on: bool) {
+    let label = window.label().to_string();
+    menu::change_shortcuts(&app, move |menu| {
+        if on {
+            menu.suspend(&label);
+        } else {
+            menu.resume_if(&label);
+        }
+    });
 }
 
 /// The path a source names, for this window's workspace.

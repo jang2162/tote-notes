@@ -12,6 +12,7 @@ use tauri::{
 
 use super::commands::CommandError;
 use super::flush::FlushGoal;
+use super::menu::MenuShortcuts;
 use super::places::TabKey;
 use super::{lifecycle, requests, AppCore, DropCandidate, SwitchTarget};
 use crate::cli::CliRequest;
@@ -313,6 +314,13 @@ pub fn open_latest(app: &AppHandle) {
 
 pub fn on_event(window: &Window, event: &WindowEvent) {
     let app = window.app_handle();
+    // A window recording a shortcut that loses focus or goes gives the menu its shortcuts back,
+    // whether or not its page said it was done. Window events come on the main thread.
+    if matches!(event, WindowEvent::Focused(false) | WindowEvent::Destroyed) {
+        if let Some(shortcuts) = app.try_state::<MenuShortcuts>() {
+            shortcuts.resume_if(window.label());
+        }
+    }
     let Some(core) = app.try_state::<AppCore>() else {
         return;
     };

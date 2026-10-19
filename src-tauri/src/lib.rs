@@ -70,6 +70,11 @@ pub fn run() {
             app.manage(AppCore::load(
                 app.path().resource_dir()?.join("extensions"),
             )?);
+            // The menu was built before the settings were read, with the default shortcuts.
+            app.state::<menu::MenuShortcuts>()
+                .apply(&shortcuts::effective(
+                    &app.state::<AppCore>().settings().shortcuts,
+                ));
             perf::mark("core-loaded");
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());
@@ -119,6 +124,8 @@ pub fn run() {
             commands::set_extension_enabled,
             commands::get_settings,
             commands::patch_settings,
+            commands::shortcut_table,
+            commands::suspend_shortcuts,
             commands::issue_file_token,
             commands::revoke_file_tokens,
             commands::resolve_relative,

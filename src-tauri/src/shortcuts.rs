@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 
 use muda::accelerator::{Accelerator, Code, Modifiers};
+use serde::Serialize;
 
 /// An app command: a menu bar item with an id, other than 설정….
 #[derive(Debug, PartialEq, Eq)]
@@ -127,10 +128,13 @@ const fn fixed(name: &'static str, accelerator: &'static str) -> Fixed {
     Fixed { name, accelerator }
 }
 
+/// 설정…'s shortcut. The menu item has one like an app command's, which recording takes off too.
+pub const SETTINGS_ACCELERATOR: &str = "CmdOrCtrl+,";
+
 /// 설정… stays where it is so the way back to this screen is never lost. The system Edit items
 /// and macOS's own window items cannot be rebound at all.
 pub const FIXED: &[Fixed] = &[
-    fixed("설정…", "CmdOrCtrl+,"),
+    fixed("설정…", SETTINGS_ACCELERATOR),
     fixed("워크스페이스 1", "Ctrl+1"),
     fixed("워크스페이스 2", "Ctrl+2"),
     fixed("워크스페이스 3", "Ctrl+3"),
@@ -189,8 +193,9 @@ fn recordable(accelerator: &Accelerator) -> bool {
 }
 
 /// The overrides of `saved` that can stand, each judged on its own: an unknown command, a string
-/// that does not parse, a fixed shortcut, or one another command ends up with is dropped and the
-/// rest kept. Between a default and an override the override goes; between two overrides, the one
+/// that does not parse, one the settings screen could not have recorded (⌘, ⌃ or ⌥ with a key, or
+/// F1–F12 alone), a fixed shortcut, or one another command ends up with is dropped and the rest
+/// kept. Between a default and an override the override goes; between two overrides, the one
 /// later in `COMMANDS`.
 pub fn sanitize(saved: &BTreeMap<String, Option<String>>) -> BTreeMap<String, Option<String>> {
     let mut kept: BTreeMap<String, Option<String>> = saved
@@ -248,6 +253,55 @@ pub fn effective(
     saved: &BTreeMap<String, Option<String>>,
 ) -> Vec<(&'static Command, Option<String>)> {
     resolve(&sanitize(saved))
+}
+
+/// What the settings screen shows (`shortcut_table`): every command with its default and the
+/// shortcut it has now, and the shortcuts no command may take.
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ShortcutTable {
+    pub commands: Vec<CommandRow>,
+    pub fixed: Vec<FixedRow>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CommandRow {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub menu: &'static str,
+    pub default: Option<&'static str>,
+    pub current: Option<String>,
+}
+
+#[derive(Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FixedRow {
+    pub name: &'static str,
+    pub accelerator: &'static str,
+}
+
+/// The table for the overrides `saved`.
+pub fn table(saved: &BTreeMap<String, Option<String>>) -> ShortcutTable {
+    ShortcutTable {
+        commands: effective(saved)
+            .into_iter()
+            .map(|(command, current)| CommandRow {
+                id: command.id,
+                label: command.label,
+                menu: command.menu,
+                default: command.default,
+                current,
+            })
+            .collect(),
+        fixed: FIXED
+            .iter()
+            .map(|f| FixedRow {
+                name: f.name,
+                accelerator: f.accelerator,
+            })
+            .collect(),
+    }
 }
 
 /// A patch's overrides, refused whole when any one of them breaks a rule `sanitize` drops for.
@@ -423,6 +477,25 @@ mod tests {
             .map(|(id, keys)| (*id, keys.map(str::to_string)))
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    /// `src/backend/fake-shortcuts.test.ts` holds the fake backend's table against this file.
+    /// `UPDATE_FIXTURES=1 cargo test` writes it anew.
+    #[test]
+    fn the_shortcut_table_fixture_is_current() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/shortcut-table.json");
+        let current = serde_json::to_string_pretty(&table(&BTreeMap::new())).unwrap() + "\n";
+        if std::env::var_os("UPDATE_FIXTURES").is_some() {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, &current).unwrap();
+        }
+        let saved = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            saved == current,
+            "{} is stale: run `UPDATE_FIXTURES=1 cargo test` in src-tauri",
+            path.display()
+        );
     }
 
     #[test]

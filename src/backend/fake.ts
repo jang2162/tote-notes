@@ -3,6 +3,7 @@ import { parseSessionFile, type SessionTab } from "../core/session";
 import { scanBytes } from "../viewer/large-text";
 import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
+import { FAKE_FIXED_SHORTCUTS, FAKE_SHORTCUT_COMMANDS } from "./fake-shortcuts";
 import {
   BackendError,
   EDITOR_FONT_SIZE_MAX,
@@ -24,6 +25,7 @@ import {
   type SearchQuery,
   type Settings,
   type SettingsPatch,
+  type ShortcutTable,
   type TextMatch,
   type TextQuery,
   type Version,
@@ -167,6 +169,10 @@ export interface FakeData {
   >;
   /** The workspace whose window `switchWorkspace` brought forward last, by path. */
   focusedWorkspace?: string;
+  /** Whether `suspendShortcuts` has the menu's shortcuts off. Absent until it is first called. */
+  shortcutsSuspended?: boolean;
+  /** Every `suspendShortcuts` call, in order. Absent until it is first called. */
+  suspendShortcutCalls?: boolean[];
   /** Timing marks are kept, as with `TOTE_PERF=1`; they go into `marks`. Absent in old seeds. */
   perf?: boolean;
   marks?: string[];
@@ -1053,8 +1059,32 @@ export class FakeBackend implements Backend {
         Math.max(EDITOR_FONT_SIZE_MIN, Math.round(patch.editorFontSize)),
       );
     if (patch.editorFontFamily !== undefined) settings.editor.fontFamily = patch.editorFontFamily;
+    // The whole map, which Rust leaves out of the JSON when it is empty. Unlike Rust, the fake
+    // does not check the entries yet (`shortcuts::validate`).
+    if (patch.shortcuts !== undefined) {
+      if (Object.keys(patch.shortcuts).length > 0)
+        settings.shortcuts = structuredClone(patch.shortcuts);
+      else delete settings.shortcuts;
+    }
     this.commit();
     this.config();
+  }
+
+  async shortcutTable(): Promise<ShortcutTable> {
+    const saved = this.data.settings.shortcuts ?? {};
+    return {
+      commands: FAKE_SHORTCUT_COMMANDS.map((command) => ({
+        ...command,
+        current: Object.hasOwn(saved, command.id) ? (saved[command.id] ?? null) : command.default,
+      })),
+      fixed: structuredClone(FAKE_FIXED_SHORTCUTS),
+    };
+  }
+
+  async suspendShortcuts(on: boolean) {
+    this.data.shortcutsSuspended = on;
+    (this.data.suspendShortcutCalls ??= []).push(on);
+    this.commit();
   }
 
   viewerUrl(extensionId: string, entry: string) {
