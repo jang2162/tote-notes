@@ -9,6 +9,7 @@ import type {
   OutsideChange,
   PerfConfig,
   Settings,
+  ShortcutTable,
   TabRef,
 } from "../backend/types";
 import { decodeText } from "../core/codec";
@@ -35,6 +36,7 @@ import {
   workerHighlighting,
   type WorkerHighlighting,
 } from "../highlight/extension";
+import { shortcutHint } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
@@ -195,6 +197,9 @@ export class AppController implements DocHost, PaneHost {
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
   };
+  /** The app commands' shortcuts as of the last config change; the hints that name one read it.
+   * Null until it is first read. */
+  private shortcuts: ShortcutTable | null = null;
   private readonly configListeners = new Set<() => void>();
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
@@ -353,7 +358,8 @@ export class AppController implements DocHost, PaneHost {
       true,
     );
     await this.loadRegistry();
-    await this.loadSettings();
+    const [, shortcuts] = await Promise.all([this.loadSettings(), this.loadShortcuts()]);
+    if (shortcuts) this.shortcutsChanged();
     this.applyEditorFont();
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
@@ -472,6 +478,28 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
+  /** Whether the table read is another than the one there was. A failed read keeps that one. */
+  private async loadShortcuts(): Promise<boolean> {
+    try {
+      const table = await this.backend.shortcutTable();
+      const changed = JSON.stringify(table) !== JSON.stringify(this.shortcuts);
+      this.shortcuts = table;
+      return changed;
+    } catch (error) {
+      this.report(error);
+      return false;
+    }
+  }
+
+  shortcutHint(id: string): string | null {
+    return this.shortcuts && shortcutHint(this.shortcuts, id);
+  }
+
+  /** The empty panes and the status bar name the shortcuts there are now. */
+  private shortcutsChanged(): void {
+    for (const pane of this.panes) pane.shortcutsChanged();
+  }
+
   /** The font variables live on the root, where the theme's variables are not: a theme never
    * names them. An empty family removes the variable, so styles.css's default shows. */
   private applyEditorFont(): void {
@@ -485,11 +513,12 @@ export class AppController implements DocHost, PaneHost {
   /** Settings or extensions changed (this window's settings screen or another's). */
   private async onConfigChanged(): Promise<void> {
     const lineNumbers = this.settings.editor.lineNumbers;
-    await this.loadSettings();
+    const [, shortcuts] = await Promise.all([this.loadSettings(), this.loadShortcuts()]);
     this.applyEditorFont();
     if (this.settings.editor.lineNumbers !== lineNumbers) {
       for (const doc of this.docs) this.reconfigureLineNumbers(doc);
     }
+    if (shortcuts) this.shortcutsChanged();
     await this.loadRegistry();
     // An extension may have been reinstalled, replaced, removed or switched: what was read from
     // its files is stale, so every open tab reads its language again. Theme and root changes

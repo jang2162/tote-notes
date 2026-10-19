@@ -841,6 +841,44 @@ test("a window's only pane shows the same help", async ({ page }) => {
   await expect(page.locator(".cm-content")).toBeFocused();
 });
 
+/** What the settings screen does: save the whole shortcut map, then the backend's change event. */
+async function saveShortcuts(page: Page, shortcuts: Record<string, string | null>) {
+  await page.evaluate((map) => window.__tote.backend.patchSettings({ shortcuts: map }), shortcuts);
+}
+
+test("the empty pane hint follows the new memo shortcut", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a")], []], { focusedPane: 0 }) });
+  const [, right] = await panesByPosition(page);
+  const hint = right.locator(".editor-placeholder p").nth(1);
+  await expect(hint).toHaveText(EMPTY_HINT);
+  await saveShortcuts(page, { "new-memo": "CmdOrCtrl+Shift+M" });
+  await expect(hint).toHaveText("메모 목록에서 메모를 열거나 ⇧⌘M 을 누르세요");
+  await saveShortcuts(page, { "new-memo": null });
+  await expect(hint).toHaveText("메모 목록에서 메모를 여세요");
+  await expect(right.locator(".editor-placeholder p")).toHaveCount(2);
+  await saveShortcuts(page, {});
+  await expect(hint).toHaveText(EMPTY_HINT);
+});
+
+test("the preview hint follows the toggle preview shortcut", async ({ page }) => {
+  await start(page, { memos });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await menu(page, "toggle-preview");
+  const status = page.locator(".status-message");
+  await expect(status).toHaveText("미리보기 · ⇧⌘V 로 편집");
+  await saveShortcuts(page, { "toggle-preview": "Alt+CmdOrCtrl+P" });
+  await expect(status).toHaveText("미리보기 · ⌥⌘P 로 편집");
+  await saveShortcuts(page, { "toggle-preview": null });
+  await expect(status).toHaveText("미리보기");
+  // Shown again, the preview says what the table says now.
+  await menu(page, "toggle-preview");
+  await expect(status).toHaveText("");
+  await menu(page, "toggle-preview");
+  await expect(status).toHaveText("미리보기");
+});
+
 test("a double click on the tab bar's free space opens a new memo as the last tab", async ({
   page,
 }) => {

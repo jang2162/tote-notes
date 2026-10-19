@@ -19,7 +19,13 @@ export const OPEN_AS_TEXT = "텍스트로 열기";
 /** What an empty pane says, however many panes the window has. */
 export const EMPTY_TITLE = "새 메모를 만드세요";
 export const EMPTY_NEW_MEMO = "새 메모";
-export const EMPTY_HINT = "메모 목록에서 메모를 열거나 ⌘N 을 누르세요";
+
+/** The empty pane's hint, naming the shortcut `new-memo` has now (`shortcut`, as written). */
+export function emptyHint(shortcut: string | null): string {
+  return shortcut
+    ? `메모 목록에서 메모를 열거나 ${shortcut} 을 누르세요`
+    : "메모 목록에서 메모를 여세요";
+}
 
 const PROBLEM_TEXT: Record<Problem, string> = {
   binary: NOT_OPENABLE,
@@ -30,7 +36,10 @@ const PROBLEM_TEXT: Record<Problem, string> = {
   unreadable: "파일을 읽지 못했습니다",
 };
 
-const PREVIEW_HINT = "미리보기 · ⇧⌘V 로 편집";
+/** The status bar's hint over a preview, naming the shortcut `toggle-preview` has now. */
+function previewHint(shortcut: string | null): string {
+  return shortcut ? `미리보기 · ${shortcut} 로 편집` : "미리보기";
+}
 const LARGE_TEXT_HINT = "읽기 전용 · 대용량 텍스트 뷰어";
 
 /** A panel on show that reads its file through tokens issued to `owner`; closing it revokes them. */
@@ -58,6 +67,9 @@ export interface PaneHost {
   showing(pane: Pane, doc: Doc | null): void;
   /** Tells the highlight worker which documents are on screen: every pane's active tab. */
   syncHighlightVisibility(): void;
+  /** The shortcut app command `id` has now, as written (`shortcutHint` in src/shortcuts/keys.ts);
+   * null when it has none or the table is not read yet. */
+  shortcutHint(id: string): string | null;
   /** Numbers the large text searches of the window: the backend keeps only the latest one
    * running, so two viewers in one window must not reuse a number. */
   nextTextSearch(): number;
@@ -182,7 +194,7 @@ export class Pane {
         this.keepKeys();
         status?.setPosition(null);
         // A notice of the document (a restored draft) is not to be hidden by the mode's hint.
-        if (!doc.notice) status?.setMessage(PREVIEW_HINT);
+        if (!doc.notice) status?.setMessage(this.previewHint());
         return;
       }
       // The language may have changed under a preview (detection on leaving), taking its viewer.
@@ -237,7 +249,7 @@ export class Pane {
   showEmptyText(): void {
     this.surface.showEmpty({
       title: EMPTY_TITLE,
-      hint: EMPTY_HINT,
+      hint: emptyHint(this.host.shortcutHint("new-memo")),
       action: { label: EMPTY_NEW_MEMO, run: () => void this.host.newMemoIn(this, "after-active") },
     });
   }
@@ -251,8 +263,20 @@ export class Pane {
     status.setPosition(doc && this.surface.showsEditor ? this.view.state : null);
     let message = doc?.notice ?? "";
     if (doc && !message && this.panel)
-      message = this.largeText ? LARGE_TEXT_HINT : doc.mode === "preview" ? PREVIEW_HINT : "";
+      message = this.largeText ? LARGE_TEXT_HINT : doc.mode === "preview" ? this.previewHint() : "";
     status.setMessage(message);
+  }
+
+  /** The app's shortcuts changed: the hints that name one say the shortcut there is now. */
+  shortcutsChanged(): void {
+    if (this.tabs.list.length === 0) this.showEmptyText();
+    const doc = this.tabs.active;
+    if (doc && !doc.notice && this.panel && !this.largeText && doc.mode === "preview")
+      this.host.statusOf(this)?.setMessage(this.previewHint());
+  }
+
+  private previewHint(): string {
+    return previewHint(this.host.shortcutHint("toggle-preview"));
   }
 
   /** Takes `doc` out of this pane, open as it is: its panel closes, the tab next to it (or

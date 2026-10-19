@@ -93,6 +93,66 @@ describe("FakeBackend shortcuts", () => {
     expect((await backend.settings()).shortcuts).toBeUndefined();
   });
 
+  // The rules of `shortcuts::validate` in src-tauri/src/shortcuts.rs, refused as Rust refuses
+  // them (`InvalidInput` is "bad-request"), the whole patch with them.
+  it("refuses a shortcut map Rust would refuse and saves nothing of the patch", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    // Rust names the first refused id in sorted order.
+    const cases: [Record<string, string | null>, string][] = [
+      [{ nope: "CmdOrCtrl+K" }, "nope"],
+      [{ settings: "CmdOrCtrl+K" }, "settings"],
+      [{ save: "Cmd+++" }, "save"],
+      [{ rename: "K" }, "rename"],
+      [{ rename: "Shift+K" }, "rename"],
+      [{ rename: "Shift+F5" }, "rename"],
+      [{ rename: "CmdOrCtrl+C" }, "rename"],
+      [{ rename: "CmdOrCtrl+N" }, "rename"],
+      [{ quit: "CmdOrCtrl+Shift+V" }, "quit"],
+      [{ "open-file": "CmdOrCtrl+Shift+M", "new-memo": "CmdOrCtrl+Shift+M" }, "open-file"],
+      [{ save: "CmdOrCtrl+C", rename: "CmdOrCtrl+S" }, "rename"],
+    ];
+    for (const [shortcuts, name] of cases) {
+      const refused = backend.patchSettings({ shortcuts, editorFontSize: 20 });
+      await expect(refused, JSON.stringify(shortcuts)).rejects.toMatchObject({
+        code: "bad-request",
+        message: `단축키를 저장할 수 없습니다: ${name}`,
+      });
+      expect((await backend.settings()).shortcuts).toBeUndefined();
+      expect((await backend.settings()).editor.fontSize).toBe(14);
+    }
+    expect(backend.data.settings.shortcuts).toBeUndefined();
+  });
+
+  it("takes a map whose every entry stands", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    const shortcuts = { "new-memo": null, rename: "Cmd+N", save: "F5", quit: "Alt+F5" };
+    await backend.patchSettings({ shortcuts });
+    expect((await backend.settings()).shortcuts).toEqual(shortcuts);
+    const current = (await backend.shortcutTable()).commands.find((c) => c.id === "rename");
+    expect(current?.current).toBe("Cmd+N");
+  });
+
+  it("drops a bad saved entry on read and keeps the rest, as Rust does", async () => {
+    const data = defaultFakeData();
+    data.settings.shortcuts = {
+      "new-memo": "CmdOrCtrl+Shift+M",
+      nope: "CmdOrCtrl+K",
+      rename: "CmdOrCtrl+C",
+      "open-file": "CmdOrCtrl+Shift+M",
+      "close-tab": null,
+    };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    expect((await backend.settings()).shortcuts).toEqual({
+      "new-memo": "CmdOrCtrl+Shift+M",
+      "close-tab": null,
+    });
+    const current = (id: string) =>
+      backend.shortcutTable().then((t) => t.commands.find((c) => c.id === id)?.current);
+    expect(await current("open-file")).toBe("CmdOrCtrl+O");
+    expect(await current("rename")).toBeNull();
+    expect(await current("close-tab")).toBeNull();
+  });
+
   it("keeps whether the shortcuts are off and every ask", async () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
     expect(backend.data.shortcutsSuspended).toBeUndefined();

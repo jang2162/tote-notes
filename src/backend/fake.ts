@@ -3,7 +3,13 @@ import { parseSessionFile, type SessionTab } from "../core/session";
 import { scanBytes } from "../viewer/large-text";
 import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
-import { FAKE_FIXED_SHORTCUTS, FAKE_SHORTCUT_COMMANDS } from "./fake-shortcuts";
+import {
+  FAKE_FIXED_SHORTCUTS,
+  FAKE_SHORTCUT_COMMANDS,
+  refusedShortcut,
+  resolveShortcuts,
+  sanitizeShortcuts,
+} from "./fake-shortcuts";
 import {
   BackendError,
   EDITOR_FONT_SIZE_MAX,
@@ -1038,10 +1044,19 @@ export class FakeBackend implements Backend {
   async settings() {
     const settings = structuredClone(this.data.settings);
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
+    if (settings.shortcuts) {
+      settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
+      if (Object.keys(settings.shortcuts).length === 0) delete settings.shortcuts;
+    }
     return settings;
   }
 
   async patchSettings(patch: SettingsPatch) {
+    // Rust refuses the whole patch over one entry (`shortcuts::validate`, an `InvalidInput`).
+    const refused = patch.shortcuts === undefined ? null : refusedShortcut(patch.shortcuts);
+    if (refused !== null)
+      throw new BackendError("bad-request", `단축키를 저장할 수 없습니다: ${refused}`);
     const settings = this.data.settings;
     // `undefined` is what JSON leaves out on the way to Rust: such a field is kept.
     if (patch.workspaceRoot !== undefined) settings.workspaceRoot = patch.workspaceRoot;
@@ -1059,8 +1074,7 @@ export class FakeBackend implements Backend {
         Math.max(EDITOR_FONT_SIZE_MIN, Math.round(patch.editorFontSize)),
       );
     if (patch.editorFontFamily !== undefined) settings.editor.fontFamily = patch.editorFontFamily;
-    // The whole map, which Rust leaves out of the JSON when it is empty. Unlike Rust, the fake
-    // does not check the entries yet (`shortcuts::validate`).
+    // The whole map, which Rust leaves out of the JSON when it is empty.
     if (patch.shortcuts !== undefined) {
       if (Object.keys(patch.shortcuts).length > 0)
         settings.shortcuts = structuredClone(patch.shortcuts);
@@ -1071,12 +1085,9 @@ export class FakeBackend implements Backend {
   }
 
   async shortcutTable(): Promise<ShortcutTable> {
-    const saved = this.data.settings.shortcuts ?? {};
+    const current = resolveShortcuts(sanitizeShortcuts(this.data.settings.shortcuts ?? {}));
     return {
-      commands: FAKE_SHORTCUT_COMMANDS.map((command) => ({
-        ...command,
-        current: Object.hasOwn(saved, command.id) ? (saved[command.id] ?? null) : command.default,
-      })),
+      commands: FAKE_SHORTCUT_COMMANDS.map((command, at) => ({ ...command, current: current[at] })),
       fixed: structuredClone(FAKE_FIXED_SHORTCUTS),
     };
   }

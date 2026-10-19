@@ -1,3 +1,4 @@
+import { recordableAccelerator, sameAccelerator } from "../shortcuts/keys";
 import type { FixedShortcut, ShortcutCommand } from "./types";
 
 /** The fake backend's copy of `COMMANDS` in src-tauri/src/shortcuts.rs, in menu order.
@@ -58,3 +59,66 @@ export const FAKE_FIXED_SHORTCUTS: FixedShortcut[] = [
   { name: "최소화", accelerator: "CmdOrCtrl+M" },
   { name: "전체 화면", accelerator: "Ctrl+CmdOrCtrl+F" },
 ];
+
+type Overrides = Record<string, string | null>;
+
+/** `shortcuts::sanitize`: the overrides of `saved` that can stand, each judged on its own. An
+ * unknown command, a string that does not parse, one the settings screen could not have recorded,
+ * a fixed shortcut, or one another command ends up with is dropped and the rest kept. Between a
+ * default and an override the override goes; between two overrides, the one later in the table. */
+export function sanitizeShortcuts(saved: Overrides): Overrides {
+  const kept: Overrides = {};
+  for (const [id, keys] of Object.entries(saved)) {
+    if (!FAKE_SHORTCUT_COMMANDS.some((command) => command.id === id)) continue;
+    if (
+      keys !== null &&
+      (!recordableAccelerator(keys) ||
+        FAKE_FIXED_SHORTCUTS.some((f) => sameAccelerator(keys, f.accelerator)))
+    )
+      continue;
+    kept[id] = keys;
+  }
+  // A dropped override gives its command the default back, which may clash with an override kept
+  // so far: drop one at a time until nothing clashes.
+  for (let id = clashing(kept); id !== null; id = clashing(kept)) delete kept[id];
+  return kept;
+}
+
+/** Every command with the shortcut it has under `kept`. */
+export function resolveShortcuts(kept: Overrides): (string | null)[] {
+  return FAKE_SHORTCUT_COMMANDS.map((command) =>
+    Object.hasOwn(kept, command.id) ? kept[command.id] : command.default,
+  );
+}
+
+/** The first override in `kept` (in table order) that another command's shortcut takes
+ * precedence over: a default, or an override earlier in the table. */
+function clashing(kept: Overrides): string | null {
+  const shortcuts = resolveShortcuts(kept);
+  for (const [at, command] of FAKE_SHORTCUT_COMMANDS.entries()) {
+    const keys = kept[command.id];
+    if (!Object.hasOwn(kept, command.id) || keys === null) continue;
+    const beaten = FAKE_SHORTCUT_COMMANDS.some((other, otherAt) => {
+      const otherKeys = shortcuts[otherAt];
+      return (
+        otherAt !== at &&
+        otherKeys !== null &&
+        sameAccelerator(otherKeys, keys) &&
+        (otherAt < at || !Object.hasOwn(kept, other.id))
+      );
+    });
+    if (beaten) return command.id;
+  }
+  return null;
+}
+
+/** `shortcuts::validate`: the id Rust refuses a patch's map for — the first, in sorted order, that
+ * `sanitizeShortcuts` drops — or null when every entry stands. */
+export function refusedShortcut(map: Overrides): string | null {
+  const kept = sanitizeShortcuts(map);
+  return (
+    Object.keys(map)
+      .sort()
+      .find((id) => !Object.hasOwn(kept, id)) ?? null
+  );
+}

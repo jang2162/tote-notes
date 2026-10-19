@@ -54,6 +54,16 @@ export const zedKeymap: KeyBinding[] = [
   { key: "Tab", run: insertIndent, shift: indentLess },
 ];
 
+/** Every key binding of the editor, in the order they are tried. The shortcut settings read the
+ * editor keys an app shortcut would hide from here (`editorBindings` in src/shortcuts/keys.ts). */
+export const editorKeymap: readonly KeyBinding[] = [
+  ...zedKeymap,
+  ...closeBracketsKeymap,
+  ...defaultKeymap,
+  ...searchKeymap,
+  ...historyKeymap,
+];
+
 const language = new Compartment();
 
 /** Markdown gets its editing aids (list continuation) from the bundled parser and keymap. Colours
@@ -159,13 +169,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName, options.languageId)),
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
-    keymap.of([
-      ...zedKeymap,
-      ...closeBracketsKeymap,
-      ...defaultKeymap,
-      ...searchKeymap,
-      ...historyKeymap,
-    ]),
+    keymap.of(editorKeymap),
     lineNumberSlot.of(options.lineNumbers ? lineNumbers() : []),
     highlightSlot.of(options.highlight ?? []),
     appTheme,
