@@ -100,6 +100,25 @@ test("a column boundary keeps 160px", () =>
       }) as SplitNode
     ).shares,
   ).toEqual([0.8, 0.2]));
+test("a pair with only one side under the minimum can still grow that side", () => {
+  const area = { width: 640, height: 800 };
+  const pair = row([leaf("a"), leaf("b")], [0.8, 0.2]);
+  const [first, second] = (resizeAt(pair, [], 0, -100, area) as SplitNode).shares;
+  expect(first).toBeCloseTo(412 / 640);
+  expect(second).toBeCloseTo(228 / 640);
+  const [stayed] = (resizeAt(pair, [], 0, 50, area) as SplitNode).shares;
+  expect(stayed).toBeCloseTo(0.8);
+});
+test("a nested boundary is measured in its parent's height", () => {
+  const tree = col(
+    [leaf("x"), row([leaf("a"), col([leaf("b"), leaf("c")], [0.5, 0.5])], [0.5, 0.5])],
+    [0.5, 0.5],
+  );
+  const moved = resizeAt(tree, [1, 1], 0, 100, { width: 1000, height: 800 }) as SplitNode;
+  const inner = (moved.children[1] as SplitNode).children[1] as SplitNode;
+  expect(inner.shares[0]).toBeCloseTo(0.6);
+  expect(inner.shares[1]).toBeCloseTo(0.4);
+});
 test("a pane splits only when both halves keep the minimum", () => {
   expect(canSplitRect({ x: 0, y: 0, width: 640, height: 320 }, "right")).toBe(true);
   expect(canSplitRect({ x: 0, y: 0, width: 639, height: 320 }, "left")).toBe(false);
@@ -119,6 +138,10 @@ test("the neighbour is the touching pane that overlaps most", () => {
   expect(neighbor(rects, "c", "left")).toBe("a");
   expect(neighbor(rects, "b", "bottom")).toBe("c");
   expect(neighbor(rects, "a", "left")).toBeNull();
+});
+test("the neighbour on an overlap tie is the left one", () => {
+  const rects = rectsOf(col([leaf("top"), row([leaf("l"), leaf("r")], [0.5, 0.5])], [0.5, 0.5]));
+  expect(neighbor(rects, "top", "bottom")).toBe("l");
 });
 test("dividers sit on the boundaries", () =>
   expect(dividersOf(row([leaf("a"), col([leaf("b"), leaf("c")], [0.5, 0.5])], [0.5, 0.5]))).toEqual(

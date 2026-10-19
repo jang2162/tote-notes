@@ -202,9 +202,12 @@ export function resizeAt(
   const extent = root.axis === "row" ? areaPx.width : areaPx.height;
   const min = root.axis === "row" ? MIN_PANE_PX : MIN_PANE_HEIGHT_PX;
   const pair = (root.shares[index] + root.shares[index + 1]) * extent;
-  // Two panes already too small for the minimum (a window made small) stay as they are.
-  if (pair < 2 * min) return root;
-  const first = Math.min(Math.max(root.shares[index] * extent + deltaPx, min), pair - min);
+  const firstPx = root.shares[index] * extent;
+  const secondPx = pair - firstPx;
+  // A side already under the minimum (a window made small) is not shrunk further, but it can grow.
+  const lo = Math.min(min, firstPx);
+  const hi = pair - Math.min(min, secondPx);
+  const first = Math.min(Math.max(firstPx + deltaPx, lo), hi);
   const shares = [...root.shares];
   shares[index] = first / extent;
   shares[index + 1] = (pair - first) / extent;
