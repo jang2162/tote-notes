@@ -16,6 +16,7 @@ export type HubEvent =
   | { type: "flush"; id: number; goal: FlushGoal }
   | { type: "memos" }
   | { type: "reveal"; tab: TabRef }
+  | { type: "adopt"; tab: string; x: number; y: number }
   | { type: "workspaces" };
 
 interface HubMessage {
@@ -87,6 +88,15 @@ export class FakeHub {
   reveal(data: FakeData, owner: string, tab: TabRef): void {
     state(data).focused = owner;
     this.send([owner], { type: "reveal", tab });
+  }
+
+  /** This window's tab `ref` (`tab`, its session entry as JSON) was let go over window `to` of
+   * this workspace at (`x`, `y`) in it: the place is that window's, and the native side brings it
+   * forward and hands it the tab. */
+  moveTo(data: FakeData, to: string, tab: string, ref: TabRef, x: number, y: number): void {
+    (data.places ??= {})[placeKey(ref)] = to;
+    state(data).focused = to;
+    this.send([to], { type: "adopt", tab, x, y });
   }
 
   /** ⌥⌘N: a new, empty window. Returns its label. */

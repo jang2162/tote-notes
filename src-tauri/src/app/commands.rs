@@ -461,6 +461,9 @@ pub async fn tear_off_tab(
             if let Some((target, frame)) = windows::drop_target(&app, label, at) {
                 if core.move_tab(label, &target, &key) {
                     let (x, y) = windows::to_window_point(at, frame);
+                    // As a tab dragged to another browser window: that window comes forward, the
+                    // tab shown in it.
+                    windows::focus(&app, &target);
                     let _ = app.emit_to(
                         EventTarget::webview_window(&target),
                         "tote://adopt",

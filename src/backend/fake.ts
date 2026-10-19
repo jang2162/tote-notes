@@ -52,6 +52,17 @@ export interface FakeMemo {
   modifiedMs: number;
 }
 
+/** A window on the screen: its label, its frame in screen points, and the path of the workspace it
+ * shows when that is not this one's. */
+export interface FakeDropTarget {
+  label: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  workspace?: string;
+}
+
 export interface FakeData {
   workspace: WorkspaceInfo;
   memos: Record<string, FakeMemo>;
@@ -129,8 +140,12 @@ export interface FakeData {
   places?: Record<string, string>;
   /** The reveals `claimTabs` asked of other windows, in order. Absent in old seeds. */
   reveals?: { label: string; tab: TabRef }[];
-  /** The tabs `tearOffTab` moved into new windows, in order. Absent in old seeds. */
-  tornOff?: { tab: SessionTab }[];
+  /** The tabs `tearOffTab` moved into new windows, in order, each with the screen point it was let
+   * go at when it was dragged out. Absent in old seeds. */
+  tornOff?: { tab: SessionTab; at?: { x: number; y: number } }[];
+  /** The other windows on the screen, most recently focused first, as `tearOffTab` looks for one
+   * under the point a tab is let go at. Absent in old seeds. */
+  dropTargets?: FakeDropTarget[];
   /** What a tab's context menu returns: the id of the item to pick, or null for none. */
   tabMenuPick?: string | null;
   /** Workspaces a switch fails to open once this window has written its tabs, as
@@ -338,6 +353,7 @@ export class FakeBackend implements Backend {
     outside: [] as ((change: OutsideChange) => void)[],
     memos: [] as (() => void)[],
     reveal: [] as ((tab: TabRef) => void)[],
+    adopt: [] as ((tab: string, x: number, y: number) => void)[],
     workspaces: [] as (() => void)[],
   };
   /** The fake's own flush rounds (`switchWorkspace`), waiting on this window's answer. */
@@ -471,6 +487,8 @@ export class FakeBackend implements Backend {
     if (event.type === "flush") this.requestFlush(event.id, event.goal);
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "reveal") this.reveal(event.tab);
+    else if (event.type === "adopt")
+      for (const handler of this.handlers.adopt) handler(event.tab, event.x, event.y);
     else if (event.type === "workspaces") this.workspacesChanged();
   }
   /** The memo list changed: the other windows read it again, as the native side tells them. */
@@ -663,7 +681,13 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
-  async tearOffTab(tab: string, ref: TabRef): Promise<"moved" | "window"> {
+  /** A tab let go at `at` goes to the window of `dropTargets` there when it is another open window
+   * of this workspace (with a hub), else to a new window, as the Rust side's does. */
+  async tearOffTab(
+    tab: string,
+    ref: TabRef,
+    at?: { x: number; y: number },
+  ): Promise<"moved" | "window"> {
     this.refuseWhileSwitching();
     const gate = this.tearOffGate;
     this.tearOffGate = null;
@@ -674,7 +698,15 @@ export class FakeBackend implements Backend {
     const places = (this.data.places ??= {});
     if (places[placeKey(ref)] !== this.label)
       throw new BackendError("io", `${this.label} does not hold the tab`);
-    (this.data.tornOff ??= []).push({ tab: entry as SessionTab });
+    const target = at && this.dropTarget(at);
+    if (at && target && this.hub) {
+      this.hub.moveTo(this.data, target.label, tab, ref, at.x - target.x, at.y - target.y);
+      this.commit();
+      return "moved";
+    }
+    (this.data.tornOff ??= []).push(
+      at ? { tab: entry as SessionTab, at } : { tab: entry as SessionTab },
+    );
     if (this.hub) {
       const label = this.hub.adopt(this.data, entry, ref);
       this.commit();
@@ -1230,8 +1262,25 @@ export class FakeBackend implements Backend {
   onWorkspacesChanged(handler: () => void) {
     this.handlers.workspaces.push(handler);
   }
-  /** Never called: `tearOffTab` here takes no point, so every tab goes into a new window. */
-  onAdopt() {}
+  onAdopt(handler: (tab: string, x: number, y: number) => void) {
+    this.handlers.adopt.push(handler);
+  }
+
+  /** The window a tab let go at `at` goes to: the first of `dropTargets` under it — the one in
+   * front — when that is another open window showing this workspace, else none (a new window). */
+  private dropTarget(at: { x: number; y: number }): FakeDropTarget | undefined {
+    const front = (this.data.dropTargets ?? []).find(
+      (each) =>
+        each.label !== this.label &&
+        at.x >= each.x &&
+        at.y >= each.y &&
+        at.x < each.x + each.width &&
+        at.y < each.y + each.height,
+    );
+    if (!front || (front.workspace ?? this.data.workspace.path) !== this.data.workspace.path)
+      return undefined;
+    return this.hub?.siblings(this.data).includes(front.label) ? front : undefined;
+  }
 
   private memo(id: string): FakeMemo {
     const memo = this.data.memos[id];

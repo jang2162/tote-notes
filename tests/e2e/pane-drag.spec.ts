@@ -495,7 +495,8 @@ test("a composition in progress lands in its memo before a drag splits", async (
     const composing = view.composing;
     const drag = app.dragTab(only.tabs.active!.tabId);
     drag.over(at.x, at.y);
-    drag.drop(at.x, at.y);
+    // In the window: the screen point is not looked at.
+    drag.drop(at.x, at.y, 0, 0);
     await new Promise((resolve) => setTimeout(resolve, 50));
     // The split waits for the composition to end.
     const splitEarly = app.panes.length > 1;

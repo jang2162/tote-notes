@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { hold, menu, quietErrors, start } from "./helpers";
+import { dragOut, hold, menu, quietErrors, start } from "./helpers";
 
 // 「탭을 새 창으로 옮기기」 in one window on the fake backend: what leaves this window and what the
 // backend is handed (`data.tornOff`). tests/e2e/windows.spec.ts opens the new window too.
@@ -387,4 +387,77 @@ test("a composition in progress lands before its tab moves", async ({ page }) =>
   expect(seen).toEqual({ composing: true, movedEarly: false, moved: true });
   await expect(page.locator(".tab")).toHaveCount(0);
   expect(await memoText(page, "a")).toBe("첫째가");
+});
+
+// Dragging a tab out of the window: a drop there tears it off as the menu item does, handing the
+// backend the screen point it was let go at.
+
+const tab = (page: Page, title: string) =>
+  page.locator(".tab", { has: page.locator(".tab-title", { hasText: title }) });
+
+test("a tab dropped outside every window opens in a new window there", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(twoTabs),
+  });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  const at = await dragOut(page, tab(page, "가"), false);
+  // Out of the window: no mask, and the tab is left dimmed where it is.
+  await expect(tab(page, "가")).toHaveClass(/\bdragging-out\b/);
+  await expect(page.locator(".drop-mask")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["나"]);
+  const { tornOff, places } = await data(page);
+  expect(tornOff).toEqual([{ tab: expect.objectContaining({ memoId: "a" }), at }]);
+  expect(places).toMatchObject({ "memo:a": "ws-2" });
+});
+
+test("Esc outside the window calls the drag off", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(twoTabs),
+  });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await dragOut(page, tab(page, "가"), false);
+  await expect(tab(page, "가")).toHaveClass(/\bdragging-out\b/);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".tab.dragging-out")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await expect(page.locator(".pane")).toHaveCount(1);
+  expect((await data(page)).tornOff).toBeUndefined();
+});
+
+test("dragging back over the tab bar and letting go keeps the tab where it was", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
+    session: JSON.stringify(twoTabs),
+  });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  const box = (await tab(page, "가").boundingBox())!;
+  await dragOut(page, tab(page, "가"), false);
+  await expect(tab(page, "가")).toHaveClass(/\bdragging-out\b/);
+  await page.mouse.move(box.x + box.width / 4, box.y + box.height / 2, { steps: 8 });
+  // Back in the window: no longer dimmed, its place in the bar marked.
+  await expect(page.locator(".tab.dragging-out")).toHaveCount(0);
+  await expect(tab(page, "가")).toHaveClass(/\bdrop-before\b/);
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
+  await expect(page.locator(".pane")).toHaveCount(1);
+  expect((await data(page)).tornOff).toBeUndefined();
+});
+
+test("a tab whose save fails stays when dropped outside", async ({ page }) => {
+  await quietErrors(page, WRITE_FAILED);
+  await typeInto(page, { failWrites: 1000 });
+  await dragOut(page, tab(page, "장보기"));
+  await expect(page.locator(".status-message")).toHaveText(NOT_MOVED);
+  await expect(page.locator(".tab.active")).toHaveClass(/\bfailed\b/);
+  await expect(page.locator(".tab.dragging-out")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+  const { tornOff, places } = await data(page);
+  expect(tornOff).toBeUndefined();
+  expect(places).toEqual({ "memo:a": "ws-1" });
 });

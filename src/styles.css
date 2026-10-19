@@ -490,6 +490,11 @@ body {
   color: var(--fg);
 }
 
+/* Dragged out of the window: it stays here, dimmed, until it is let go. */
+.tab.dragging-out {
+  opacity: 0.4;
+}
+
 /* External files save only on ⌘S, so their tabs look different. */
 .tab.external .tab-title {
   font-style: italic;

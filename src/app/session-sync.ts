@@ -84,16 +84,20 @@ export class SessionSync {
     const panes = sessionPaneList.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
     for (const [at, { doc, tab, pane, index }] of found.entries()) {
       if (!claims[at]) continue;
-      doc.restoreSelection = tab.selection;
-      doc.scrollAnchor = tab.scrollAnchor ?? 0;
-      doc.mode = tab.mode ?? "edit";
-      if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
-        doc.keepConflict(tab.conflictKept.memoId);
+      placeAsSaved(doc, tab);
       panes[pane].tabs.push(doc);
       if (index === sessionPaneList[pane].activeTab) panes[pane].active = doc;
     }
     for (const pane of panes) pane.active ??= pane.tabs.at(-1) ?? null;
     return { layout: window.layout, panes, focusedPane: window.focusedPane };
+  }
+
+  /** The tab for `tab` — another window's, handed to this one — as a restore would make it, its
+   * place already this window's; null for a memo not listed here or another device's file. */
+  tabFor(tab: SessionTab): Doc | null {
+    const doc = this.docFor(tab, []);
+    if (doc) placeAsSaved(doc, tab);
+    return doc;
   }
 
   async build(captureActive: () => void): Promise<WindowSession> {
@@ -135,6 +139,15 @@ export class SessionSync {
   }
 }
 
+/** `doc` takes the selection, scroll, mode and kept conflict its session entry `tab` saved. */
+function placeAsSaved(doc: Doc, tab: SessionTab): void {
+  doc.restoreSelection = tab.selection;
+  doc.scrollAnchor = tab.scrollAnchor ?? 0;
+  doc.mode = tab.mode ?? "edit";
+  if (doc instanceof MemoDoc && tab.kind === "memo" && tab.conflictKept)
+    doc.keepConflict(tab.conflictKept.memoId);
+}
+
 /** The places of `refs` among every window's tabs (`Backend.claimTabs`); `reveal` brings forward
  * the window holding one. When they cannot be asked for, all are taken as given: the tabs open
  * here rather than not at all, and the console says why one may be open twice. */
@@ -152,7 +165,7 @@ export async function claimPlaces(
 }
 
 /** `null` for no text or text that is not JSON: the window then starts with no tabs. */
-function parseJson(text: string | null): unknown {
+export function parseJson(text: string | null): unknown {
   try {
     return text ? JSON.parse(text) : null;
   } catch {

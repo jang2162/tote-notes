@@ -175,7 +175,9 @@ export function parsePane(raw: Json): PaneSession {
   return pane;
 }
 
-function parseTab(value: unknown): SessionTab | null {
+/** A session tab as `sessionTab` writes it — one window's tab handed to another, too — or null
+ * for one that does not parse. */
+export function parseTab(value: unknown): SessionTab | null {
   if (!isObject(value)) return null;
   const place: TabPlace = {};
   const selection = parseSelection(value.selection);

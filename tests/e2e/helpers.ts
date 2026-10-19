@@ -145,6 +145,34 @@ export async function panesByPosition(page: Page): Promise<Locator[]> {
     .map(({ index }) => all.nth(index));
 }
 
+/** Past the window's left edge, in client coordinates. WebKit goes on sending the pointer's moves
+ * and its release there, as the app's webview is to (Task 1 of the free splits plan). */
+export const OUTSIDE = { x: -80, y: 300 };
+
+/** Presses on `tab`'s middle and moves out of the window (`OUTSIDE`) in steps; lets go there
+ * unless `release` is false. Returns the screen point of the last move: where a drop there is
+ * let go of, as the page hands it to `tearOffTab`. */
+export async function dragOut(
+  page: Page,
+  tab: Locator,
+  release = true,
+): Promise<{ x: number; y: number }> {
+  let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
+  // `boundingBox` does not wait: right after a restore the tab bar may be drawn again.
+  while (!(box = await tab.boundingBox())) await page.waitForTimeout(20);
+  await page.evaluate(() =>
+    window.addEventListener("pointermove", (event) => {
+      window.lastScreenPoint = { x: event.screenX, y: event.screenY };
+    }),
+  );
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(OUTSIDE.x, OUTSIDE.y, { steps: 8 });
+  const at = await page.evaluate(() => window.lastScreenPoint!);
+  if (release) await page.mouse.up();
+  return at;
+}
+
 /** What the native menu would send. */
 export function menu(page: Page, id: string): Promise<void> {
   return page.evaluate((menuId) => window.__tote.backend.menu(menuId), id);

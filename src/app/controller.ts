@@ -13,7 +13,7 @@ import type {
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
-import { isSessionPane, type SessionNode } from "../core/session";
+import { isSessionPane, parseTab, type SessionNode, type SessionTab } from "../core/session";
 import { settleComposition } from "../editor/compose";
 import {
   languageData,
@@ -81,7 +81,7 @@ import {
   type Zone,
 } from "./layout";
 import { Pane, type PaneHost } from "./pane";
-import { claimPlaces, sessionTab, SessionSync } from "./session-sync";
+import { claimPlaces, parseJson, sessionTab, SessionSync } from "./session-sync";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
@@ -372,6 +372,11 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
+    this.backend.onAdopt((json, x, y) => {
+      const tab = parseTab(parseJson(json));
+      if (tab) void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
+      else this.report(new Error(`not a tab: ${json}`));
+    });
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => {
@@ -673,8 +678,10 @@ export class AppController implements DocHost, PaneHost {
    * it alone and reads it afresh: a memo is saved first, an external file's edits kept as its
    * draft. When that fails, or a banner still asks about the file, the tab stays and the status
    * bar says so. Leaving, the tab is not closed — a blank new memo is not deleted: it is the other
-   * window's now. Returns whether it moved. */
-  async tearOff(doc: Doc): Promise<boolean> {
+   * window's now. Returns whether it moved. Dragged out of the window, `at` is the screen point it
+   * was let go at: the tab goes to the window of this workspace there, else a new window there
+   * (`Backend.tearOffTab`). */
+  async tearOff(doc: Doc, at?: { x: number; y: number }): Promise<boolean> {
     await settleComposition(this.focused.view);
     if (!this.docs.includes(doc)) return false;
     // The editor lets go of the tab first: a key typed while it is written and handed over would
@@ -712,7 +719,7 @@ export class AppController implements DocHost, PaneHost {
     if (!this.docs.includes(doc)) return false;
     const pane = this.paneOf(doc);
     try {
-      await this.backend.tearOffTab(JSON.stringify(sessionTab(doc, this.deviceId)), doc.tabRef);
+      await this.backend.tearOffTab(JSON.stringify(sessionTab(doc, this.deviceId)), doc.tabRef, at);
     } catch (error) {
       stay();
       this.report(error);
@@ -766,7 +773,16 @@ export class AppController implements DocHost, PaneHost {
 
   dragTab(tabId: string): TabDrag {
     let marked: Pane | null = null;
+    let dimmed: Pane | null = null;
     const dragged = () => this.docs.find((each) => each.tabId === tabId);
+    const outside = (x: number, y: number) =>
+      x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight;
+    // Out of the window the tab is left dimmed in its bar, and no place in this window is marked.
+    const dim = (doc: Doc | undefined) => {
+      dimmed?.tabBar.markOut(null);
+      dimmed = doc ? this.paneOf(doc) : null;
+      dimmed?.tabBar.markOut(tabId);
+    };
     // A place in a tab bar is marked there, a zone of a pane's body by the mask; never both.
     const mark = (target: DropTarget) => {
       marked?.tabBar.markDrop(null);
@@ -778,9 +794,21 @@ export class AppController implements DocHost, PaneHost {
       this.showDropMask(target && "zone" in target ? target : null);
     };
     return {
-      over: (x, y) => mark(this.dropTarget(x, y, dragged())),
-      drop: (x, y) => {
+      over: (x, y) => {
         const doc = dragged();
+        dim(outside(x, y) ? doc : undefined);
+        mark(outside(x, y) ? null : this.dropTarget(x, y, doc));
+      },
+      drop: (x, y, screenX, screenY) => {
+        const doc = dragged();
+        dim(undefined);
+        if (doc && outside(x, y)) {
+          mark(null);
+          void this.tearOff(doc, { x: screenX, y: screenY }).catch((error: unknown) =>
+            this.report(error),
+          );
+          return;
+        }
         const target = this.dropTarget(x, y, doc);
         mark(null);
         if (!doc || !target) return;
@@ -792,7 +820,10 @@ export class AppController implements DocHost, PaneHost {
               : this.splitWithTab(doc, target.pane, target.zone);
         void moved.catch((error: unknown) => this.report(error));
       },
-      cancel: () => mark(null),
+      cancel: () => {
+        dim(undefined);
+        mark(null);
+      },
     };
   }
 
@@ -1040,10 +1071,36 @@ export class AppController implements DocHost, PaneHost {
     this.hold(doc);
   }
 
-  /** Another window asked for a tab this window holds. */
+  /** Another window asked for a tab this window holds. One it holds without a tab — handed over
+   * before this page heard of it (`onAdopt`) — opens here: no window would show it otherwise. A
+   * restore under way makes the tabs of the session, which may hold it. */
   private async reveal(tab: TabRef): Promise<void> {
     const doc = tab.kind === "memo" ? this.memoTab(tab.id) : this.externalTab(tab.path);
     if (doc) await this.showTab(doc);
+    else if (this.restoring) return;
+    else if (tab.kind === "memo") await this.openMemo(tab.id);
+    else await this.openExternal(tab.path);
+  }
+
+  /** Another window of this workspace let `tab` go over this one at (`x`, `y`), its place already
+   * this window's (`onAdopt`): it opens as the last tab of the pane there, else of the focused
+   * pane, and is shown. The session is written at once, not on its timer: the other window has
+   * written its own without the tab, and an app quitting between the two would lose its place. */
+  async adoptTab(tab: SessionTab, x: number, y: number): Promise<void> {
+    let doc: Doc | null | undefined =
+      tab.kind === "memo" ? this.memoTab(tab.memoId) : this.externalTab(tab.path);
+    if (!doc) {
+      // Made in the other window a moment ago, the memo may not be listed here yet.
+      if (tab.kind === "memo" && !this.memoList.get(tab.memoId)) await this.refreshMemos();
+      doc = this.session.tabFor(tab);
+      if (!doc) return this.report(new Error("메모를 찾을 수 없습니다"));
+      const hit = document.elementsFromPoint(x, y);
+      const pane = this.panes.find((each) => hit.includes(each.el)) ?? this.focused;
+      this.held.set(doc, doc.tabRef);
+      pane.tabs.place(doc, pane.tabs.list.length);
+    }
+    await this.showTab(doc);
+    await this.saveSessionNow();
   }
 
   /** Everything written now — tab edits, titles and the session. `closing` (the window closes or

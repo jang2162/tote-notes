@@ -21,16 +21,19 @@ export function dropIndex(tabs: { left: number; width: number }[], x: number): n
   return index < 0 ? tabs.length : index;
 }
 
-/** A tab being dragged, in client coordinates: it goes `over` places, then is dropped or, on Esc,
- * called off. */
+/** A tab being dragged, in client coordinates — out of the window too, past its edges: it goes
+ * `over` places, then is dropped or, on Esc, called off. A drop also says where it was let go on
+ * the screen (`screenX`, `screenY`). */
 export interface TabDrag {
   over(x: number, y: number): void;
-  drop(x: number, y: number): void;
+  drop(x: number, y: number, screenX: number, screenY: number): void;
   cancel(): void;
 }
 
 export class TabBar {
   readonly el = h("div", { class: "tabbar", role: "tablist" });
+  /** The tab dragged out of the window, dimmed while it is (`markOut`). */
+  private out: string | null = null;
 
   constructor(
     private readonly actions: {
@@ -74,6 +77,13 @@ export class TabBar {
     else tabs[tabs.length - 1].classList.add("drop-after");
   }
 
+  /** Dims tab `id`, dragged out of the window; null takes that away. It stays dimmed as the bar is
+   * drawn again. */
+  markOut(id: string | null): void {
+    this.out = id;
+    for (const el of this.tabEls()) el.classList.toggle("dragging-out", el.dataset.id === id);
+  }
+
   private tabEls(): HTMLElement[] {
     return [...this.el.querySelectorAll<HTMLElement>(".tab")];
   }
@@ -92,6 +102,7 @@ export class TabBar {
       tab.dirty && "dirty",
       tab.failed && "failed",
       tab.external && "external",
+      tab.id === this.out && "dragging-out",
     ]
       .filter(Boolean)
       .join(" ");
@@ -148,7 +159,7 @@ export class TabBar {
     const up = (event: PointerEvent) => {
       if (!ours(event)) return;
       stop();
-      drag?.drop(event.clientX, event.clientY);
+      drag?.drop(event.clientX, event.clientY, event.screenX, event.screenY);
     };
     const cancel = () => {
       stop();
@@ -161,6 +172,9 @@ export class TabBar {
       cancel();
     };
     const options = { signal: listening.signal };
+    // The pointer leaving the window goes on with the drag: a drop out there tears the tab off.
+    // Whether the app's webview sends a `blur` as it leaves is not confirmed in the app yet (Task 1
+    // of the free splits plan); if it does, the `blur` below calls such drags off.
     window.addEventListener("pointermove", move, options);
     window.addEventListener("pointerup", up, options);
     window.addEventListener("pointercancel", cancel, options);
