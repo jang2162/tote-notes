@@ -42,6 +42,8 @@ export const CSS_VARIABLES: { variable: string; keys: string[] }[] = [
   { variable: "--selection", keys: ["editor.selectionBackground"] },
   { variable: "--selection-match", keys: ["editor.selectionHighlightBackground"] },
   { variable: "--cursor", keys: ["editorCursor.foreground", "editor.foreground", "foreground"] },
+  { variable: "--line-number", keys: ["editorLineNumber.foreground"] },
+  { variable: "--line-number-active", keys: ["editorLineNumber.activeForeground"] },
   { variable: "--panel-bg", keys: ["editorWidget.background", "sideBar.background"] },
 ];
 
@@ -60,6 +62,8 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--selection": "#b6d6fd",
     "--selection-match": "rgb(255 200 0 / 25%)",
     "--cursor": "#1f2328",
+    "--line-number": "#6e7781",
+    "--line-number-active": "#1f2328",
     "--panel-bg": "#f6f8fa",
   },
   dark: {
@@ -75,6 +79,8 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--selection": "#2f4f7a",
     "--selection-match": "rgb(255 200 0 / 18%)",
     "--cursor": "#dcdee3",
+    "--line-number": "#8b9099",
+    "--line-number-active": "#dcdee3",
     "--panel-bg": "#191a1d",
   },
 };

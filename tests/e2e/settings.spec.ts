@@ -1,7 +1,8 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
-import { fakeMemo } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { LONG_LINE_LIMIT } from "../../src/app/docs";
+import { fakeFile, fakeMemo } from "../../src/backend/fake";
+import { menu, nextWindow, paneSession, start, startWindows } from "./helpers";
 
 const PKG = { name: "night", publisher: "someone", version: "1.0.0", displayName: "Night Theme" };
 
@@ -260,6 +261,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       workspaceRoot: null,
       theme: { light: { extension: "gone.theme", label: "Gone" }, dark: null },
       extensions: { disabled: [], precedence: "user" },
+      editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     },
   });
   await menu(page, "settings");
@@ -315,4 +317,87 @@ test("replacing an extension with the same version makes the next file read agai
   await page.keyboard.press("Escape");
   await page.locator(".memo-row", { hasText: "b" }).first().click();
   await expect.poll(reads).toBeGreaterThan(before);
+});
+
+const lineMemos = {
+  a: fakeMemo("가.md", "첫째\n둘째", { modifiedMs: 4 }),
+  b: fakeMemo("나.md", "셋째", { modifiedMs: 3 }),
+  c: fakeMemo("다.md", "넷째", { modifiedMs: 2 }),
+  d: fakeMemo("라.md", "다섯째", { modifiedMs: 1 }),
+};
+
+/** What the settings screen does for another window: save, then the backend's change event. */
+async function patch(page: Page, patch: object): Promise<void> {
+  await page.evaluate(async (change) => {
+    const backend = window.__tote.backend;
+    await backend.patchSettings(change);
+  }, patch);
+}
+
+test("line numbers show by default and switch off in every tab and window", async ({ context }) => {
+  const first = await startWindows(context, {
+    memos: lineMemos,
+    session: paneSession([
+      [
+        { kind: "memo", memoId: "a" },
+        { kind: "memo", memoId: "c" },
+      ],
+      [{ kind: "memo", memoId: "b" }],
+    ]),
+  });
+  await expect(first.locator(".cm-lineNumbers")).toHaveCount(2);
+  await patch(first, { editorLineNumbers: false });
+  await expect(first.locator(".cm-lineNumbers")).toHaveCount(0);
+  // The hidden tab was reconfigured too, not only the two on screen.
+  await first.locator(".pane").first().locator(".tab", { hasText: "다" }).click();
+  await expect(first.locator(".cm-content", { hasText: "넷째" })).toBeVisible();
+  await expect(first.locator(".cm-lineNumbers")).toHaveCount(0);
+  await patch(first, { editorLineNumbers: true });
+  await expect(first.locator(".cm-lineNumbers")).toHaveCount(2);
+  await patch(first, { editorLineNumbers: false });
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  await second.locator(".memo-row", { hasText: "라" }).click();
+  await expect(second.locator(".cm-content")).toContainText("다섯째");
+  await expect(second.locator(".cm-lineNumbers")).toHaveCount(0);
+});
+
+test("the editor font size follows the setting but the large text viewer stays at 14px", async ({
+  page,
+}) => {
+  await start(page, { memos: lineMemos, picks: ["/x/huge.log"] });
+  await page.evaluate(
+    (data) => {
+      const backend = window.__tote.backend as unknown as {
+        storage: { save(text: string): void };
+        data: { files: Record<string, string> };
+      };
+      backend.storage = { save: () => {} };
+      backend.data.files["/x/huge.log"] = data;
+    },
+    fakeFile("L".repeat(LONG_LINE_LIMIT + 1)),
+  );
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  const size = (selector: string) =>
+    page
+      .locator(selector)
+      .first()
+      .evaluate((el) => getComputedStyle(el).fontSize);
+  await expect.poll(() => size(".cm-scroller")).toBe("14px");
+  await patch(page, { editorFontSize: 18 });
+  await expect.poll(() => size(".cm-scroller")).toBe("18px");
+  await menu(page, "open-file");
+  await expect(page.locator(".large-text")).toBeVisible();
+  expect(await size(".large-text-scroller")).toBe("14px");
+  await patch(page, { editorFontFamily: "Courier" });
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
+    )
+    .toBe("Courier");
+  await patch(page, { editorFontFamily: "" });
+  await expect
+    .poll(() =>
+      page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
+    )
+    .toBe("");
 });

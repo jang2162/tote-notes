@@ -20,6 +20,7 @@ import {
   highlightActiveLine,
   highlightSpecialChars,
   keymap,
+  lineNumbers,
   type Command,
   type KeyBinding,
   type ViewUpdate,
@@ -83,6 +84,13 @@ export function languageDataEffect(data: LanguageData) {
   return configuration.reconfigure(languageDataExtension(data));
 }
 
+const lineNumberSlot = new Compartment();
+
+/** Shows or hides the gutter of a state built by `editorExtensions` (the line-number setting). */
+export function lineNumbersEffect(on: boolean) {
+  return lineNumberSlot.reconfigure(on ? lineNumbers() : []);
+}
+
 const highlightSlot = new Compartment();
 
 /** Swaps the TextMate colours of a state built by `editorExtensions` (`workerHighlighting`'s
@@ -98,6 +106,15 @@ const appTheme = EditorView.theme({
     fontFamily: "var(--editor-font)",
     fontSize: "var(--editor-size)",
     lineHeight: "1.55",
+  },
+  ".cm-gutters": {
+    backgroundColor: "var(--bg)",
+    color: "var(--line-number, var(--muted))",
+    border: "none",
+  },
+  ".cm-activeLineGutter": {
+    backgroundColor: "var(--active-line)",
+    color: "var(--line-number-active, var(--fg))",
   },
   ".cm-content": { caretColor: "var(--cursor)", padding: "8px 0" },
   ".cm-line": { padding: "0 16px" },
@@ -116,6 +133,8 @@ export interface EditorOptions {
   languageId?: string;
   /** Soft wrap; off when a line is too long to wrap cheaply (`WRAP_LIMIT` in src/app/docs.ts). */
   wrap: boolean;
+  /** The line-number gutter (the editor setting). */
+  lineNumbers: boolean;
   onUpdate: (update: ViewUpdate) => void;
   /** From the language's configuration file: comment tokens, bracket pairs, word characters. */
   languageData?: LanguageData;
@@ -147,6 +166,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
       ...searchKeymap,
       ...historyKeymap,
     ]),
+    lineNumberSlot.of(options.lineNumbers ? lineNumbers() : []),
     highlightSlot.of(options.highlight ?? []),
     appTheme,
     EditorView.updateListener.of(options.onUpdate),

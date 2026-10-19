@@ -14,8 +14,13 @@
   --selection: #b6d6fd;
   --selection-match: rgb(255 200 0 / 25%);
   --cursor: #1f2328;
+  --line-number: #6e7781;
+  --line-number-active: #1f2328;
   --panel-bg: #f6f8fa;
-  --editor-font: ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace;
+  --large-text-font: ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace;
+  --large-text-size: 14px;
+  /* The editor settings replace these on the page's root; the large text viewer keeps its own. */
+  --editor-font: var(--large-text-font);
   --editor-size: 14px;
   font:
     13px/1.4 -apple-system,
@@ -39,6 +44,8 @@
     --selection: #2f4f7a;
     --selection-match: rgb(255 200 0 / 18%);
     --cursor: #dcdee3;
+    --line-number: #8b9099;
+    --line-number-active: #dcdee3;
     --panel-bg: #191a1d;
   }
 }
@@ -779,8 +786,8 @@ button.danger {
 .large-text-scroller {
   position: relative;
   overflow: auto;
-  font-family: var(--editor-font);
-  font-size: var(--editor-size);
+  font-family: var(--large-text-font);
+  font-size: var(--large-text-size);
 }
 
 .large-text-rows {

@@ -5,6 +5,8 @@ import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   BackendError,
+  EDITOR_FONT_SIZE_MAX,
+  EDITOR_FONT_SIZE_MIN,
   type Backend,
   type ExtensionProblem,
   type ExtensionRegistry,
@@ -213,6 +215,7 @@ export function defaultFakeData(): FakeData {
       workspaceRoot: null,
       theme: { light: null, dark: null },
       extensions: { disabled: [], precedence: "user" },
+      editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     },
     userExtensions: [],
     packages: {},
@@ -1027,7 +1030,9 @@ export class FakeBackend implements Backend {
   }
 
   async settings() {
-    return structuredClone(this.data.settings);
+    const settings = structuredClone(this.data.settings);
+    settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    return settings;
   }
 
   async patchSettings(patch: SettingsPatch) {
@@ -1037,6 +1042,17 @@ export class FakeBackend implements Backend {
     if (patch.themeLight !== undefined) settings.theme.light = structuredClone(patch.themeLight);
     if (patch.themeDark !== undefined) settings.theme.dark = structuredClone(patch.themeDark);
     if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
+    // An old seed has no `editor`.
+    settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    if (patch.editorLineNumbers !== undefined)
+      settings.editor.lineNumbers = patch.editorLineNumbers;
+    // Rust takes any number and clamps it, rounding a fraction.
+    if (patch.editorFontSize !== undefined)
+      settings.editor.fontSize = Math.min(
+        EDITOR_FONT_SIZE_MAX,
+        Math.max(EDITOR_FONT_SIZE_MIN, Math.round(patch.editorFontSize)),
+      );
+    if (patch.editorFontFamily !== undefined) settings.editor.fontFamily = patch.editorFontFamily;
     this.commit();
     this.config();
   }

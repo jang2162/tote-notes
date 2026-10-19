@@ -8,6 +8,7 @@ import type {
   MemoInfo,
   OutsideChange,
   PerfConfig,
+  Settings,
   TabRef,
 } from "../backend/types";
 import { decodeText } from "../core/codec";
@@ -25,6 +26,7 @@ import {
   highlightEffect,
   languageDataEffect,
   languageEffect,
+  lineNumbersEffect,
 } from "../editor/setup";
 import { EMPTY_REGISTRY, languageLabelFor, Registry } from "../extensions/registry";
 import { HighlightClient } from "../highlight/client";
@@ -187,6 +189,12 @@ export class AppController implements DocHost, PaneHost {
   private versionsOpen = false;
   /** `extensionSignature` of the registry the caches were filled from. */
   private extensionSet = "";
+  /** The settings as of the last config change; the editor reads its options from here. */
+  private settings: Settings = {
+    theme: { light: null, dark: null },
+    extensions: { disabled: [], precedence: "user" },
+    editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+  };
   private readonly configListeners = new Set<() => void>();
   private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
@@ -345,6 +353,8 @@ export class AppController implements DocHost, PaneHost {
       true,
     );
     await this.loadRegistry();
+    await this.loadSettings();
+    this.applyEditorFont();
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
     this.theme.onChange((active) => {
@@ -453,8 +463,33 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
+  /** A failed read keeps what the editor has (or, at the start, the defaults). */
+  private async loadSettings(): Promise<void> {
+    try {
+      this.settings = await this.backend.settings();
+    } catch (error) {
+      this.report(error);
+    }
+  }
+
+  /** The font variables live on the root, where the theme's variables are not: a theme never
+   * names them. An empty family removes the variable, so styles.css's default shows. */
+  private applyEditorFont(): void {
+    const { fontSize, fontFamily } = this.settings.editor;
+    const style = document.documentElement.style;
+    style.setProperty("--editor-size", `${fontSize}px`);
+    if (fontFamily) style.setProperty("--editor-font", fontFamily);
+    else style.removeProperty("--editor-font");
+  }
+
   /** Settings or extensions changed (this window's settings screen or another's). */
   private async onConfigChanged(): Promise<void> {
+    const lineNumbers = this.settings.editor.lineNumbers;
+    await this.loadSettings();
+    this.applyEditorFont();
+    if (this.settings.editor.lineNumbers !== lineNumbers) {
+      for (const doc of this.docs) this.reconfigureLineNumbers(doc);
+    }
     await this.loadRegistry();
     // An extension may have been reinstalled, replaced, removed or switched: what was read from
     // its files is stale, so every open tab reads its language again. Theme and root changes
@@ -477,6 +512,7 @@ export class AppController implements DocHost, PaneHost {
       fileName: doc.fileName,
       languageId: this.languageOf(doc)?.id,
       wrap: options.wrap,
+      lineNumbers: this.settings.editor.lineNumbers,
       languageData: doc.languageData,
       highlight: this.highlightFor(doc, options.text.length),
       onUpdate: (update) => this.onUpdate(doc, update),
@@ -1549,6 +1585,15 @@ export class AppController implements DocHost, PaneHost {
     // A preview shows the text it was given; give it the restored one.
     const shown = this.paneOf(doc);
     if (doc === shown.tabs.active && doc.mode === "preview") shown.show(doc);
+  }
+
+  /** Tabs of a viewer have no editor state: only text tabs carry a gutter. */
+  private reconfigureLineNumbers(doc: Doc): void {
+    if (!doc.state) return;
+    const effects = [lineNumbersEffect(this.settings.editor.lineNumbers)];
+    const pane = this.paneOf(doc);
+    if (doc === pane.tabs.active && pane.view.state === doc.state) pane.view.dispatch({ effects });
+    else doc.state = doc.state.update({ effects }).state;
   }
 
   private reconfigureLanguage(doc: Doc): void {

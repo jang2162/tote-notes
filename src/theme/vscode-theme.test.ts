@@ -25,8 +25,24 @@ describe("themeVariables", () => {
     expect(vars["--active-line"]).toBe("#ffffff0A");
     // Not in the theme: the dark default, not the light one and not undefined.
     expect(vars["--danger"]).toBe(DEFAULT_VARIABLES.dark["--danger"]);
+    // No line-number colours in the theme: the dark default, which a previous theme's must not outlive.
+    expect(vars["--line-number"]).toBe(DEFAULT_VARIABLES.dark["--line-number"]);
     expect(vars["--cursor"]).toBe("#D4D4D4"); // falls through editorCursor.foreground to the foreground
     expect(Object.keys(vars).sort()).toEqual(Object.keys(DEFAULT_VARIABLES.light).sort());
+  });
+
+  it("fills the line-number variables from the theme's gutter colours", () => {
+    const vars = themeVariables(
+      {
+        colors: {
+          "editorLineNumber.foreground": "#111111",
+          "editorLineNumber.activeForeground": "#222222",
+        },
+      },
+      "light",
+    );
+    expect(vars["--line-number"]).toBe("#111111");
+    expect(vars["--line-number-active"]).toBe("#222222");
   });
 
   it("takes the first key present in a key list", () => {

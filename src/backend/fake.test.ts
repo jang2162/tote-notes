@@ -33,3 +33,35 @@ describe("FakeBackend whileWritingLayout", () => {
     expect(backend.whileWritingLayout).not.toBeNull();
   });
 });
+
+describe("FakeBackend editor settings", () => {
+  it("starts with line numbers on, the default size and no font of its own", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    expect((await backend.settings()).editor).toEqual({
+      lineNumbers: true,
+      fontSize: 14,
+      fontFamily: "",
+    });
+  });
+
+  it("clamps the font size to 11–24 like the Rust side and rounds a fraction", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    await backend.patchSettings({ editorFontSize: 30 });
+    expect((await backend.settings()).editor.fontSize).toBe(24);
+    await backend.patchSettings({ editorFontSize: 3 });
+    expect((await backend.settings()).editor.fontSize).toBe(11);
+    await backend.patchSettings({ editorFontSize: 16.6 });
+    expect((await backend.settings()).editor.fontSize).toBe(17);
+  });
+
+  it("keeps what a patch leaves out", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    await backend.patchSettings({ editorLineNumbers: false, editorFontFamily: "Menlo" });
+    await backend.patchSettings({ editorFontSize: 18 });
+    expect((await backend.settings()).editor).toEqual({
+      lineNumbers: false,
+      fontSize: 18,
+      fontFamily: "Menlo",
+    });
+  });
+});

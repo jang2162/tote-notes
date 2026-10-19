@@ -193,7 +193,20 @@ export interface Settings {
   workspaceRoot?: string | null;
   theme: { light: ThemeRef | null; dark: ThemeRef | null };
   extensions: { disabled: string[]; precedence: "user" | "bundled" };
+  editor: EditorSettings;
 }
+
+/** `EditorSettings` in src-tauri/src/appdata.rs. `fontFamily` is empty for the stylesheet's own. */
+export interface EditorSettings {
+  lineNumbers: boolean;
+  /** 11–24; Rust clamps what a patch asks for. */
+  fontSize: number;
+  fontFamily: string;
+}
+
+/** The smallest and largest editor font size (`FONT_SIZE_RANGE` in src-tauri/src/appdata.rs). */
+export const EDITOR_FONT_SIZE_MIN = 11;
+export const EDITOR_FONT_SIZE_MAX = 24;
 
 /** The settings fields one change names (`SettingsPatch` in src-tauri/src/appdata.rs). A key left
  * out is kept as it is; `null` clears it. */
@@ -202,6 +215,9 @@ export interface SettingsPatch {
   themeLight?: ThemeRef | null;
   themeDark?: ThemeRef | null;
   precedence?: "user" | "bundled";
+  editorLineNumbers?: boolean;
+  editorFontSize?: number;
+  editorFontFamily?: string;
 }
 
 export interface WorkspaceListItem {

@@ -11,6 +11,7 @@ describe("languageDataEffect", () => {
       extensions: editorExtensions({
         fileName: "a.txt",
         wrap: false,
+        lineNumbers: false,
         onUpdate: () => {},
         languageData: { commentTokens: { line: "//" } },
       }),
