@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "@playwright/test";
+import type { BrowserContext, Locator, Page } from "@playwright/test";
 
 import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
 import {
@@ -126,6 +126,23 @@ export async function hold(
       (name) => (window as unknown as Record<string, () => void>)[`release-${name}`](),
       gate,
     );
+}
+
+/** The window's panes from the top down, left to right on one level. A split leaves the panes'
+ * elements where they are, so their order in the DOM is not the layout's. Read once: a pane opened
+ * or closed after the call is not in it. */
+export async function panesByPosition(page: Page): Promise<Locator[]> {
+  const all = page.locator(".pane");
+  const places = await all.evaluateAll((els) =>
+    els.map((el) => {
+      const { top, left } = el.getBoundingClientRect();
+      return { top: Math.round(top), left: Math.round(left) };
+    }),
+  );
+  return places
+    .map((place, index) => ({ ...place, index }))
+    .sort((a, b) => a.top - b.top || a.left - b.left)
+    .map(({ index }) => all.nth(index));
 }
 
 /** What the native menu would send. */

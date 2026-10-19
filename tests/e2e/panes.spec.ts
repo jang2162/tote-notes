@@ -110,7 +110,8 @@ async function areaBox(page: Page): Promise<Box> {
 /** The same places, whichever pane holds each: a restart lays the panes' elements out in the
  * layout's order, which a split need not have kept. */
 function expectBoxes(actual: Box[], expected: Box[]): void {
-  const byPlace = (boxes: Box[]) => [...boxes].sort((a, b) => a.x - b.x || a.y - b.y);
+  const byPlace = (boxes: Box[]) =>
+    [...boxes].sort((a, b) => Math.round(a.x) - Math.round(b.x) || a.y - b.y);
   const [got, want] = [byPlace(actual), byPlace(expected)];
   expect(got).toHaveLength(want.length);
   want.forEach((box, index) => {
@@ -790,8 +791,8 @@ test("the old right-edge drop target is gone", async ({ page }) => {
   await page.mouse.move(from.x + from.width / 2, from.y + from.height / 2);
   await page.mouse.down();
   await page.mouse.move(area.x + area.width - 10, area.y + area.height / 2, { steps: 8 });
-  // The drag is on: the pane under it marks the end of its tabs.
-  await expect(page.locator(".tab.drop-after")).toHaveCount(1);
+  // The drag is on: the pane under it shows where the tab would land.
+  await expect(page.locator(".drop-mask")).toHaveCount(1);
   await expect(page.locator(".pane-drop-edge")).toHaveCount(0);
   await page.keyboard.press("Escape");
   await page.mouse.up();

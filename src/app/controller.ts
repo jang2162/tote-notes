@@ -60,6 +60,7 @@ import { describeError } from "./errors";
 import {
   canSplitRect,
   dividersOf,
+  dropZone,
   heirOf,
   leaf,
   leafIds,
@@ -72,6 +73,7 @@ import {
   type LayoutNode,
   type Rect,
   type Side,
+  type Zone,
 } from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { claimPlaces, sessionTab, SessionSync } from "./session-sync";
@@ -100,8 +102,12 @@ export const NOT_MOVED_TO_NEW_WINDOW = "저장하지 못해 새 창으로 옮기
 export const MOVE_TAB_TO_NEW_WINDOW = "move-tab-to-new-window";
 const NEW_WORKSPACE_NAME = "새 워크스페이스 이름";
 
-/** Where a dragged tab would go (`AppController.dropTarget`). */
-type DropTarget = { pane: Pane; index: number } | null;
+/** Where a dragged tab would go (`AppController.dropTarget`): a place in a pane's tab bar, or a
+ * zone of a pane's body — the whole pane, or a side split off for it. */
+type DropTarget = { pane: Pane; index: number } | { pane: Pane; zone: Zone } | null;
+
+/** The leaf a drop mask stands for while it asks the layout where a split would put a new pane. */
+const MASK_ID = "drop-mask";
 
 const sameTab = (a: TabRef, b: TabRef) =>
   a.kind === "memo"
@@ -156,6 +162,8 @@ export class AppController implements DocHost, PaneHost {
   private boundaries: Divider[] = [];
   private readonly grips: HTMLElement[] = [];
   private readonly panesEl = h("div", { class: "panes" });
+  /** Where a tab dragged over a pane's body would land; in `panesEl` only while it is shown. */
+  private readonly dropMask = h("div", { class: "drop-mask" });
   registry = new Registry(EMPTY_REGISTRY);
   readonly theme: ThemeManager;
   readonly highlight = new HighlightClient(
@@ -402,16 +410,16 @@ export class AppController implements DocHost, PaneHost {
     this.arrange(layout, panes);
     restored.panes.forEach(({ tabs }, index) => {
       for (const doc of tabs) {
-        this.panes[index].tabs.push(doc);
+        panes[index].tabs.push(doc);
         this.held.set(doc, doc.tabRef);
       }
     });
-    this.setFocused(this.panes[restored.focusedPane]);
+    this.setFocused(panes[restored.focusedPane]);
     this.syncPanes();
     // Each pane shows its active tab; only the focused one takes the keys.
     await Promise.all(
       restored.panes.map(({ active }, index) => {
-        const pane = this.panes[index];
+        const pane = panes[index];
         if (active) return pane.activate(active);
         pane.renderTabs();
         return undefined;
@@ -734,34 +742,78 @@ export class AppController implements DocHost, PaneHost {
 
   dragTab(tabId: string): TabDrag {
     let marked: Pane | null = null;
+    const dragged = () => this.docs.find((each) => each.tabId === tabId);
+    // A place in a tab bar is marked there, a zone of a pane's body by the mask; never both.
     const mark = (target: DropTarget) => {
       marked?.tabBar.markDrop(null);
-      marked = target?.pane ?? null;
-      if (target) target.pane.tabBar.markDrop(target.index);
+      marked = null;
+      if (target && "index" in target) {
+        marked = target.pane;
+        target.pane.tabBar.markDrop(target.index);
+      }
+      this.showDropMask(target && "zone" in target ? target : null);
     };
     return {
-      over: (x, y) => mark(this.dropTarget(x, y)),
+      over: (x, y) => mark(this.dropTarget(x, y, dragged())),
       drop: (x, y) => {
-        const target = this.dropTarget(x, y);
+        const doc = dragged();
+        const target = this.dropTarget(x, y, doc);
         mark(null);
-        const doc = this.docs.find((each) => each.tabId === tabId);
         if (!doc || !target) return;
-        void this.moveTab(doc, target.pane, target.index).catch((error: unknown) =>
-          this.report(error),
-        );
+        const moved =
+          "index" in target
+            ? this.moveTab(doc, target.pane, target.index)
+            : target.zone === "center"
+              ? this.moveTab(doc, target.pane, target.pane.tabs.list.length)
+              : this.splitWithTab(doc, target.pane, target.zone);
+        void moved.catch((error: unknown) => this.report(error));
       },
       cancel: () => mark(null),
     };
   }
 
-  /** Where a tab dropped at (`x`, `y`) goes: a place in a pane's tab bar, or — anywhere else in a
-   * pane — the end of its tabs. */
-  private dropTarget(x: number, y: number): DropTarget {
+  /** Where `doc`, dropped at (`x`, `y`), would go: a place in a pane's tab bar, or a zone of a
+   * pane's body (`dropZone`) — a side the pane is too small to split toward is its center. Nothing
+   * for a side of `doc`'s own pane when it is that pane's only tab: there is nothing to split. */
+  private dropTarget(x: number, y: number, doc: Doc | undefined): DropTarget {
     const hit = document.elementsFromPoint(x, y);
     const pane = this.panes.find((each) => hit.includes(each.el));
     if (!pane) return null;
-    const index = hit.includes(pane.tabBar.el) ? pane.tabBar.indexAt(x) : pane.tabs.list.length;
-    return { pane, index };
+    if (hit.includes(pane.tabBar.el)) return { pane, index: pane.tabBar.indexAt(x) };
+    const zone = dropZone(pane.surface.el.getBoundingClientRect(), x, y);
+    if (zone === "center") return { pane, zone };
+    if (pane.tabs.list.length === 1 && pane.tabs.list[0] === doc) return null;
+    return { pane, zone: canSplitRect(this.rectPx(pane), zone) ? zone : "center" };
+  }
+
+  /** Shows over `target`'s pane where a drop would put the tab — the pane, or the half a split
+   * would give the new pane, as the layout would have it — or, for null, takes the mask away. */
+  private showDropMask(target: { pane: Pane; zone: Zone } | null): void {
+    const rect = !target
+      ? undefined
+      : target.zone === "center"
+        ? rectsOf(this.layout).get(target.pane.id)
+        : rectsOf(splitAt(this.layout, target.pane.id, target.zone, MASK_ID)).get(MASK_ID);
+    if (!rect) {
+      this.dropMask.remove();
+      return;
+    }
+    // Placed before it is shown: a mask appearing does not slide in from where it last was.
+    place(this.dropMask, rect);
+    if (!this.dropMask.isConnected) this.panesEl.append(this.dropMask);
+  }
+
+  /** Splits `to` and puts `doc` in the new pane on `side` — a tab dropped on that edge of `to` —
+   * once any composition has ended, as `moveTab` does. A pane it leaves empty closes. */
+  private async splitWithTab(doc: Doc, to: Pane, side: Side): Promise<void> {
+    await settleComposition(this.focused.view);
+    // Closed, or its pane closed, while the composition ended.
+    if (!this.docs.includes(doc) || !this.panes.includes(to)) return;
+    if (to.tabs.list.length === 1 && to.tabs.list[0] === doc) return;
+    const pane = this.makePane();
+    this.panesEl.append(pane.el);
+    this.arrange(splitAt(this.layout, to.id, side, pane.id), [pane]);
+    await this.relocate(doc, pane, 0);
   }
 
   private makePane(): Pane {
@@ -891,7 +943,7 @@ export class AppController implements DocHost, PaneHost {
   focusPane(side: Side): void {
     const id = neighbor(rectsOf(this.layout), this.focused.id, side);
     const next = this.panes.find((pane) => pane.id === id);
-    if (next) void this.focusOn(next);
+    if (next) void this.focusOn(next).catch((error: unknown) => this.report(error));
   }
 
   /** Closes `pane`, which has no tabs; the window's only pane stays. Its room goes as `removeLeaf`

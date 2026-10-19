@@ -372,6 +372,20 @@ body {
   cursor: row-resize;
 }
 
+/* Where a tab dragged over a pane's body would land: the whole pane, or the half a split would
+ * give the new pane. It slides as the pointer moves between zones and panes. */
+.drop-mask {
+  position: absolute;
+  z-index: 2;
+  pointer-events: none;
+  background: color-mix(in srgb, var(--accent) 20%, transparent);
+  transition:
+    left 100ms,
+    top 100ms,
+    width 100ms,
+    height 100ms;
+}
+
 /* With panes side by side, the focused one's active tab is marked. */
 .panes.split .pane.focused .tab.active {
   box-shadow: inset 0 2px 0 var(--accent);

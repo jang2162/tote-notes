@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { sessionPane, sessionPaneCount, start } from "./helpers";
+import { panesByPosition, sessionPane, sessionPaneCount, start } from "./helpers";
 
 // Dragging a tab between the panes of one window, on the fake backend. The drag is made of pointer
 // events (the spike could not confirm HTML5 drag and drop between tab bars in the app's webview), so
@@ -16,6 +16,10 @@ const activeTitle = (page: Page, index: number) =>
   pane(page, index).locator(".tab.active .tab-title");
 const editor = (page: Page, index: number) => pane(page, index).locator(".cm-content");
 const memoTab = (memoId: string) => ({ kind: "memo", memoId });
+const titlesIn = (target: Locator) => target.locator(".tab .tab-title");
+const mask = (page: Page) => page.locator(".drop-mask");
+
+type Box = { x: number; y: number; width: number; height: number };
 
 /** A version 2 session of one window whose panes hold `tabs`, each pane's first tab active. */
 function session(tabs: object[][], focusedPane = 0): string {
@@ -76,6 +80,23 @@ async function before(target: Locator): Promise<{ x: number; y: number }> {
   return { x: box.x + 4, y: box.y + box.height / 2 };
 }
 
+/** A point of `target`'s body — the part under its tab bar — at `fx` of its width and `fy` of its
+ * height. */
+async function inBody(target: Locator, fx: number, fy: number): Promise<{ x: number; y: number }> {
+  const box = await boxOf(target.locator(".surface"));
+  return { x: box.x + box.width * fx, y: box.y + box.height * fy };
+}
+
+/** Waits for the drop mask to cover `want` (±2px): it slides to a new place in 100ms. */
+async function expectMask(page: Page, want: Box): Promise<void> {
+  await expect(async () => {
+    const got = await mask(page).boundingBox();
+    expect(got).not.toBeNull();
+    for (const key of ["x", "y", "width", "height"] as const)
+      expect(Math.abs(got![key] - want[key])).toBeLessThanOrEqual(2);
+  }).toPass({ timeout: 2000 });
+}
+
 /** Inside the editing area's right edge, halfway down. */
 async function rightEdge(page: Page): Promise<{ x: number; y: number }> {
   const box = await boxOf(page.locator(".panes"));
@@ -122,20 +143,142 @@ test("a tab dropped on an empty pane goes into it", async ({ page }) => {
   await expect(titles(page, 0)).toHaveText(["가"]);
 });
 
-test("a tab dropped near the right edge goes last in the pane under it", async ({ page }) => {
+test("the mask covers the half a drop on the right edge would take", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  const box = await boxOf(pane(page, 0));
+  await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 7 / 8, 1 / 2), false);
+  await expectMask(page, {
+    x: box.x + box.width / 2,
+    y: box.y,
+    width: box.width / 2,
+    height: box.height,
+  });
+  // Over a pane's body the tab bar marks no place.
+  await expect(page.locator(".tab.drop-before, .tab.drop-after")).toHaveCount(0);
+  await page.mouse.up();
+  await expect(mask(page)).toHaveCount(0);
+  await expect(panes(page)).toHaveCount(2);
+  const [left, right] = await panesByPosition(page);
+  await expect(titlesIn(left)).toHaveText(["나"]);
+  await expect(titlesIn(right)).toHaveText(["가"]);
+  await expect(right.locator(".cm-content")).toHaveText("첫째");
+  await expect(right).toHaveClass(/\bfocused\b/);
+  const [leftBox, rightBox] = [await boxOf(left), await boxOf(right)];
+  expect(Math.abs(rightBox.x - (box.x + box.width / 2))).toBeLessThanOrEqual(2);
+  expect(Math.abs(leftBox.y - rightBox.y)).toBeLessThanOrEqual(1);
+  const memosOf = async (index: number) =>
+    (await sessionPane(page, 0, index)).tabs.map((each) => each.kind === "memo" && each.memoId);
+  await expect.poll(() => memosOf(1)).toEqual(["a"]);
+  expect(await memosOf(0)).toEqual(["b"]);
+});
+
+test("the mask covers the whole pane in the middle, and a drop there puts the tab last", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  await drag(page, tab(page, 0, "가"), await inBody(pane(page, 1), 1 / 2, 1 / 2), false);
+  await expectMask(page, await boxOf(pane(page, 1)));
+  await page.mouse.up();
+  await expect(mask(page)).toHaveCount(0);
+  await expect(panes(page)).toHaveCount(2);
+  await expect(titles(page, 1)).toHaveText(["다", "가"]);
+  await expect(activeTitle(page, 1)).toHaveText("가");
+  await expect(titles(page, 0)).toHaveText(["나"]);
+});
+
+test("dropping on the bottom edge stacks a new pane below", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  const box = await boxOf(pane(page, 0));
+  await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 1 / 2, 15 / 16), false);
+  await expectMask(page, {
+    x: box.x,
+    y: box.y + box.height / 2,
+    width: box.width,
+    height: box.height / 2,
+  });
+  await page.mouse.up();
+  await expect(panes(page)).toHaveCount(2);
+  const [top, bottom] = await panesByPosition(page);
+  await expect(titlesIn(top)).toHaveText(["나"]);
+  await expect(titlesIn(bottom)).toHaveText(["가"]);
+  await expect(bottom.locator(".cm-content")).toHaveText("첫째");
+  await expect(bottom).toHaveClass(/\bfocused\b/);
+  const [topBox, bottomBox] = [await boxOf(top), await boxOf(bottom)];
+  expect(Math.abs(topBox.x - bottomBox.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(bottomBox.y - (box.y + box.height / 2))).toBeLessThanOrEqual(2);
+});
+
+test("dropping on the top edge of another pane splits that pane", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  const before = await boxOf(pane(page, 1));
+  await drag(page, tab(page, 0, "나"), await inBody(pane(page, 1), 1 / 2, 1 / 16), false);
+  await expectMask(page, { ...before, height: before.height / 2 });
+  await page.mouse.up();
+  await expect(panes(page)).toHaveCount(3);
+  const [left, upper, lower] = await panesByPosition(page);
+  await expect(titlesIn(left)).toHaveText(["가"]);
+  await expect(titlesIn(upper)).toHaveText(["나"]);
+  await expect(titlesIn(lower)).toHaveText(["다"]);
+  await expect(upper).toHaveClass(/\bfocused\b/);
+  const [leftBox, upperBox, lowerBox] = [await boxOf(left), await boxOf(upper), await boxOf(lower)];
+  // The left pane keeps its whole height; the right one is cut in two.
+  expect(Math.abs(leftBox.height - before.height)).toBeLessThanOrEqual(1);
+  expect(Math.abs(upperBox.x - before.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(lowerBox.x - before.x)).toBeLessThanOrEqual(1);
+  expect(Math.abs(upperBox.y - before.y)).toBeLessThanOrEqual(1);
+  expect(Math.abs(lowerBox.y - (before.y + before.height / 2))).toBeLessThanOrEqual(2);
+});
+
+test("a pane emptied by a drag closes", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await expect(titles(page, 1)).toHaveText(["다"]);
+  await drag(page, tab(page, 1, "다"), await inBody(pane(page, 0), 1 / 2, 1 / 2));
   await expect(panes(page)).toHaveCount(1);
-  await drag(page, tab(page, 0, "가"), await rightEdge(page));
+  await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+  await expect(activeTitle(page, 0)).toHaveText("다");
+  const [area, left] = [await boxOf(page.locator(".panes")), await boxOf(pane(page, 0))];
+  for (const key of ["x", "y", "width", "height"] as const)
+    expect(Math.abs(left[key] - area[key])).toBeLessThanOrEqual(1);
+});
+
+test("a side too small to split shows the whole pane instead", async ({ page }) => {
+  // An editing area of 600px: a half would be under 320px.
+  await page.setViewportSize({ width: 888, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나"]);
+  const box = await boxOf(pane(page, 0));
+  expect(Math.round(box.width)).toBe(600);
+  await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 7 / 8, 1 / 2), false);
+  await expectMask(page, box);
+  await page.mouse.up();
+  await expect(panes(page)).toHaveCount(1);
   await expect(titles(page, 0)).toHaveText(["나", "가"]);
-  await expect(activeTitle(page, 0)).toHaveText("가");
-  await expect(editor(page, 0)).toHaveText("첫째");
+  await expect(page.locator(".status-message")).toHaveText("");
+});
+
+test("a lone tab over its own pane's edge shows no mask and stays", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await expect(titles(page, 0)).toHaveText(["가"]);
+  // Its middle shows the mask, so the mask going away at the edge is the edge's doing.
+  await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 1 / 2, 1 / 2), false);
+  await expectMask(page, await boxOf(pane(page, 0)));
+  const edge = await inBody(pane(page, 0), 7 / 8, 1 / 2);
+  await page.mouse.move(edge.x, edge.y, { steps: 4 });
+  await expect(mask(page)).toHaveCount(0);
+  await page.mouse.up();
   await expect(panes(page)).toHaveCount(1);
-  await expect
-    .poll(async () =>
-      (await sessionPane(page, 0, 0)).tabs.map((each) => each.kind === "memo" && each.memoId),
-    )
-    .toEqual(["b", "a"]);
+  await expect(titles(page, 0)).toHaveText(["가"]);
+  await expect(editor(page, 0)).toHaveText("첫째");
 });
 
 test("dragging the last tab out closes its pane", async ({ page }) => {
@@ -188,9 +331,17 @@ test("Esc during a drag calls it off", async ({ page }) => {
   await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
   await drag(page, tab(page, 0, "나"), await before(tab(page, 1, "다")), false);
   await expect(page.locator(".tab.drop-before")).toHaveCount(1);
-  await page.keyboard.press("Escape");
+  await expect(mask(page)).toHaveCount(0);
+  // On into the pane's body: the mask takes over from the tab bar's mark.
+  const body = await inBody(pane(page, 1), 1 / 2, 1 / 2);
+  await page.mouse.move(body.x, body.y, { steps: 4 });
+  await expect(mask(page)).toHaveCount(1);
   await expect(page.locator(".tab.drop-before")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(mask(page)).toHaveCount(0);
+  await expect(page.locator(".tab.drop-before, .tab.drop-after")).toHaveCount(0);
   await page.mouse.up();
+  await expect(panes(page)).toHaveCount(2);
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await expect(titles(page, 1)).toHaveText(["다"]);
 });
@@ -232,6 +383,8 @@ test("a composition in progress lands before its tab moves", async ({ page }) =>
     ]),
   });
   await expect(editor(page, 0)).toBeFocused();
+  // The text is drawn: the composition goes at its position 2.
+  await expect(editor(page, 0)).toHaveText("첫째");
   // The input method's events as tests/e2e/panes.spec.ts sends them (from tests/e2e/pages/editor.ts),
   // into the first pane's editor; the move a drop makes comes mid-composition.
   const seen = await page.evaluate(async () => {
@@ -289,6 +442,78 @@ test("a composition in progress lands before its tab moves", async ({ page }) =>
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째가");
 });
 
+test("a composition in progress lands in its memo before a drag splits", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    session: session([
+      [{ ...memoTab("a"), selection: { ranges: [{ anchor: 2, head: 2 }], main: 0 } }, memoTab("b")],
+    ]),
+  });
+  await expect(editor(page, 0)).toBeFocused();
+  // The text is drawn: the composition goes at its position 2.
+  await expect(editor(page, 0)).toHaveText("첫째");
+  const bottom = await inBody(pane(page, 0), 1 / 2, 15 / 16);
+  // The input method's events as in the test above; the drop on the pane's bottom edge comes
+  // mid-composition.
+  const seen = await page.evaluate(async (at) => {
+    const { app } = window.__tote;
+    const [only] = app.panes;
+    const view = only.view;
+    const dom = view.contentDOM;
+    const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const fire = (type: "beforeinput" | "input", inputType: string, data: string | null) =>
+      dom.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data }));
+    const composition = (type: string, data: string) =>
+      dom.dispatchEvent(new CompositionEvent(type, { bubbles: true, data }));
+    const write = (from: number, to: number, text: string) => {
+      const at = view.domAtPos(from);
+      let node = at.node;
+      let offset = at.offset;
+      if (node.nodeType !== Node.TEXT_NODE) {
+        const before = node.childNodes[offset - 1];
+        node = before;
+        offset = before.nodeValue!.length;
+      }
+      const value = node.nodeValue!;
+      node.nodeValue = value.slice(0, offset) + text + value.slice(offset + (to - from));
+      document.getSelection()!.collapse(node, offset + text.length);
+    };
+    composition("compositionstart", "");
+    await tick();
+    const from = view.state.selection.main.from;
+    composition("compositionupdate", "가");
+    fire("beforeinput", "insertCompositionText", "가");
+    write(from, from, "가");
+    fire("input", "insertCompositionText", "가");
+    await tick();
+    const composing = view.composing;
+    const drag = app.dragTab(only.tabs.active!.tabId);
+    drag.over(at.x, at.y);
+    drag.drop(at.x, at.y);
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    // The split waits for the composition to end.
+    const splitEarly = app.panes.length > 1;
+    fire("beforeinput", "deleteCompositionText", null);
+    write(from, from + 1, "");
+    fire("input", "deleteCompositionText", null);
+    await tick();
+    fire("beforeinput", "insertFromComposition", "가");
+    write(from, from, "가");
+    fire("input", "insertFromComposition", "가");
+    await tick();
+    composition("compositionend", "가");
+    return { composing, splitEarly };
+  }, bottom);
+  expect(seen).toEqual({ composing: true, splitEarly: false });
+  await expect(panes(page)).toHaveCount(2);
+  const [upper, lower] = await panesByPosition(page);
+  await expect(titlesIn(upper)).toHaveText(["나"]);
+  await expect(titlesIn(lower)).toHaveText(["가"]);
+  await expect(lower.locator(".cm-content")).toHaveText("첫째가");
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("첫째가");
+});
+
 test("a pane the move empties closes and the session follows, though the target cannot show the tab", async ({
   page,
 }) => {
@@ -324,9 +549,9 @@ test("a drag goes on and ends cleanly when the pointer cannot be captured", asyn
     };
   });
   await drag(page, tab(page, 0, "가"), await rightEdge(page), false);
-  await expect(page.locator(".tab.drop-after")).toHaveCount(1);
+  await expect(mask(page)).toHaveCount(1);
   await page.keyboard.press("Escape");
-  await expect(page.locator(".tab.drop-after")).toHaveCount(0);
+  await expect(mask(page)).toHaveCount(0);
   await page.mouse.up();
   await expect(panes(page)).toHaveCount(1);
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
