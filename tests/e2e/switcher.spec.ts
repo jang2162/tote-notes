@@ -57,6 +57,10 @@ const button = (page: Page) => page.locator(".ws-switcher-button");
 const option = (page: Page, name: string) =>
   page.locator(".ws-switcher-item", { has: page.locator(".ws-switcher-label", { hasText: name }) });
 
+/** Where the cursor is in the focused pane's tab, as the tab keeps it. */
+const cursor = (page: Page) =>
+  page.evaluate(() => window.__tote.app.focused.tabs.active?.state?.selection.main.head);
+
 /** Opens the list, if it is not, and clicks the workspace `name`. */
 async function pickWorkspace(page: Page, name: string): Promise<void> {
   if (!(await page.locator(".ws-switcher-list").isVisible())) await button(page).click();
@@ -341,7 +345,9 @@ test("a switch that cannot open its target after writing gives the panes back", 
   await expect(page).toHaveTitle("업무");
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
   await expect(page.locator(".cm-content")).toBeFocused();
+  expect(await cursor(page)).toBe(2);
   await page.keyboard.insertText(" 셋");
+  await expect.poll(() => cursor(page)).toBe(4);
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
 });
 
@@ -368,7 +374,9 @@ test("a late answer after the round ended gives the panes back", async ({ page }
     .toBe(true);
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
   await expect(page.locator(".cm-content")).toBeFocused();
+  expect(await cursor(page)).toBe(2);
   await page.keyboard.insertText(" 셋");
+  await expect.poll(() => cursor(page)).toBe(4);
   await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
 });
 

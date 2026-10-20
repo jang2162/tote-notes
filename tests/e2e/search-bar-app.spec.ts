@@ -191,6 +191,7 @@ test("a reload in another pane leaves the focus where it is", async ({ page }) =
 
   await editor(left).click();
   await expect(editor(left)).toBeFocused();
+  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 9 } }));
 
   // Another app rewrites the right pane's memo while the left pane is being typed in.
   await page.evaluate((data) => {
@@ -202,8 +203,11 @@ test("a reload in another pane leaves the focus where it is", async ({ page }) =
   await expect(findInput(right)).toHaveValue("beta");
 
   await expect(editor(left)).toBeFocused();
-  // Where the click left the cursor does not matter: the key goes into the left pane's text.
+  // The key goes into the left pane's text, where its cursor was.
   await page.keyboard.type("X");
-  await expect(editor(left)).toHaveText(/^(Xalpha one|alpha oneX)$/);
+  await expect(editor(left)).toHaveText("alpha oneX");
+  expect(
+    await page.evaluate(() => window.__tote.app.focused.tabs.active?.state?.selection.main.head),
+  ).toBe(10);
   await expect(findInput(right)).toHaveValue("beta");
 });

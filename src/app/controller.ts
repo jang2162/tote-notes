@@ -203,7 +203,9 @@ export class AppController implements DocHost, PaneHost {
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
   private shortcuts: ShortcutTable | null = null;
   private readonly configListeners = new Set<() => void>();
-  private readonly languageConfigs = new Map<string, Promise<LanguageData>>();
+  /** The language-configuration reads by file, settled once a failure has been warned about
+   * (public: the UI tests wait for them). */
+  readonly languageConfigs = new Map<string, Promise<LanguageData>>();
   /** Each tab's document in the highlight worker, kept from tab switch to tab switch. */
   private readonly highlights = new Map<Doc, { key: string; highlighting: WorkerHighlighting }>();
   /** The place each open tab holds among every window's tabs (`Backend.claimTabs`): what it was

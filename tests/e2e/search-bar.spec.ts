@@ -3,6 +3,9 @@ import { expect, test, type Page } from "@playwright/test";
 import { contrastRatio } from "../../src/theme/contrast";
 
 const DOC = "my notes\nmy-app\nMySQL";
+/** The page loads on a clock that runs; the test then holds it and moves it by hand. */
+const LOADED = new Date("2026-01-01T09:00:00");
+const PAUSED = new Date("2026-01-01T10:00:00");
 
 async function open(page: Page, doc = DOC) {
   await page.goto(`/tests/e2e/pages/editor.html?doc=${encodeURIComponent(doc)}`);
@@ -67,15 +70,15 @@ test("typing recounts without moving", async ({ page }) => {
 });
 
 test("a change to the memo is counted once it rests", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
   await openBar(page);
   await expect(count(page)).toHaveText("1 / 3");
-  // The frame after the change still shows the old count: no scan per key typed in the memo.
-  const next = await page.evaluate(async () => {
-    window.view.dispatch({ changes: { from: 0, insert: "my " } });
-    await new Promise((done) => requestAnimationFrame(done));
-    return document.querySelector(".find-bar-count")?.textContent;
-  });
-  expect(next).toBe("1 / 3");
+  await page.clock.pauseAt(PAUSED);
+  await page.evaluate(() => window.view.dispatch({ changes: { from: 0, insert: "my " } }));
+  // No scan per key typed in the memo: frames go by and the old count stays until it has rested.
+  await page.clock.runFor(149);
+  await expect(count(page)).toHaveText("1 / 3");
+  await page.clock.runFor(1);
   // The selection moved along with its match, now the second of four.
   await expect(count(page)).toHaveText("2 / 4");
 });
@@ -176,9 +179,11 @@ test("⌘F in the focused find field selects the whole query", async ({ page }) 
 });
 
 test("a composing Enter in the find field does not move", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
   await openBar(page);
   await page.keyboard.type("my");
   await expect(count(page)).toHaveText("1 / 3");
+  await page.clock.pauseAt(PAUSED);
   const prevented = await input(page).evaluate((el) =>
     // WebKit can also send the committing Enter after compositionend: not composing, key code 229.
     [true, false].map((isComposing) => {
@@ -196,8 +201,8 @@ test("a composing Enter in the find field does not move", async ({ page }) => {
   );
   // The input method needs the key to commit the syllable.
   expect(prevented).toEqual([false, false]);
-  // Give a move, and the recount after it, the time to happen.
-  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  // Give a move, and the recount after it, the time to happen: frames, and the memo's rest.
+  await page.clock.runFor(150);
   await expect(count(page)).toHaveText("1 / 3");
   expect(await main(page)).toEqual({ from: 0, to: 2 });
 });

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { defaultFakeData, FakeBackend, memoryStorage } from "./fake";
+import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "./fake";
 
 describe("FakeBackend settings", () => {
   it("hands out a copy, so a caller's edit is not a save", async () => {
@@ -20,6 +20,22 @@ describe("FakeBackend settings", () => {
     const bundled = registry.extensions.filter((e) => e.source === "bundled");
     expect(bundled.length).toBeGreaterThan(0);
     expect(bundled.every((e) => e.enabled)).toBe(true);
+  });
+});
+
+describe("FakeBackend write counts", () => {
+  it("start from nothing in data stored before they were counted", async () => {
+    const data: Partial<ReturnType<typeof defaultFakeData>> = {
+      ...defaultFakeData(),
+      memos: { a: fakeMemo("a.md", "a") },
+    };
+    delete data.memoWrites;
+    delete data.layoutWrites;
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    await backend.writeMemo("a", new TextEncoder().encode("b"));
+    await backend.writeWindowLayout(JSON.stringify({ panes: [], focusedPane: 0 }));
+    expect(backend.data.memoWrites).toEqual({ a: 1 });
+    expect(Object.values(backend.data.layoutWrites)).toEqual([1]);
   });
 });
 

@@ -906,8 +906,30 @@ test("a double click on the tab bar's free space opens a new memo as the last ta
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await expect(activeTitle(page, 0)).toHaveText("가");
   const bar = pane(page, 0).locator(".tabbar");
-  const barBox = (await bar.boundingBox())!;
-  const last = (await pane(page, 0).locator(".tab").last().boundingBox())!;
+  // The bar and its last tab, read in one go once two reads agree: a tab bar still being laid out
+  // puts the free space somewhere else, or has no last tab for a moment.
+  const read = () =>
+    bar.evaluate((el) => {
+      const box = (of: Element) => {
+        const { x, y, width, height } = of.getBoundingClientRect();
+        return { x, y, width, height };
+      };
+      const tabs = el.querySelectorAll(".tab");
+      return JSON.stringify({
+        bar: box(el),
+        last: tabs.length ? box(tabs[tabs.length - 1]) : null,
+      });
+    });
+  let settled = "";
+  await expect
+    .poll(async () => {
+      const now = await read();
+      const same = now === settled;
+      settled = now;
+      return same;
+    })
+    .toBe(true);
+  const { bar: barBox, last } = JSON.parse(settled) as { bar: Box; last: Box };
   await bar.dblclick({
     position: { x: last.x + last.width + 20 - barBox.x, y: barBox.height / 2 },
   });

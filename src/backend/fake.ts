@@ -582,7 +582,9 @@ export class FakeBackend implements Backend {
     const memo = this.memo(id);
     memo.data = toBase64(bytes);
     memo.modifiedMs = this.tick();
-    this.data.memoWrites[id] = (this.data.memoWrites[id] ?? 0) + 1;
+    // Data stored by a dev page before the count existed has no record of it.
+    const memoWrites = (this.data.memoWrites ??= {});
+    memoWrites[id] = (memoWrites[id] ?? 0) + 1;
     this.commit();
     this.memosTouched();
     return this.info(id, memo);
@@ -673,7 +675,8 @@ export class FakeBackend implements Backend {
     }
     if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
     else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
-    this.data.layoutWrites[this.label] = (this.data.layoutWrites[this.label] ?? 0) + 1;
+    const layoutWrites = (this.data.layoutWrites ??= {});
+    layoutWrites[this.label] = (layoutWrites[this.label] ?? 0) + 1;
     this.commit();
   }
 

@@ -166,10 +166,14 @@ for (const leaving of [false, true]) {
     await expect
       .poll(() => page.evaluate(() => (window as unknown as { cut: number }).cut))
       .toBeGreaterThan(0);
-    // A round trip to the page: the rejection has been caught by now.
-    await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
-    const own = warnings.filter((text) => text.includes("language configuration of"));
-    expect(own).toHaveLength(leaving ? 0 : 1);
+    const own = () => warnings.filter((text) => text.includes("language configuration of"));
+    if (!leaving) {
+      await expect.poll(() => own().length).toBe(1);
+      return;
+    }
+    // Every read has settled, so a warning it was going to give has been given.
+    await page.evaluate(() => Promise.all(window.__tote.app.languageConfigs.values()));
+    expect(own()).toHaveLength(0);
   });
 }
 
