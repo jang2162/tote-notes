@@ -480,8 +480,9 @@ export interface Backend {
   onReveal(handler: (tab: TabRef) => void): void;
   /** Another window of this workspace let its tab go on this one (`tearOffTab`): its session entry
    * as JSON, and where it was let go in this window, in CSS pixels from the top-left corner. The
-   * tab's place is this window's already. */
-  onAdopt(handler: (tab: string, x: number, y: number) => void): void;
+   * tab's place is this window's already. Resolves once the handler listens: the native side sends
+   * the tab from the moment the page has started (`workspaceInfo`), and does not keep it. */
+  onAdopt(handler: (tab: string, x: number, y: number) => void): Promise<void>;
   /** A workspace was made, or a window came to show another workspace: the switcher lists
    * them again. */
   onWorkspacesChanged(handler: () => void): void;

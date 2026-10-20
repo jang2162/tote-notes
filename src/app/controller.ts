@@ -335,6 +335,15 @@ export class AppController implements DocHost, PaneHost {
   }
 
   async start(): Promise<void> {
+    // Before the page counts as started: from then on the native side sends this window the tabs
+    // let go over it, and an event no one listens for is gone. Until the restore is done they
+    // wait (`pendingAdopts`), so all the handler needs is there from the start.
+    await this.backend.onAdopt((json, x, y) => {
+      const tab = parseTab(parseJson(json));
+      if (!tab) this.report(new Error(`not a tab: ${json}`));
+      else if (this.restoring) this.pendingAdopts.push({ tab, x, y });
+      else void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
+    });
     const first = Promise.all([
       // The first call of a page: after a switch it lets the window write again
       // (`AppCore::page_started`). The switcher and ⌃1–⌃9 are wired after it, so an old page has
@@ -399,12 +408,6 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
-    this.backend.onAdopt((json, x, y) => {
-      const tab = parseTab(parseJson(json));
-      if (!tab) this.report(new Error(`not a tab: ${json}`));
-      else if (this.restoring) this.pendingAdopts.push({ tab, x, y });
-      else void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
-    });
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => {

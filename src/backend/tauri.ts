@@ -290,8 +290,8 @@ export class TauriBackend implements Backend {
   onReveal(handler: (tab: TabRef) => void) {
     void this.window.listen<TabRef>("tote://reveal", (event) => handler(event.payload));
   }
-  onAdopt(handler: (tab: string, x: number, y: number) => void) {
-    void this.window.listen<{ tab: string; x: number; y: number }>("tote://adopt", (event) =>
+  async onAdopt(handler: (tab: string, x: number, y: number) => void) {
+    await this.window.listen<{ tab: string; x: number; y: number }>("tote://adopt", (event) =>
       handler(event.payload.tab, event.payload.x, event.payload.y),
     );
   }

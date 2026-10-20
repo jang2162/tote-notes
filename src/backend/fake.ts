@@ -152,6 +152,10 @@ export interface FakeData {
    * tab. This page is window `FAKE_LABEL`; a test seeds another label for a tab open elsewhere.
    * Absent in old seeds. */
   places?: Record<string, string>;
+  /** A tab another window lets go over this one the moment its page starts (`workspaceInfo`, where
+   * the native side marks the page started): handed over once, its place already in `places`.
+   * Absent in old seeds. */
+  adoptOnStart?: { tab: string; x: number; y: number };
   /** The reveals `claimTabs` asked of other windows, in order. Absent in old seeds. */
   reveals?: { label: string; tab: TabRef }[];
   /** The tabs `tearOffTab` moved into new windows, in order, each with the screen point it was let
@@ -546,6 +550,12 @@ export class FakeBackend implements Backend {
   // Backend.
 
   async workspaceInfo() {
+    const adopt = this.data.adoptOnStart;
+    if (adopt) {
+      delete this.data.adoptOnStart;
+      this.commit();
+      this.adopt(adopt.tab, adopt.x, adopt.y);
+    }
     return this.data.workspace;
   }
 
@@ -1341,7 +1351,7 @@ export class FakeBackend implements Backend {
   onWorkspacesChanged(handler: () => void) {
     this.handlers.workspaces.push(handler);
   }
-  onAdopt(handler: (tab: string, x: number, y: number) => void) {
+  async onAdopt(handler: (tab: string, x: number, y: number) => void) {
     this.handlers.adopt.push(handler);
   }
 

@@ -184,9 +184,10 @@ struct OpenWindow {
     /// leaves while `reserved` already names it for the target. A CLI request for the target would
     /// land in the workspace left and be cleared by `switch_window`, so it waits in `Inner::held`.
     in_switch: bool,
-    /// Set by `page_started`: the window's page is up and hears what it is handed (a dropped tab).
-    /// False from registration, not from `opened` — the page may ask before the window is done
-    /// opening — and again from `switch_window` until the new page starts.
+    /// Set by `page_started`, the page's first command (`workspace_info`). The page listens for a
+    /// tab handed to it (`tote://adopt`) before it makes that call, so from here on such a tab
+    /// reaches it. False from registration, not from `opened` — the page may ask before the window
+    /// is done opening — and again from `switch_window` until the new page starts.
     page_ready: bool,
 }
 
@@ -1168,6 +1169,16 @@ impl AppCore {
 
     /// Whether the window is between its round ending as a switch and `finish_switch`. Not the
     /// page-side `switching` (`page_started`), which outlasts it.
+    /// `OpenWindow::page_ready`. `drop_candidates` cannot tell it apart after a switch: the
+    /// page-side `switching` is set and cleared at the same two places.
+    #[cfg(test)]
+    fn is_page_ready(&self, label: &str) -> bool {
+        lock(&self.inner)
+            .windows
+            .get(label)
+            .is_some_and(|w| w.page_ready)
+    }
+
     #[cfg(test)]
     fn is_switching(&self, label: &str) -> bool {
         lock(&self.inner)
@@ -2679,7 +2690,8 @@ mod tests {
         let w1 = open(&core, "가");
         core.page_started(&w1);
         let w2 = attach(&core, &core.path_of(&w1).unwrap());
-        // Up on the screen but its page not yet listening: a tab handed to it would be lost.
+        // Up on the screen but its page not yet started: it may not listen yet, and a tab handed to
+        // it would be lost.
         assert!(core.drop_candidates(&w1).iter().any(|c| c.label == w2));
         assert!(!takes_drops(&core, &w1, &w2));
         core.page_started(&w2);
@@ -2717,6 +2729,22 @@ mod tests {
         assert!(!takes_drops(&core, &w3, &w2));
         core.page_started(&w2);
         assert!(takes_drops(&core, &w3, &w2));
+    }
+
+    #[test]
+    fn a_switch_takes_the_page_ready_mark_until_the_new_page_starts() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        core.page_started(&w1);
+        assert!(core.is_page_ready(&w1));
+        let na = closed_workspace(&core, "나", &[]);
+        switch(&core, &w1, &na);
+        assert!(!core.is_page_ready(&w1));
+        core.finish_switch(&w1);
+        assert!(!core.is_page_ready(&w1));
+        core.page_started(&w1);
+        assert!(core.is_page_ready(&w1));
     }
 
     #[test]
