@@ -83,6 +83,90 @@ test("a change to the memo is counted once it rests", async ({ page }) => {
   await expect(count(page)).toHaveText("2 / 4");
 });
 
+/** Holds the page's clock and makes every look at it take 10ms, so a count runs out of its 30ms
+ * budget on its fourth look; the count's next go then waits for the clock to be moved. */
+async function slowLooks(page: Page) {
+  await page.clock.pauseAt(PAUSED);
+  await page.evaluate(() => {
+    const now = performance.now.bind(performance);
+    let spent = 0;
+    performance.now = () => now() + (spent += 10);
+  });
+}
+
+/** Records every text the count shows from now on. */
+async function recordCount(page: Page) {
+  await page.evaluate(() => {
+    const shown: string[] = [];
+    const count = document.querySelector(".find-bar-count")!;
+    new MutationObserver(() => shown.push(count.textContent ?? "")).observe(count, {
+      childList: true,
+      characterData: true,
+      subtree: true,
+    });
+    Object.assign(window, { shown });
+  });
+}
+
+const shown = (page: Page) => page.evaluate(() => (window as unknown as { shown: string[] }).shown);
+
+test("a count stopped by time goes on to the exact number", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
+  await open(page, "a ".repeat(20));
+  await select(page, 0, 1);
+  await slowLooks(page);
+  await page.keyboard.press("Meta+f");
+  await expect(input(page)).toHaveValue("a");
+  // At least this many so far: the count goes on from where it stopped.
+  await expect(count(page)).toHaveText("1 / 4+");
+  await page.clock.runFor(10);
+  await expect(count(page)).toHaveText("1 / 20");
+});
+
+test("an edit during a continued count starts the count over", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
+  await open(page, "a ".repeat(20));
+  await select(page, 0, 1);
+  await slowLooks(page);
+  await page.keyboard.press("Meta+f");
+  await expect(count(page)).toHaveText("1 / 4+");
+  // A match in front of the ones found so far: carried on from the old positions, the count would
+  // keep the match at 0 that is now `b` and number the selection after it.
+  await page.evaluate(() =>
+    window.view.dispatch({ changes: { from: 0, insert: "b " }, selection: { anchor: 2, head: 3 } }),
+  );
+  await page.clock.runFor(149);
+  await expect(count(page)).toHaveText("1 / 4+");
+  await page.clock.runFor(10);
+  await expect(count(page)).toHaveText("1 / 20");
+  await select(page, 40, 41);
+  await expect(count(page)).toHaveText("20 / 20");
+});
+
+test("a count that finds nothing in its time keeps what it showed", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
+  await open(page);
+  // Pieces of about 64K characters: the count stops by time with nothing found, more than once.
+  await page.evaluate(() =>
+    window.view.dispatch({
+      changes: { from: 0, insert: `${"x".repeat(99)}\n`.repeat(6000) },
+      selection: { anchor: 0 },
+    }),
+  );
+  await page.keyboard.press("Meta+f");
+  await expect(input(page)).toBeFocused();
+  await slowLooks(page);
+  await recordCount(page);
+  await page.keyboard.type("needle");
+  // A frame for the count, and its next goes.
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("결과 없음");
+  await page.keyboard.type("s");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("결과 없음");
+  expect(await shown(page)).toEqual(["결과 없음"]);
+});
+
 test("the toggles change the query", async ({ page }) => {
   await openBar(page);
   await expect(toggle(page, "case")).toHaveAttribute("aria-pressed", "false");

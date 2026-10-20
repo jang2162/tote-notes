@@ -146,6 +146,8 @@ class SearchBar implements Panel {
   private matches: Matches | null = null;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
+  /** The next go of a count stopped by its time budget, which carries on from where it stopped. */
+  private more: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly view: EditorView) {
     this.query = getSearchQuery(view.state);
@@ -250,6 +252,7 @@ class SearchBar implements Panel {
   destroy() {
     cancelAnimationFrame(this.frame);
     clearTimeout(this.timer);
+    clearTimeout(this.more);
   }
 
   private keydown(event: KeyboardEvent) {
@@ -317,8 +320,11 @@ class SearchBar implements Panel {
 
   /** Counts again at the next frame, one count a frame however fast the query is typed; with
    * `delay`, once the memo has rested that long, so typing in it does not scan it per key. The
-   * count shown stays as it was until then. */
+   * count shown stays as it was until then. A count still going on is dropped: its positions are
+   * those of the text or query before. */
   private scheduleCount(delay?: number) {
+    clearTimeout(this.more);
+    this.more = undefined;
     if (delay !== undefined) {
       if (this.frame) return;
       clearTimeout(this.timer);
@@ -334,18 +340,29 @@ class SearchBar implements Panel {
     });
   }
 
-  private recount() {
+  /** Counts from the start, or with `carried` goes on with a count stopped by its time budget;
+   * a count stopped again goes on at the next turn, so the "n+" shown comes to the exact number. */
+  private recount(carried?: Matches) {
     cancelAnimationFrame(this.frame);
     this.frame = 0;
     clearTimeout(this.timer);
     this.timer = undefined;
-    this.matches = this.query.valid ? findMatches(this.view.state, this.query) : null;
+    clearTimeout(this.more);
+    this.more = undefined;
+    const matches = this.query.valid
+      ? findMatches(this.view.state, this.query, undefined, undefined, undefined, carried)
+      : null;
+    this.matches = matches;
+    if (matches && matches.resume !== null) this.more = setTimeout(() => this.recount(matches), 0);
     this.showCount();
   }
 
   private showCount() {
     const query = this.query;
     const matches = this.matches;
+    // Nothing found yet by a count still going on: the label stays as it was, rather than show
+    // "– / 0+" between two "결과 없음".
+    if (matches && matches.resume !== null && matches.from.length === 0) return;
     const count = matches && {
       total: matches.from.length,
       capped: matches.capped,

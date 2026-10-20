@@ -16,11 +16,14 @@ export interface MatchCount {
   current: number | null;
 }
 
-/** The matches found from the start, in order; `capped` when the count stopped before the end. */
+/** The matches found from the start, in order; `capped` when the count stopped before the end.
+ * `resume` is where a count stopped by its time budget goes on from, null once it has reached the
+ * end or the limit. */
 export interface Matches {
   from: number[];
   to: number[];
   capped: boolean;
+  resume: number | null;
 }
 
 /** Whether a match of `query` can run over a line end: a newline in a plain search (CodeMirror reads
@@ -33,33 +36,46 @@ function crossesLines(query: SearchQuery): boolean {
 
 /** Finds matches from the start, stopping at the first one past `limit` or once `budgetMs` has run
  * out. The text is searched a piece of lines at a time, so a long stretch without a match is cut
- * too; a query that can run over a line end is searched in one piece. */
+ * too; a query that can run over a line end is searched in one piece. With `carried`, a count of
+ * the same text and query stopped by time, it goes on from there and adds to what that one found. */
 export function findMatches(
   state: EditorState,
   query: SearchQuery,
   limit: number = COUNT_LIMIT,
   budgetMs: number = COUNT_BUDGET_MS,
   now: () => number = () => performance.now(),
+  carried?: Matches,
 ): Matches {
+  if (carried && carried.resume === null) return carried;
   const { doc } = state;
   const whole = crossesLines(query);
-  const from: number[] = [];
-  const to: number[] = [];
+  const from = carried ? carried.from.slice() : [];
+  const to = carried ? carried.to.slice() : [];
+  // A count stopped after a match goes on where it ended. An empty match found there is one the
+  // cursor would have passed over had it gone on: it skips an empty match right after a match.
+  const last = carried && to.length ? to[to.length - 1] : -1;
   const start = now();
   const late = () => now() - start > budgetMs;
-  for (let at = 0; ;) {
+  for (let at = carried?.resume ?? 0; ;) {
     const end =
       whole || at + PIECE_CHARS >= doc.length ? doc.length : doc.lineAt(at + PIECE_CHARS).to;
     const cursor = query.getCursor(state, at, end);
     for (let next = cursor.next(); !next.done; next = cursor.next()) {
-      if (from.length === limit) return { from, to, capped: true };
-      from.push(next.value.from);
-      to.push(next.value.to);
-      if (late()) return { from, to, capped: true };
+      const match = next.value;
+      if (match.from === last && match.to === last) continue;
+      if (from.length === limit) return { from, to, capped: true, resume: null };
+      from.push(match.from);
+      to.push(match.to);
+      if (late()) {
+        // Where the cursor looks next: past an empty match, as it would go on itself.
+        const resume = match.to + (match.from === match.to ? 1 : 0);
+        if (resume > doc.length) return { from, to, capped: false, resume: null };
+        return { from, to, capped: true, resume };
+      }
     }
-    if (end >= doc.length) return { from, to, capped: false };
-    if (late()) return { from, to, capped: true };
+    if (end >= doc.length) return { from, to, capped: false, resume: null };
     // The line break between two pieces holds no match: none runs over a line end here.
+    if (late()) return { from, to, capped: true, resume: end + 1 };
     at = end + 1;
   }
 }
