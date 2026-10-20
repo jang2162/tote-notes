@@ -215,7 +215,10 @@ class SearchBar implements Panel {
     this.recount();
   }
 
+  // Only from this view's own focus (⌘F, ⌥⌘F): a bar mounted by `setState` — a reload, or a tab
+  // shown in a pane without the focus — leaves the keys where they are.
   mount() {
+    if (!this.view.dom.contains(this.view.root.activeElement)) return;
     this.input.focus();
     this.input.select();
   }

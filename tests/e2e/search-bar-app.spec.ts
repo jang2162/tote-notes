@@ -174,3 +174,36 @@ test("a reload leaves a closed bar closed", async ({ page }) => {
   await expect(editor(only)).toHaveText("alpha alpha");
   await expect(bar(only)).toHaveCount(0);
 });
+
+test("a reload in another pane leaves the focus where it is", async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, {
+    memos,
+    session: JSON.stringify({ version: 1, activeTab: 1, tabs: [memoTab("a"), memoTab("b")] }),
+  });
+  await menu(page, "split-pane");
+  await expect(page.locator(".pane")).toHaveCount(2);
+  const left = pane(page, 0);
+  const right = pane(page, 1);
+  await expect(editor(left)).toHaveText("alpha one");
+  await expect(editor(right)).toHaveText("beta two");
+  await search(right, "beta");
+
+  await editor(left).click();
+  await expect(editor(left)).toBeFocused();
+
+  // Another app rewrites the right pane's memo while the left pane is being typed in.
+  await page.evaluate((data) => {
+    Object.assign(window.__tote.backend.data.memos.b, { data, modifiedMs: 900 });
+  }, fakeFile("beta beta"));
+  const change: OutsideChange = { kind: "workspace", changes: [{ kind: "modified", id: "b" }] };
+  await page.evaluate((c) => window.__tote.backend.outside(c), change);
+  await expect(editor(right)).toHaveText("beta beta");
+  await expect(findInput(right)).toHaveValue("beta");
+
+  await expect(editor(left)).toBeFocused();
+  await page.keyboard.press("End");
+  await page.keyboard.type("X");
+  await expect(editor(left)).toHaveText("alpha oneX");
+  await expect(findInput(right)).toHaveValue("beta");
+});
