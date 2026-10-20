@@ -39,6 +39,13 @@ Finder 이름처럼 분해형(NFD)이어야 하는 테스트 입력은 `"한글 
 
 - **Why:** NFD 한글을 소스에 그대로 적으면 복사·붙여넣기·편집기를 거치며 조용히 NFC 로 바뀌고, 테스트는 오류 없이 NFC 를 검사해 구분력을 잃는다.
 
+## 일부만 stage 한 채 커밋하면 pre-commit 훅이 실패할 수 있다
+
+stage 하지 않은 변경이 작업 트리에 남아 있으면 lefthook 의 pre-commit 이 그 변경을 따로 저장하려고 `git diff … --output <파일> --` 를 부른다. Apple Git 2.54 는 이 꼴(`--output` 뒤 띄어 쓴 경로와 `--`)을 `--no-index` 비교로 읽어 `Not a git repository` 로 끝나고, 훅이 `failed to create a diff for all files` 로 커밋을 막는다.
+
+- **How to apply:** 커밋할 때 작업 트리를 index 와 같게 만든다. 남길 변경은 임시 폴더에 복사해 두고 `git restore --worktree -- <파일>` 로 되돌린 뒤 커밋하고, 복사본을 다시 놓는다. 커밋한 트리가 복사본과 같은지 `git show HEAD:<파일> | cmp - <복사본>` 으로 확인한다. 훅을 건너뛰지 않는다.
+- 이 git 인지는 `git diff --output /tmp/x.patch --; echo $?` 가 129 인지로 본다.
+
 ## pre-push 는 느리다
 
 pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 고친 브랜치도 마찬가지다.
