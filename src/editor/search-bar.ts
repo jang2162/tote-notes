@@ -3,6 +3,7 @@ import {
   findNext,
   findPrevious,
   getSearchQuery,
+  openSearchPanel,
   search,
   SearchQuery,
   setSearchQuery,
@@ -10,6 +11,7 @@ import {
 import type { Extension } from "@codemirror/state";
 import {
   runScopeHandlers,
+  type Command,
   type EditorView,
   type KeyBinding,
   type Panel,
@@ -19,8 +21,19 @@ import {
 import { h } from "../ui/dom";
 import { countLabel, countMatches } from "./search-count";
 
+/** `openSearchPanel`, which also selects the query when the find field already has the focus
+ * (CodeMirror only selects it when it moves the focus there). */
+export const openSearchBar: Command = (view) => {
+  openSearchPanel(view);
+  const field = view.dom.querySelector<HTMLInputElement>(".find-bar-input");
+  if (field && field === view.root.activeElement) field.select();
+  return true;
+};
+
 /** The bar's own editor keys, tried ahead of `searchKeymap` in `editorKeymap`. */
-export const searchBarKeymap: readonly KeyBinding[] = [];
+export const searchBarKeymap: readonly KeyBinding[] = [
+  { key: "Mod-f", run: openSearchBar, scope: "editor search-panel" },
+];
 
 type ToggleName = "case" | "word" | "re";
 
@@ -182,7 +195,8 @@ class SearchBar implements Panel {
   private recount() {
     const query = this.query;
     const label = countLabel(query, query.valid ? countMatches(this.view.state, query) : null);
-    this.count.textContent = label;
+    // Only a change: the count is a live region, and a rewrite reads it out again.
+    if (this.count.textContent !== label) this.count.textContent = label;
     this.count.classList.toggle("find-bar-error", query.search !== "" && !query.valid);
   }
 }

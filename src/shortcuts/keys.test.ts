@@ -205,6 +205,15 @@ describe("conflict", () => {
       name: "selectLine",
     });
     expect(conflict(table(), "rename", "Ctrl+Alt+CmdOrCtrl+J")).toBeNull();
+    // ⌘F is in the keymap twice, the find bar's ahead of CodeMirror's: one warning, the first.
+    expect(editorBindings().filter((b) => sameAccelerator(b.accelerator, "CmdOrCtrl+F"))).toEqual([
+      { accelerator: "CmdOrCtrl+F", name: "openSearchBar" },
+      { accelerator: "CmdOrCtrl+F", name: "openSearchPanel" },
+    ]);
+    expect(conflict(table(), "rename", "CmdOrCtrl+F")).toEqual({
+      kind: "editor",
+      name: "openSearchBar",
+    });
   });
 
   it("does not hold a command's own key against it", () => {

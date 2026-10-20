@@ -151,6 +151,16 @@ test("⌘F again with another word puts it in the open bar", async ({ page }) =>
   await expect(count(page)).toHaveText("1 / 1");
 });
 
+test("⌘F in the focused find field selects the whole query", async ({ page }) => {
+  await openBar(page);
+  await input(page).evaluate((el: HTMLInputElement) => el.setSelectionRange(2, 2));
+  await page.keyboard.press("Meta+f");
+  await expect(input(page)).toBeFocused();
+  expect(
+    await input(page).evaluate((el: HTMLInputElement) => [el.selectionStart, el.selectionEnd]),
+  ).toEqual([0, 2]);
+});
+
 test("a composing Enter in the find field does not move", async ({ page }) => {
   await openBar(page);
   await page.keyboard.type("my");
@@ -190,6 +200,11 @@ test("⌘Z in the find field leaves the memo alone", async ({ page }) => {
   await expect(input(page)).toHaveValue("myx");
   await page.keyboard.press("Meta+z");
   await expect(input(page)).toHaveValue(/^myx?$/);
+  expect(await page.evaluate(() => window.view.state.doc.toString())).toBe(before);
+  // Past what the field has to take back: still not the memo's history.
+  await page.keyboard.press("Meta+z");
+  await page.keyboard.press("Meta+z");
+  await expect(input(page)).toBeFocused();
   expect(await page.evaluate(() => window.view.state.doc.toString())).toBe(before);
   await page.keyboard.press("Shift+Meta+z");
   expect(await page.evaluate(() => window.view.state.doc.toString())).toBe(before);
