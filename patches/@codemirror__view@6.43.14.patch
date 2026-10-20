@@ -1,0 +1,28 @@
+diff --git a/dist/index.cjs b/dist/index.cjs
+index b20aa9d84be6ff4b85b126bdd930065277668a26..d3533e04763a334e83ddca5e07dbc547f4b732dc 100644
+--- a/dist/index.cjs
++++ b/dist/index.cjs
+@@ -7316,6 +7316,9 @@ class DOMObserver {
+             view.inputState.lastTouchTime < Date.now() - 300 &&
+             atElementStart(this.dom, range)) {
+             this.view.inputState.lastFocusTime = 0;
++            // tote: compare with the selection the browser has now, not the one
++            // cached before it moved, or the reset finds nothing to do
++            this.selectionRange.setRange(range);
+             view.docView.updateSelection();
+             return false;
+         }
+diff --git a/dist/index.js b/dist/index.js
+index 216f754db06f65f7f17f056b47d8f6fab45067bf..fd665522551aa73a2c8fc302d8960e864aa3a836 100644
+--- a/dist/index.js
++++ b/dist/index.js
+@@ -7311,6 +7311,9 @@ class DOMObserver {
+             view.inputState.lastTouchTime < Date.now() - 300 &&
+             atElementStart(this.dom, range)) {
+             this.view.inputState.lastFocusTime = 0;
++            // tote: compare with the selection the browser has now, not the one
++            // cached before it moved, or the reset finds nothing to do
++            this.selectionRange.setRange(range);
+             view.docView.updateSelection();
+             return false;
+         }

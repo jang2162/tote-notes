@@ -312,3 +312,56 @@ test("a hidden document that shrank does not keep the worker busy", async ({ pag
   expect(result.ready).toBe(true);
   expect(result.advancing).toBe(false);
 });
+
+// A pane shown again focuses its editor, and the first colours wrap the caret's text in spans.
+// WebKit then drops the selection to the start of the line, and @codemirror/view (patched:
+// docs/guides/development.md 「`@codemirror/view` 는 패치해서 쓴다」) must put it back rather than
+// take it as the person's.
+test("colours that land just after the editor takes the focus leave the cursor in place", async ({
+  page,
+}) => {
+  // The grammar is held, so the client can be wrapped before the first colours are asked for.
+  let releaseGrammar = () => {};
+  const grammarHeld = new Promise<void>((resolve) => (releaseGrammar = resolve));
+  await page.route("**/extensions/*/grammars/**", async (route) => {
+    await grammarHeld;
+    await route.continue();
+  });
+  await open(page, "echo hello", "run.sh");
+  await page.evaluate(() => {
+    const client = window.highlightClient;
+    const cached = client.cachedTokens.bind(client);
+    const held = window as unknown as { releaseTokens?: () => void };
+    client.cachedTokens = async (...args) => {
+      const answer = await cached(...args);
+      await new Promise<void>((resolve) => (held.releaseTokens = resolve));
+      return answer;
+    };
+  });
+  releaseGrammar();
+  await expect.poll(() => page.evaluate(() => "releaseTokens" in window)).toBe(true);
+  const head = await page.evaluate(async () => {
+    const view = window.view;
+    view.dispatch({ selection: { anchor: 3 } });
+    // Focus comes back from outside the editor while the selection is in it, but off the text,
+    // as it is in a pane shown again.
+    document.body.appendChild(document.createElement("button")).focus();
+    getSelection()!.collapse(view.contentDOM, view.contentDOM.childNodes.length);
+    view.focus();
+    const coloured = new Promise<void>((resolve) => {
+      const watch = new MutationObserver(() => {
+        if (!view.contentDOM.querySelector("[class*='tm-c']")) return;
+        watch.disconnect();
+        resolve();
+      });
+      watch.observe(view.contentDOM, { childList: true, subtree: true });
+    });
+    (window as unknown as { releaseTokens: () => void }).releaseTokens();
+    await coloured;
+    // The next measure reads the DOM selection: it must not move the cursor. Run now, not at the
+    // next frame (`measure` is not in the typings, the frame's own call is).
+    (view as unknown as { measure(): void }).measure();
+    return view.state.selection.main.head;
+  });
+  expect(head).toBe(3);
+});

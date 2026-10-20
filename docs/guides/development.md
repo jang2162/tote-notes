@@ -67,6 +67,16 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
 
+## `@codemirror/view` 는 패치해서 쓴다 — 포커스 직후 커서가 줄 머리로 가지 않게
+
+`patches/` 의 `@codemirror/view` 패치(`pnpm-workspace.yaml` 의 `patchedDependencies`)는 `DOMObserver.readSelectionRange` 의 「포커스 뒤 200ms 안에 브라우저가 선택을 편집기 맨 앞으로 옮겼다」 보정 분기에 한 줄을 더한다. 그 분기는 캐시된 선택을 지금 DOM 선택으로 바꾸지 않고 `updateSelection()` 을 불러서, 옮기기 전의 캐시와 비교해 「이미 제자리」 로 보고 아무것도 쓰지 않는다. 그러면서 보정 표시(`lastFocusTime`)만 지운다. 패치는 비교 전에 캐시를 지금 DOM 선택으로 맞춘다.
+
+- **Why:** 칸이 다시 보이며 편집기가 포커스를 받은 직후 첫 색(하이라이트 decoration)이 오면, 커서가 있던 텍스트 노드가 span 으로 옮겨지고 WebKit 이 DOM 선택을 `(줄, 0)` 으로 접는다. 패치가 없으면 다음 measure 가 그 선택을 사람의 선택으로 받아 커서가 줄 머리로 가고, 다음 글자가 줄 머리에 들어간다. 상위 최신판에도 같은 코드가 있다.
+- **How to apply:**
+  - 이 패치를 지키는 시험은 `tests/e2e/highlight.spec.ts` 「colours that land just after the editor takes the focus leave the cursor in place」 다. 패치를 빼면 결정적으로 실패한다.
+  - `node_modules` 의 파일을 직접 고치지 않는다. pnpm 저장소의 하드 링크라 다른 워크트리까지 바뀐다. 고칠 것은 `pnpm patch @codemirror/view@<판> --edit-dir <임시 폴더>` 로 풀고 고친 뒤 `pnpm patch-commit <임시 폴더>` 로 만든다.
+  - `@codemirror/view` 를 올리면 패치의 판 이름이 맞지 않아 `pnpm install` 이 실패한다. 새 판의 `readSelectionRange` 를 보고, 그 분기가 `updateSelection` 전에 `selectionRange.setRange(range)` 를 하면(상위가 고쳤으면) `patchedDependencies` 항목과 패치 파일을 지운다. 아니면 새 판에 같은 한 줄로 패치를 다시 만들고 옛 패치를 지운다. 어느 쪽이든 위 시험을 돌린다.
+
 ## `Function.name` 에 기대는 코드는 `keepNames` 와 `check-build` 에 묶여 있다
 
 함수의 `name` 을 읽는 코드(지금은 `src/shortcuts/keys.ts` 의 `editorBindings` 가 편집기 키의 이름을 얻는 자리)는 `vite.config.ts` 의 `keepNames: true` 가 있어야 배포 빌드에서 동작한다. `pnpm build` 는 `vite build` 뒤에 `scripts/check-build.ts` 로 번들에 `selectLine=` 이 남았는지 보고, 없으면 실패한다.
