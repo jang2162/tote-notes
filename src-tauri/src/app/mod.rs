@@ -184,6 +184,10 @@ struct OpenWindow {
     /// leaves while `reserved` already names it for the target. A CLI request for the target would
     /// land in the workspace left and be cleared by `switch_window`, so it waits in `Inner::held`.
     in_switch: bool,
+    /// Set by `page_started`: the window's page is up and hears what it is handed (a dropped tab).
+    /// False from registration, not from `opened` — the page may ask before the window is done
+    /// opening — and again from `switch_window` until the new page starts.
+    page_ready: bool,
 }
 
 impl OpenWindow {
@@ -252,6 +256,7 @@ impl Inner {
                 layout,
                 switching: false,
                 in_switch: false,
+                page_ready: false,
             },
         );
     }
@@ -634,6 +639,7 @@ impl AppCore {
     pub fn page_started(&self, label: &str) {
         if let Some(window) = lock(&self.inner).windows.get_mut(label) {
             window.switching = false;
+            window.page_ready = true;
         }
     }
 
@@ -752,6 +758,7 @@ impl AppCore {
                 window.layout = layout;
                 window.pending.clear();
                 window.switching = true;
+                window.page_ready = false;
             }
             // As in `closed`: the last window's layout is already all the file holds.
             let left = inner.windows_of(&from);
@@ -1109,7 +1116,9 @@ impl AppCore {
 
     /// The windows a tab dragged out of window `from` may land on, most recently focused first:
     /// whether each shows `from`'s workspace and whether it is leaving (`window_is_leaving`).
-    /// `from` is among them. A window not up yet (`opened`) is not.
+    /// `from` is among them. A window not up yet (`opened`) is not. One whose page has not started
+    /// (`page_ready`) counts as leaving: it would not hear the tab, and a tab let go over it must not
+    /// go to a window it hides either.
     pub fn drop_candidates(&self, from: &str) -> Vec<DropCandidate> {
         let inner = lock(&self.inner);
         let path = inner.windows.get(from).map(|w| &w.path);
@@ -1121,7 +1130,7 @@ impl AppCore {
                 Some(DropCandidate {
                     label: label.clone(),
                     same_workspace: path == Some(&window.path),
-                    leaving: window.is_leaving(),
+                    leaving: window.is_leaving() || !window.page_ready,
                 })
             })
             .collect()
@@ -2635,6 +2644,9 @@ mod tests {
         let other = open(&core, "나");
         let w2 = attach(&core, &path);
         let w3 = attach(&core, &path);
+        for label in [&w1, &other, &w2, &w3] {
+            core.page_started(label);
+        }
         core.closing(&w3);
         core.focused(&w2);
         let candidate = |label: &str, same_workspace: bool, leaving: bool| DropCandidate {
@@ -2650,6 +2662,96 @@ mod tests {
                 candidate(&other, false, false),
                 candidate(&w1, true, false),
             ]
+        );
+    }
+
+    /// Whether window `label` is among `from`'s drop candidates as one a tab may land on.
+    fn takes_drops(core: &AppCore, from: &str, label: &str) -> bool {
+        core.drop_candidates(from)
+            .iter()
+            .any(|candidate| candidate.label == label && !candidate.leaving)
+    }
+
+    #[test]
+    fn a_window_not_yet_started_is_not_a_drop_candidate() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        core.page_started(&w1);
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        // Up on the screen but its page not yet listening: a tab handed to it would be lost.
+        assert!(core.drop_candidates(&w1).iter().any(|c| c.label == w2));
+        assert!(!takes_drops(&core, &w1, &w2));
+        core.page_started(&w2);
+        assert!(takes_drops(&core, &w1, &w2));
+    }
+
+    #[test]
+    fn a_page_started_before_its_window_finished_opening_takes_drops() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        core.page_started(&w1);
+        let w2 = core.next_label();
+        assert!(core.register_window(&w2, &core.path_of(&w1).unwrap(), None, None));
+        core.page_started(&w2);
+        core.opened(&w2);
+        assert!(takes_drops(&core, &w1, &w2));
+    }
+
+    #[test]
+    fn a_window_back_from_a_switch_is_a_drop_candidate_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let ga = core.path_of(&w1).unwrap();
+        let w2 = attach(&core, &ga);
+        let w3 = attach(&core, &ga);
+        for label in [&w1, &w2, &w3] {
+            core.page_started(label);
+        }
+        let na = closed_workspace(&core, "나", &[]);
+        switch(&core, &w2, &na);
+        core.finish_switch(&w2);
+        // The old page is still up until the new one starts.
+        assert!(!takes_drops(&core, &w3, &w2));
+        core.page_started(&w2);
+        assert!(takes_drops(&core, &w3, &w2));
+    }
+
+    #[test]
+    fn a_tab_let_go_over_a_window_not_yet_started_gets_a_window_of_its_own() {
+        use crate::app::windows::{window_at, ScreenPoint, WindowSpot};
+        use crate::session::WindowFrame;
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let path = core.path_of(&w1).unwrap();
+        let behind = attach(&core, &path);
+        core.page_started(&w1);
+        core.page_started(&behind);
+        // In front of `behind`, the most recently opened: the tab must not go through it.
+        let front = attach(&core, &path);
+        let frame = WindowFrame {
+            x: 100.0,
+            y: 100.0,
+            width: 900.0,
+            height: 600.0,
+        };
+        let candidates = core.drop_candidates(&w1);
+        let spots: Vec<WindowSpot> = candidates
+            .iter()
+            .map(|candidate| WindowSpot {
+                label: &candidate.label,
+                frame,
+                same_workspace: candidate.same_workspace,
+                leaving: candidate.leaving,
+            })
+            .collect();
+        assert_eq!(spots[0].label, front);
+        assert_eq!(
+            window_at(&spots, ScreenPoint { x: 500.0, y: 400.0 }, &w1),
+            None
         );
     }
 

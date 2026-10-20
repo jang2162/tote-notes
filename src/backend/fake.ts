@@ -499,6 +499,11 @@ export class FakeBackend implements Backend {
   reveal(tab: TabRef): void {
     for (const handler of this.handlers.reveal) handler(tab);
   }
+  /** Another window of this workspace let `tab` (its session entry as JSON) go over this one at
+   * (`x`, `y`), the place already this window's (`FakeHub.moveTo`). */
+  adopt(tab: string, x: number, y: number): void {
+    for (const handler of this.handlers.adopt) handler(tab, x, y);
+  }
   /** A workspace was made, or a window came to show another one. */
   workspacesChanged(): void {
     for (const handler of this.handlers.workspaces) handler();
@@ -508,8 +513,7 @@ export class FakeBackend implements Backend {
     if (event.type === "flush") this.requestFlush(event.id, event.goal);
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "reveal") this.reveal(event.tab);
-    else if (event.type === "adopt")
-      for (const handler of this.handlers.adopt) handler(event.tab, event.x, event.y);
+    else if (event.type === "adopt") this.adopt(event.tab, event.x, event.y);
     else if (event.type === "workspaces") this.workspacesChanged();
     else if (event.type === "config") this.config();
   }

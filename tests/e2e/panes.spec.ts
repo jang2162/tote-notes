@@ -926,7 +926,7 @@ test("a double click on the tab bar's free space opens a new memo as the last ta
       const now = await read();
       const same = now === settled;
       settled = now;
-      return same;
+      return same && (JSON.parse(now) as { last: Box | null }).last !== null;
     })
     .toBe(true);
   const { bar: barBox, last } = JSON.parse(settled) as { bar: Box; last: Box };

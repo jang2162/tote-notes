@@ -167,13 +167,11 @@ for (const leaving of [false, true]) {
       .poll(() => page.evaluate(() => (window as unknown as { cut: number }).cut))
       .toBeGreaterThan(0);
     const own = () => warnings.filter((text) => text.includes("language configuration of"));
-    if (!leaving) {
-      await expect.poll(() => own().length).toBe(1);
-      return;
-    }
-    // Every read has settled, so a warning it was going to give has been given.
+    if (!leaving) await expect.poll(() => own().length).toBe(1);
+    // Every read has settled, so a warning it was going to give has been given: exactly one, or
+    // none while leaving.
     await page.evaluate(() => Promise.all(window.__tote.app.languageConfigs.values()));
-    expect(own()).toHaveLength(0);
+    expect(own()).toHaveLength(leaving ? 0 : 1);
   });
 }
 

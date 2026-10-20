@@ -54,9 +54,21 @@ test("a memo changed outside is reread silently with the cursor in place", async
     .toBe("청!소\n빨래");
 });
 
+const DROPPED = "an edit from a state the tab has replaced was dropped";
+
+/** The page's console warnings that say an edit was dropped (`AppController.onUpdate`). */
+function droppedEdits(page: Page): string[] {
+  const seen: string[] = [];
+  page.on("console", (message) => {
+    if (message.type() === "warning" && message.text().includes(DROPPED)) seen.push(message.text());
+  });
+  return seen;
+}
+
 test("a memo reread while the editor has a layout to measure shows the new text", async ({
   page,
 }) => {
+  const dropped = droppedEdits(page);
   await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
   await page.locator(".memo-row", { hasText: "장보기" }).click();
   await expect(page.locator(".cm-content")).toHaveText("우유");
@@ -73,6 +85,27 @@ test("a memo reread while the editor has a layout to measure shows the new text"
   expect(
     await page.evaluate(() => window.__tote.app.focused.tabs.active?.state?.doc.toString()),
   ).toBe("우유\n계란");
+  // The measure's update from the old text is dropped without a word: it carries no edit.
+  expect(dropped).toEqual([]);
+});
+
+// Nothing puts a shown tab's text in from outside the editor and then lets the editor edit the old
+// one: were it to, the keys would never reach the tab nor be saved. That must not go unseen.
+test("an edit from a state the tab has replaced is dropped with a warning", async ({ page }) => {
+  const dropped = droppedEdits(page);
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유");
+  await page.evaluate(() => {
+    const { app } = window.__tote;
+    const tab = app.focused.tabs.active!;
+    tab.state = app.view.state.update({ changes: { from: 2, insert: " 두유" } }).state;
+    app.view.dispatch({ changes: { from: 2, insert: " 계란" } });
+  });
+  expect(
+    await page.evaluate(() => window.__tote.app.focused.tabs.active?.state?.doc.toString()),
+  ).toBe("우유 두유");
+  await expect.poll(() => dropped.length).toBe(1);
 });
 
 test("an external change while typing shows the conflict banner and keeps the typed text", async ({

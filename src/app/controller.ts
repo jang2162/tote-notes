@@ -215,6 +215,9 @@ export class AppController implements DocHost, PaneHost {
   private deviceId = "";
   /** Session writes wait until the restored tabs are in place. */
   private restoring = true;
+  /** Tabs handed to this window while it restores (`onAdopt`): a restore neither shows a tab nor
+   * writes the session, so they are adopted once it is done. */
+  private pendingAdopts: { tab: SessionTab; x: number; y: number }[] = [];
   /** A memo listing has come through. The session is restored only after one: without the memos
    * its memo tabs have nothing to stand for, and a session written then would drop them. */
   private memosLoaded = false;
@@ -398,8 +401,9 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onReveal((tab) => void this.reveal(tab));
     this.backend.onAdopt((json, x, y) => {
       const tab = parseTab(parseJson(json));
-      if (tab) void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
-      else this.report(new Error(`not a tab: ${json}`));
+      if (!tab) this.report(new Error(`not a tab: ${json}`));
+      else if (this.restoring) this.pendingAdopts.push({ tab, x, y });
+      else void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
     });
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
@@ -467,6 +471,8 @@ export class AppController implements DocHost, PaneHost {
     );
     this.restoring = false;
     this.markNextFrame("restore-done");
+    for (const { tab, x, y } of this.pendingAdopts.splice(0))
+      await this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
   }
 
   private async loadRegistry(): Promise<void> {
@@ -1177,7 +1183,15 @@ export class AppController implements DocHost, PaneHost {
     }
     if (!doc) {
       doc = this.session.tabFor(tab);
-      if (!doc) return this.report(new Error("메모를 찾을 수 없습니다"));
+      if (!doc) {
+        // Its place is this window's already: no other window could take the tab again.
+        const ref: TabRef =
+          tab.kind === "memo"
+            ? { kind: "memo", id: tab.memoId }
+            : { kind: "external", path: tab.path };
+        void this.backend.releaseTab(ref).catch((error: unknown) => console.warn(error));
+        return this.report(new Error("메모를 찾을 수 없습니다"));
+      }
       const hit = document.elementsFromPoint(x, y);
       const pane = this.panes.find((each) => hit.includes(each.el)) ?? this.focused;
       this.held.set(doc, doc.tabRef);
@@ -1273,7 +1287,12 @@ export class AppController implements DocHost, PaneHost {
   private onUpdate(doc: Doc, update: ViewUpdate): void {
     // From a state the tab has replaced since: a reread puts the new text in, then reads the scroll
     // position, which runs the view's pending measure on the old state. It must not bring it back.
-    if (update.startState !== doc.state) return;
+    if (update.startState !== doc.state) {
+      // A measure carries nothing to keep. An edit does: nothing should put a shown tab's text in
+      // from outside the editor and leave the editor on the old one, so say so if something does.
+      if (update.docChanged) console.warn("an edit from a state the tab has replaced was dropped");
+      return;
+    }
     doc.update(update);
     const pane = this.paneOf(doc);
     if (doc !== pane.tabs.active || !(update.docChanged || update.selectionSet)) return;
