@@ -21,4 +21,5 @@
 | tote-notes 설정·단축키 계획을 실행할 때                                                            | `docs/superpowers/plans/2026-10-20-tote-notes-settings-and-shortcuts.md`          |
 | tote-notes 편집기 검색 띠(⌘F)를 고치거나 그 설계를 바꿀 때                                         | `docs/superpowers/specs/2026-10-20-tote-notes-editor-search-bar-design.md`        |
 | tote-notes 편집기 검색 띠 계획을 실행할 때                                                         | `docs/superpowers/plans/2026-10-20-tote-notes-editor-search-bar.md`               |
+| tote-notes 안정화 후속 계획을 실행할 때                                                            | `docs/superpowers/plans/2026-10-20-tote-notes-stability-followups.md`             |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                | `docs/guides/development.md`                                                      |
