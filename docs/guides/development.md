@@ -85,12 +85,12 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - `node_modules` 의 파일을 직접 고치지 않는다. pnpm 저장소의 하드 링크라 다른 워크트리까지 바뀐다. 고칠 것은 `pnpm patch @codemirror/view@<판> --edit-dir <임시 폴더>` 로 풀고 고친 뒤 `pnpm patch-commit <임시 폴더>` 로 만든다.
   - `@codemirror/view` 를 올리면 패치의 판 이름이 맞지 않아 `pnpm install` 이 실패한다. 새 판의 `readSelectionRange` 를 보고, 그 분기가 `updateSelection` 전에 `selectionRange.setRange(range)` 를 하면(상위가 고쳤으면) `patchedDependencies` 항목과 패치 파일을 지운다. 아니면 새 판에 같은 한 줄로 패치를 다시 만들고 옛 패치를 지운다. 어느 쪽이든 위 시험을 돌린다.
 
-## `Function.name` 에 기대는 코드는 `keepNames` 와 `check-build` 에 묶여 있다
+## 편집기 명령의 이름은 `Function.name` 이 아니라 import 이름에서 얻는다
 
-함수의 `name` 을 읽는 코드(지금은 `src/shortcuts/keys.ts` 의 `editorBindings` 가 편집기 키의 이름을 얻는 자리)는 `vite.config.ts` 의 `keepNames: true` 가 있어야 배포 빌드에서 동작한다. `pnpm build` 는 `vite build` 뒤에 `scripts/check-build.ts` 로 번들에 `selectLine=` 이 남았는지 보고, 없으면 실패한다.
+설정 화면이 편집기 키를 부르는 이름(`src/shortcuts/keys.ts` 의 `editorBindings`)은 `src/shortcuts/command-names.ts` 의 `commandName` 이 준다. 편집기 키맵(`editorKeymap`)에 걸린 명령만 이름으로 import 해 `Map<함수, 이름>` 을 만든다.
 
-- **Why:** 배포 빌드(vite 8/rolldown 압축)가 함수 이름을 `Qp` 같은 것으로 바꾼다. vitest·e2e 는 압축 전 코드를 돌려서 이 문제를 잡지 못한다. 그대로 두면 설정 화면의 경고가 「편집기의 Qp 을 가립니다」 가 된다.
-- **How to apply:** `keepNames` 를 끄거나 다른 이름에 기대는 코드를 더할 때는 `check-build.ts` 가 그 이름도 보게 한다(지금은 `selectLine` 하나만 본다). `pnpm build` 는 Tauri `beforeBuildCommand` 라서 검사가 실패하면 앱 빌드도 실패한다.
+- **Why:** 배포 빌드(vite 8/rolldown 압축)가 함수 이름을 `Qp` 같은 것으로 바꾼다. `Function.name` 에 기대면 `keepNames` 로 번들이 커지고 빌드 검사도 따로 있어야 했다. import 이름은 압축되지 않는다. `import * as` 로 패키지 전체를 모으면 tree-shaking 이 깨져 gzip 이 약 7kB 커지므로(측정함) 키맵이 쓰는 명령만 이름으로 import 한다. vitest·e2e 는 압축 전 코드를 돌려 이 문제를 잡지 못하므로 `Function.name` 을 읽는 코드를 되살리지 않는다.
+- **How to apply:** 키맵에 명령을 더하면 `command-names.ts` 의 표에도 더한다. `src/shortcuts/command-names.test.ts` 의 「names every command the editor keymap binds」 가 빠진 명령을 잡는다. 두 이름이 한 함수이면(`cursorLineBoundaryBackward`·`cursorLineBoundaryLeft`) 표에서 나중 항목이 이긴다.
 
 ## e2e 는 메뉴 단축키를 누르지 못한다
 

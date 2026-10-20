@@ -1,3 +1,4 @@
+import { selectLine } from "@codemirror/commands";
 import { describe, expect, it } from "vitest";
 
 import fixture from "../../src-tauri/tests/fixtures/shortcut-table.json";
@@ -12,6 +13,7 @@ import {
   recordableAccelerator,
   sameAccelerator,
   shortcutHint,
+  UNNAMED_EDITOR_COMMAND,
 } from "./keys";
 
 /** The table with nothing saved, but `current` overridden for the ids in `current`. */
@@ -159,22 +161,35 @@ describe("editorBindings", () => {
 });
 
 describe("bindingsOf", () => {
-  it("names a key after its function, and a function without a name 편집기 명령", () => {
-    function named() {
-      return true;
-    }
-    // A function a function returns has no name (an arrow written as `run:` would be `run`).
-    const make = () => () => true;
+  it("names a key after the export of its function, and a function no module exports 편집기 명령", () => {
+    const local = () => true;
     expect(
       bindingsOf([
-        { key: "Mod-k", run: named },
-        { key: "Mod-j", run: make(), shift: make() },
+        { key: "Mod-k", run: selectLine },
+        { key: "Mod-j", run: local, shift: local },
       ]),
     ).toEqual([
-      { accelerator: "CmdOrCtrl+K", name: "named" },
+      { accelerator: "CmdOrCtrl+K", name: "selectLine" },
       { accelerator: "CmdOrCtrl+J", name: "편집기 명령" },
       { accelerator: "Shift+CmdOrCtrl+J", name: "편집기 명령" },
     ]);
+  });
+
+  it("editor bindings are named from the exports, not Function.name", () => {
+    // What a minifier does to a function's name (`selectLine` read `Qp` in a build).
+    const original = Object.getOwnPropertyDescriptor(selectLine, "name");
+    Object.defineProperty(selectLine, "name", { value: "Qp", configurable: true });
+    try {
+      expect(bindingsOf([{ key: "Mod-l", run: selectLine }])).toEqual([
+        { accelerator: "CmdOrCtrl+L", name: "selectLine" },
+      ]);
+    } finally {
+      Object.defineProperty(selectLine, "name", original!);
+    }
+  });
+
+  it("names every key of the editor", () => {
+    expect(editorBindings().filter((b) => b.name === UNNAMED_EDITOR_COMMAND)).toEqual([]);
   });
 });
 

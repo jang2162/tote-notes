@@ -59,12 +59,6 @@ export default defineConfig({
     strictPort: true,
     watch: { ignored: ["**/src-tauri/**"] },
   },
-  build: {
-    // The shortcut settings name an editor key after the function it runs (`editorBindings` in
-    // src/shortcuts/keys.ts); minified, `selectLine` would read `Qp`. scripts/check-build.ts
-    // fails the build when the names are gone.
-    rolldownOptions: { output: { keepNames: true } },
-  },
   test: {
     include: ["src/**/*.test.ts", "scripts/**/*.test.ts"],
     environment: "node",

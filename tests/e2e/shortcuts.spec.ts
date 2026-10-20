@@ -187,16 +187,16 @@ test("an editor key is saved with a warning", async ({ page }) => {
   );
 });
 
-test("an editor key whose command has no name is written as an editor shortcut", async ({
+test("an editor key made by a function without a name is still named after its export", async ({
   page,
 }) => {
   const panel = await startShortcuts(page);
-  // ⇧⌘U is `redoSelection`, which CodeMirror makes with a function that has no name.
+  // ⇧⌘U is `redoSelection`, which CodeMirror makes with a function that has no name of its own.
   await record(panel, "rename");
   await page.keyboard.press("Meta+Shift+U");
   await expect.poll(() => savedMap(page)).toEqual({ rename: "CmdOrCtrl+Shift+U" });
   await expect(row(panel, "rename").locator(".shortcut-note")).toHaveText(
-    "편집기 단축키를 가립니다",
+    "편집기의 redoSelection 을 가립니다",
   );
 });
 

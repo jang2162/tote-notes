@@ -2,6 +2,7 @@ import type { KeyBinding } from "@codemirror/view";
 
 import type { ShortcutTable } from "../backend/types";
 import { editorKeymap } from "../editor/setup";
+import { commandName } from "./command-names";
 
 // Shortcuts are Tauri accelerators (`CmdOrCtrl+Shift+N`), read here the way muda 0.20 reads them
 // (`parse_accelerator` in its accelerator/mod.rs) on macOS, so that the settings screen judges a
@@ -270,11 +271,11 @@ function cmKeyToAccelerator(name: string): string | null {
   return parse(accelerator) ? accelerator : null;
 }
 
-/** What `bindingsOf` names a function without a name. */
+/** What `bindingsOf` names a function no module exports. */
 export const UNNAMED_EDITOR_COMMAND = "편집기 명령";
 
 /** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
- * same key with ⇧), named after the function they run, or 편집기 명령 for one without a name. */
+ * same key with ⇧), named after the export of the function they run (`commandName`), or 편집기 명령 for one no module exports. */
 export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string; name: string }[] {
   return keymap.flatMap((binding) => {
     const name = binding.mac ?? binding.key;
@@ -282,7 +283,8 @@ export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string
     const found: { accelerator: string; name: string }[] = [];
     const add = (keys: string, run: KeyBinding["run"]) => {
       const accelerator = cmKeyToAccelerator(keys);
-      if (accelerator && run) found.push({ accelerator, name: run.name || UNNAMED_EDITOR_COMMAND });
+      if (accelerator && run)
+        found.push({ accelerator, name: commandName(run) ?? UNNAMED_EDITOR_COMMAND });
     };
     add(name, binding.run);
     if (binding.shift) add(`Shift-${name}`, binding.shift);
