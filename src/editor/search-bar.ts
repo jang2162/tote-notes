@@ -61,31 +61,35 @@ let panelOpener: StateEffect<unknown> | undefined;
 
 /** CodeMirror's effect that opens the search panel, which it does not export: it is taken from
  * what `openSearchPanel` dispatches for a closed panel, the one case that touches nothing of the
- * view but its state and `dispatch`. */
-function openPanelEffect(): StateEffect<unknown> {
+ * view but its state and `dispatch`. `undefined` when a later CodeMirror does it otherwise. */
+function openPanelEffect(): StateEffect<unknown> | undefined {
   if (!panelOpener) {
     let effects: readonly StateEffect<unknown>[] = [];
     const view = {
       state: EditorState.create({ extensions: search() }),
       dispatch: (spec: { effects: readonly StateEffect<unknown>[] }) => (effects = spec.effects),
     };
-    openSearchPanel(view as unknown as EditorView);
-    panelOpener = effects.find((effect) => !effect.is(setSearchQuery));
-    if (!panelOpener) throw new Error("openSearchPanel dispatched no panel effect");
+    try {
+      openSearchPanel(view as unknown as EditorView);
+      panelOpener = [effects].flat().find((effect) => !effect.is(setSearchQuery));
+    } catch (error) {
+      console.error("the search panel's effect could not be had", error);
+      return undefined;
+    }
+    if (!panelOpener) console.error("openSearchPanel dispatched no panel effect");
   }
   return panelOpener;
 }
 
 /** The effects that open the bar in a new state of `from`'s tab as it is open in `from` — query,
  * options and replace row — or none when it is closed there. A reload builds a new state, which
- * would otherwise drop the bar from under the search going on in it. */
+ * would otherwise drop the bar from under the search going on in it. Without the panel's effect
+ * the bar closes, as it did before: the reload it is part of must go through. */
 export function carrySearch(from: EditorState): StateEffect<unknown>[] {
   if (!searchPanelOpen(from)) return [];
-  return [
-    setSearchQuery.of(getSearchQuery(from)),
-    setReplaceOpen.of(isReplaceOpen(from)),
-    openPanelEffect(),
-  ];
+  const open = openPanelEffect();
+  if (!open) return [];
+  return [setSearchQuery.of(getSearchQuery(from)), setReplaceOpen.of(isReplaceOpen(from)), open];
 }
 
 /** The bar's own editor keys, tried ahead of `searchKeymap` in `editorKeymap`. */

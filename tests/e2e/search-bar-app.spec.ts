@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange } from "../../src/backend/types";
-import { menu, paneSession, start } from "./helpers";
+import { boxOf, centre, menu, paneSession, start } from "./helpers";
 
 // The find bar in the app: one bar per tab, in the pane that shows the tab, and kept open when
 // the tab's file is read again after another app changed it.
@@ -30,21 +30,14 @@ async function search(target: Locator, query: string, keys = "Meta+f"): Promise<
   await findInput(target).fill(query);
 }
 
-async function centre(locator: Locator): Promise<{ x: number; y: number }> {
-  let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
-  await expect.poll(async () => (box = await locator.boundingBox())).not.toBeNull();
-  return { x: box!.x + box!.width / 2, y: box!.y + box!.height / 2 };
-}
-
 /** Drags `from` to just inside the left end of `target`, as `tests/e2e/pane-drag.spec.ts` does:
  * a drop there lands before it. */
 async function dragBefore(page: Page, from: Locator, target: Locator): Promise<void> {
   const start = await centre(from);
-  const end = await centre(target);
-  const box = (await target.boundingBox())!;
+  const box = await boxOf(target);
   await page.mouse.move(start.x, start.y);
   await page.mouse.down();
-  await page.mouse.move(box.x + 4, end.y, { steps: 8 });
+  await page.mouse.move(box.x + 4, box.y + box.height / 2, { steps: 8 });
   await page.mouse.up();
 }
 

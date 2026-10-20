@@ -1,4 +1,4 @@
-import type { BrowserContext, Locator, Page } from "@playwright/test";
+import { expect, type BrowserContext, type Locator, type Page } from "@playwright/test";
 
 import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
 import {
@@ -143,6 +143,22 @@ export async function panesByPosition(page: Page): Promise<Locator[]> {
     .map((place, index) => ({ ...place, index }))
     .sort((a, b) => a.top - b.top || a.left - b.left)
     .map(({ index }) => all.nth(index));
+}
+
+/** `locator`'s box. `boundingBox` does not wait, and right after a restore the tab bar is drawn
+ * again: a box read while its tabs are being replaced is null, so it is read until there is one. */
+export async function boxOf(
+  locator: Locator,
+): Promise<{ x: number; y: number; width: number; height: number }> {
+  let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
+  await expect.poll(async () => (box = await locator.boundingBox())).not.toBeNull();
+  return box!;
+}
+
+/** The middle of `locator`'s box. */
+export async function centre(locator: Locator): Promise<{ x: number; y: number }> {
+  const box = await boxOf(locator);
+  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
 }
 
 /** Past the window's left edge, in client coordinates. WebKit goes on sending the pointer's moves
