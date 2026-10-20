@@ -66,6 +66,20 @@ test("typing recounts without moving", async ({ page }) => {
   expect(await main(page)).toEqual({ from: 0, to: 2 });
 });
 
+test("a change to the memo is counted once it rests", async ({ page }) => {
+  await openBar(page);
+  await expect(count(page)).toHaveText("1 / 3");
+  // The frame after the change still shows the old count: no scan per key typed in the memo.
+  const next = await page.evaluate(async () => {
+    window.view.dispatch({ changes: { from: 0, insert: "my " } });
+    await new Promise((done) => requestAnimationFrame(done));
+    return document.querySelector(".find-bar-count")?.textContent;
+  });
+  expect(next).toBe("1 / 3");
+  // The selection moved along with its match, now the second of four.
+  await expect(count(page)).toHaveText("2 / 4");
+});
+
 test("the toggles change the query", async ({ page }) => {
   await openBar(page);
   await expect(toggle(page, "case")).toHaveAttribute("aria-pressed", "false");

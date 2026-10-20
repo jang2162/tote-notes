@@ -22,7 +22,7 @@ import {
 } from "@codemirror/view";
 
 import { h } from "../ui/dom";
-import { countLabel, countMatches } from "./search-count";
+import { countLabel, currentMatch, findMatches, type Matches } from "./search-count";
 
 /** `openSearchPanel`, which also selects the query when the find field already has the focus
  * (CodeMirror only selects it when it moves the focus there). */
@@ -57,6 +57,10 @@ export const openSearchWithReplace: Command = (view) => {
   return openSearchBar(view);
 };
 
+/** How long the memo must rest after a change before the bar counts again: a count can take a
+ * frame or two of a big memo, which typing must not pay per key. */
+const RECOUNT_DELAY_MS = 150;
+
 let panelOpener: StateEffect<unknown> | undefined;
 
 /** CodeMirror's effect that opens the search panel, which it does not export: it is taken from
@@ -71,6 +75,7 @@ function openPanelEffect(): StateEffect<unknown> | undefined {
     };
     try {
       openSearchPanel(view as unknown as EditorView);
+      // `effects` is one effect or an array of them, as a transaction spec takes it.
       panelOpener = [effects].flat().find((effect) => !effect.is(setSearchQuery));
     } catch (error) {
       console.error("the search panel's effect could not be had", error);
@@ -137,7 +142,10 @@ class SearchBar implements Panel {
   private readonly replaceToggle: HTMLButtonElement;
   private readonly replaceRow: HTMLElement;
   private query: SearchQuery;
+  /** The matches of the last count, for numbering the selection until the text or query changes. */
+  private matches: Matches | null = null;
   private frame = 0;
+  private timer: ReturnType<typeof setTimeout> | undefined;
 
   constructor(private readonly view: EditorView) {
     this.query = getSearchQuery(view.state);
@@ -229,7 +237,11 @@ class SearchBar implements Panel {
     // ⌘F with text selected hands the panel a new query; typing here does not reach this branch,
     // since `commit` keeps `this.query` up to date first.
     if (changed) this.show(query);
-    if (changed || update.docChanged || update.selectionSet) this.scheduleCount();
+    if (changed) this.scheduleCount();
+    else if (update.docChanged) this.scheduleCount(RECOUNT_DELAY_MS);
+    // A moved selection is numbered among the matches already found, unless a count is on its way:
+    // their positions are those of the text before the change it waits for.
+    else if (update.selectionSet && !this.frame && this.timer === undefined) this.showCount();
     const open = isReplaceOpen(update.state);
     // The row's `hidden` mirrors the field: shown while open, so equal values mean they disagree.
     if (this.replaceRow.hidden === open) this.showReplace(open);
@@ -237,6 +249,7 @@ class SearchBar implements Panel {
 
   destroy() {
     cancelAnimationFrame(this.frame);
+    clearTimeout(this.timer);
   }
 
   private keydown(event: KeyboardEvent) {
@@ -302,8 +315,18 @@ class SearchBar implements Panel {
     else this.input.removeAttribute("aria-invalid");
   }
 
-  // One count a frame: typing fast, or a key held down, does not scan the memo per keystroke.
-  private scheduleCount() {
+  /** Counts again at the next frame, one count a frame however fast the query is typed; with
+   * `delay`, once the memo has rested that long, so typing in it does not scan it per key. The
+   * count shown stays as it was until then. */
+  private scheduleCount(delay?: number) {
+    if (delay !== undefined) {
+      if (this.frame) return;
+      clearTimeout(this.timer);
+      this.timer = setTimeout(() => this.recount(), delay);
+      return;
+    }
+    clearTimeout(this.timer);
+    this.timer = undefined;
     if (this.frame) return;
     this.frame = requestAnimationFrame(() => {
       this.frame = 0;
@@ -312,8 +335,23 @@ class SearchBar implements Panel {
   }
 
   private recount() {
+    cancelAnimationFrame(this.frame);
+    this.frame = 0;
+    clearTimeout(this.timer);
+    this.timer = undefined;
+    this.matches = this.query.valid ? findMatches(this.view.state, this.query) : null;
+    this.showCount();
+  }
+
+  private showCount() {
     const query = this.query;
-    const label = countLabel(query, query.valid ? countMatches(this.view.state, query) : null);
+    const matches = this.matches;
+    const count = matches && {
+      total: matches.from.length,
+      capped: matches.capped,
+      current: currentMatch(matches, this.view.state.selection.main),
+    };
+    const label = countLabel(query, count);
     // Only a change: the count is a live region, and a rewrite reads it out again.
     if (this.count.textContent !== label) this.count.textContent = label;
     this.count.classList.toggle("find-bar-error", query.search !== "" && !query.valid);
