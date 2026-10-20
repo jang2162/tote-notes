@@ -1,5 +1,8 @@
 type Rgba = [number, number, number, number];
 
+/** Degrees in one of each CSS angle unit. */
+const DEGREES: Record<string, number> = { deg: 1, grad: 0.9, rad: 180 / Math.PI, turn: 360 };
+
 const clamp = (v: number, max: number) => Math.min(max, Math.max(0, v));
 
 /** Parses `#rgb[a]`, `#rrggbb[aa]`, `rgb()/rgba()` and `hsl()/hsla()` (comma or space separated,
@@ -17,12 +20,14 @@ function parse(color: string): Rgba {
   if (hslFn) {
     const parts = hslFn[1].split(/[\s,/]+/).filter(Boolean);
     if (parts.length === 3 || parts.length === 4) {
-      const [h, s, l] = parts.slice(0, 3).map((p) => {
+      const angle = /^([-+]?(?:\d+\.?\d*|\.\d+))(deg|grad|rad|turn)?$/i.exec(parts[0]);
+      if (!angle) throw new Error(`Unreadable colour: ${color}`);
+      const hue = Number(angle[1]) * DEGREES[(angle[2] ?? "deg").toLowerCase()];
+      const [s, l] = parts.slice(1, 3).map((p) => {
         const v = parseFloat(p);
         if (Number.isNaN(v)) throw new Error(`Unreadable colour: ${color}`);
         return v;
       });
-      const hue = parts[0].toLowerCase().endsWith("turn") ? h * 360 : h;
       const sat = clamp(s, 100) / 100;
       const light = clamp(l, 100) / 100;
       const k = (n: number) => (n + (((hue % 360) + 360) % 360) / 30) % 12;
@@ -42,7 +47,7 @@ function parse(color: string): Rgba {
         return v;
       };
       const [r, g, b] = parts.slice(0, 3).map((p) => clamp(num(p, 255), 255));
-      return [r, g, b, parts[3] === undefined ? 1 : clamp(num(parts[3], 1), 1)];
+      return [r, g, b, alpha(parts[3], color)];
     }
   }
   throw new Error(`Unreadable colour: ${color}`);

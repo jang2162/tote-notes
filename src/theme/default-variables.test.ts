@@ -28,14 +28,17 @@ function variables(text: string): Record<string, string> {
   return found;
 }
 
-/** Variables styles.css carries that are not theme colours, so `DEFAULT_VARIABLES` has no entry. */
-const NOT_THEMED = new Set([
-  "--accent-fg",
-  "--large-text-font",
-  "--large-text-size",
-  "--editor-font",
-  "--editor-size",
-]);
+/** Variables styles.css carries that are not theme colours, so `DEFAULT_VARIABLES` has no entry,
+ * with the value each appearance has. Pinned here so that dropping one from the css, or changing
+ * it there, is noticed too. */
+const SAME = (value: string) => ({ light: value, dark: value });
+const NOT_THEMED: Record<string, { light: string; dark: string }> = {
+  "--accent-fg": { light: "#ffffff", dark: "#10151c" },
+  "--large-text-font": SAME('ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace'),
+  "--large-text-size": SAME("14px"),
+  "--editor-font": SAME("var(--large-text-font)"),
+  "--editor-size": SAME("14px"),
+};
 
 describe("styles.css and DEFAULT_VARIABLES", () => {
   const dark = block("@media (prefers-color-scheme: dark)");
@@ -46,7 +49,7 @@ describe("styles.css and DEFAULT_VARIABLES", () => {
   };
   for (const appearance of ["light", "dark"] as Appearance[]) {
     it(`${appearance}: both carry the same keys`, () => {
-      const inCss = Object.keys(sources[appearance]).filter((k) => !NOT_THEMED.has(k));
+      const inCss = Object.keys(sources[appearance]).filter((k) => !(k in NOT_THEMED));
       const inCode = Object.keys(DEFAULT_VARIABLES[appearance]);
       expect({
         onlyInCss: inCss.filter((k) => !inCode.includes(k)),
@@ -58,6 +61,15 @@ describe("styles.css and DEFAULT_VARIABLES", () => {
       const differing = Object.entries(DEFAULT_VARIABLES[appearance])
         .filter(([key, value]) => sources[appearance][key] !== value)
         .map(([key, value]) => `${key}: code ${value}, css ${sources[appearance][key]}`);
+      expect(differing).toEqual([]);
+    });
+
+    it(`${appearance}: the variables that are not themed keep their values`, () => {
+      const differing = Object.entries(NOT_THEMED)
+        .filter(([key, value]) => sources[appearance][key] !== value[appearance])
+        .map(
+          ([key, value]) => `${key}: pinned ${value[appearance]}, css ${sources[appearance][key]}`,
+        );
       expect(differing).toEqual([]);
     });
   }

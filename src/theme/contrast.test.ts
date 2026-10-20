@@ -50,6 +50,14 @@ describe("contrastRatio", () => {
     );
   });
 
+  it("reads every CSS angle unit for a hue, and throws on one it does not know", () => {
+    const green = contrastRatio("hsl(120 100% 25%)", "#fff");
+    for (const hue of ["120", "120deg", "133.3333333grad", "2.0943951rad", "0.3333333turn"])
+      expect(contrastRatio(`hsl(${hue} 100% 25%)`, "#fff"), hue).toBeCloseTo(green, 3);
+    expect(() => contrastRatio("hsl(120foo 100% 25%)", "#fff")).toThrow("Unreadable colour");
+    expect(() => contrastRatio("hsl(none 100% 25%)", "#fff")).toThrow("Unreadable colour");
+  });
+
   it("reads #rgb and throws on a colour it cannot read", () => {
     expect(contrastRatio("#000", "#fff")).toBeCloseTo(21, 2);
     expect(() => contrastRatio("#zzz", "#fff")).toThrow();
