@@ -1,6 +1,13 @@
 import { expect, type BrowserContext, type Locator, type Page } from "@playwright/test";
 
-import { defaultFakeData, FAKE_STORAGE_KEY, type FakeData } from "../../src/backend/fake";
+import {
+  defaultFakeData,
+  FAKE_STORAGE_KEY,
+  fakeFile,
+  fakeMemo,
+  type FakeData,
+} from "../../src/backend/fake";
+import type { OutsideChange } from "../../src/backend/types";
 import {
   isSessionPane,
   parseSessionFile,
@@ -57,6 +64,34 @@ export async function nextWindow(page: Page): Promise<Page> {
 
 export async function ready(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__tote?.ready === true);
+}
+
+/** Opens memo 장보기 (우유) on the fake backend seeded with `seed`. */
+export async function openShopping(page: Page, seed: Partial<FakeData> = {}): Promise<void> {
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") }, ...seed });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유");
+}
+
+/** Opens 장보기 (우유), types 「 계란」 behind 우유, and another app writes 두유 and is heard — in one
+ * go. Between steps the save's timer can run out under load, and the save then writes the typed
+ * text over 두유 before the change is heard: there would be no other app's text left to choose. */
+export async function typeWhileChangedElsewhere(page: Page): Promise<void> {
+  await openShopping(page);
+  const change: OutsideChange = { kind: "workspace", changes: [{ kind: "modified", id: "a" }] };
+  await page.evaluate(
+    ([data, heard]) => {
+      const { app, backend } = window.__tote;
+      app.view.dispatch({
+        changes: { from: 2, insert: " 계란" },
+        selection: { anchor: 5 },
+        userEvent: "input.type",
+      });
+      Object.assign(backend.data.memos.a, { data, modifiedMs: 900 });
+      backend.outside(heard);
+    },
+    [fakeFile("두유"), change] as const,
+  );
 }
 
 /** Every write the window has scheduled — memo saves, its session — has run (`WriteScheduler`):

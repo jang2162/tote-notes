@@ -7,15 +7,7 @@ import {
   sessionPanes,
   type WindowSession,
 } from "../../src/core/session";
-import {
-  dragOut,
-  menu,
-  nextWindow,
-  openWindow,
-  panesByPosition,
-  startWindows,
-  writesSettled,
-} from "./helpers";
+import { dragOut, menu, nextWindow, openWindow, panesByPosition, startWindows } from "./helpers";
 
 // Windows of one workspace on the fake backend: each page is a window (`FakeHub`), sharing the
 // fake's data and hearing what the native side would tell it.
@@ -128,12 +120,20 @@ test("two windows of one workspace come back after a restart", async ({ context 
   await second.close();
 
   const again = await openWindow(context, "ws-1");
-  // The first window writes its layout before the second one's page starts, as a slow page at
-  // launch lets it: the second window is reopened all the same and keeps its saved layout.
-  await writesSettled(again);
-  const againSecond = await openWindow(context, "ws-2");
   await expect(titles(again)).toHaveText(["가"]);
   await expect(again.locator(".cm-content")).toHaveText("첫째");
+  // The first window writes its layout before the second one's page starts, as a slow page at
+  // launch lets it: the second window is reopened all the same and keeps its saved layout. A
+  // moved cursor is what makes the window write.
+  const written = await again.evaluate(() => {
+    const before = window.__tote.backend.data.layoutWrites["ws-1"] ?? 0;
+    window.__tote.app.view.dispatch({ selection: { anchor: 1 } });
+    return before;
+  });
+  await expect
+    .poll(() => again.evaluate(() => window.__tote.backend.data.layoutWrites["ws-1"] ?? 0))
+    .toBeGreaterThan(written);
+  const againSecond = await openWindow(context, "ws-2");
   await expect(titles(againSecond)).toHaveText(["나"]);
   await expect(againSecond.locator(".cm-content")).toHaveText("둘째");
 });

@@ -94,6 +94,8 @@ export interface FakeData {
   reads: Record<string, number>;
   /** `writeMemo` calls that wrote, per memo ID — lets tests check that no save went out. */
   memoWrites: Record<string, number>;
+  /** `writeWindowLayout` calls per window label — lets tests wait for a window's layout to land. */
+  layoutWrites: Record<string, number>;
   flushed: { id: number; blocked?: string }[];
   windowClosed: boolean;
   settings: Settings;
@@ -224,6 +226,7 @@ export function defaultFakeData(): FakeData {
     clock: 1000,
     reads: {},
     memoWrites: {},
+    layoutWrites: {},
     flushed: [],
     windowClosed: false,
     settings: {
@@ -670,6 +673,7 @@ export class FakeBackend implements Backend {
     }
     if (this.hub) this.hub.writeLayout(this.data, JSON.parse(json));
     else this.data.session = JSON.stringify({ version: 2, windows: [JSON.parse(json)] });
+    this.data.layoutWrites[this.label] = (this.data.layoutWrites[this.label] ?? 0) + 1;
     this.commit();
   }
 

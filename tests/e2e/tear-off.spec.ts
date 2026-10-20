@@ -2,7 +2,17 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { dragOut, hold, memoWrites, menu, quietErrors, start, writesSettled } from "./helpers";
+import {
+  dragOut,
+  hold,
+  memoWrites,
+  menu,
+  openShopping,
+  quietErrors,
+  start,
+  typeWhileChangedElsewhere,
+  writesSettled,
+} from "./helpers";
 
 // 「탭을 새 창으로 옮기기」 in one window on the fake backend: what leaves this window and what the
 // backend is handed (`data.tornOff`). tests/e2e/windows.spec.ts opens the new window too.
@@ -35,9 +45,7 @@ const memoText = (page: Page, id: string) =>
 
 /** Opens 장보기 (우유) with the cursor after 우유 and types behind it. */
 async function typeInto(page: Page, seed: Parameters<typeof start>[1] = {}): Promise<void> {
-  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") }, ...seed });
-  await page.locator(".memo-row", { hasText: "장보기" }).click();
-  await expect(page.locator(".cm-content")).toHaveText("우유");
+  await openShopping(page, seed);
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await page.keyboard.insertText(" 계란");
 }
@@ -171,12 +179,7 @@ test("a tab the backend does not take stays editable and says why", async ({ pag
 });
 
 test("a tab with a conflict banner stays and says why", async ({ page }) => {
-  await typeInto(page);
-  await page.evaluate(
-    (text) => Object.assign(window.__tote.backend.data.memos.a, { data: text, modifiedMs: 900 }),
-    fakeFile("두유"),
-  );
-  await outside(page, { kind: "modified", id: "a" });
+  await typeWhileChangedElsewhere(page);
   await expect(page.locator(".banner")).toBeVisible();
   await menu(page, MOVE);
   await expect(page.locator(".status-message")).toHaveText(NOT_MOVED_WITH_BANNER);

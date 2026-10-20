@@ -2,7 +2,14 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { memoWrites, ready, sessionPane, start, writesSettled } from "./helpers";
+import {
+  memoWrites,
+  ready,
+  sessionPane,
+  start,
+  typeWhileChangedElsewhere,
+  writesSettled,
+} from "./helpers";
 
 /** What another app does to memo `id`: new contents, stamped later than anything seeded. */
 async function writeElsewhere(page: Page, id: string, text: string): Promise<void> {
@@ -17,38 +24,6 @@ async function writeElsewhere(page: Page, id: string, text: string): Promise<voi
 function outside(page: Page, ...changes: WorkspaceChange[]): Promise<void> {
   const change: OutsideChange = { kind: "workspace", changes };
   return page.evaluate((c) => window.__tote.backend.outside(c), change);
-}
-
-/** Opens 장보기 (우유) with the cursor after 우유 and types behind it. */
-async function typeInto(page: Page): Promise<void> {
-  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
-  await page.locator(".memo-row", { hasText: "장보기" }).click();
-  await expect(page.locator(".cm-content")).toHaveText("우유");
-  await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
-  await page.keyboard.insertText(" 계란");
-}
-
-/** Opens 장보기 (우유), types 「 계란」 behind 우유, and another app writes 두유 and is heard — in one
- * go. Between steps the save's timer can run out under load, and the save then writes the typed
- * text over 두유 before the change is heard: there would be no other app's text left to choose. */
-async function typeWhileChangedElsewhere(page: Page): Promise<void> {
-  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
-  await page.locator(".memo-row", { hasText: "장보기" }).click();
-  await expect(page.locator(".cm-content")).toHaveText("우유");
-  const change: OutsideChange = { kind: "workspace", changes: [{ kind: "modified", id: "a" }] };
-  await page.evaluate(
-    ([data, heard]) => {
-      const { app, backend } = window.__tote;
-      app.view.dispatch({
-        changes: { from: 2, insert: " 계란" },
-        selection: { anchor: 5 },
-        userEvent: "input.type",
-      });
-      Object.assign(backend.data.memos.a, { data, modifiedMs: 900 });
-      backend.outside(heard);
-    },
-    [fakeFile("두유"), change] as const,
-  );
 }
 
 const banner = (page: Page) => page.locator(".banner");
@@ -257,9 +232,7 @@ test("closing the window with two conflicts keeps every file as the other app le
 
 /** A conflict left open on 장보기 and a flush: the tab is now the new memo with the info banner. */
 async function keepConflict(page: Page): Promise<void> {
-  await typeInto(page);
-  await writeElsewhere(page, "a", "두유");
-  await outside(page, { kind: "modified", id: "a" });
+  await typeWhileChangedElsewhere(page);
   await expect(banner(page)).toBeVisible();
   await page.evaluate(() => window.__tote.backend.requestFlush(3));
   await expect
@@ -301,9 +274,7 @@ test("the conflict-kept banner ends with its tab", async ({ page }) => {
 });
 
 test("⌘W on a memo with the conflict open keeps the tab and says what to do", async ({ page }) => {
-  await typeInto(page);
-  await writeElsewhere(page, "a", "두유");
-  await outside(page, { kind: "modified", id: "a" });
+  await typeWhileChangedElsewhere(page);
   await expect(banner(page)).toBeVisible();
   await page.evaluate(() => window.__tote.backend.menu("close-tab"));
   await expect(page.locator(".status-message")).toHaveText(
