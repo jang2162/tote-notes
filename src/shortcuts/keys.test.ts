@@ -145,6 +145,7 @@ describe("editorBindings", () => {
     expect(named("CmdOrCtrl+L")).toContain("selectLine");
     expect(named("CmdOrCtrl+Shift+\\")).toContain("cursorMatchingBracket");
     expect(named("CmdOrCtrl+F")).toContain("openSearchPanel");
+    expect(named("Alt+CmdOrCtrl+F")).toEqual(["openSearchWithReplace"]);
     expect(named("Alt+CmdOrCtrl+Up")).toContain("addCursorAbove");
     // `mac:` wins: Mod-ArrowLeft is ⌥← on macOS, and ⌘← is another command's.
     expect(named("Alt+Left")).toContain("cursorGroupLeft");

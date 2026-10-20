@@ -210,6 +210,124 @@ test("⌘Z in the find field leaves the memo alone", async ({ page }) => {
   expect(await page.evaluate(() => window.view.state.doc.toString())).toBe(before);
 });
 
+const replaceRow = (page: Page) => page.locator(".find-bar-replace");
+const replaceInput = (page: Page) => page.locator("input.find-bar-input[name=replace]");
+const replaceToggle = (page: Page) => page.locator('button[name="replace-toggle"]');
+const doc = (page: Page) => page.evaluate(() => window.view.state.doc.toString());
+
+test("⇄ shows the replace row and remembers it", async ({ page }) => {
+  await openBar(page);
+  await expect(replaceRow(page)).toBeHidden();
+  await replaceToggle(page).click();
+  await expect(replaceRow(page)).toBeVisible();
+  await expect(replaceToggle(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(replaceInput(page)).toHaveAttribute("placeholder", "바꿀 내용");
+  await expect(page.locator('.find-bar-replace button[name="replace"]')).toHaveText("바꾸기");
+  await expect(page.locator('.find-bar-replace button[name="replace-all"]')).toHaveText(
+    "모두 바꾸기",
+  );
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".find-bar")).toHaveCount(0);
+  await page.keyboard.press("Meta+f");
+  await expect(input(page)).toBeFocused();
+  await expect(replaceRow(page)).toBeVisible();
+  await expect(replaceToggle(page)).toHaveAttribute("aria-pressed", "true");
+  // And ⇄ folds it again; the focus it was holding goes to the find field.
+  await replaceInput(page).focus();
+  await replaceToggle(page).click();
+  await expect(replaceRow(page)).toBeHidden();
+  await expect(replaceToggle(page)).toHaveAttribute("aria-pressed", "false");
+  await expect(input(page)).toBeFocused();
+});
+
+test("⌥⌘F opens with the replace row", async ({ page }) => {
+  await open(page);
+  await expect(page.locator(".find-bar")).toHaveCount(0);
+  await page.keyboard.press("Meta+Alt+f");
+  await expect(page.locator(".find-bar")).toBeVisible();
+  await expect(replaceRow(page)).toBeVisible();
+  await expect(replaceToggle(page)).toHaveAttribute("aria-pressed", "true");
+  await expect(input(page)).toBeFocused();
+});
+
+test("⌥⌘F in the open bar unfolds the replace row", async ({ page }) => {
+  await openBar(page);
+  await expect(replaceRow(page)).toBeHidden();
+  await page.keyboard.press("Meta+Alt+f");
+  await expect(replaceRow(page)).toBeVisible();
+  await expect(input(page)).toBeFocused();
+});
+
+/** "a a a" with the first `a` selected, the bar open on it and `b` to replace it with. */
+async function openReplace(page: Page) {
+  await open(page, "a a a");
+  await select(page, 0, 1);
+  await page.keyboard.press("Meta+Alt+f");
+  await expect(input(page)).toHaveValue("a");
+  await expect(count(page)).toHaveText("1 / 3");
+  await replaceInput(page).fill("b");
+}
+
+test("바꾸기 replaces the current result and moves on", async ({ page }) => {
+  await openReplace(page);
+  await page.locator('button[name="replace"]').click();
+  expect(await doc(page)).toBe("b a a");
+  expect(await main(page)).toEqual({ from: 2, to: 3 });
+  await expect(count(page)).toHaveText("1 / 2");
+  // Enter in the replace field does the same.
+  await expect(replaceInput(page)).toBeFocused();
+  await page.keyboard.press("Enter");
+  expect(await doc(page)).toBe("b b a");
+  expect(await main(page)).toEqual({ from: 4, to: 5 });
+  await expect(replaceInput(page)).toBeFocused();
+});
+
+test("모두 바꾸기 is one ⌘Z away", async ({ page }) => {
+  await openReplace(page);
+  await page.locator('button[name="replace-all"]').click();
+  expect(await doc(page)).toBe("b b b");
+  await expect(count(page)).toHaveText("결과 없음");
+  await page.locator(".cm-content").focus();
+  await page.keyboard.press("Meta+z");
+  expect(await doc(page)).toBe("a a a");
+  // ⌘Enter in the replace field replaces them all too.
+  await replaceInput(page).focus();
+  await page.keyboard.press("Meta+Enter");
+  expect(await doc(page)).toBe("b b b");
+  await page.locator(".cm-content").focus();
+  await page.keyboard.press("Meta+z");
+  expect(await doc(page)).toBe("a a a");
+});
+
+test("a regexp replace uses groups", async ({ page }) => {
+  await openReplace(page);
+  await toggle(page, "re").click();
+  await input(page).fill("(a)");
+  await replaceInput(page).fill("[$1]");
+  await page.locator('button[name="replace-all"]').click();
+  expect(await doc(page)).toBe("[a] [a] [a]");
+});
+
+test("a composing Enter in the replace field does not replace", async ({ page }) => {
+  await openReplace(page);
+  const prevented = await replaceInput(page).evaluate((el) =>
+    [true, false].map((isComposing) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "Enter",
+        code: "Enter",
+        isComposing,
+        bubbles: true,
+        cancelable: true,
+      });
+      if (!isComposing) Object.defineProperty(event, "keyCode", { value: 229 });
+      el.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  );
+  expect(prevented).toEqual([false, false]);
+  expect(await doc(page)).toBe("a a a");
+});
+
 /** The colour of each text in the bar and what it sits on, read as RGBA through a canvas pixel
  * (WebKit reports `color-mix()` as `color(srgb …)`, which `contrastRatio` does not read). */
 function barColours(page: Page) {
@@ -255,6 +373,8 @@ for (const scheme of ["dark", "light"] as const) {
     await page.addStyleTag({ url: "/src/styles.css" });
     await page.addStyleTag({ content: "body { display: block; }" });
     await expect(page.locator(".find-bar")).toHaveCSS("padding-top", "6px");
+    await replaceToggle(page).click();
+    await expect(replaceRow(page)).toBeVisible();
     await toggle(page, "case").click();
     await expect(count(page)).toHaveText("1 / 2");
     const states = [await barColours(page)];
@@ -263,7 +383,8 @@ for (const scheme of ["dark", "light"] as const) {
     await expect(count(page)).toHaveText("잘못된 정규식");
     states.push(await barColours(page));
     for (const colours of states) {
-      expect(colours.length).toBe(9);
+      // The find row's field, count and seven buttons; the replace row's field and two buttons.
+      expect(colours.length).toBe(12);
       for (const { what, fg, bg, base } of colours) {
         const ratio = contrastRatio(fg, bg, base);
         expect(ratio, `${what}: ${fg} on ${bg} over ${base}`).toBeGreaterThanOrEqual(4.5);

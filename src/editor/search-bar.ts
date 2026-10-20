@@ -4,11 +4,13 @@ import {
   findPrevious,
   getSearchQuery,
   openSearchPanel,
+  replaceAll,
+  replaceNext,
   search,
   SearchQuery,
   setSearchQuery,
 } from "@codemirror/search";
-import type { Extension } from "@codemirror/state";
+import { StateEffect, StateField, type Extension } from "@codemirror/state";
 import {
   runScopeHandlers,
   type Command,
@@ -30,18 +32,51 @@ export const openSearchBar: Command = (view) => {
   return true;
 };
 
+/** Unfolds (`true`) or folds the bar's replace row. */
+export const setReplaceOpen = StateEffect.define<boolean>();
+
+/** Whether the bar shows its replace row. It lives in the tab's state next to CodeMirror's search
+ * state, so a bar closed and opened again with ⌘F comes back as it was left. */
+export const replaceOpen = StateField.define<boolean>({
+  create: () => false,
+  update(open, tr) {
+    for (const effect of tr.effects) if (effect.is(setReplaceOpen)) open = effect.value;
+    return open;
+  },
+});
+
+/** ⌥⌘F: `openSearchBar` with the replace row unfolded. The focus still goes to the find field. */
+export const openSearchWithReplace: Command = (view) => {
+  if (!view.state.field(replaceOpen, false)) view.dispatch({ effects: setReplaceOpen.of(true) });
+  return openSearchBar(view);
+};
+
 /** The bar's own editor keys, tried ahead of `searchKeymap` in `editorKeymap`. */
 export const searchBarKeymap: readonly KeyBinding[] = [
   { key: "Mod-f", run: openSearchBar, scope: "editor search-panel" },
+  {
+    key: "Mod-Alt-f",
+    run: openSearchWithReplace,
+    scope: "editor search-panel",
+    preventDefault: true,
+  },
 ];
 
 type ToggleName = "case" | "word" | "re";
 
-function button(name: string, label: string, text: string, className: string) {
-  const element = h("button", { type: "button", name, class: className, title: label }, text);
-  element.setAttribute("aria-label", label);
-  // Clicking keeps the focus where it was, so the find field stays ready for typing.
+/** A button whose click keeps the focus where it was, so the field being typed in stays ready. */
+function textButton(name: string, text: string) {
+  const element = h("button", { type: "button", name, class: "find-bar-button" }, text);
   element.addEventListener("mousedown", (event) => event.preventDefault());
+  return element;
+}
+
+/** `textButton` for a symbol, which says what it does in its tooltip and label. */
+function button(name: string, label: string, text: string, className: string) {
+  const element = textButton(name, text);
+  element.className = className;
+  element.title = label;
+  element.setAttribute("aria-label", label);
   return element;
 }
 
@@ -50,13 +85,17 @@ function setPressed(element: HTMLElement, on: boolean) {
 }
 
 /** The find panel: a field with its option toggles, the result count, and the step, replace and
- * close buttons. Search, highlighting and the commands stay CodeMirror's. */
+ * close buttons; below it the replace row, folded unless `replaceOpen`. Search, highlighting and
+ * the commands stay CodeMirror's. */
 class SearchBar implements Panel {
   readonly dom: HTMLElement;
   readonly top = true;
   private readonly input: HTMLInputElement;
   private readonly toggles: Record<ToggleName, HTMLButtonElement>;
   private readonly count: HTMLElement;
+  private readonly replaceInput: HTMLInputElement;
+  private readonly replaceToggle: HTMLButtonElement;
+  private readonly replaceRow: HTMLElement;
   private query: SearchQuery;
   private frame = 0;
 
@@ -87,11 +126,30 @@ class SearchBar implements Panel {
     prev.addEventListener("click", () => findPrevious(view));
     const next = button("next", "다음 결과", "↓", "find-bar-icon");
     next.addEventListener("click", () => findNext(view));
-    // A place only: the replace row comes with the next step of the plan.
-    const replaceToggle = button("replace-toggle", "바꾸기 펼치기", "⇄", "find-bar-icon");
-    setPressed(replaceToggle, false);
+    this.replaceToggle = button("replace-toggle", "바꾸기 펼치기", "⇄", "find-bar-icon");
+    this.replaceToggle.addEventListener("click", () =>
+      view.dispatch({ effects: setReplaceOpen.of(!view.state.field(replaceOpen)) }),
+    );
     const close = button("close", "닫기", "×", "find-bar-icon");
     close.addEventListener("click", () => closeSearchPanel(view));
+    this.replaceInput = h("input", {
+      type: "text",
+      name: "replace",
+      placeholder: "바꿀 내용",
+      class: "find-bar-input",
+    });
+    this.replaceInput.setAttribute("aria-label", "바꿀 내용");
+    this.replaceInput.addEventListener("input", () => this.commit());
+    const replace = textButton("replace", "바꾸기");
+    replace.addEventListener("click", () => replaceNext(view));
+    const replaceEvery = textButton("replace-all", "모두 바꾸기");
+    replaceEvery.addEventListener("click", () => replaceAll(view));
+    this.replaceRow = h(
+      "div",
+      { class: "find-bar-replace" },
+      h("div", { class: "find-bar-field" }, this.replaceInput),
+      h("div", { class: "find-bar-actions" }, replace, replaceEvery),
+    );
 
     this.dom = h(
       "div",
@@ -107,15 +165,13 @@ class SearchBar implements Panel {
           this.toggles.word,
           this.toggles.re,
         ),
-        this.count,
-        prev,
-        next,
-        replaceToggle,
-        close,
+        h("div", { class: "find-bar-actions" }, this.count, prev, next, this.replaceToggle, close),
       ),
+      this.replaceRow,
     );
     this.dom.addEventListener("keydown", (event) => this.keydown(event));
     this.show(this.query);
+    this.showReplace(view.state.field(replaceOpen, false) ?? false);
     this.recount();
   }
 
@@ -131,6 +187,8 @@ class SearchBar implements Panel {
     // since `commit` keeps `this.query` up to date first.
     if (changed) this.show(query);
     if (changed || update.docChanged || update.selectionSet) this.scheduleCount();
+    const open = update.state.field(replaceOpen, false) ?? false;
+    if (open === this.replaceRow.hidden) this.showReplace(open);
   }
 
   destroy() {
@@ -146,6 +204,15 @@ class SearchBar implements Panel {
     } else if (event.key === "Enter" && event.target === this.input) {
       event.preventDefault();
       (event.shiftKey ? findPrevious : findNext)(this.view);
+    } else if (
+      event.key === "Enter" &&
+      event.target === this.replaceInput &&
+      !event.shiftKey &&
+      !event.altKey &&
+      !event.ctrlKey
+    ) {
+      event.preventDefault();
+      (event.metaKey ? replaceAll : replaceNext)(this.view);
     }
   }
 
@@ -158,7 +225,7 @@ class SearchBar implements Panel {
       wholeWord: pressed("word"),
       regexp: pressed("re"),
       literal: this.query.literal,
-      replace: this.query.replace,
+      replace: this.replaceInput.value,
     });
     if (query.eq(this.query)) return;
     this.query = query;
@@ -171,10 +238,18 @@ class SearchBar implements Panel {
   private show(query: SearchQuery) {
     this.query = query;
     if (this.input.value !== query.search) this.input.value = query.search;
+    if (this.replaceInput.value !== query.replace) this.replaceInput.value = query.replace;
     setPressed(this.toggles.case, query.caseSensitive);
     setPressed(this.toggles.word, query.wholeWord);
     setPressed(this.toggles.re, query.regexp);
     this.markInvalid(query);
+  }
+
+  private showReplace(open: boolean) {
+    this.replaceRow.hidden = !open;
+    setPressed(this.replaceToggle, open);
+    // ⇄ keeps the focus where it was: folding the row away from under it hands it to the find field.
+    if (!open && this.replaceRow.contains(this.view.root.activeElement)) this.input.focus();
   }
 
   private markInvalid(query: SearchQuery) {
@@ -203,5 +278,5 @@ class SearchBar implements Panel {
 
 /** CodeMirror's search with the find bar for its panel, at the top of the editor. */
 export function searchBar(): Extension {
-  return search({ top: true, createPanel: (view) => new SearchBar(view) });
+  return [replaceOpen, search({ top: true, createPanel: (view) => new SearchBar(view) })];
 }
