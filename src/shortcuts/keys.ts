@@ -275,7 +275,8 @@ function cmKeyToAccelerator(name: string): string | null {
 export const UNNAMED_EDITOR_COMMAND = "편집기 명령";
 
 /** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
- * same key with ⇧), named after the export of the function they run (`commandName`), or 편집기 명령 for one no module exports. */
+ * same key with ⇧), named after the export of the function they run (`commandName`), or 편집기 명령
+ * for one no module exports. */
 export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string; name: string }[] {
   return keymap.flatMap((binding) => {
     const name = binding.mac ?? binding.key;

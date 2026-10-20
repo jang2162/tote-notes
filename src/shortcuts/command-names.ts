@@ -87,7 +87,7 @@ import { insertIndent } from "../editor/setup";
 // A function's `name` is what a minifier renames (`selectLine` becomes `Qp`), so an editor command
 // is named by the identifier it is imported under instead. Only the commands `editorKeymap` binds
 // are listed, imported by name: the keymap already pulls them into the bundle, so the table adds no
-// code (a `import * as` of these packages does, and tree-shaking cannot drop it). A command added
+// code (an `import * as` of these packages does, and tree-shaking cannot drop it). A command added
 // to the keymap but not here shows as 편집기 명령; src/shortcuts/command-names.test.ts fails on it.
 const NAMED: Record<string, Function> = {
   deleteBracketPair,
@@ -174,9 +174,7 @@ const NAMED: Record<string, Function> = {
   insertIndent,
 };
 
-// Where two names are one function (`cursorLineBoundaryBackward` and `cursorLineBoundaryLeft`), the
-// later entry wins: the one the macOS key is named after. The order of NAMED is the tie-break, so
-// list the name to show last.
+// No export of the three packages is an alias of another today, so each function has one name here.
 const names = new Map<Function, string>();
 for (const [name, run] of Object.entries(NAMED)) names.set(run, name);
 

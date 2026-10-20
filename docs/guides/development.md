@@ -94,7 +94,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
 설정 화면이 편집기 키를 부르는 이름(`src/shortcuts/keys.ts` 의 `editorBindings`)은 `src/shortcuts/command-names.ts` 의 `commandName` 이 준다. 편집기 키맵(`editorKeymap`)에 걸린 명령만 이름으로 import 해 `Map<함수, 이름>` 을 만든다.
 
 - **Why:** 배포 빌드(vite 8/rolldown 압축)가 함수 이름을 `Qp` 같은 것으로 바꾼다. `Function.name` 에 기대면 `keepNames` 로 번들이 커지고 빌드 검사도 따로 있어야 했다. import 이름은 압축되지 않는다. `import * as` 로 패키지 전체를 모으면 tree-shaking 이 깨져 gzip 이 약 7kB 커지므로(측정함) 키맵이 쓰는 명령만 이름으로 import 한다. vitest·e2e 는 압축 전 코드를 돌려 이 문제를 잡지 못하므로 `Function.name` 을 읽는 코드를 되살리지 않는다.
-- **How to apply:** 키맵에 명령을 더하면 `command-names.ts` 의 표에도 더한다. `src/shortcuts/command-names.test.ts` 의 「names every command the editor keymap binds」 가 빠진 명령을 잡는다. 두 이름이 한 함수이면(`cursorLineBoundaryBackward`·`cursorLineBoundaryLeft`) 표에서 나중 항목이 이긴다.
+- **How to apply:** 키맵에 명령을 더하면 `command-names.ts` 의 표에도 더한다. `src/shortcuts/command-names.test.ts` 의 「names every command the editor keymap binds」 가 빠진 명령을 잡는다.
 
 ## e2e 는 메뉴 단축키를 누르지 못한다
 
