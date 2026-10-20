@@ -1167,8 +1167,6 @@ impl AppCore {
             .is_some_and(OpenWindow::is_leaving)
     }
 
-    /// Whether the window is between its round ending as a switch and `finish_switch`. Not the
-    /// page-side `switching` (`page_started`), which outlasts it.
     /// `OpenWindow::page_ready`. `drop_candidates` cannot tell it apart after a switch: the
     /// page-side `switching` is set and cleared at the same two places.
     #[cfg(test)]
@@ -1179,6 +1177,8 @@ impl AppCore {
             .is_some_and(|w| w.page_ready)
     }
 
+    /// Whether the window is between its round ending as a switch and `finish_switch`. Not the
+    /// page-side `switching` (`page_started`), which outlasts it.
     #[cfg(test)]
     fn is_switching(&self, label: &str) -> bool {
         lock(&self.inner)

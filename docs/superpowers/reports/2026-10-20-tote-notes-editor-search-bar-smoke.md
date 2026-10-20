@@ -54,14 +54,14 @@ open --env TOTE_DATA_DIR="$S" src-tauri/target/debug/bundle/macos/tote-dev.app
 
 구현 중 미룬 것. 모두 동작을 막지 않는 Minor 이거나 표본이 모자란 관찰이다.
 
-- **Task 1 Minor:** `src/styles.css` 의 새 변수와 `src/theme/vscode-theme.ts` 의 `DEFAULT_VARIABLES` 가 같은 값인지 고정하는 시험이 없다(둘을 손으로 맞춘다). 대비 계산 도구(`contrast`)가 `hsl()` 색을 읽지 못한다(지금 변수는 모두 hex).
-- **Task 2 Minor:** 개수 세기의 1000 경계(정확히 1000개에서 `capped:false`, 선택이 1000번째 결과일 때 `current` 1000)를 가르는 시험이 없다. 빈 일치 정규식 시험(`search-count.test.ts`)이 `total <= 상한` 만 단언해 약하다(`^` 는 100줄이면 100 이어야 한다는 식의 기대값을 더한다). 커서 위의 빈 일치가 current 로 잡히는 것이 의도임을 시험 한 줄로 못 박는다.
+- **Task 1 Minor:** `src/styles.css` 의 새 변수와 `src/theme/vscode-theme.ts` 의 `DEFAULT_VARIABLES` 가 같은 값인지 고정하는 시험이 없다(둘을 손으로 맞춘다). 대비 계산 도구(`contrast`)가 `hsl()` 색을 읽지 못한다(지금 변수는 모두 hex). (안정화 후속에서 해결, 커밋 `c61b878` `090dc1c`)
+- **Task 2 Minor:** 개수 세기의 1000 경계(정확히 1000개에서 `capped:false`, 선택이 1000번째 결과일 때 `current` 1000)를 가르는 시험이 없다. 빈 일치 정규식 시험(`search-count.test.ts`)이 `total <= 상한` 만 단언해 약하다(`^` 는 100줄이면 100 이어야 한다는 식의 기대값을 더한다). 커서 위의 빈 일치가 current 로 잡히는 것이 의도임을 시험 한 줄로 못 박는다. (안정화 후속에서 해결, 커밋 `c61b878`)
 - **e2e 잡음:** `Cross-origin script load denied …` 줄이 이 브랜치의 e2e 에서 세 번 중 한 번 보였다. base 표본이 모자라 변경 탓인지 가를 수 없고, Task 5 수정 회차의 전체 e2e(360 개, 부하 37)에서는 나오지 않았다. 표본이 적으니 다음 계획에서 계속 본다.
-- **기존 부하성 실패:** `windows.spec` 의 재시작 복원 시험이 부하가 걸린 전체 실행에서 실패한다(이 브랜치 이전부터).
-- **Task 1 Minor 2:** `src/theme/contrast.ts` 가 색 채널을 0~255, 알파를 0~1 로 자르지 않는다(범위 밖 값이 그대로 계산에 들어간다).
-- **Task 5 Minor:** 패널 열기 효과를 못 얻는 CodeMirror 에서는 다시 읽기마다 `console.error` 가 되풀이된다(`openPanelEffect` 가 실패를 기억하지 않는다).
+- **기존 부하성 실패:** `windows.spec` 의 재시작 복원 시험이 부하가 걸린 전체 실행에서 실패한다(이 브랜치 이전부터). (안정화 후속에서 해결, 커밋 `c128a80`)
+- **Task 1 Minor 2:** `src/theme/contrast.ts` 가 색 채널을 0~255, 알파를 0~1 로 자르지 않는다(범위 밖 값이 그대로 계산에 들어간다). (안정화 후속에서 해결, 커밋 `c61b878`)
+- **Task 5 Minor:** 패널 열기 효과를 못 얻는 CodeMirror 에서는 다시 읽기마다 `console.error` 가 되풀이된다(`openPanelEffect` 가 실패를 기억하지 않는다). (안정화 후속에서 해결, 커밋 `c61b878`)
 - **띠 옮기기의 CodeMirror 내부 의존:** 다시 읽기에서 띠를 옮기는 코드는 CodeMirror 가 밖에 내놓지 않는 패널 열기 효과를 가짜 view 로 얻는다. 라이브러리를 갱신하면 효과를 못 얻어 조용히 닫힘으로 떨어진다(단위 시험이 알린다).
-- **최종 재리뷰 Minor ①:** 새 e2e 「…counted once it rests」(`tests/e2e/search-bar.spec.ts`)가 「한 프레임 < 150ms」 에 기댄다. 부하로 프레임이 밀리면 실패할 수 있다 — `page.clock` 으로 타이머를 잡아 고친다.
-- **최종 재리뷰 Minor ②③:** 시간 예산(30ms)으로 멈춘 「n+」 는 아주 큰 메모에서 정확한 수로 풀리지 않는다(다시 셀 때마다 같은 예산). 1MB 근처 메모에서는 세기마다 「결과 없음」 과 「– / 0+」 를 오갈 수 있다. 조각 처리로 이어 세기를 검토한다.
+- **최종 재리뷰 Minor ①:** 새 e2e 「…counted once it rests」(`tests/e2e/search-bar.spec.ts`)가 「한 프레임 < 150ms」 에 기댄다. 부하로 프레임이 밀리면 실패할 수 있다 — `page.clock` 으로 타이머를 잡아 고친다. (안정화 후속에서 해결, 커밋 `7436f4f`)
+- **최종 재리뷰 Minor ②③:** 시간 예산(30ms)으로 멈춘 「n+」 는 아주 큰 메모에서 정확한 수로 풀리지 않는다(다시 셀 때마다 같은 예산). 1MB 근처 메모에서는 세기마다 「결과 없음」 과 「– / 0+」 를 오갈 수 있다. 조각 처리로 이어 세기를 검토한다. (안정화 후속에서 해결, 커밋 `78dc3cd`)
 - **최종 재리뷰 Minor ④:** `crossesLines`(`src/editor/search-count.ts`)가 CodeMirror 의 줄 넘김 판정을 복제한다. 라이브러리를 갱신할 때 함께 확인한다.
-- **최종 재리뷰 Minor ⑤⑥:** 이 브랜치 시험 「a reload leaves a closed bar closed」(`tests/e2e/search-bar-app.spec.ts`)와 워크스페이스 고르개 시험 「…gives the panes back」 이 병렬 부하에서 흔들린다(둘 다 이전 파일로도 재현). 같은 파일의 커서 위치 단언이 느슨해 「커서가 0 으로 감」 증상을 가릴 수 있다 — 두 흔들림에 공통인 그 증상부터 본다.
+- **최종 재리뷰 Minor ⑤⑥:** 이 브랜치 시험 「a reload leaves a closed bar closed」(`tests/e2e/search-bar-app.spec.ts`)와 워크스페이스 고르개 시험 「…gives the panes back」 이 병렬 부하에서 흔들린다(둘 다 이전 파일로도 재현). 같은 파일의 커서 위치 단언이 느슨해 「커서가 0 으로 감」 증상을 가릴 수 있다 — 두 흔들림에 공통인 그 증상부터 본다. (안정화 후속에서 해결, 커밋 `7436f4f` `9fb7fe4`)

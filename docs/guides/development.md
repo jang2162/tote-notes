@@ -68,6 +68,9 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - e2e 가 실패하면 다시 돌리기 전에 그 실행의 `test-results/` 를 다른 이름으로 옮기거나, 다시 돌릴 때 `--output <다른 폴더>` 를 준다. 다음 실행이 `test-results/` 를 지우고 새로 쓰므로 처음 실패한 메시지와 trace 가 남지 않는다. 보고에는 실패 메시지 첫 줄을 함께 적는다.
   - 원인을 찾을 때는 바뀌는 상태에 계측을 건다. 메모 목록이면 `window.__tote.app.memoList` 의 `upsert`·`setMemos`·`remove` 를 감싸 시각과 스택을 남기면 누가 늦게 무엇을 넣는지 보인다. 이 계측은 그 창의 메모 목록 하나만 본다. 다른 창이나 다른 상태(탭·배너)가 늦게 바뀌는 것은 그 객체를 따로 감싸야 보인다.
   - 편집기 상태가 늦게 되돌아가면 `EditorView` 의 갱신을 감싸 본다. 편집기의 레이아웃을 읽는 호출(`lineBlockAtHeight`·`coordsAtPos` 등)은 밀린 measure 를 그 자리에서 돌리고, 그 measure 의 갱신은 update listener 로 탭(`Doc.update`)에 간다. 그래서 탭이 state 를 바꾼 뒤(다시 읽기) 레이아웃을 읽으면 옛 state 의 갱신이 새 state 를 덮을 수 있다. `AppController.onUpdate` 는 탭이 지금 들고 있는 state 에서 시작하지 않은 갱신을 버린다.
+  - 시간 자체를 다루는 시험(타이머로 미룬 갱신, 이어 세기)은 `waitForTimeout` 대신 `page.clock` 을 쓴다. `page.clock.install({ time })` 을 로드 전에 부르고, `pauseAt` 으로 시계를 세운 뒤 `runFor(n)` 으로 옮긴다. 150ms 로 미룬 갱신이면 `runFor(149)` 에서 옛 값, `runFor(1)` 에서 새 값을 단언한다. 시계를 세워 두면 저장 타이머(`SESSION_DELAY_MS` 등)도 돌지 않으므로 「즉시 쓰기」 와 「타이머 쓰기」 를 가를 수 있다. `performance.now` 를 읽는 예산(검색 개수의 30ms)은 페이지 안에서 `performance.now` 를 감싸 「볼 때마다 n ms」 로 만든다(`search-bar.spec.ts` 의 `slowLooks`).
+  - 「일어나지 않음」 은 지연으로 증명하지 않는다. 가짜 백엔드의 쓰기 기록(`FakeData.memoWrites`·`layoutWrites`: 메모 id·창 라벨별로 성공한 쓰기 횟수)과 창의 `WriteScheduler.pending()`(대기·실행 중인 쓰기 키 수)을 쓴다. 대기 쓰기가 0 이 될 때까지 poll(`writesSettled`, `tests/e2e/helpers.ts`)한 뒤 `memoWrites` 가 늘지 않았음을 단언한다. 대기 중인 쓰기가 아직 예약 전이면 첫 poll 이 0 을 볼 수 있으므로 쓰기를 일으킨 쪽의 횟수(`layoutWrites` 등)가 늘 때까지 먼저 기다린다. `pending()` 은 세션 쓰기도 세어 판정이 늦어질 뿐 틀리지는 않는다.
+  - 다른 앱의 변경을 흉내 내는 시험(충돌 배너 등)은 입력·다른 앱의 쓰기·변경 알림을 한 `page.evaluate` 안에서 동기로 한다(`typeWhileChangedElsewhere`, `tests/e2e/helpers.ts`). 단계 사이에 저장 타이머(500ms)가 끝나면 저장이 다른 앱의 내용을 덮어써 충돌이 사라지거나 엉뚱한 쪽이 「디스크 버전」 이 된다.
   - 가짜 백엔드의 「불러오는 중」 은 타이머(`setTimeout`) 대신 테스트가 풀어 줄 때까지 붙잡아 만든다(`tests/e2e/memo.spec.ts` 의 `holdReads`). 타이머는 혼자 끝나서, 느린 실행에서는 그 상태가 이미 지나간 뒤에 키가 들어간다. `holdReads` 는 `readMemo`·`openExternal` 만 붙잡는다. 다른 읽기로 불러오는 중을 만들려면 그 호출을 더한다.
   - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
   - 목록·메뉴처럼 포커스를 가져가는 오버레이가 있는 화면에서는 포커스 이동의 부수 효과(조합 확정 등)가 구분력 시험을 조용히 약하게 만들 수 있다. 시험이 정말 보호 대상 코드 때문에 통과하는지 그 코드를 지워 실패하는지 본다.
@@ -84,6 +87,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - 이 패치를 지키는 시험은 `tests/e2e/highlight.spec.ts` 「colours that land just after the editor takes the focus leave the cursor in place」 다. 패치를 빼면 결정적으로 실패한다.
   - `node_modules` 의 파일을 직접 고치지 않는다. pnpm 저장소의 하드 링크라 다른 워크트리까지 바뀐다. 고칠 것은 `pnpm patch @codemirror/view@<판> --edit-dir <임시 폴더>` 로 풀고 고친 뒤 `pnpm patch-commit <임시 폴더>` 로 만든다.
   - `@codemirror/view` 를 올리면 패치의 판 이름이 맞지 않아 `pnpm install` 이 실패한다. 새 판의 `readSelectionRange` 를 보고, 그 분기가 `updateSelection` 전에 `selectionRange.setRange(range)` 를 하면(상위가 고쳤으면) `patchedDependencies` 항목과 패치 파일을 지운다. 아니면 새 판에 같은 한 줄로 패치를 다시 만들고 옛 패치를 지운다. 어느 쪽이든 위 시험을 돌린다.
+  - 패치는 `pnpm install` 때 적용된다. post-checkout 훅은 설치를 돌리지만 merge·pull 로 받은 체크아웃은 훅이 돌지 않으므로, 패치를 들이거나 바꾼 커밋을 merge·pull 로 받은 뒤에는 `pnpm install` 을 다시 돌린다.
 
 ## 편집기 명령의 이름은 `Function.name` 이 아니라 import 이름에서 얻는다
 

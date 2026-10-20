@@ -175,7 +175,8 @@ const NAMED: Record<string, Function> = {
 };
 
 // Where two names are one function (`cursorLineBoundaryBackward` and `cursorLineBoundaryLeft`), the
-// later entry wins: the one the macOS key is named after.
+// later entry wins: the one the macOS key is named after. The order of NAMED is the tie-break, so
+// list the name to show last.
 const names = new Map<Function, string>();
 for (const [name, run] of Object.entries(NAMED)) names.set(run, name);
 
