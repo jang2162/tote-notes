@@ -145,6 +145,7 @@ describe("editorBindings", () => {
     expect(named("CmdOrCtrl+L")).toContain("selectLine");
     expect(named("CmdOrCtrl+Shift+\\")).toContain("cursorMatchingBracket");
     expect(named("CmdOrCtrl+F")).toContain("openSearchPanel");
+    expect(named("Alt+CmdOrCtrl+F")).toEqual(["openSearchWithReplace"]);
     expect(named("Alt+CmdOrCtrl+Up")).toContain("addCursorAbove");
     // `mac:` wins: Mod-ArrowLeft is ⌥← on macOS, and ⌘← is another command's.
     expect(named("Alt+Left")).toContain("cursorGroupLeft");
@@ -205,6 +206,15 @@ describe("conflict", () => {
       name: "selectLine",
     });
     expect(conflict(table(), "rename", "Ctrl+Alt+CmdOrCtrl+J")).toBeNull();
+    // ⌘F is in the keymap twice, the find bar's ahead of CodeMirror's: one warning, the first.
+    expect(editorBindings().filter((b) => sameAccelerator(b.accelerator, "CmdOrCtrl+F"))).toEqual([
+      { accelerator: "CmdOrCtrl+F", name: "openSearchBar" },
+      { accelerator: "CmdOrCtrl+F", name: "openSearchPanel" },
+    ]);
+    expect(conflict(table(), "rename", "CmdOrCtrl+F")).toEqual({
+      kind: "editor",
+      name: "openSearchBar",
+    });
   });
 
   it("does not hold a command's own key against it", () => {

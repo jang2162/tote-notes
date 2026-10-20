@@ -1,0 +1,154 @@
+import { EditorState } from "@codemirror/state";
+import { SearchQuery } from "@codemirror/search";
+import { describe, expect, it } from "vitest";
+import {
+  COUNT_BUDGET_MS,
+  COUNT_LIMIT,
+  countLabel,
+  countMatches,
+  currentMatch,
+  findMatches,
+} from "./search-count";
+
+function state(doc: string, from = 0, to = from): EditorState {
+  return EditorState.create({ doc, selection: { anchor: from, head: to } });
+}
+
+describe("countMatches", () => {
+  it("ignores case by default and honours caseSensitive", () => {
+    const s = state("my my My");
+    expect(countMatches(s, new SearchQuery({ search: "my" })).total).toBe(3);
+    expect(countMatches(s, new SearchQuery({ search: "my", caseSensitive: true })).total).toBe(2);
+  });
+
+  it("numbers the match equal to the main selection, null for a bare cursor", () => {
+    const query = new SearchQuery({ search: "my" });
+    expect(countMatches(state("my my My", 3, 5), query).current).toBe(2);
+    expect(countMatches(state("my my My", 3), query).current).toBeNull();
+    expect(countMatches(state("my my My", 3, 4), query).current).toBeNull();
+  });
+
+  it("stops at the limit", () => {
+    const doc = "a ".repeat(5000);
+    const query = new SearchQuery({ search: "a" });
+    expect(countMatches(state(doc, 0, 1), query)).toEqual({
+      total: COUNT_LIMIT,
+      capped: true,
+      current: 1,
+    });
+    // The 4000th match starts at 2 * 3999.
+    expect(countMatches(state(doc, 7998, 7999), query).current).toBeNull();
+  });
+
+  it("an empty-matching regexp still finishes", () => {
+    const doc = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
+    for (const search of ["^", "a*"]) {
+      const count = countMatches(state(doc), new SearchQuery({ search, regexp: true }));
+      expect(count.total).toBeLessThanOrEqual(COUNT_LIMIT);
+    }
+  });
+});
+
+describe("findMatches", () => {
+  /** Every match of `query` in one cursor over the whole text, the way CodeMirror itself steps. */
+  function plain(s: EditorState, query: SearchQuery): number[] {
+    const starts: number[] = [];
+    const cursor = query.getCursor(s);
+    for (let next = cursor.next(); !next.done; next = cursor.next()) starts.push(next.value.from);
+    return starts;
+  }
+
+  // Over 200K characters, so the text is searched in several pieces.
+  const long = Array.from({ length: 6000 }, (_, i) => `line ${i} has my-word and MY word`).join(
+    "\n",
+  );
+
+  it("finds what one cursor over the whole text finds", () => {
+    const s = state(long);
+    for (const query of [
+      new SearchQuery({ search: "word" }),
+      new SearchQuery({ search: "my", wholeWord: true }),
+      new SearchQuery({ search: "^line 5", regexp: true }),
+      new SearchQuery({ search: "\\d+$", regexp: true }),
+      new SearchQuery({ search: "word\\nline", regexp: true }),
+      new SearchQuery({ search: "word\\nline 59" }),
+    ]) {
+      const found = findMatches(s, query, Infinity, Infinity);
+      expect(found.from, query.search).toEqual(plain(s, query));
+      expect(found.capped).toBe(false);
+    }
+  });
+
+  it("stops once the count has taken its time, keeping what it found", () => {
+    // The clock reads 0 when the count starts and past the budget at every later look.
+    const late = () => {
+      let started = false;
+      return () => (started ? COUNT_BUDGET_MS + 1 : ((started = true), 0));
+    };
+    const query = new SearchQuery({ search: "a" });
+    expect(
+      countMatches(state("a a a a", 2, 3), query, COUNT_LIMIT, COUNT_BUDGET_MS, late()),
+    ).toEqual({ total: 1, capped: true, current: null });
+    expect(
+      countMatches(state("a a a a", 0, 1), query, COUNT_LIMIT, COUNT_BUDGET_MS, late()),
+    ).toEqual({ total: 1, capped: true, current: 1 });
+    // A text with no match early on is cut too, not scanned to its end in one go.
+    const sparse = state(`${"x".repeat(100).concat("\n").repeat(2000)}needle`);
+    expect(
+      countMatches(
+        sparse,
+        new SearchQuery({ search: "needle" }),
+        COUNT_LIMIT,
+        COUNT_BUDGET_MS,
+        late(),
+      ),
+    ).toEqual({ total: 0, capped: true, current: null });
+    expect(
+      countMatches(
+        sparse,
+        new SearchQuery({ search: "needle" }),
+        COUNT_LIMIT,
+        COUNT_BUDGET_MS,
+        () => 0,
+      ),
+    ).toEqual({ total: 1, capped: false, current: null });
+  });
+});
+
+describe("currentMatch", () => {
+  it("finds the selection among the matches", () => {
+    const found = findMatches(state(long()), new SearchQuery({ search: "ab" }));
+    expect(found.from.length).toBe(500);
+    expect(currentMatch(found, { from: 0, to: 2 })).toBe(1);
+    expect(currentMatch(found, { from: 3 * 237, to: 3 * 237 + 2 })).toBe(238);
+    expect(currentMatch(found, { from: 3 * 499, to: 3 * 499 + 2 })).toBe(500);
+    expect(currentMatch(found, { from: 3 * 237, to: 3 * 237 + 1 })).toBeNull();
+    expect(currentMatch(found, { from: 1, to: 3 })).toBeNull();
+    expect(currentMatch(found, { from: 3 * 500, to: 3 * 500 })).toBeNull();
+  });
+
+  function long() {
+    return "ab ".repeat(500);
+  }
+});
+
+describe("countLabel", () => {
+  const some = (total: number, current: number | null, capped = false) => ({
+    total,
+    capped,
+    current,
+  });
+
+  it("formats each state", () => {
+    expect(countLabel(new SearchQuery({ search: "" }), null)).toBe("");
+    expect(countLabel(new SearchQuery({ search: "(", regexp: true }), null)).toBe("잘못된 정규식");
+    const q = new SearchQuery({ search: "x" });
+    expect(countLabel(q, some(0, null))).toBe("결과 없음");
+    expect(countLabel(q, some(12, 3))).toBe("3 / 12");
+    expect(countLabel(q, some(12, null))).toBe("– / 12");
+    expect(countLabel(q, some(1000, 17, true))).toBe("17 / 1000+");
+    // Cut by the time budget: at least this many, however few.
+    expect(countLabel(q, some(4, null, true))).toBe("– / 4+");
+    expect(countLabel(q, some(0, null, true))).toBe("– / 0+");
+  });
+});

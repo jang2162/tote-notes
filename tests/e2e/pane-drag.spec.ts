@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { panesByPosition, sessionPane, sessionPaneCount, start } from "./helpers";
+import { boxOf, centre, panesByPosition, sessionPane, sessionPaneCount, start } from "./helpers";
 
 // Dragging a tab between the panes of one window, on the fake backend. The drag is made of pointer
 // events (the spike could not confirm HTML5 drag and drop between tab bars in the app's webview), so
@@ -44,21 +44,6 @@ const memos = {
   c: fakeMemo("다.md", "셋째", { modifiedMs: 2 }),
   d: fakeMemo("라.md", "넷째", { modifiedMs: 1 }),
 };
-
-/** `locator`'s box. `boundingBox` does not wait, and right after a restore the tab bar is drawn
- * again: a box read while its tabs are being replaced is null, so it is read until there is one. */
-async function boxOf(
-  locator: Locator,
-): Promise<{ x: number; y: number; width: number; height: number }> {
-  let box: Awaited<ReturnType<Locator["boundingBox"]>> = null;
-  await expect.poll(async () => (box = await locator.boundingBox())).not.toBeNull();
-  return box!;
-}
-
-async function centre(locator: Locator): Promise<{ x: number; y: number }> {
-  const box = await boxOf(locator);
-  return { x: box.x + box.width / 2, y: box.y + box.height / 2 };
-}
 
 /** Presses on `from`'s middle and moves to `to` in steps; lets go unless `release` is false. */
 async function drag(

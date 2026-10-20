@@ -3,7 +3,7 @@
   color-scheme: light dark;
   --bg: #ffffff;
   --fg: #1f2328;
-  --muted: #6e7781;
+  --muted: #656d76;
   --border: #d8dee4;
   --accent: #0969da;
   --accent-fg: #ffffff;
@@ -17,6 +17,10 @@
   --line-number: #6e7781;
   --line-number-active: #1f2328;
   --panel-bg: #f6f8fa;
+  --input-bg: #ffffff;
+  --search-match: rgb(255 213 0 / 35%);
+  --search-match-current: rgb(255 140 0 / 45%);
+  --search-match-border: #b85c00;
   --large-text-font: ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace;
   --large-text-size: 14px;
   /* The editor settings replace these on the page's root; the large text viewer keeps its own. */
@@ -47,6 +51,10 @@
     --line-number: #8b9099;
     --line-number-active: #dcdee3;
     --panel-bg: #191a1d;
+    --input-bg: #141518;
+    --search-match: rgb(255 210 0 / 22%);
+    --search-match-current: rgb(255 140 0 / 40%);
+    --search-match-border: #e8892b;
   }
 }
 
@@ -581,6 +589,141 @@ body {
 
 .editor-host {
   height: 100%;
+}
+
+/* The editor's find bar (src/editor/search-bar.ts), a CodeMirror panel on top of the text. The
+ * panel container paints it `--panel-bg`. Its two rows share one grid, so the replace field lines
+ * up with the find field whichever row's buttons are wider. */
+.find-bar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 6px 4px;
+  padding: 6px 10px;
+}
+
+.find-bar-find,
+.find-bar-replace {
+  display: contents;
+}
+
+.find-bar-replace[hidden] {
+  display: none;
+}
+
+.find-bar-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* The find field, with the option toggles inside its right edge. */
+.find-bar-field {
+  display: flex;
+  flex: 1;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  height: 26px;
+  box-sizing: border-box;
+  padding-right: 2px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--input-bg);
+}
+
+.find-bar-field:focus-within {
+  border-color: var(--accent);
+}
+
+.find-bar-field:has(.find-bar-input[aria-invalid="true"]) {
+  border-color: var(--danger);
+}
+
+.find-bar-input {
+  flex: 1;
+  min-width: 0;
+  height: 100%;
+  padding: 0 0 0 8px;
+  border: none;
+  outline: none;
+  background: none;
+  color: var(--fg);
+  /* The memo's typeface shows spaces and symbols as they are there; the size stays put. */
+  font: 13px var(--editor-font);
+}
+
+.find-bar-input::placeholder {
+  color: var(--muted);
+}
+
+.find-bar-toggle,
+.find-bar-icon {
+  flex: none;
+  padding: 0;
+  border: 1px solid transparent;
+  background: none;
+  cursor: default;
+}
+
+.find-bar-toggle {
+  width: 22px;
+  height: 20px;
+  border-radius: 4px;
+  color: var(--muted);
+  font: 12px var(--editor-font);
+}
+
+.find-bar-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 5px;
+  color: var(--fg);
+  font-size: 14px;
+}
+
+.find-bar-toggle:hover,
+.find-bar-icon:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.find-bar-toggle[aria-pressed="true"],
+.find-bar-icon[aria-pressed="true"] {
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--fg);
+}
+
+.find-bar-button {
+  flex: none;
+  height: 24px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 5px;
+  background: var(--input-bg);
+  color: var(--fg);
+  font: inherit;
+  font-size: 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.find-bar-button:hover {
+  background: color-mix(in srgb, var(--accent) 8%, var(--input-bg));
+}
+
+.find-bar-count {
+  flex: none;
+  min-width: 52px;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+  text-align: center;
+  white-space: nowrap;
+}
+
+.find-bar-count.find-bar-error {
+  color: var(--danger);
 }
 
 .editor-placeholder {

@@ -10,7 +10,7 @@ import {
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
 import { indentUnit } from "@codemirror/language";
-import { highlightSelectionMatches, search, searchKeymap } from "@codemirror/search";
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
 import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
 import {
   crosshairCursor,
@@ -30,6 +30,7 @@ import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
 import { multiRangeIme, redoWithCursors, undoWithCursors } from "./ime";
 import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
+import { searchBar, searchBarKeymap } from "./search-bar";
 
 /** Tab: an indent unit at every cursor; with text selected, indents the selected lines. */
 export const insertIndent: Command = (view) => {
@@ -60,6 +61,7 @@ export const editorKeymap: readonly KeyBinding[] = [
   ...zedKeymap,
   ...closeBracketsKeymap,
   ...defaultKeymap,
+  ...searchBarKeymap,
   ...searchKeymap,
   ...historyKeymap,
 ];
@@ -133,6 +135,11 @@ const appTheme = EditorView.theme({
     { backgroundColor: "var(--selection)" },
   ".cm-activeLine": { backgroundColor: "var(--active-line)" },
   ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },
+  ".cm-searchMatch": { backgroundColor: "var(--search-match)" },
+  ".cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "var(--search-match-current)",
+    outline: "1px solid var(--search-match-border)",
+  },
   ".cm-panels": { backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
 });
@@ -164,7 +171,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     highlightSpecialChars(),
     highlightSelectionMatches(),
     closeBrackets(),
-    search({ top: true }),
+    searchBar(),
     multiRangeIme,
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName, options.languageId)),
