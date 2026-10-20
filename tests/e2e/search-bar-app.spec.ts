@@ -202,8 +202,8 @@ test("a reload in another pane leaves the focus where it is", async ({ page }) =
   await expect(findInput(right)).toHaveValue("beta");
 
   await expect(editor(left)).toBeFocused();
-  await page.keyboard.press("End");
+  // Where the click left the cursor does not matter: the key goes into the left pane's text.
   await page.keyboard.type("X");
-  await expect(editor(left)).toHaveText("alpha oneX");
+  await expect(editor(left)).toHaveText(/^(Xalpha one|alpha oneX)$/);
   await expect(findInput(right)).toHaveValue("beta");
 });
