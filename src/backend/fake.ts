@@ -92,6 +92,8 @@ export interface FakeData {
   clock: number;
   /** `readMemo` calls per memo ID — lets tests check that a restore loads lazily. */
   reads: Record<string, number>;
+  /** `writeMemo` calls that wrote, per memo ID — lets tests check that no save went out. */
+  memoWrites: Record<string, number>;
   flushed: { id: number; blocked?: string }[];
   windowClosed: boolean;
   settings: Settings;
@@ -221,6 +223,7 @@ export function defaultFakeData(): FakeData {
     notWorkspaces: [],
     clock: 1000,
     reads: {},
+    memoWrites: {},
     flushed: [],
     windowClosed: false,
     settings: {
@@ -576,6 +579,7 @@ export class FakeBackend implements Backend {
     const memo = this.memo(id);
     memo.data = toBase64(bytes);
     memo.modifiedMs = this.tick();
+    this.data.memoWrites[id] = (this.data.memoWrites[id] ?? 0) + 1;
     this.commit();
     this.memosTouched();
     return this.info(id, memo);

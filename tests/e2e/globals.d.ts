@@ -1,3 +1,4 @@
+import type { undoDepth } from "@codemirror/commands";
 import type { EditorSelection, EditorState } from "@codemirror/state";
 import type { EditorView } from "@codemirror/view";
 import type { IRawTheme } from "@shikijs/vscode-textmate";
@@ -60,7 +61,12 @@ declare global {
     BackendError: typeof BackendError;
     lineText(line: number): string;
     /** Set by src/main.ts when it runs on the fake backend. */
-    __tote: { app: AppController; backend: FakeBackend; ready: boolean };
+    __tote: {
+      app: AppController;
+      backend: FakeBackend;
+      ready: boolean;
+      undoDepth: typeof undoDepth;
+    };
     /** `dragOut` in tests/e2e/helpers.ts: the screen point of the pointer's last move. */
     lastScreenPoint?: { x: number; y: number };
     /** save-failure.spec.ts: while true the patched `keepExternalDraft` rejects. */

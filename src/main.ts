@@ -1,3 +1,5 @@
+import { undoDepth } from "@codemirror/commands";
+
 import { AppController } from "./app/controller";
 import type { Backend } from "./backend/types";
 
@@ -19,7 +21,9 @@ async function chooseBackend(): Promise<{ backend: Backend; fake: boolean }> {
 void (async () => {
   const { backend, fake } = await chooseBackend();
   const app = new AppController(document.body, backend);
-  const handle = { app, backend, ready: false };
+  // `undoDepth` is the app's own copy of the module: a copy the page imported apart would look
+  // for another history field and find none.
+  const handle = { app, backend, ready: false, undoDepth };
   // The UI tests drive the fake backend and inspect the editor through this handle.
   if (fake) Object.assign(window, { __tote: handle });
   try {

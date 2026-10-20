@@ -59,6 +59,17 @@ export async function ready(page: Page): Promise<void> {
   await page.waitForFunction(() => window.__tote?.ready === true);
 }
 
+/** Every write the window has scheduled — memo saves, its session — has run (`WriteScheduler`):
+ * a save a key or an edit scheduled has gone out by now, so what `memoWrites` says is final. */
+export async function writesSettled(page: Page): Promise<void> {
+  await expect.poll(() => page.evaluate(() => window.__tote.app.writes.pending())).toBe(0);
+}
+
+/** How many saves of memo `id` the fake has written. */
+export function memoWrites(page: Page, id: string): Promise<number> {
+  return page.evaluate((memo) => window.__tote.backend.data.memoWrites[memo] ?? 0, id);
+}
+
 /** A version 2 session of one window whose panes hold `tabs` side by side, each pane's first tab
  * active and `focusedPane` focused. */
 export function paneSession(tabs: object[][], focusedPane = 0): string {

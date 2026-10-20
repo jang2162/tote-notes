@@ -88,6 +88,24 @@ describe("WriteScheduler", () => {
     expect(s.pending("b")).toBe(false);
   });
 
+  it("pending with no key counts the keys with a write waiting or running", async () => {
+    const s = new WriteScheduler(() => {});
+    expect(s.pending()).toBe(0);
+    let finish = () => {};
+    s.schedule("a", 500, () => new Promise<void>((resolve) => (finish = resolve)));
+    s.schedule("b", 500, async () => {});
+    expect(s.pending()).toBe(2);
+    await vi.advanceTimersByTimeAsync(500);
+    // `a` is running, `b` is done.
+    expect(s.pending()).toBe(1);
+    finish();
+    await s.flushAll();
+    expect(s.pending()).toBe(0);
+    s.schedule("c", 500, async () => {});
+    s.cancel("c");
+    expect(s.pending()).toBe(0);
+  });
+
   it("cancel drops a pending write", async () => {
     const writes: string[] = [];
     const s = new WriteScheduler(() => {});

@@ -1,8 +1,21 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { FAKE_STORAGE_KEY, fakeMemo, type FakeData } from "../../src/backend/fake";
-import { parseSessionFile, sessionPanes } from "../../src/core/session";
-import { dragOut, menu, nextWindow, openWindow, panesByPosition, startWindows } from "./helpers";
+import {
+  parseSessionFile,
+  parseWindowSession,
+  sessionPanes,
+  type WindowSession,
+} from "../../src/core/session";
+import {
+  dragOut,
+  menu,
+  nextWindow,
+  openWindow,
+  panesByPosition,
+  startWindows,
+  writesSettled,
+} from "./helpers";
 
 // Windows of one workspace on the fake backend: each page is a window (`FakeHub`), sharing the
 // fake's data and hearing what the native side would tell it.
@@ -17,14 +30,24 @@ const memos = {
 const titles = (page: Page) => page.locator(".tab .tab-title");
 const activeTitle = (page: Page) => page.locator(".tab.active .tab-title");
 
+/** The memo tabs of a window's layout, in its order. */
+const memoTabs = (window: WindowSession) =>
+  sessionPanes(window.layout).flatMap((pane) =>
+    pane.tabs.flatMap((tab) => (tab.kind === "memo" ? [tab.memoId] : [])),
+  );
+
 /** The memo tabs of each window in the session file, in its order. */
 async function sessionWindows(page: Page): Promise<string[][]> {
   const text = await page.evaluate(() => window.__tote.backend.data.session);
-  return parseSessionFile(text).windows.map((window) =>
-    sessionPanes(window.layout).flatMap((pane) =>
-      pane.tabs.flatMap((tab) => (tab.kind === "memo" ? [tab.memoId] : [])),
-    ),
+  return parseSessionFile(text).windows.map(memoTabs);
+}
+
+/** The memo tabs of each open window in the layout the native side holds for it. */
+async function hubWindows(page: Page): Promise<string[][]> {
+  const layouts = await page.evaluate(
+    () => window.__tote.backend.data.hub?.windows.map((each) => each.layout) ?? [],
   );
+  return layouts.map((layout) => memoTabs(parseWindowSession(layout)));
 }
 
 async function openMemo(page: Page, name: string): Promise<void> {
@@ -97,12 +120,17 @@ test("two windows of one workspace come back after a restart", async ({ context 
   await openMemo(first, "가");
   const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
   await openMemo(second, "나");
+  // Both windows' layouts are in before the quit: a write after it changes nothing.
+  await expect.poll(() => hubWindows(first)).toEqual([["a"], ["b"]]);
   await expect.poll(() => sessionWindows(first)).toEqual([["a"], ["b"]]);
   await first.evaluate(() => window.__tote.backend.quit());
   await first.close();
   await second.close();
 
   const again = await openWindow(context, "ws-1");
+  // The first window writes its layout before the second one's page starts, as a slow page at
+  // launch lets it: the second window is reopened all the same and keeps its saved layout.
+  await writesSettled(again);
   const againSecond = await openWindow(context, "ws-2");
   await expect(titles(again)).toHaveText(["가"]);
   await expect(again.locator(".cm-content")).toHaveText("첫째");

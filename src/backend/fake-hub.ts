@@ -34,6 +34,10 @@ export interface HubState {
   labels: number;
   /** The window a reveal brought forward last. */
   focused: string | null;
+  /** The saved layouts of the windows reopened at launch whose pages have not started yet, in
+   * order. The native side makes every window before any page runs, so a layout written meanwhile
+   * keeps theirs. Absent in old seeds. */
+  reopening?: unknown[];
 }
 
 const placeKey = (tab: TabRef) => (tab.kind === "memo" ? `memo:${tab.id}` : `external:${tab.path}`);
@@ -56,13 +60,14 @@ export class FakeHub {
 
   /** The page has started. A window the hub knows — made by `adopt` or `openFresh`, or a page
    * loaded again — keeps its layout; any other is reopened from the next layout of the session
-   * file, as at launch. */
+   * file, as at launch. The first page of a launch stands for the native side reopening every
+   * saved window: the ones whose pages have not started yet wait in `reopening`. */
   register(data: FakeData): void {
     const hub = state(data);
     hub.labels = Math.max(hub.labels, Number(this.label.replace(/^ws-/, "")) || 0);
     if (hub.windows.some((window) => window.label === this.label)) return;
-    const saved = parseSessionFile(data.session).windows;
-    hub.windows.push({ label: this.label, layout: saved[hub.windows.length] ?? null });
+    if (!hub.windows.length) hub.reopening = parseSessionFile(data.session).windows;
+    hub.windows.push({ label: this.label, layout: hub.reopening?.shift() ?? null });
   }
 
   /** The other windows. */
@@ -154,8 +159,9 @@ function nextLabel(data: FakeData): string {
 }
 
 function writeSession(data: FakeData): void {
-  const windows = state(data)
-    .windows.map((window) => window.layout)
-    .filter((layout) => layout !== null);
+  const hub = state(data);
+  const windows = [...hub.windows.map((window) => window.layout), ...(hub.reopening ?? [])].filter(
+    (layout) => layout !== null,
+  );
   data.session = JSON.stringify({ version: 2, windows });
 }

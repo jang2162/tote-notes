@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { dragOut, hold, menu, quietErrors, start } from "./helpers";
+import { dragOut, hold, memoWrites, menu, quietErrors, start, writesSettled } from "./helpers";
 
 // 「탭을 새 창으로 옮기기」 in one window on the fake backend: what leaves this window and what the
 // backend is handed (`data.tornOff`). tests/e2e/windows.spec.ts opens the new window too.
@@ -103,6 +103,8 @@ test("a tab being torn off does not take its editor back when shown again", asyn
     await page.locator(".tab", { hasText: "나" }).click();
     await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
     await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "false");
+    // The tab's click leaves the keys on the tab: they go where a shown editor would take them.
+    await page.evaluate(() => window.__tote.app.view.focus());
     await page.keyboard.insertText("x");
   };
 
@@ -110,8 +112,9 @@ test("a tab being torn off does not take its editor back when shown again", asyn
   let release = await hold(page, "tearOffGate");
   await menu(page, MOVE);
   await away();
-  // Past the memo save delay: a save the key scheduled would have run.
-  await page.waitForTimeout(600);
+  // A save the key scheduled would have run by the time nothing is left to write.
+  await writesSettled(page);
+  expect(await memoWrites(page, "b")).toBe(0);
   expect(await memoText(page, "b")).toBe("둘째");
   await release();
   await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);

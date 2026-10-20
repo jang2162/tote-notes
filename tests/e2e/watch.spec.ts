@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
 import type { OutsideChange, WorkspaceChange } from "../../src/backend/types";
-import { ready, sessionPane, start } from "./helpers";
+import { memoWrites, ready, sessionPane, start, writesSettled } from "./helpers";
 
 /** What another app does to memo `id`: new contents, stamped later than anything seeded. */
 async function writeElsewhere(page: Page, id: string, text: string): Promise<void> {
@@ -26,6 +26,29 @@ async function typeInto(page: Page): Promise<void> {
   await expect(page.locator(".cm-content")).toHaveText("우유");
   await page.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await page.keyboard.insertText(" 계란");
+}
+
+/** Opens 장보기 (우유), types 「 계란」 behind 우유, and another app writes 두유 and is heard — in one
+ * go. Between steps the save's timer can run out under load, and the save then writes the typed
+ * text over 두유 before the change is heard: there would be no other app's text left to choose. */
+async function typeWhileChangedElsewhere(page: Page): Promise<void> {
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유");
+  const change: OutsideChange = { kind: "workspace", changes: [{ kind: "modified", id: "a" }] };
+  await page.evaluate(
+    ([data, heard]) => {
+      const { app, backend } = window.__tote;
+      app.view.dispatch({
+        changes: { from: 2, insert: " 계란" },
+        selection: { anchor: 5 },
+        userEvent: "input.type",
+      });
+      Object.assign(backend.data.memos.a, { data, modifiedMs: 900 });
+      backend.outside(heard);
+    },
+    [fakeFile("두유"), change] as const,
+  );
 }
 
 const banner = (page: Page) => page.locator(".banner");
@@ -59,17 +82,15 @@ test("a memo changed outside is reread silently with the cursor in place", async
 test("an external change while typing shows the conflict banner and keeps the typed text", async ({
   page,
 }) => {
-  await typeInto(page);
-  // Within the half second before the save.
-  await writeElsewhere(page, "a", "두유");
-  await outside(page, { kind: "modified", id: "a" });
+  await typeWhileChangedElsewhere(page);
   await expect(banner(page)).toBeVisible();
   await expect(banner(page).locator(".banner-text")).toHaveText(
     "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?",
   );
   await expect(page.locator(".cm-content")).toHaveText("우유 계란");
-  // The save waits for the choice.
-  await page.waitForTimeout(1000);
+  // The save waits for the choice: its timer runs out and writes nothing.
+  await writesSettled(page);
+  expect(await memoWrites(page, "a")).toBe(0);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("두유");
 
   await banner(page).getByRole("button", { name: "내 버전" }).click();
@@ -81,16 +102,19 @@ test("an external change while typing shows the conflict banner and keeps the ty
 });
 
 test("디스크 버전 replaces the text and clears the banner", async ({ page }) => {
-  await typeInto(page);
-  await writeElsewhere(page, "a", "두유");
-  await outside(page, { kind: "modified", id: "a" });
+  await typeWhileChangedElsewhere(page);
   await banner(page).getByRole("button", { name: "디스크 버전" }).click();
   await expect(page.locator(".cm-content")).toHaveText("두유");
   await expect(banner(page)).toBeHidden();
   // A new state, not an edit: ⌘Z has nothing to take back into the typed text.
+  expect(await page.evaluate(() => window.__tote.undoDepth(window.__tote.app.view.state))).toBe(0);
+  // In the editor: the banner's button has the keys after the click.
+  await page.locator(".cm-content").focus();
   await page.keyboard.press("Meta+z");
   await expect(page.locator(".cm-content")).toHaveText("두유");
-  await page.waitForTimeout(700);
+  // Nor anything to save: the typed text's save was dropped, and ⌘Z scheduled none.
+  await writesSettled(page);
+  expect(await memoWrites(page, "a")).toBe(0);
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("두유");
 });
 
