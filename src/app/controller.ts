@@ -1269,6 +1269,9 @@ export class AppController implements DocHost, PaneHost {
   }
 
   private onUpdate(doc: Doc, update: ViewUpdate): void {
+    // From a state the tab has replaced since: a reread puts the new text in, then reads the scroll
+    // position, which runs the view's pending measure on the old state. It must not bring it back.
+    if (update.startState !== doc.state) return;
     doc.update(update);
     const pane = this.paneOf(doc);
     if (doc !== pane.tabs.active || !(update.docChanged || update.selectionSet)) return;

@@ -54,6 +54,27 @@ test("a memo changed outside is reread silently with the cursor in place", async
     .toBe("청!소\n빨래");
 });
 
+test("a memo reread while the editor has a layout to measure shows the new text", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("우유");
+  await writeElsewhere(page, "a", "우유\n계란");
+  // The editor's size changes in the same task, as when the find bar closes: the measure it waits
+  // for runs as the reread reads the scroll position, before the new text is put in.
+  await page.evaluate(() => {
+    const { app, backend } = window.__tote;
+    app.view.dom.style.width = "60%";
+    app.view.requestMeasure();
+    backend.outside({ kind: "workspace", changes: [{ kind: "modified", id: "a" }] });
+  });
+  await expect(page.locator(".cm-content")).toHaveText("우유계란");
+  expect(
+    await page.evaluate(() => window.__tote.app.focused.tabs.active?.state?.doc.toString()),
+  ).toBe("우유\n계란");
+});
+
 test("an external change while typing shows the conflict banner and keeps the typed text", async ({
   page,
 }) => {

@@ -60,6 +60,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - 재현: `uptime` 을 적고 `TOTE_E2E_PORT=<워크트리 전용 포트> pnpm exec playwright test <파일> -g "<제목>" --repeat-each=20` 을 돈다. vitest 는 `--repeat-each` 가 없으니 `pnpm exec vitest run <파일>` 을 20번 돌린다. 부하는 결과마다 함께 적는다. 부하 15~28 에서 20번에 1~2번 나던 실패가 부하 10 에서는 0번일 수 있다.
   - e2e 가 실패하면 다시 돌리기 전에 그 실행의 `test-results/` 를 다른 이름으로 옮기거나, 다시 돌릴 때 `--output <다른 폴더>` 를 준다. 다음 실행이 `test-results/` 를 지우고 새로 쓰므로 처음 실패한 메시지와 trace 가 남지 않는다. 보고에는 실패 메시지 첫 줄을 함께 적는다.
   - 원인을 찾을 때는 바뀌는 상태에 계측을 건다. 메모 목록이면 `window.__tote.app.memoList` 의 `upsert`·`setMemos`·`remove` 를 감싸 시각과 스택을 남기면 누가 늦게 무엇을 넣는지 보인다. 이 계측은 그 창의 메모 목록 하나만 본다. 다른 창이나 다른 상태(탭·배너)가 늦게 바뀌는 것은 그 객체를 따로 감싸야 보인다.
+  - 편집기 상태가 늦게 되돌아가면 `EditorView` 의 갱신을 감싸 본다. 편집기의 레이아웃을 읽는 호출(`lineBlockAtHeight`·`coordsAtPos` 등)은 밀린 measure 를 그 자리에서 돌리고, 그 measure 의 갱신은 update listener 로 탭(`Doc.update`)에 간다. 그래서 탭이 state 를 바꾼 뒤(다시 읽기) 레이아웃을 읽으면 옛 state 의 갱신이 새 state 를 덮을 수 있다. `AppController.onUpdate` 는 탭이 지금 들고 있는 state 에서 시작하지 않은 갱신을 버린다.
   - 가짜 백엔드의 「불러오는 중」 은 타이머(`setTimeout`) 대신 테스트가 풀어 줄 때까지 붙잡아 만든다(`tests/e2e/memo.spec.ts` 의 `holdReads`). 타이머는 혼자 끝나서, 느린 실행에서는 그 상태가 이미 지나간 뒤에 키가 들어간다. `holdReads` 는 `readMemo`·`openExternal` 만 붙잡는다. 다른 읽기로 불러오는 중을 만들려면 그 호출을 더한다.
   - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
   - 목록·메뉴처럼 포커스를 가져가는 오버레이가 있는 화면에서는 포커스 이동의 부수 효과(조합 확정 등)가 구분력 시험을 조용히 약하게 만들 수 있다. 시험이 정말 보호 대상 코드 때문에 통과하는지 그 코드를 지워 실패하는지 본다.
