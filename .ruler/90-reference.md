@@ -19,4 +19,5 @@
 | tote-notes 자유 분할·탭 끌어 떼어 내기 계획을 실행할 때                                            | `docs/superpowers/plans/2026-10-19-tote-notes-free-splits-and-tab-drag.md`        |
 | tote-notes 설정 화면·편집기 설정(줄번호·글꼴)·단축키 설정을 고치거나 그 설계를 바꿀 때             | `docs/superpowers/specs/2026-10-20-tote-notes-settings-and-shortcuts-design.md`   |
 | tote-notes 설정·단축키 계획을 실행할 때                                                            | `docs/superpowers/plans/2026-10-20-tote-notes-settings-and-shortcuts.md`          |
+| tote-notes 편집기 검색 띠(⌘F)를 고치거나 그 설계를 바꿀 때                                         | `docs/superpowers/specs/2026-10-20-tote-notes-editor-search-bar-design.md`        |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                | `docs/guides/development.md`                                                      |
