@@ -283,20 +283,27 @@ test("바꾸기 replaces the current result and moves on", async ({ page }) => {
 });
 
 test("모두 바꾸기 is one ⌘Z away", async ({ page }) => {
-  await openReplace(page);
+  await open(page, "a a a");
+  // Typing just before: one ⌘Z takes back the replace and stops short of the typing.
+  await select(page, 5, 5);
+  await page.keyboard.type(" x");
+  await select(page, 0, 1);
+  await page.keyboard.press("Meta+Alt+f");
+  await expect(count(page)).toHaveText("1 / 3");
+  await replaceInput(page).fill("b");
   await page.locator('button[name="replace-all"]').click();
-  expect(await doc(page)).toBe("b b b");
+  expect(await doc(page)).toBe("b b b x");
   await expect(count(page)).toHaveText("결과 없음");
   await page.locator(".cm-content").focus();
   await page.keyboard.press("Meta+z");
-  expect(await doc(page)).toBe("a a a");
+  expect(await doc(page)).toBe("a a a x");
   // ⌘Enter in the replace field replaces them all too.
   await replaceInput(page).focus();
   await page.keyboard.press("Meta+Enter");
-  expect(await doc(page)).toBe("b b b");
+  expect(await doc(page)).toBe("b b b x");
   await page.locator(".cm-content").focus();
   await page.keyboard.press("Meta+z");
-  expect(await doc(page)).toBe("a a a");
+  expect(await doc(page)).toBe("a a a x");
 });
 
 test("a regexp replace uses groups", async ({ page }) => {

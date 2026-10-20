@@ -25,6 +25,7 @@ import type { WriteScheduler } from "../core/scheduler";
 import { restoreSelection, type SelectionJSON, type ViewMode } from "../core/session";
 import { memoTitle, titleLine } from "../core/title";
 import type { LanguageData } from "../editor/language-config";
+import { carrySearch } from "../editor/search-bar";
 import type { BannerAction, BannerState } from "../ui/banner";
 
 // Spec 「저장」·「크기별 단계」.
@@ -349,8 +350,11 @@ export abstract class Doc {
     } else {
       this.eol = decoded.eol;
       this.bom = decoded.bom;
-      const selection = this.state?.selection.toJSON() as SelectionJSON | undefined;
+      const old = this.state;
+      const selection = old?.selection.toJSON() as SelectionJSON | undefined;
       this.setText(decoded.text, (doc) => restoreSelection(selection, doc), longest);
+      // The find bar stays open over the new text, with the search it had.
+      if (old && this.state) this.state = this.state.update({ effects: carrySearch(old) }).state;
       this.loaded();
     }
     this.host.changed(this, "reloaded");

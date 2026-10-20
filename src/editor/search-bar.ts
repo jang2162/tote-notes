@@ -7,10 +7,11 @@ import {
   replaceAll,
   replaceNext,
   search,
+  searchPanelOpen,
   SearchQuery,
   setSearchQuery,
 } from "@codemirror/search";
-import { StateEffect, StateField, type Extension } from "@codemirror/state";
+import { EditorState, StateEffect, StateField, type Extension } from "@codemirror/state";
 import {
   runScopeHandlers,
   type Command,
@@ -45,11 +46,47 @@ export const replaceOpen = StateField.define<boolean>({
   },
 });
 
+/** `replaceOpen` in `state`; folded in a state without the bar. */
+function isReplaceOpen(state: EditorState): boolean {
+  return state.field(replaceOpen, false) ?? false;
+}
+
 /** ⌥⌘F: `openSearchBar` with the replace row unfolded. The focus still goes to the find field. */
 export const openSearchWithReplace: Command = (view) => {
-  if (!view.state.field(replaceOpen, false)) view.dispatch({ effects: setReplaceOpen.of(true) });
+  if (!isReplaceOpen(view.state)) view.dispatch({ effects: setReplaceOpen.of(true) });
   return openSearchBar(view);
 };
+
+let panelOpener: StateEffect<unknown> | undefined;
+
+/** CodeMirror's effect that opens the search panel, which it does not export: it is taken from
+ * what `openSearchPanel` dispatches for a closed panel, the one case that touches nothing of the
+ * view but its state and `dispatch`. */
+function openPanelEffect(): StateEffect<unknown> {
+  if (!panelOpener) {
+    let effects: readonly StateEffect<unknown>[] = [];
+    const view = {
+      state: EditorState.create({ extensions: search() }),
+      dispatch: (spec: { effects: readonly StateEffect<unknown>[] }) => (effects = spec.effects),
+    };
+    openSearchPanel(view as unknown as EditorView);
+    panelOpener = effects.find((effect) => !effect.is(setSearchQuery));
+    if (!panelOpener) throw new Error("openSearchPanel dispatched no panel effect");
+  }
+  return panelOpener;
+}
+
+/** The effects that open the bar in a new state of `from`'s tab as it is open in `from` — query,
+ * options and replace row — or none when it is closed there. A reload builds a new state, which
+ * would otherwise drop the bar from under the search going on in it. */
+export function carrySearch(from: EditorState): StateEffect<unknown>[] {
+  if (!searchPanelOpen(from)) return [];
+  return [
+    setSearchQuery.of(getSearchQuery(from)),
+    setReplaceOpen.of(isReplaceOpen(from)),
+    openPanelEffect(),
+  ];
+}
 
 /** The bar's own editor keys, tried ahead of `searchKeymap` in `editorKeymap`. */
 export const searchBarKeymap: readonly KeyBinding[] = [
@@ -65,16 +102,15 @@ export const searchBarKeymap: readonly KeyBinding[] = [
 type ToggleName = "case" | "word" | "re";
 
 /** A button whose click keeps the focus where it was, so the field being typed in stays ready. */
-function textButton(name: string, text: string) {
-  const element = h("button", { type: "button", name, class: "find-bar-button" }, text);
+function textButton(name: string, text: string, className = "find-bar-button") {
+  const element = h("button", { type: "button", name, class: className }, text);
   element.addEventListener("mousedown", (event) => event.preventDefault());
   return element;
 }
 
 /** `textButton` for a symbol, which says what it does in its tooltip and label. */
 function button(name: string, label: string, text: string, className: string) {
-  const element = textButton(name, text);
-  element.className = className;
+  const element = textButton(name, text, className);
   element.title = label;
   element.setAttribute("aria-label", label);
   return element;
@@ -128,7 +164,7 @@ class SearchBar implements Panel {
     next.addEventListener("click", () => findNext(view));
     this.replaceToggle = button("replace-toggle", "바꾸기 펼치기", "⇄", "find-bar-icon");
     this.replaceToggle.addEventListener("click", () =>
-      view.dispatch({ effects: setReplaceOpen.of(!view.state.field(replaceOpen)) }),
+      view.dispatch({ effects: setReplaceOpen.of(!isReplaceOpen(view.state)) }),
     );
     const close = button("close", "닫기", "×", "find-bar-icon");
     close.addEventListener("click", () => closeSearchPanel(view));
@@ -171,7 +207,7 @@ class SearchBar implements Panel {
     );
     this.dom.addEventListener("keydown", (event) => this.keydown(event));
     this.show(this.query);
-    this.showReplace(view.state.field(replaceOpen, false) ?? false);
+    this.showReplace(isReplaceOpen(view.state));
     this.recount();
   }
 
@@ -187,8 +223,9 @@ class SearchBar implements Panel {
     // since `commit` keeps `this.query` up to date first.
     if (changed) this.show(query);
     if (changed || update.docChanged || update.selectionSet) this.scheduleCount();
-    const open = update.state.field(replaceOpen, false) ?? false;
-    if (open === this.replaceRow.hidden) this.showReplace(open);
+    const open = isReplaceOpen(update.state);
+    // The row's `hidden` mirrors the field: shown while open, so equal values mean they disagree.
+    if (this.replaceRow.hidden === open) this.showReplace(open);
   }
 
   destroy() {
