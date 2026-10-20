@@ -380,6 +380,30 @@ test("line numbers show by default and switch off in every tab and window", asyn
   await expect(second.locator(".cm-lineNumbers")).toHaveCount(0);
 });
 
+test("line numbers switch in a window whose tabs include a viewer that has no editor state", async ({
+  page,
+}) => {
+  // The sandboxed viewer's probe of its parent is reported as a SecurityError, whenever it runs.
+  const errors: Error[] = [];
+  page.on("pageerror", (error) => error.name !== "SecurityError" && errors.push(error));
+  await start(page, {
+    memos: lineMemos,
+    files: { "/x/사진.png": fakeFile(new Uint8Array([0x89, 0x50, 0x4e, 0x47])) },
+    picks: ["/x/사진.png"],
+    session: paneSession([[{ kind: "memo", memoId: "a" }]]),
+  });
+  await menu(page, "open-file");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  await patch(page, { editorLineNumbers: false });
+  // The memo tab behind the viewer was reconfigured and nothing threw on the viewer.
+  await page.locator(".tab", { hasText: "가" }).click();
+  await expect(page.locator(".cm-content")).toContainText("첫째");
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(0);
+  await patch(page, { editorLineNumbers: true });
+  await expect(page.locator(".cm-lineNumbers")).toHaveCount(1);
+  expect(errors).toEqual([]);
+});
+
 // The change event is the backend's to every window (`broadcast_config`), not only the saver's.
 test("line numbers switch off in a window that was open before the change", async ({ context }) => {
   const first = await startWindows(context, {
@@ -530,6 +554,18 @@ test("the editor section saves line numbers, font size and font at once", async 
   await expect(lineNumbers).not.toBeChecked();
   await expect(size).toHaveValue("24");
   await expect(font).toHaveValue("Menlo");
+});
+
+test("a font size with a fraction is saved as the whole number nearest it", async ({ page }) => {
+  await start(page);
+  const panel = await openSection(page, "편집기");
+  const size = panel.getByLabel("글꼴 크기");
+  await size.fill("14.5");
+  await size.press("Enter");
+  await expect(size).toHaveValue("15");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.editor.fontSize))
+    .toBe(15);
 });
 
 test("a font size or font whose save failed is sent again as it is", async ({ page }) => {

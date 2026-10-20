@@ -62,12 +62,14 @@ export const openSearchWithReplace: Command = (view) => {
 const RECOUNT_DELAY_MS = 150;
 
 let panelOpener: StateEffect<unknown> | undefined;
+/** Set once the effect could not be had: the reloads after that go without it and say nothing. */
+let panelOpenerFailed = false;
 
 /** CodeMirror's effect that opens the search panel, which it does not export: it is taken from
  * what `openSearchPanel` dispatches for a closed panel, the one case that touches nothing of the
  * view but its state and `dispatch`. `undefined` when a later CodeMirror does it otherwise. */
 function openPanelEffect(): StateEffect<unknown> | undefined {
-  if (!panelOpener) {
+  if (!panelOpener && !panelOpenerFailed) {
     let effects: readonly StateEffect<unknown>[] = [];
     const view = {
       state: EditorState.create({ extensions: search() }),
@@ -78,10 +80,14 @@ function openPanelEffect(): StateEffect<unknown> | undefined {
       // `effects` is one effect or an array of them, as a transaction spec takes it.
       panelOpener = [effects].flat().find((effect) => !effect.is(setSearchQuery));
     } catch (error) {
+      panelOpenerFailed = true;
       console.error("the search panel's effect could not be had", error);
       return undefined;
     }
-    if (!panelOpener) console.error("openSearchPanel dispatched no panel effect");
+    if (!panelOpener) {
+      panelOpenerFailed = true;
+      console.error("openSearchPanel dispatched no panel effect");
+    }
   }
   return panelOpener;
 }

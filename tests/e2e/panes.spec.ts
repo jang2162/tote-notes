@@ -5,6 +5,7 @@ import type { OutsideChange } from "../../src/backend/types";
 import {
   layoutSession,
   menu,
+  paneSession,
   panesByPosition,
   ready,
   sessionPane,
@@ -34,27 +35,6 @@ const memoTab = (memoId: string, selection?: number) =>
         memoId,
         selection: { ranges: [{ anchor: selection, head: selection }], main: 0 },
       };
-
-/** A version 2 session of one window whose panes hold `tabs`, each pane's first tab active. */
-function session(
-  tabs: object[][],
-  options: { focusedPane?: number; widths?: number[] } = {},
-): string {
-  const widths = options.widths ?? tabs.map(() => 1 / tabs.length);
-  return JSON.stringify({
-    version: 2,
-    windows: [
-      {
-        panes: tabs.map((each, index) => ({
-          tabs: each,
-          activeTab: each.length ? 0 : -1,
-          width: widths[index],
-        })),
-        focusedPane: options.focusedPane ?? 0,
-      },
-    ],
-  });
-}
 
 const memos = {
   a: fakeMemo("가.md", "첫째", { modifiedMs: 4 }),
@@ -152,7 +132,7 @@ test("⌘\\ moves the active tab into a new pane on the right", async ({ page })
 });
 
 test("⌘\\ with one tab opens an empty pane and focuses it", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
   await expect(titles(page, 0)).toHaveText(["가"]);
   await menu(page, "split-pane");
   await expect(panes(page)).toHaveCount(2);
@@ -180,7 +160,7 @@ test("⌘\\ in a narrow window says so and does nothing", async ({ page }) => {
 test("closing the last tab of a pane closes the pane", async ({ page }) => {
   await start(page, {
     memos,
-    session: session([[memoTab("a")], [memoTab("b")], [memoTab("c")]], {
+    session: paneSession([[memoTab("a")], [memoTab("b")], [memoTab("c")]], {
       focusedPane: 1,
       widths: [0.25, 0.25, 0.5],
     }),
@@ -202,7 +182,7 @@ test("closing the last tab of a pane closes the pane", async ({ page }) => {
 });
 
 test("⌘W on an empty pane closes it; the only pane stays", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
   await expect(titles(page, 0)).toHaveText(["가"]);
   await menu(page, "split-pane");
   await expect(panes(page)).toHaveCount(2);
@@ -221,7 +201,7 @@ test("⌘W on an empty pane closes it; the only pane stays", async ({ page }) =>
 });
 
 test("the sidebar opens a memo in the focused pane", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], [memoTab("b")]]) });
   await expect(titles(page, 1)).toHaveText(["나"]);
   await page.locator(".memo-row", { hasText: "다" }).click();
   await expect(titles(page, 0)).toHaveText(["가", "다"]);
@@ -238,7 +218,7 @@ test("the sidebar opens a memo in the focused pane", async ({ page }) => {
 test("⌥⌘→ and ⌥⌘← move the focus and the status bar follows", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("가.qqq", "첫째\n둘째 줄"), b: fakeMemo("나.zzz", "하나") },
-    session: session([[memoTab("a", 4)], [memoTab("b", 0)]]),
+    session: paneSession([[memoTab("a", 4)], [memoTab("b", 0)]]),
   });
   await expect(editor(page, 0)).toBeFocused();
   await expect(page.locator(".status-position")).toHaveText("줄 2, 열 2");
@@ -267,7 +247,7 @@ test("⌥⌘→ and ⌥⌘← move the focus and the status bar follows", async 
 test("tab cycling stays inside the focused pane", async ({ page }) => {
   await start(page, {
     memos,
-    session: session(
+    session: paneSession(
       [
         [memoTab("a"), memoTab("b")],
         [memoTab("c"), memoTab("d")],
@@ -286,7 +266,10 @@ test("tab cycling stays inside the focused pane", async ({ page }) => {
 });
 
 test("a memo already open in another pane is focused there, not opened twice", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b"), memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a")], [memoTab("b"), memoTab("c")]]),
+  });
   await expect(pane(page, 0)).toHaveClass(/\bfocused\b/);
   await page.locator(".memo-row", { hasText: "다" }).click();
   await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
@@ -300,7 +283,7 @@ test("a memo already open in another pane is focused there, not opened twice", a
 test("a search result in a memo of another pane opens there at the match", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "하나\n둘 foo") },
-    session: session([[memoTab("a")], [memoTab("b")]]),
+    session: paneSession([[memoTab("a")], [memoTab("b")]]),
   });
   await expect(pane(page, 0)).toHaveClass(/\bfocused\b/);
   await menu(page, "search-workspace");
@@ -314,7 +297,7 @@ test("a search result in a memo of another pane opens there at the match", async
 });
 
 test("leaving a pane retitles its memo", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")], []], { focusedPane: 1 }) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], []], { focusedPane: 1 }) });
   await expect(pane(page, 1)).toHaveClass(/\bfocused\b/);
   await menu(page, "new-memo");
   await expect(editor(page, 1)).toBeFocused();
@@ -330,7 +313,7 @@ test("leaving a pane retitles its memo", async ({ page }) => {
 test("keys after ⌥⌘→ into a preview pane do not reach the pane left", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("회의.md", "# 회의 준비\n") },
-    session: session([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
+    session: paneSession([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
   });
   await expect(editor(page, 0)).toBeFocused();
   await expect(pane(page, 1).locator("iframe.viewer-frame")).toHaveCount(1);
@@ -342,7 +325,7 @@ test("keys after ⌥⌘→ into a preview pane do not reach the pane left", asyn
 test("a click inside a pane's preview focuses that pane", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("회의.md", "# 회의 준비\n") },
-    session: session([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
+    session: paneSession([[memoTab("a")], [{ ...memoTab("b"), mode: "preview" }]]),
   });
   await expect(editor(page, 0)).toBeFocused();
   const frame = pane(page, 1).locator("iframe.viewer-frame");
@@ -362,7 +345,7 @@ test("a click inside a pane's preview focuses that pane", async ({ page }) => {
 test("each pane keeps its own banner and preview mode", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("회의.md", "# 회의 준비\n"), b: fakeMemo("나.md", "둘째") },
-    session: session([[memoTab("a")], [memoTab("b")]]),
+    session: paneSession([[memoTab("a")], [memoTab("b")]]),
   });
   await expect(editor(page, 0)).toBeFocused();
   await menu(page, "toggle-preview");
@@ -389,7 +372,7 @@ test("dragging the divider resizes and stops at 320px", async ({ page }) => {
   // An editing area of 992px — 1232px less the 240px sidebar: two panes of
   // 496px, the line between them the right one's border.
   await page.setViewportSize({ width: 1232, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], [memoTab("b")]]) });
   await expect(panes(page)).toHaveCount(2);
   const width = (index: number) =>
     pane(page, index).evaluate((el) => el.getBoundingClientRect().width);
@@ -419,7 +402,7 @@ test("dragging the divider resizes and stops at 320px", async ({ page }) => {
 test("the panes, their widths and the focused pane come back after a restart", async ({ page }) => {
   await start(page, {
     memos,
-    session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]], {
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]], {
       focusedPane: 0,
       widths: [0.7, 0.3],
     }),
@@ -448,7 +431,7 @@ test("the panes, their widths and the focused pane come back after a restart", a
 test("a session listing one memo in two panes restores it once", async ({ page }) => {
   await start(page, {
     memos,
-    session: session([
+    session: paneSession([
       [memoTab("a"), memoTab("b")],
       [memoTab("a"), memoTab("c")],
     ]),
@@ -491,7 +474,7 @@ test("widths keep their ratios in a window too narrow for them", async ({ page }
 });
 
 test("a composition in progress lands in its own pane before the focus moves", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a", 2)], [memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a", 2)], [memoTab("b")]]) });
   await expect(editor(page, 0)).toBeFocused();
   // The text is drawn: the composition goes at its position 2.
   await expect(editor(page, 0)).toHaveText("첫째");
@@ -815,7 +798,7 @@ const PNG = Uint8Array.from(
 
 test("an empty pane says how to start and its button makes a memo there", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a")], []], { focusedPane: 0 }) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], []], { focusedPane: 0 }) });
   const [left, right] = await panesByPosition(page);
   await expect(left.locator(".tab")).toHaveCount(1);
   const help = right.locator(".editor-placeholder");
@@ -868,7 +851,7 @@ async function saveShortcuts(page: Page, shortcuts: Record<string, string | null
 
 test("the empty pane hint follows the new memo shortcut", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a")], []], { focusedPane: 0 }) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], []], { focusedPane: 0 }) });
   const [, right] = await panesByPosition(page);
   const hint = right.locator(".editor-placeholder p").nth(1);
   await expect(hint).toHaveText(EMPTY_HINT);
@@ -902,7 +885,7 @@ test("the preview hint follows the toggle preview shortcut", async ({ page }) =>
 test("a double click on the tab bar's free space opens a new memo as the last tab", async ({
   page,
 }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await expect(activeTitle(page, 0)).toHaveText("가");
   const bar = pane(page, 0).locator(".tabbar");
@@ -939,7 +922,7 @@ test("a double click on the tab bar's free space opens a new memo as the last ta
 });
 
 test("a double click on a tab opens nothing", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await pane(page, 0).locator(".tab", { hasText: "나" }).dblclick();
   await expect(activeTitle(page, 0)).toHaveText("나");
@@ -954,7 +937,7 @@ test("the help never shows over a viewer or an open memo", async ({ page }) => {
     memos,
     files: { "/x/점.png": fakeFile(PNG) },
     picks: ["/x/점.png"],
-    session: session([[memoTab("a")], []]),
+    session: paneSession([[memoTab("a")], []]),
   });
   await expect(panes(page)).toHaveCount(2);
   const [left, right] = await panesByPosition(page);
@@ -972,7 +955,7 @@ test("a tab's menu splits it into a new pane below", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, {
     memos,
-    session: session([[memoTab("a"), memoTab("b")]]),
+    session: paneSession([[memoTab("a"), memoTab("b")]]),
     tabMenuPick: "split-tab-bottom",
   });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
@@ -989,7 +972,7 @@ test("a tab's menu splits it into a new pane on the left", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 720 });
   await start(page, {
     memos,
-    session: session([[memoTab("a")], [memoTab("b"), memoTab("c")]]),
+    session: paneSession([[memoTab("a")], [memoTab("b"), memoTab("c")]]),
     tabMenuPick: "split-tab-left",
   });
   await expect(titles(page, 1)).toHaveText(["나", "다"]);
@@ -1005,7 +988,7 @@ test("a tab's menu splits a pane's only tab into an empty new pane", async ({ pa
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, {
     memos,
-    session: session([[memoTab("a")]]),
+    session: paneSession([[memoTab("a")]]),
     tabMenuPick: "split-tab-right",
   });
   await expect(titles(page, 0)).toHaveText(["가"]);
@@ -1022,7 +1005,7 @@ test("a tab's menu in a narrow window says so and splits nothing", async ({ page
   await page.setViewportSize({ width: 860, height: 720 });
   await start(page, {
     memos,
-    session: session([[memoTab("a"), memoTab("b")]]),
+    session: paneSession([[memoTab("a"), memoTab("b")]]),
     tabMenuPick: "split-tab-right",
   });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
@@ -1033,7 +1016,7 @@ test("a tab's menu in a narrow window says so and splits nothing", async ({ page
 });
 
 test("a press and a move on the tab bar's empty part start no drag", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   const bar = (await pane(page, 0).locator(".tabbar").boundingBox())!;
   const last = (await pane(page, 0).locator(".tab").last().boundingBox())!;
@@ -1050,7 +1033,7 @@ test("a press and a move on the tab bar's empty part start no drag", async ({ pa
 
 // One block (title, hint, button) in the middle of the pane, not spread over its height.
 test("the empty pane notice sits together in the middle", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
   await menu(page, "split-pane");
   const area = pane(page, 1).locator(".editor-placeholder");
   const body = area.locator(".editor-placeholder-body");

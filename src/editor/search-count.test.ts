@@ -40,12 +40,42 @@ describe("countMatches", () => {
     expect(countMatches(state(doc, 7998, 7999), query).current).toBeNull();
   });
 
+  it("is not capped at exactly the limit, and numbers the match that is the last one counted", () => {
+    const doc = "a ".repeat(COUNT_LIMIT);
+    const query = new SearchQuery({ search: "a" });
+    expect(countMatches(state(doc), query)).toEqual({
+      total: COUNT_LIMIT,
+      capped: false,
+      current: null,
+    });
+    const last = 2 * (COUNT_LIMIT - 1);
+    expect(countMatches(state(doc, last, last + 1), query)).toEqual({
+      total: COUNT_LIMIT,
+      capped: false,
+      current: COUNT_LIMIT,
+    });
+  });
+
   it("an empty-matching regexp still finishes", () => {
     const doc = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
-    for (const search of ["^", "a*"]) {
-      const count = countMatches(state(doc), new SearchQuery({ search, regexp: true }));
-      expect(count.total).toBeLessThanOrEqual(COUNT_LIMIT);
-    }
+    // One empty match at each of the 100 line starts; `a*` matches empty at every position.
+    expect(countMatches(state(doc), new SearchQuery({ search: "^", regexp: true }))).toMatchObject({
+      total: 100,
+      capped: false,
+    });
+    const every = countMatches(state(doc), new SearchQuery({ search: "a*", regexp: true }));
+    expect(every.total).toBeLessThanOrEqual(COUNT_LIMIT);
+  });
+
+  it("numbers an empty match under the cursor as the current one", () => {
+    // Line starts are 0, 2 and 4: the cursor on the second line start is the second match.
+    expect(
+      countMatches(state("a\nb\nc", 2), new SearchQuery({ search: "^", regexp: true })),
+    ).toEqual({
+      total: 3,
+      capped: false,
+      current: 2,
+    });
   });
 });
 

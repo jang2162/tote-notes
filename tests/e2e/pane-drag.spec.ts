@@ -1,7 +1,15 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { boxOf, centre, panesByPosition, sessionPane, sessionPaneCount, start } from "./helpers";
+import {
+  boxOf,
+  centre,
+  paneSession,
+  panesByPosition,
+  sessionPane,
+  sessionPaneCount,
+  start,
+} from "./helpers";
 
 // Dragging a tab between the panes of one window, on the fake backend. The drag is made of pointer
 // events (the spike could not confirm HTML5 drag and drop between tab bars in the app's webview), so
@@ -20,23 +28,6 @@ const titlesIn = (target: Locator) => target.locator(".tab .tab-title");
 const mask = (page: Page) => page.locator(".drop-mask");
 
 type Box = { x: number; y: number; width: number; height: number };
-
-/** A version 2 session of one window whose panes hold `tabs`, each pane's first tab active. */
-function session(tabs: object[][], focusedPane = 0): string {
-  return JSON.stringify({
-    version: 2,
-    windows: [
-      {
-        panes: tabs.map((each) => ({
-          tabs: each,
-          activeTab: each.length ? 0 : -1,
-          width: 1 / tabs.length,
-        })),
-        focusedPane,
-      },
-    ],
-  });
-}
 
 const memos = {
   a: fakeMemo("가.md", "첫째", { modifiedMs: 4 }),
@@ -92,7 +83,7 @@ test("dragging a tab onto another pane's tab bar moves it there", async ({ page 
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, {
     memos,
-    session: session([
+    session: paneSession([
       [memoTab("a"), memoTab("b")],
       [memoTab("c"), memoTab("d")],
     ]),
@@ -111,7 +102,7 @@ test("dragging a tab onto another pane's tab bar moves it there", async ({ page 
 });
 
 test("dragging a tab within its tab bar puts it where it is dropped", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b"), memoTab("c")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
   await drag(page, tab(page, 0, "가"), await before(tab(page, 0, "다")));
   await expect(titles(page, 0)).toHaveText(["나", "가", "다"]);
@@ -119,7 +110,7 @@ test("dragging a tab within its tab bar puts it where it is dropped", async ({ p
 });
 
 test("a tab dropped on an empty pane goes into it", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], []]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")], []]) });
   await expect(panes(page)).toHaveCount(2);
   await drag(page, tab(page, 0, "나"), await centre(pane(page, 1).locator(".surface")));
   await expect(titles(page, 1)).toHaveText(["나"]);
@@ -130,7 +121,7 @@ test("a tab dropped on an empty pane goes into it", async ({ page }) => {
 
 test("the mask covers the half a drop on the right edge would take", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   const box = await boxOf(pane(page, 0));
   await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 7 / 8, 1 / 2), false);
@@ -163,7 +154,10 @@ test("the mask covers the whole pane in the middle, and a drop there puts the ta
   page,
 }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   await expect(titles(page, 1)).toHaveText(["다"]);
   await drag(page, tab(page, 0, "가"), await inBody(pane(page, 1), 1 / 2, 1 / 2), false);
   await expectMask(page, await boxOf(pane(page, 1)));
@@ -177,7 +171,7 @@ test("the mask covers the whole pane in the middle, and a drop there puts the ta
 
 test("dropping on the bottom edge stacks a new pane below", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   const box = await boxOf(pane(page, 0));
   await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 1 / 2, 15 / 16), false);
@@ -201,7 +195,10 @@ test("dropping on the bottom edge stacks a new pane below", async ({ page }) => 
 
 test("dropping on the top edge of another pane splits that pane", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   await expect(titles(page, 1)).toHaveText(["다"]);
   const before = await boxOf(pane(page, 1));
   await drag(page, tab(page, 0, "나"), await inBody(pane(page, 1), 1 / 2, 1 / 16), false);
@@ -229,7 +226,10 @@ test("dropping on the top edge of another pane splits that pane", async ({ page 
 
 test("a pane emptied by a drag closes", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   await expect(titles(page, 1)).toHaveText(["다"]);
   await drag(page, tab(page, 1, "다"), await inBody(pane(page, 0), 1 / 2, 1 / 2));
   await expect(panes(page)).toHaveCount(1);
@@ -243,7 +243,7 @@ test("a pane emptied by a drag closes", async ({ page }) => {
 test("a side too small to split shows the whole pane instead", async ({ page }) => {
   // An editing area of 600px: a half would be under 320px.
   await page.setViewportSize({ width: 840, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   const box = await boxOf(pane(page, 0));
   expect(Math.round(box.width)).toBe(600);
@@ -257,7 +257,7 @@ test("a side too small to split shows the whole pane instead", async ({ page }) 
 
 test("a lone tab over its own pane's edge shows no mask and stays", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
   await expect(titles(page, 0)).toHaveText(["가"]);
   // Its middle shows the mask, so the mask going away at the edge is the edge's doing.
   await drag(page, tab(page, 0, "가"), await inBody(pane(page, 0), 1 / 2, 1 / 2), false);
@@ -274,7 +274,7 @@ test("a lone tab over its own pane's edge shows no mask and stays", async ({ pag
 test("dragging the last tab out closes its pane", async ({ page }) => {
   await start(page, {
     memos,
-    session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]], 1),
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]], { focusedPane: 1 }),
   });
   await expect(panes(page)).toHaveCount(2);
   const bar = pane(page, 0).locator(".tabbar");
@@ -290,7 +290,10 @@ test("dragging the last tab out closes its pane", async ({ page }) => {
 });
 
 test("a moved memo keeps its unsaved text and its undo", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   await editor(page, 0).click();
   await page.keyboard.press("Meta+ArrowDown");
   await page.keyboard.type("!!");
@@ -308,7 +311,7 @@ test("a moved memo keeps its unsaved text and its undo", async ({ page }) => {
 test("a drop near the right edge of a narrow window goes into the pane too", async ({ page }) => {
   // An editing area of 572px, too narrow to split.
   await page.setViewportSize({ width: 812, height: 720 });
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await drag(page, tab(page, 0, "가"), await rightEdge(page));
   await expect(titles(page, 0)).toHaveText(["나", "가"]);
@@ -318,7 +321,10 @@ test("a drop near the right edge of a narrow window goes into the pane too", asy
 });
 
 test("Esc during a drag calls it off", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   await drag(page, tab(page, 0, "나"), await before(tab(page, 1, "다")), false);
   await expect(page.locator(".tab.drop-before")).toHaveCount(1);
   await expect(mask(page)).toHaveCount(0);
@@ -337,7 +343,10 @@ test("Esc during a drag calls it off", async ({ page }) => {
 });
 
 test("a press that moves no more than 4px is a click", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]) });
+  await start(page, {
+    memos,
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+  });
   const { x, y } = await centre(tab(page, 0, "나"));
   await page.mouse.move(x, y);
   await page.mouse.down();
@@ -354,7 +363,7 @@ test("a file dropped from Finder still opens as a tab", async ({ page }) => {
   await start(page, {
     memos,
     files: { "/x/a.sh": fakeFile("echo hi\n") },
-    session: session([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
+    session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
   });
   await drag(page, tab(page, 0, "나"), await before(tab(page, 1, "다")));
   await expect(titles(page, 1)).toHaveText(["나", "다"]);
@@ -367,7 +376,7 @@ test("a file dropped from Finder still opens as a tab", async ({ page }) => {
 test("a composition in progress lands before its tab moves", async ({ page }) => {
   await start(page, {
     memos,
-    session: session([
+    session: paneSession([
       [{ ...memoTab("a"), selection: { ranges: [{ anchor: 2, head: 2 }], main: 0 } }],
       [memoTab("b")],
     ]),
@@ -436,7 +445,7 @@ test("a composition in progress lands in its memo before a drag splits", async (
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, {
     memos,
-    session: session([
+    session: paneSession([
       [{ ...memoTab("a"), selection: { ranges: [{ anchor: 2, head: 2 }], main: 0 } }, memoTab("b")],
     ]),
   });
@@ -508,7 +517,7 @@ test("a composition in progress lands in its memo before a drag splits", async (
 test("a pane the move empties closes and the session follows, though the target cannot show the tab", async ({
   page,
 }) => {
-  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], [memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가"]);
   await expect(titles(page, 1)).toHaveText(["나"]);
   await page.evaluate(async () => {
@@ -522,7 +531,7 @@ test("a pane the move empties closes and the session follows, though the target 
 });
 
 test("closePane leaves a pane that still has tabs", async ({ page }) => {
-  await start(page, { memos, session: session([[memoTab("a")], [memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a")], [memoTab("b")]]) });
   await expect(titles(page, 1)).toHaveText(["나"]);
   await page.evaluate(() => window.__tote.app.closePane(window.__tote.app.panes[1]));
   await expect(panes(page)).toHaveCount(2);
@@ -532,7 +541,7 @@ test("closePane leaves a pane that still has tabs", async ({ page }) => {
 test("a drag goes on and ends cleanly when the pointer cannot be captured", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await start(page, { memos, session: session([[memoTab("a"), memoTab("b")]]) });
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b")]]) });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await page.evaluate(() => {
     Element.prototype.setPointerCapture = () => {

@@ -25,6 +25,31 @@ describe("contrastRatio", () => {
     );
   });
 
+  it("clamps channels to 0..255 and alpha to 0..1", () => {
+    expect(contrastRatio("rgb(300 0 0)", "#fff")).toBeCloseTo(
+      contrastRatio("rgb(255 0 0)", "#fff"),
+      5,
+    );
+    expect(contrastRatio("rgb(-20 0 0)", "#fff")).toBeCloseTo(
+      contrastRatio("rgb(0 0 0)", "#fff"),
+      5,
+    );
+    expect(contrastRatio("rgb(0 0 0 / 2)", "#fff")).toBeCloseTo(contrastRatio("#000", "#fff"), 5);
+    expect(contrastRatio("rgb(0 0 0 / -1)", "#fff")).toBeCloseTo(1, 5);
+  });
+
+  it("reads hsl() and hsla()", () => {
+    expect(contrastRatio("hsl(0 0% 0%)", "#fff")).toBeCloseTo(contrastRatio("#000", "#fff"), 5);
+    expect(contrastRatio("hsl(0, 100%, 50%)", "#fff")).toBeCloseTo(
+      contrastRatio("#f00", "#fff"),
+      5,
+    );
+    expect(contrastRatio("hsla(120deg 100% 25% / 50%)", "#fff")).toBeCloseTo(
+      contrastRatio("rgb(0 127.5 0 / 0.5)", "#fff"),
+      5,
+    );
+  });
+
   it("reads #rgb and throws on a colour it cannot read", () => {
     expect(contrastRatio("#000", "#fff")).toBeCloseTo(21, 2);
     expect(() => contrastRatio("#zzz", "#fff")).toThrow();

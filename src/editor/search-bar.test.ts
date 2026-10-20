@@ -33,7 +33,14 @@ function opened(search: Search, state: EditorState, query: string): EditorState 
 
 describe("carrySearch", () => {
   beforeEach(() => vi.spyOn(console, "error").mockImplementation(() => {}));
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(async () => {
+    vi.restoreAllMocks();
+    // A test's stand-in for `openSearchPanel` would otherwise outlive it.
+    const actual = await vi.importActual<Search>("@codemirror/search");
+    vi.mocked((await import("@codemirror/search")).openSearchPanel).mockImplementation(
+      actual.openSearchPanel,
+    );
+  });
 
   it("opens the bar in a new state with the query it had", async () => {
     const { search, bar } = await load();
@@ -61,6 +68,28 @@ describe("carrySearch", () => {
     });
 
     expect(bar.carrySearch(from)).toEqual([]);
+    expect(console.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells of a panel effect it cannot have once, and stays quiet on the reloads after", async () => {
+    const { search, bar } = await load();
+    const extensions = bar.searchBar();
+    const from = opened(search, EditorState.create({ doc: "alpha", extensions }), "alpha");
+    vi.mocked(search.openSearchPanel).mockImplementation(() => {
+      throw new TypeError("view.dom is undefined");
+    });
+
+    for (let reloads = 0; reloads < 3; reloads++) expect(bar.carrySearch(from)).toEqual([]);
+    expect(console.error).toHaveBeenCalledTimes(1);
+  });
+
+  it("tells once too when the panel dispatches no effect of its own", async () => {
+    const { search, bar } = await load();
+    const extensions = bar.searchBar();
+    const from = opened(search, EditorState.create({ doc: "alpha", extensions }), "alpha");
+    vi.mocked(search.openSearchPanel).mockImplementation(() => true);
+
+    for (let reloads = 0; reloads < 3; reloads++) expect(bar.carrySearch(from)).toEqual([]);
     expect(console.error).toHaveBeenCalledTimes(1);
   });
 });

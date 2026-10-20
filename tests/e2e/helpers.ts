@@ -106,18 +106,23 @@ export function memoWrites(page: Page, id: string): Promise<number> {
 }
 
 /** A version 2 session of one window whose panes hold `tabs` side by side, each pane's first tab
- * active and `focusedPane` focused. */
-export function paneSession(tabs: object[][], focusedPane = 0): string {
+ * active. `focusedPane` is focused (the first by default); `widths` are the panes' shares (equal
+ * by default). */
+export function paneSession(
+  tabs: object[][],
+  options: { focusedPane?: number; widths?: number[] } = {},
+): string {
+  const widths = options.widths ?? tabs.map(() => 1 / tabs.length);
   return JSON.stringify({
     version: 2,
     windows: [
       {
-        panes: tabs.map((each) => ({
+        panes: tabs.map((each, index) => ({
           tabs: each,
           activeTab: each.length ? 0 : -1,
-          width: 1 / tabs.length,
+          width: widths[index],
         })),
-        focusedPane,
+        focusedPane: options.focusedPane ?? 0,
       },
     ],
   });
