@@ -54,6 +54,40 @@ describe("themeVariables", () => {
   });
 });
 
+describe("themeVariables find colours", () => {
+  it("a theme without the find colours keeps the defaults", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const vars = themeVariables({ colors: {} }, appearance);
+      for (const name of [
+        "--input-bg",
+        "--search-match",
+        "--search-match-current",
+        "--search-match-border",
+      ]) {
+        expect(vars[name]).toBe(DEFAULT_VARIABLES[appearance][name]);
+      }
+    }
+  });
+
+  it("maps the VS Code find colours", () => {
+    const vars = themeVariables(
+      {
+        colors: {
+          "input.background": "#111111",
+          "editor.findMatchHighlightBackground": "#22222280",
+          "editor.findMatchBackground": "#333333",
+          "editor.findMatchBorder": "#444444",
+        },
+      },
+      "dark",
+    );
+    expect(vars["--input-bg"]).toBe("#111111");
+    expect(vars["--search-match"]).toBe("#22222280");
+    expect(vars["--search-match-current"]).toBe("#333333");
+    expect(vars["--search-match-border"]).toBe("#444444");
+  });
+});
+
 describe("themeVariables colour check", () => {
   it("drops values that are not colour literals", () => {
     const vars = themeVariables(

@@ -133,6 +133,11 @@ const appTheme = EditorView.theme({
     { backgroundColor: "var(--selection)" },
   ".cm-activeLine": { backgroundColor: "var(--active-line)" },
   ".cm-selectionMatch": { backgroundColor: "var(--selection-match)" },
+  ".cm-searchMatch": { backgroundColor: "var(--search-match)" },
+  ".cm-searchMatch.cm-searchMatch-selected": {
+    backgroundColor: "var(--search-match-current)",
+    outline: "1px solid var(--search-match-border)",
+  },
   ".cm-panels": { backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
 });

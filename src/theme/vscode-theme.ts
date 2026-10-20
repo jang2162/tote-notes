@@ -45,6 +45,10 @@ export const CSS_VARIABLES: { variable: string; keys: string[] }[] = [
   { variable: "--line-number", keys: ["editorLineNumber.foreground"] },
   { variable: "--line-number-active", keys: ["editorLineNumber.activeForeground"] },
   { variable: "--panel-bg", keys: ["editorWidget.background", "sideBar.background"] },
+  { variable: "--input-bg", keys: ["input.background"] },
+  { variable: "--search-match", keys: ["editor.findMatchHighlightBackground"] },
+  { variable: "--search-match-current", keys: ["editor.findMatchBackground"] },
+  { variable: "--search-match-border", keys: ["editor.findMatchBorder"] },
 ];
 
 /** The values styles.css carries for each appearance; the theme overrides key by key. */
@@ -52,7 +56,7 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
   light: {
     "--bg": "#ffffff",
     "--fg": "#1f2328",
-    "--muted": "#6e7781",
+    "--muted": "#656d76",
     "--border": "#d8dee4",
     "--accent": "#0969da",
     "--danger": "#cf222e",
@@ -65,6 +69,10 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--line-number": "#6e7781",
     "--line-number-active": "#1f2328",
     "--panel-bg": "#f6f8fa",
+    "--input-bg": "#ffffff",
+    "--search-match": "rgb(255 213 0 / 35%)",
+    "--search-match-current": "rgb(255 140 0 / 45%)",
+    "--search-match-border": "#b85c00",
   },
   dark: {
     "--bg": "#1e1f22",
@@ -82,6 +90,10 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--line-number": "#8b9099",
     "--line-number-active": "#dcdee3",
     "--panel-bg": "#191a1d",
+    "--input-bg": "#141518",
+    "--search-match": "rgb(255 210 0 / 22%)",
+    "--search-match-current": "rgb(255 140 0 / 40%)",
+    "--search-match-border": "#e8892b",
   },
 };
 

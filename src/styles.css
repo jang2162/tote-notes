@@ -3,7 +3,7 @@
   color-scheme: light dark;
   --bg: #ffffff;
   --fg: #1f2328;
-  --muted: #6e7781;
+  --muted: #656d76;
   --border: #d8dee4;
   --accent: #0969da;
   --accent-fg: #ffffff;
@@ -17,6 +17,10 @@
   --line-number: #6e7781;
   --line-number-active: #1f2328;
   --panel-bg: #f6f8fa;
+  --input-bg: #ffffff;
+  --search-match: rgb(255 213 0 / 35%);
+  --search-match-current: rgb(255 140 0 / 45%);
+  --search-match-border: #b85c00;
   --large-text-font: ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace;
   --large-text-size: 14px;
   /* The editor settings replace these on the page's root; the large text viewer keeps its own. */
@@ -47,6 +51,10 @@
     --line-number: #8b9099;
     --line-number-active: #dcdee3;
     --panel-bg: #191a1d;
+    --input-bg: #141518;
+    --search-match: rgb(255 210 0 / 22%);
+    --search-match-current: rgb(255 140 0 / 40%);
+    --search-match-border: #e8892b;
   }
 }
 
