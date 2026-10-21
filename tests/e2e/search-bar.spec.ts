@@ -165,8 +165,54 @@ test("a count that finds nothing in its time keeps what it showed", async ({ pag
   await page.evaluate(() => window.view.dispatch({ changes: { from: 0, insert: "y" } }));
   await page.clock.runFor(200);
   await expect(count(page)).toHaveText("결과 없음");
-  expect((await shown(page)).at(-1)).toBe("결과 없음");
-  expect((await shown(page)).filter((text) => text === "결과 없음")).toHaveLength(1);
+  expect(await shown(page)).toEqual(["– / 0+", "결과 없음"]);
+});
+
+test("a replace text typed during a count that found nothing leaves the count alone", async ({
+  page,
+}) => {
+  await page.clock.install({ time: LOADED });
+  await open(page);
+  await page.evaluate(() =>
+    window.view.dispatch({
+      changes: { from: 0, insert: `${"x".repeat(99)}\n`.repeat(6000) },
+      selection: { anchor: 0 },
+    }),
+  );
+  await page.keyboard.press("Meta+f");
+  await expect(input(page)).toBeFocused();
+  await slowLooks(page);
+  await page.keyboard.type("needle");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("결과 없음");
+  await replaceToggle(page).click();
+  await recordCount(page);
+  await replaceInput(page).fill("바뀜");
+  await page.clock.runFor(200);
+  await expect(count(page)).toHaveText("결과 없음");
+  expect(await shown(page)).toEqual([]);
+});
+
+test("a new query found nowhere shows its own count, then none found", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
+  await open(page);
+  await page.evaluate(() =>
+    window.view.dispatch({
+      changes: {
+        from: window.view.state.doc.length,
+        insert: `\n${"x".repeat(99)}`.repeat(6000) + "\nfar",
+      },
+      selection: { anchor: 0, head: 2 },
+    }),
+  );
+  await page.keyboard.press("Meta+f");
+  await expect(count(page)).toHaveText("1 / 3");
+  await slowLooks(page);
+  await recordCount(page);
+  await input(page).fill("nowhere");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("결과 없음");
+  expect(await shown(page)).toEqual(["– / 0+", "결과 없음"]);
 });
 
 test("a new query never shows the last query's count", async ({ page }) => {

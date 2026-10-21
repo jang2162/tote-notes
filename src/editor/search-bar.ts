@@ -135,6 +135,17 @@ function setPressed(element: HTMLElement, on: boolean) {
   element.setAttribute("aria-pressed", String(on));
 }
 
+/** Whether two queries find the same matches: the replace text is not part of it. */
+function sameFind(a: SearchQuery | null, b: SearchQuery): boolean {
+  return (
+    a !== null &&
+    a.search === b.search &&
+    a.caseSensitive === b.caseSensitive &&
+    a.regexp === b.regexp &&
+    a.wholeWord === b.wholeWord
+  );
+}
+
 /** The find panel: a field with its option toggles, the result count, and the step, replace and
  * close buttons; below it the replace row, folded unless `replaceOpen`. Search, highlighting and
  * the commands stay CodeMirror's. */
@@ -296,11 +307,13 @@ class SearchBar implements Panel {
       replace: this.replaceInput.value,
     });
     if (query.eq(this.query)) return;
+    const recount = !sameFind(this.query, query);
     this.query = query;
     this.markInvalid(query);
     this.view.dispatch({ effects: setSearchQuery.of(query) });
-    // `update` sees no change of query for this one, so it does not count.
-    this.scheduleCount();
+    // `update` sees no change of query for this one, so it does not count. The replace text
+    // changes no match: the count stays as it is.
+    if (recount) this.scheduleCount();
   }
 
   private show(query: SearchQuery) {
@@ -371,7 +384,12 @@ class SearchBar implements Panel {
     // Nothing found yet by a count still going on: the label stays as it was, rather than show
     // "– / 0+" between two "결과 없음". Only for the query it was written for: a new query shows
     // its own "– / 0+" from the first pass, not the last query's count or error.
-    if (matches && matches.resume !== null && matches.from.length === 0 && this.shownFor?.eq(query))
+    if (
+      matches &&
+      matches.resume !== null &&
+      matches.from.length === 0 &&
+      sameFind(this.shownFor, query)
+    )
       return;
     this.shownFor = query;
     const count = matches && {
