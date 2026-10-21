@@ -87,18 +87,23 @@ describe("FakeBackend shortcuts", () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
     const before = await backend.shortcutTable();
     expect(before.commands.find((c) => c.id === "new-memo")?.current).toBe("CmdOrCtrl+N");
-    expect(before.fixed[0]).toEqual({ name: "설정…", accelerator: "CmdOrCtrl+," });
+    expect(before.fixed.slice(0, 2)).toEqual([
+      { name: "설정…", accelerator: "CmdOrCtrl+," },
+      { name: "tote 종료", accelerator: "CmdOrCtrl+Q" },
+    ]);
 
-    await backend.patchSettings({ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M", quit: null } });
+    await backend.patchSettings({
+      shortcuts: { "new-memo": "CmdOrCtrl+Shift+M", rename: "CmdOrCtrl+K" },
+    });
     const after = await backend.shortcutTable();
     const current = (id: string) => after.commands.find((c) => c.id === id)?.current;
     expect(current("new-memo")).toBe("CmdOrCtrl+Shift+M");
-    expect(current("quit")).toBeNull();
+    expect(current("rename")).toBe("CmdOrCtrl+K");
     expect(current("save")).toBe("CmdOrCtrl+S");
     expect(after.commands.find((c) => c.id === "new-memo")?.default).toBe("CmdOrCtrl+N");
     expect((await backend.settings()).shortcuts).toEqual({
       "new-memo": "CmdOrCtrl+Shift+M",
-      quit: null,
+      rename: "CmdOrCtrl+K",
     });
 
     // The whole map is replaced: what is left out goes back to its default.
@@ -123,7 +128,11 @@ describe("FakeBackend shortcuts", () => {
       [{ rename: "Shift+F5" }, "rename"],
       [{ rename: "CmdOrCtrl+C" }, "rename"],
       [{ rename: "CmdOrCtrl+N" }, "rename"],
-      [{ quit: "CmdOrCtrl+Shift+V" }, "quit"],
+      [{ "close-window": "CmdOrCtrl+Shift+V" }, "close-window"],
+      // ⌘Q is fixed, and so is the item it belongs to: no id for it to be saved under.
+      [{ quit: "CmdOrCtrl+Shift+Q" }, "quit"],
+      [{ quit: null }, "quit"],
+      [{ rename: "CmdOrCtrl+Q" }, "rename"],
       [{ "open-file": "CmdOrCtrl+Shift+M", "new-memo": "CmdOrCtrl+Shift+M" }, "open-file"],
       [{ save: "CmdOrCtrl+C", rename: "CmdOrCtrl+S" }, "rename"],
     ];
@@ -141,7 +150,7 @@ describe("FakeBackend shortcuts", () => {
 
   it("takes a map whose every entry stands", async () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
-    const shortcuts = { "new-memo": null, rename: "Cmd+N", save: "F5", quit: "Alt+F5" };
+    const shortcuts = { "new-memo": null, rename: "Cmd+N", save: "F5", "close-window": "Alt+F5" };
     await backend.patchSettings({ shortcuts });
     expect((await backend.settings()).shortcuts).toEqual(shortcuts);
     const current = (await backend.shortcutTable()).commands.find((c) => c.id === "rename");

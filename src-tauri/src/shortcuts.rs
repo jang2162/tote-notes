@@ -36,7 +36,6 @@ const fn command(
 /// In menu order. Whichever of two people's overrides comes later here is the one dropped.
 pub const COMMANDS: &[Command] = &[
     command("install-cli", "셸 명령 설치…", "tote", None),
-    command("quit", "tote 종료", "tote", Some("CmdOrCtrl+Q")),
     command("new-memo", "새 메모", "파일", Some("CmdOrCtrl+N")),
     command("new-window", "새 창", "파일", Some("Alt+CmdOrCtrl+N")),
     command("open-file", "파일 열기…", "파일", Some("CmdOrCtrl+O")),
@@ -131,10 +130,15 @@ const fn fixed(name: &'static str, accelerator: &'static str) -> Fixed {
 /// 설정…'s shortcut. The menu item has one like an app command's, which recording takes off too.
 pub const SETTINGS_ACCELERATOR: &str = "CmdOrCtrl+,";
 
-/// 설정… stays where it is so the way back to this screen is never lost. The system Edit items
-/// and macOS's own window items cannot be rebound at all.
+/// tote 종료's shortcut, kept like 설정…'s so the way out of the app is never lost from the
+/// shortcuts. Recording takes it off too.
+pub const QUIT_ACCELERATOR: &str = "CmdOrCtrl+Q";
+
+/// 설정… and tote 종료 stay where they are so the way back to this screen and the way out of the
+/// app are never lost. The system Edit items and macOS's own window items cannot be rebound at all.
 pub const FIXED: &[Fixed] = &[
     fixed("설정…", SETTINGS_ACCELERATOR),
+    fixed("tote 종료", QUIT_ACCELERATOR),
     fixed("워크스페이스 1", "Ctrl+1"),
     fixed("워크스페이스 2", "Ctrl+2"),
     fixed("워크스페이스 3", "Ctrl+3"),
@@ -383,13 +387,16 @@ mod tests {
         assert_eq!(shortcut_of(&saved, "rename"), None);
         assert!(validate(&saved).unwrap_err().contains("rename"));
         // The default's command comes later in the menu: the default still wins.
-        let saved = overrides(&[("quit", Some("CmdOrCtrl+Shift+V"))]);
+        let saved = overrides(&[("close-window", Some("CmdOrCtrl+Shift+V"))]);
         assert_eq!(sanitize(&saved), BTreeMap::new());
         assert_eq!(
             shortcut_of(&saved, "toggle-preview"),
             Some("CmdOrCtrl+Shift+V".into())
         );
-        assert_eq!(shortcut_of(&saved, "quit"), Some("CmdOrCtrl+Q".into()));
+        assert_eq!(
+            shortcut_of(&saved, "close-window"),
+            Some("CmdOrCtrl+Shift+W".into())
+        );
     }
 
     #[test]
@@ -420,12 +427,30 @@ mod tests {
     }
 
     #[test]
+    fn quit_is_fixed_and_cannot_be_rebound() {
+        assert!(FIXED
+            .iter()
+            .any(|f| f.name == "tote 종료" && f.accelerator == "CmdOrCtrl+Q"));
+        assert_eq!(QUIT_ACCELERATOR, "CmdOrCtrl+Q");
+        assert!(COMMANDS.iter().all(|c| c.id != "quit"));
+        // A settings.json from before: the entry is dropped as an unknown id.
+        let saved = overrides(&[("quit", Some("CmdOrCtrl+Shift+Q"))]);
+        assert_eq!(sanitize(&saved), BTreeMap::new());
+        assert!(validate(&saved).unwrap_err().contains("quit"));
+        // ⌘Q is not for another command to take.
+        let saved = overrides(&[("rename", Some("CmdOrCtrl+Q"))]);
+        assert_eq!(sanitize(&saved), BTreeMap::new());
+        assert_eq!(shortcut_of(&saved, "rename"), None);
+        assert!(validate(&saved).unwrap_err().contains("rename"));
+    }
+
+    #[test]
     fn a_patch_with_any_bad_entry_is_refused_naming_it() {
         assert_eq!(validate(&BTreeMap::new()), Ok(()));
         assert_eq!(
             validate(&overrides(&[
                 ("rename", Some("CmdOrCtrl+K")),
-                ("quit", None)
+                ("close-tab", None)
             ])),
             Ok(())
         );
@@ -434,7 +459,7 @@ mod tests {
             ("rename", Some("Ctrl+3")),
             ("nope", None),
         ] {
-            let error = validate(&overrides(&[("quit", None), (id, keys)])).unwrap_err();
+            let error = validate(&overrides(&[("close-tab", None), (id, keys)])).unwrap_err();
             assert!(error.contains(id), "{error}");
         }
     }
@@ -443,7 +468,6 @@ mod tests {
     fn effective_matches_todays_menu() {
         let expected: &[(&str, Option<&str>)] = &[
             ("install-cli", None),
-            ("quit", Some("CmdOrCtrl+Q")),
             ("new-memo", Some("CmdOrCtrl+N")),
             ("new-window", Some("Alt+CmdOrCtrl+N")),
             ("open-file", Some("CmdOrCtrl+O")),

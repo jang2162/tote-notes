@@ -744,7 +744,7 @@ mod tests {
             workspace_root: Some(Some("/y".into())),
             editor_line_numbers: Some(false),
             shortcuts: Some(BTreeMap::from([
-                ("quit".into(), None),
+                ("close-tab".into(), None),
                 ("save".into(), Some("Cmd+++".into())),
             ])),
             ..Default::default()

@@ -8,13 +8,6 @@
       "current": null
     },
     {
-      "id": "quit",
-      "label": "tote 종료",
-      "menu": "tote",
-      "default": "CmdOrCtrl+Q",
-      "current": "CmdOrCtrl+Q"
-    },
-    {
       "id": "new-memo",
       "label": "새 메모",
       "menu": "파일",
@@ -180,6 +173,10 @@
     {
       "name": "설정…",
       "accelerator": "CmdOrCtrl+,"
+    },
+    {
+      "name": "tote 종료",
+      "accelerator": "CmdOrCtrl+Q"
     },
     {
       "name": "워크스페이스 1",

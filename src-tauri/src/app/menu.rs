@@ -19,7 +19,7 @@ use super::{lifecycle, lock, windows, AppCore};
 
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
-use crate::shortcuts::{self, Command, COMMANDS, SETTINGS_ACCELERATOR};
+use crate::shortcuts::{self, Command, COMMANDS, QUIT_ACCELERATOR, SETTINGS_ACCELERATOR};
 
 /// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
 /// and never act as the menu bar's items of the same name.
@@ -44,7 +44,12 @@ fn item(
 enum Slot {
     /// An app command, by its id in `shortcuts::COMMANDS`: its name and shortcut come from there.
     Command(&'static str),
-    Settings,
+    /// An item with a name and a shortcut of its own that no setting changes: 설정…, tote 종료.
+    Fixed {
+        id: &'static str,
+        text: &'static str,
+        accelerator: &'static str,
+    },
     Separator,
     About,
     Services,
@@ -66,6 +71,21 @@ enum Slot {
 /// The id of 설정…, whose shortcut is fixed.
 const SETTINGS: &str = "settings";
 
+/// The id of tote 종료, whose shortcut is fixed.
+const QUIT: &str = "quit";
+
+const SETTINGS_ITEM: Slot = Slot::Fixed {
+    id: SETTINGS,
+    text: "설정…",
+    accelerator: SETTINGS_ACCELERATOR,
+};
+
+const QUIT_ITEM: Slot = Slot::Fixed {
+    id: QUIT,
+    text: "tote 종료",
+    accelerator: QUIT_ACCELERATOR,
+};
+
 /// The menu bar: each submenu's title and entries, the commands in `shortcuts::COMMANDS` order.
 const MENUS: &[(&str, &[Slot])] = &[
     (
@@ -73,7 +93,7 @@ const MENUS: &[(&str, &[Slot])] = &[
         &[
             Slot::About,
             Slot::Separator,
-            Slot::Settings,
+            SETTINGS_ITEM,
             Slot::Separator,
             Slot::Command("install-cli"),
             Slot::Separator,
@@ -84,7 +104,7 @@ const MENUS: &[(&str, &[Slot])] = &[
             Slot::ShowAll,
             Slot::Separator,
             // Not the system Quit item: that one terminates at once, without writing pending edits.
-            Slot::Command("quit"),
+            QUIT_ITEM,
         ],
     ),
     (
@@ -153,17 +173,18 @@ const MENUS: &[(&str, &[Slot])] = &[
     ),
 ];
 
-/// The id of the item `slot` makes whose shortcut `MenuShortcuts` keeps: every command, and
-/// 설정….
+/// The id of the item `slot` makes whose shortcut `MenuShortcuts` keeps: every command, and the
+/// fixed items.
 fn shortcut_item(slot: &Slot) -> Option<&'static str> {
     match slot {
         Slot::Command(id) => Some(id),
-        Slot::Settings => Some(SETTINGS),
+        Slot::Fixed { id, .. } => Some(id),
         _ => None,
     }
 }
 
 /// Every item whose shortcut `MenuShortcuts` keeps, in menu order.
+#[cfg(test)]
 fn shortcut_items() -> Vec<&'static str> {
     MENUS
         .iter()
@@ -171,21 +192,48 @@ fn shortcut_items() -> Vec<&'static str> {
         .collect()
 }
 
+/// The fixed items' ids and shortcuts, in menu order.
+fn fixed_items() -> Vec<(&'static str, &'static str)> {
+    MENUS
+        .iter()
+        .flat_map(|(_, slots)| slots.iter())
+        .filter_map(|slot| match slot {
+            Slot::Fixed {
+                id, accelerator, ..
+            } => Some((*id, *accelerator)),
+            _ => None,
+        })
+        .collect()
+}
+
+/// The name of the item `slot` makes: a command's from `shortcuts::COMMANDS`, a fixed item's own.
+fn shortcut_label(slot: &Slot) -> Option<&'static str> {
+    match slot {
+        Slot::Command(id) => Some(
+            COMMANDS
+                .iter()
+                .find(|command| command.id == *id)
+                .unwrap_or_else(|| panic!("MENUS names only commands of shortcuts::COMMANDS: {id}"))
+                .label,
+        ),
+        Slot::Fixed { text, .. } => Some(text),
+        _ => None,
+    }
+}
+
 /// Builds the menu bar with the default shortcuts and manages its items as `MenuShortcuts`. The
 /// settings are not loaded yet: setup applies the saved shortcuts (src/lib.rs).
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
-    let items = shortcut_items()
-        .into_iter()
-        .map(|id| {
-            let label = COMMANDS
-                .iter()
-                .find(|command| command.id == id)
-                .map_or("설정…", |command| command.label);
+    let items = MENUS
+        .iter()
+        .flat_map(|(_, slots)| slots.iter())
+        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot)?)))
+        .map(|(id, label)| {
             let (_, keys) = keys
                 .iter()
                 .find(|(item, _)| *item == id)
-                .expect("MENUS names only commands of shortcuts::COMMANDS, and 설정…");
+                .expect("MENUS names only commands of shortcuts::COMMANDS, and the fixed items");
             Ok((id, item(app, id, label, keys.as_deref())?))
         })
         .collect::<tauri::Result<Vec<_>>>()?;
@@ -199,7 +247,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 continue;
             }
             menu = match slot {
-                Slot::Command(_) | Slot::Settings => unreachable!("an item with a shortcut"),
+                Slot::Command(_) | Slot::Fixed { .. } => unreachable!("an item with a shortcut"),
                 Slot::Separator => menu.separator(),
                 Slot::About => menu.about(None),
                 Slot::Services => menu.services(),
@@ -237,7 +285,7 @@ impl AcceleratorSlot for MenuItem<Wry> {
     }
 }
 
-/// The menu items with a shortcut: every app command and 설정…. Their shortcuts follow the saved
+/// The menu items with a shortcut: every app command and the fixed items. Their shortcuts follow the saved
 /// settings, and come off while a window records a shortcut so the keys reach the recorder instead
 /// of running a command (spec 「녹음 중에 명령이 실행되지 않게」).
 ///
@@ -329,8 +377,8 @@ impl<I: AcceleratorSlot> ShortcutState<I> {
     }
 }
 
-/// The shortcut each item gets: its command's in `effective`, and 설정…'s own; none at all while
-/// suspended.
+/// The shortcut each item gets: its command's in `effective`, and the fixed items' own; none at all
+/// while suspended.
 fn accelerators_while(
     suspended: bool,
     effective: &[(&'static Command, Option<String>)],
@@ -338,7 +386,11 @@ fn accelerators_while(
     effective
         .iter()
         .map(|(command, keys)| (command.id, keys.clone()))
-        .chain([(SETTINGS, Some(SETTINGS_ACCELERATOR.to_string()))])
+        .chain(
+            fixed_items()
+                .into_iter()
+                .map(|(id, accelerator)| (id, Some(accelerator.to_string()))),
+        )
         .map(|(id, keys)| (id, keys.filter(|_| !suspended)))
         .collect()
 }
@@ -621,9 +673,10 @@ mod tests {
     fn suspended_menus_carry_no_accelerators_and_resume_restores_them() {
         let table = shortcuts::effective(&BTreeMap::new());
         let on = accelerators_while(false, &table);
-        assert_eq!(on.len(), COMMANDS.len() + 1);
+        assert_eq!(on.len(), COMMANDS.len() + 2);
         assert!(on.contains(&("new-memo", Some("CmdOrCtrl+N".into()))));
         assert!(on.contains(&("settings", Some("CmdOrCtrl+,".into()))));
+        assert!(on.contains(&("quit", Some("CmdOrCtrl+Q".into()))));
         assert!(on.contains(&("rename", None)));
         let off = accelerators_while(true, &table);
         assert_eq!(off.len(), on.len());
@@ -634,6 +687,7 @@ mod tests {
         let before = menu.all();
         assert_eq!(menu.shortcut("new-memo"), Some("CmdOrCtrl+N".into()));
         assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+        assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
         menu.shortcuts.suspend("ws-1");
         assert!(menu.all().iter().all(Option::is_none));
         menu.shortcuts.resume();
@@ -651,13 +705,14 @@ mod tests {
             .apply(&shortcuts::effective(&BTreeMap::new()));
         menu.shortcuts.suspend("ws-1");
         let puts = menu.puts();
-        let changed = saved(&[("new-memo", Some("CmdOrCtrl+Shift+M")), ("quit", None)]);
+        let changed = saved(&[("new-memo", Some("CmdOrCtrl+Shift+M")), ("rename", None)]);
         menu.shortcuts.apply(&shortcuts::effective(&changed));
         assert_eq!(menu.puts(), puts, "nothing is put back while suspended");
         assert!(menu.all().iter().all(Option::is_none));
         menu.shortcuts.resume_if("ws-1");
         assert_eq!(menu.shortcut("new-memo"), Some("CmdOrCtrl+Shift+M".into()));
-        assert_eq!(menu.shortcut("quit"), None);
+        assert_eq!(menu.shortcut("rename"), None);
+        assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
         assert_eq!(menu.shortcut("save"), Some("CmdOrCtrl+S".into()));
         assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
     }
@@ -704,7 +759,7 @@ mod tests {
         assert_eq!(in_menus, commands);
         assert!(MENUS
             .iter()
-            .any(|(_, slots)| slots.contains(&Slot::Settings)));
+            .any(|(_, slots)| slots.contains(&SETTINGS_ITEM)));
 
         let table = shortcuts::table(&saved(&[("rename", Some("CmdOrCtrl+K"))]));
         let ids: Vec<&str> = table.commands.iter().map(|row| row.id).collect();
@@ -742,9 +797,35 @@ mod tests {
     }
 
     #[test]
+    fn the_quit_menu_item_keeps_its_name_and_shortcut() {
+        let quit = MENUS
+            .iter()
+            .flat_map(|(_, slots)| slots.iter())
+            .find(|slot| shortcut_item(slot) == Some("quit"))
+            .unwrap();
+        assert_eq!(shortcut_label(quit), Some("tote 종료"));
+        assert_eq!(
+            fixed_items(),
+            [("settings", "CmdOrCtrl+,"), ("quit", "CmdOrCtrl+Q")]
+        );
+
+        let menu = Menu::new();
+        menu.shortcuts
+            .apply(&shortcuts::effective(&BTreeMap::new()));
+        assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
+        menu.shortcuts.suspend("ws-1");
+        assert_eq!(menu.shortcut("quit"), None);
+        assert_eq!(menu.shortcut("settings"), None);
+        menu.shortcuts.resume_if("ws-1");
+        assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
+        assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+    }
+
+    #[test]
     fn every_item_the_table_puts_a_shortcut_on_is_kept() {
         let mut kept = shortcut_items();
         assert!(kept.contains(&SETTINGS));
+        assert!(kept.contains(&QUIT));
         let mut put: Vec<&str> = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()))
             .into_iter()
             .map(|(id, _)| id)
