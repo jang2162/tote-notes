@@ -150,6 +150,8 @@ class SearchBar implements Panel {
   private query: SearchQuery;
   /** The matches of the last count, for numbering the selection until the text or query changes. */
   private matches: Matches | null = null;
+  /** The query the count label was last written for. */
+  private shownFor: SearchQuery | null = null;
   private frame = 0;
   private timer: ReturnType<typeof setTimeout> | undefined;
   /** The next go of a count stopped by its time budget, which carries on from where it stopped. */
@@ -367,8 +369,11 @@ class SearchBar implements Panel {
     const query = this.query;
     const matches = this.matches;
     // Nothing found yet by a count still going on: the label stays as it was, rather than show
-    // "– / 0+" between two "결과 없음".
-    if (matches && matches.resume !== null && matches.from.length === 0) return;
+    // "– / 0+" between two "결과 없음". Only for the query it was written for: a new query shows
+    // its own "– / 0+" from the first pass, not the last query's count or error.
+    if (matches && matches.resume !== null && matches.from.length === 0 && this.shownFor?.eq(query))
+      return;
+    this.shownFor = query;
     const count = matches && {
       total: matches.from.length,
       capped: matches.capped,

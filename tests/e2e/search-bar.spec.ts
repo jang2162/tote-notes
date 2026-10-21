@@ -158,13 +158,52 @@ test("a count that finds nothing in its time keeps what it showed", async ({ pag
   await slowLooks(page);
   await recordCount(page);
   await page.keyboard.type("needle");
-  // A frame for the count, and its next goes.
+  // A frame for the count, and its next goes. The query is new, so its first pass shows its own.
   await page.clock.runFor(20);
   await expect(count(page)).toHaveText("결과 없음");
-  await page.keyboard.type("s");
-  await page.clock.runFor(20);
+  // The same query counted again after an edit keeps what it showed.
+  await page.evaluate(() => window.view.dispatch({ changes: { from: 0, insert: "y" } }));
+  await page.clock.runFor(200);
   await expect(count(page)).toHaveText("결과 없음");
-  expect(await shown(page)).toEqual(["결과 없음"]);
+  expect((await shown(page)).at(-1)).toBe("결과 없음");
+  expect((await shown(page)).filter((text) => text === "결과 없음")).toHaveLength(1);
+});
+
+test("a new query never shows the last query's count", async ({ page }) => {
+  await page.clock.install({ time: LOADED });
+  await open(page);
+  // "far" only after pieces of about 64K characters, which the first pass of a count never reaches.
+  await page.evaluate(() =>
+    window.view.dispatch({
+      changes: {
+        from: window.view.state.doc.length,
+        insert: `\n${"x".repeat(99)}`.repeat(6000) + "\nfar",
+      },
+      selection: { anchor: 0, head: 2 },
+    }),
+  );
+  await page.keyboard.press("Meta+f");
+  await expect(count(page)).toHaveText("1 / 3");
+  await slowLooks(page);
+  // (a) The new query is only found far on: its first pass shows no count of the last one.
+  await recordCount(page);
+  await input(page).fill("far");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("– / 1");
+  expect(await shown(page)).toEqual(["– / 0+", "– / 1"]);
+
+  // (b) An invalid regex, then a fixed one the first pass finds nothing of: the red goes at once.
+  await toggle(page, "re").click();
+  await input(page).fill("(");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("잘못된 정규식");
+  await expect(count(page)).toHaveClass(/find-bar-error/);
+  await recordCount(page);
+  await input(page).fill("fa(r)");
+  await page.clock.runFor(20);
+  await expect(count(page)).toHaveText("– / 1");
+  await expect(count(page)).not.toHaveClass(/find-bar-error/);
+  expect(await shown(page)).toEqual(["– / 0+", "– / 1"]);
 });
 
 test("the toggles change the query", async ({ page }) => {
