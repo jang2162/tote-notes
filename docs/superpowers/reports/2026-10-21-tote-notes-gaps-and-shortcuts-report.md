@@ -46,14 +46,17 @@
 
 ## 이번에 닫지 않고 넘기는 것
 
-| 무엇                                                                                                           | 출처                | 까닭·다음 걸음                                                                                                      |
-| -------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `menu.rs` `shortcut_label` 이 「없음」 을 `None` 과 panic 둘로 나눈다                                          | Task 1 리뷰 Minor 2 | `build` 의 기존 `expect` 와 같은 수준. 통일하려면 둘 다 `Option` 이나 둘 다 panic                                   |
-| `shortcut_items()`(`cfg(test)` 전용)와 `build` 의 순회가 두 군데에서 만들어진다                                | Task 1 리뷰 Minor 3 | 지금은 같은 슬롯 순회라 어긋날 위험이 낮다. `build` 가 `shortcut_items()` 를 쓰게 하면 하나가 된다                  |
-| `--accent-fg` 는 `button.foreground` 만 보고 `--accent` 는 `button.background → focusBorder → textLink` 순이다 | Task 6 리뷰 Minor 3 | `button.background` 없이 `button.foreground` 만 주는 테마에서 짝이 어긋난다. 낮은 위험                              |
-| `modal()` 이 `namingText` 를 부르는 줄을 되돌려도 자동 시험이 실패하지 않는다                                  | Task 6 리뷰 Minor 1 | 아래 화면 확인으로 대신한다. 시험을 더하려면 첫 `p` 가 빈 대화상자의 이름을 `getByRole("dialog", { name })` 로 단언 |
-| `Escape` 로 설정을 닫을 때 `onConfigChanged` 구독이 안 풀린다                                                  | Task 6 보고         | 기존 문제. `done` 버튼만 `unsubscribe` 한다                                                                         |
-| 바뀐 줄이 없을 때 4열 gap 이 오른쪽에 남는 모양                                                                | 설정·단축키 스모크  | 이번에 안 건드렸다. D-9 에서 실제로 보이는지 본다                                                                   |
+| 무엇                                                                                                                    | 출처                | 까닭·다음 걸음                                                                                                      |
+| ----------------------------------------------------------------------------------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `menu.rs` `shortcut_label` 이 「없음」 을 `None` 과 panic 둘로 나눈다                                                   | Task 1 리뷰 Minor 2 | `build` 의 기존 `expect` 와 같은 수준. 통일하려면 둘 다 `Option` 이나 둘 다 panic                                   |
+| `shortcut_items()`(`cfg(test)` 전용)와 `build` 의 순회가 두 군데에서 만들어진다                                         | Task 1 리뷰 Minor 3 | 지금은 같은 슬롯 순회라 어긋날 위험이 낮다. `build` 가 `shortcut_items()` 를 쓰게 하면 하나가 된다                  |
+| `--accent-fg` 는 `button.foreground` 만 보고 `--accent` 는 `button.background → focusBorder → textLink` 순이다          | Task 6 리뷰 Minor 3 | `button.background` 없이 `button.foreground` 만 주는 테마에서 짝이 어긋난다. 낮은 위험                              |
+| `modal()` 이 `namingText` 를 부르는 줄을 되돌려도 자동 시험이 실패하지 않는다                                           | Task 6 리뷰 Minor 1 | 아래 화면 확인으로 대신한다. 시험을 더하려면 첫 `p` 가 빈 대화상자의 이름을 `getByRole("dialog", { name })` 로 단언 |
+| `writeHandedTabs` 안의 `if (!this.restoring) return;` 재검사는 지워도 모든 시험이 통과한다                              | Task 2 리뷰 Minor 3 | 수용 — 위험이 낮다. 비동기 읽기 뒤 한 번 더 보는 방어일 뿐                                                          |
+| 숫자패드 열 가지 중 셋만 `acceleratorFromEvent` 단위 시험이 본다                                                        | Task 5 리뷰 Minor 4 | 수용 — 위험이 낮다. 나머지는 같은 표를 지나간다                                                                     |
+| 가짜 백엔드는 전환 중 떼어 내기에 언제나 `window-busy` 로 답하고, Rust 는 라운드가 열린 동안(`in_switch` 포함)만 그렇다 | 최종 리뷰 Minor 5   | 라운드가 끝난 뒤 새 페이지가 뜨기 전의 짧은 틈에서만 다르다. 가짜는 고치지 않는다                                   |
+| `Escape` 로 설정을 닫을 때 `onConfigChanged` 구독이 안 풀린다                                                           | Task 6 보고         | 기존 문제. `done` 버튼만 `unsubscribe` 한다                                                                         |
+| 바뀐 줄이 없을 때 4열 gap 이 오른쪽에 남는 모양                                                                         | 설정·단축키 스모크  | 이번에 안 건드렸다. D-9 에서 실제로 보이는지 본다                                                                   |
 
 ## 화면 확인 후보
 
@@ -64,6 +67,7 @@
 - **`page_loading` 의 도착 순서.** 실기기에서 `Started` 가 `page_started` 보다 늦게 오면 그 창은 다음 로드까지 「준비 안 됨」 으로 남는다. 탭을 잃지는 않지만(새 창으로 간다) 순서를 확인한다.
 - **`post-rewrite` 가 rebase pull 에서 도는지.** `git pull --rebase` 뒤 훅 두 잡(runtime, deps)이 도는지 본다.
 - **첫 `p` 가 빈 대화상자의 이름이 실제로 비지 않은 글로 붙는지.** `dialogs.ts` 의 `namingText` 연결은 자동 시험이 되돌려도 실패하지 않는다.
+- **녹음 중 ⌘Q.** 아무 줄이나 녹음하며 ⌘Q → 앱이 그대로 있고 그 줄 아래 「tote 종료 에 고정된 단축키입니다」. 녹음을 끝낸 뒤 ⌘Q 는 종료(저장하지 못한 메모가 있으면 묻는다). e2e 가 메뉴 키를 못 눌러 Rust 시험은 accelerator 가 떨어지는 것까지만 본다.
 - **진짜 창 비활성화 때 고르개가 키를 돌려주는지.** Playwright 는 `document.hasFocus` 덮어쓰기로 대신했다. 실제 WebKit 이 창 비활성화에서 `hasFocus()` 를 false 로 돌려주는지는 사람이 본다.
 - 이월 문서에서 오는 것: 실기기에서 `window.listen` 의 promise 가 리스너 등록 뒤에 풀리는지, 복원 중 받은 탭이 보이고 세션에 쓰이는지.
 
