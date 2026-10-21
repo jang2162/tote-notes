@@ -2,7 +2,7 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
 import { parseWindowSession, sessionPanes } from "../../src/core/session";
-import { paneSession, quietErrors, sessionPane, start, startWindows } from "./helpers";
+import { memoWrites, paneSession, quietErrors, sessionPane, start, startWindows } from "./helpers";
 
 // A tab another window of the workspace let go over this one (`onAdopt`), on the fake backend:
 // the other window is not there, so a test does what it and the native side would — the place
@@ -130,9 +130,10 @@ async function hubPane(
   label: string,
 ): Promise<{ tabs: (string | false)[]; activeTab: number }> {
   const json = await page.evaluate(
-    (window) =>
+    (label) =>
       JSON.stringify(
-        self.__tote.backend.data.hub?.windows.find((each) => each.label === window)?.layout ?? null,
+        window.__tote.backend.data.hub?.windows.find((each) => each.label === label)?.layout ??
+          null,
       ),
     label,
   );
@@ -179,43 +180,103 @@ test("a window with no layout yet keeps the tabs it was handed in a pane of thei
     .toEqual([{ id: 1 }]);
 });
 
+/** Memo `memo` (as 나, ID b) is made in another window a moment ago: this one lists it only at its
+ * next listing, which waits until the returned `release` is called (`listings` counts the listings
+ * since). Meanwhile `events` records the window's layout writes — 「layout with 나」 once 나 is
+ * among its tabs — and its answer to a round. */
+async function holdListing(page: Page): Promise<{
+  release: () => Promise<void>;
+  listings: () => Promise<number>;
+  events: () => Promise<string[]>;
+}> {
+  await page.evaluate((memo) => {
+    const { backend } = window.__tote;
+    backend.data.memos.b = memo;
+    const list = backend.listMemos.bind(backend);
+    const held = new Promise<void>((resolve) => Object.assign(window, { releaseList: resolve }));
+    const seen = { listings: 0, events: [] as string[] };
+    Object.assign(window, { seen });
+    backend.listMemos = async () => {
+      seen.listings += 1;
+      await held;
+      return list();
+    };
+    const write = backend.writeWindowLayout.bind(backend);
+    backend.writeWindowLayout = (json) => {
+      seen.events.push(json.includes('"memoId":"b"') ? "layout with 나" : "layout");
+      return write(json);
+    };
+    const done = backend.flushDone.bind(backend);
+    backend.flushDone = (id, blocked) => {
+      seen.events.push("answer");
+      return done(id, blocked);
+    };
+  }, memos.b);
+  type Seen = { seen: { listings: number; events: string[] } };
+  return {
+    release: () =>
+      page.evaluate(() => (window as unknown as { releaseList(): void }).releaseList()),
+    listings: () => page.evaluate(() => (window as unknown as Seen).seen.listings),
+    events: () => page.evaluate(() => (window as unknown as Seen).seen.events),
+  };
+}
+
+/** The window wrote 나 into its layout before it answered the round, and answered. */
+async function wroteBeforeAnswering(events: () => Promise<string[]>): Promise<void> {
+  await expect.poll(events).toContain("answer");
+  const seen = await events();
+  expect(seen.indexOf("layout with 나")).toBeGreaterThanOrEqual(0);
+  expect(seen.indexOf("layout with 나")).toBeLessThan(seen.indexOf("answer"));
+}
+
 // A tab handed over whose memo this window has not listed yet waits for a listing (`adoptTab`). A
 // round answered meanwhile would write the window's tabs without it and close the window over it.
 test("a close round waits for a tab still being adopted", async ({ page }) => {
   await start(page, { memos: { a: memos.a }, session: sessionOfA });
   await expect(page.locator(".cm-content")).toHaveText("첫째");
-  await page.evaluate((memo) => {
-    const { backend } = window.__tote;
-    // Made in another window a moment ago: listed only by the next listing, which waits.
-    backend.data.memos.b = memo;
-    const list = backend.listMemos.bind(backend);
-    const held = new Promise<void>((resolve) => Object.assign(window, { releaseList: resolve }));
-    backend.listMemos = async () => {
-      await held;
-      return list();
-    };
-    const events: string[] = [];
-    Object.assign(window, { events });
-    const write = backend.writeWindowLayout.bind(backend);
-    backend.writeWindowLayout = (json) => {
-      events.push(json.includes('"memoId":"b"') ? "layout with 나" : "layout");
-      return write(json);
-    };
-    const done = backend.flushDone.bind(backend);
-    backend.flushDone = (id, blocked) => {
-      events.push("answer");
-      return done(id, blocked);
-    };
-  }, memos.b);
+  const listing = await holdListing(page);
   await adopt(page, "b");
   await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
-  await page.evaluate(() => (window as unknown as { releaseList(): void }).releaseList());
-  await expect
-    .poll(() => page.evaluate(() => (window as unknown as { events: string[] }).events))
-    .toContain("answer");
-  const events = await page.evaluate(() => (window as unknown as { events: string[] }).events);
-  expect(events.indexOf("layout with 나")).toBeGreaterThanOrEqual(0);
-  expect(events.indexOf("layout with 나")).toBeLessThan(events.indexOf("answer"));
+  await listing.release();
+  await wroteBeforeAnswering(listing.events);
+});
+
+// The tabs handed over during the restore are adopted as it ends, one after another: a round
+// answered while they are still being placed waits for them too.
+test("a close round waits for the tabs adopted as the restore ends", async ({ page }) => {
+  await quietErrors(page, LISTING_FAILED);
+  const release = await restoreHeld(page, { memos: { a: memos.a }, session: sessionOfA });
+  await adopt(page, "b");
+  const listing = await holdListing(page);
+  await release();
+  // The restore is done, and adopting 나 waits for the listing.
+  await expect.poll(listing.listings).toBe(1);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+  await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
+  await listing.release();
+  await wroteBeforeAnswering(listing.events);
+});
+
+// What the window has open is written first: the round runs out of time while a tab is still
+// being adopted, and a window it closes then goes with what it has written.
+test("a close round writes the open memos without waiting for a tab being adopted", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await start(page, { memos: { a: memos.a }, session: sessionOfA });
+  await expect(page.locator(".cm-content")).toHaveText("첫째");
+  // Saves wait for the test clock: only the round writes the memo.
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await page.evaluate(() =>
+    window.__tote.app.view.dispatch({ changes: { from: 0, insert: "!" }, userEvent: "input.type" }),
+  );
+  const listing = await holdListing(page);
+  await adopt(page, "b");
+  await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  expect(await page.evaluate(() => window.__tote.backend.data.flushed)).toEqual([]);
+  await listing.release();
+  await wroteBeforeAnswering(listing.events);
 });
 
 // The native side sends a tab let go over the window from the moment its page has started (the

@@ -229,8 +229,8 @@ export class AppController implements DocHost, PaneHost {
   /** Tabs handed to this window while it restores (`onAdopt`): a restore neither shows a tab nor
    * writes the session, so they are adopted once it is done. */
   private pendingAdopts: { tab: SessionTab; x: number; y: number }[] = [];
-  /** Tabs handed to this window being adopted after its restore (`adoptTab`): a round waits for
-   * them before it writes the window's tabs (`onFlush`). */
+  /** Tabs handed to this window being adopted once its restore is done (`adoptTab`): a round
+   * waits for them before it lets go of the window's tabs (`onFlush`). */
   private readonly adopting = new Set<Promise<void>>();
   /** A memo listing has come through. The session is restored only after one: without the memos
    * its memo tabs have nothing to stand for, and a session written then would drop them. */
@@ -493,8 +493,14 @@ export class AppController implements DocHost, PaneHost {
     );
     this.restoring = false;
     this.markNextFrame("restore-done");
-    for (const { tab, x, y } of this.pendingAdopts.splice(0))
-      await this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
+    // Counted among the tabs being adopted from the moment the restore is done, in the same step:
+    // a round answered while they are still being placed waits for them (`onFlush`).
+    const adopted: Promise<void> = (async () => {
+      for (const { tab, x, y } of this.pendingAdopts.splice(0))
+        await this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
+    })().finally(() => this.adopting.delete(adopted));
+    this.adopting.add(adopted);
+    await adopted;
   }
 
   private async loadRegistry(): Promise<void> {
@@ -1259,13 +1265,14 @@ export class AppController implements DocHost, PaneHost {
    * window that closes or switches lets go of its tabs before it answers (`leave`). */
   private async onFlush(id: number, goal: FlushGoal): Promise<void> {
     try {
-      // A tab still being adopted is written with the others: a window closing over it would
-      // take it along.
-      await Promise.allSettled(this.adopting);
       // A syllable still being composed goes into its own tab before the tabs are written
       // (closing, quitting, switching the workspace).
       await this.settleCompositions();
       await this.flushAll(true);
+      // A tab still being adopted writes the session once it is placed: a window closing over it
+      // would take it along. After the tabs are written, which do not wait on it: the round runs
+      // out of time, and a window it closes then goes with what it has written.
+      await Promise.allSettled(this.adopting);
       // The window stays open until the native side acts on the answer, and a key typed after the
       // tabs are written would be lost with it. The editors take keys while the tabs are written:
       // what came in meanwhile is written too before the answer.

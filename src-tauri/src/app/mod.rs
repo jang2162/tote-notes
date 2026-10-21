@@ -220,6 +220,14 @@ impl Inner {
         window.is_leaving() || self.flush.targets(label)
     }
 
+    /// Whether window `label` (`window`) is to hand no tab to another: it is leaving, or a round to
+    /// close it or switch its workspace is open. A page that answered a switch has written the tab
+    /// into the session of the workspace it leaves, and the tab would be in two layouts; one that
+    /// has not answered yet writes its tabs for the round all the same.
+    fn gives_no_tabs(&self, label: &str, window: &OpenWindow) -> bool {
+        window.is_leaving() || self.flush.targets(label)
+    }
+
     /// The labels of the windows on `path`, in opening order.
     fn windows_of(&self, path: &Path) -> Vec<String> {
         let mut windows: Vec<(&String, &OpenWindow)> = self
@@ -555,8 +563,8 @@ impl AppCore {
     /// registered and not made yet: that window's layout becomes the one tab, the session file is
     /// written with it, and the place is that window's. Called before the window is made, so a
     /// quit or a crash while it loads keeps the tab. `Err`, changing nothing, when `from` does not
-    /// hold the tab, `new_label` is not registered, the app is quitting or the file cannot be
-    /// written.
+    /// hold the tab or gives none (`Inner::gives_no_tabs`), `new_label` is not registered, the app
+    /// is quitting or the file cannot be written.
     pub fn adopt_tab(
         &self,
         new_label: &str,
@@ -574,6 +582,9 @@ impl AppCore {
                 format!("{new_label} is not open"),
             ));
         };
+        if inner.flush.targets(from) {
+            return Err(io::Error::other(format!("{from} is closing or switching")));
+        }
         if !inner.places.transfer(&key, from, new_label) {
             return Err(io::Error::other(format!("{from} does not hold the tab")));
         }
@@ -1159,11 +1170,11 @@ impl AppCore {
 
     /// Hands the tab `key` from window `from` to window `to`, which shows the same workspace,
     /// neither of them leaving, checked under the lock the transfer takes: a window that began to
-    /// close or switch since `drop_candidates` — its round only begun — takes nothing
-    /// (`Inner::takes_no_tabs`), and one switching away gives nothing
-    /// (its tab is in the session of the workspace it leaves already). False, changing nothing,
-    /// then, when `from` does not hold the tab, or while quitting. The session file is left to the
-    /// two windows' next layouts.
+    /// close or switch since `drop_candidates` — its round only begun — or whose page began to load
+    /// again takes nothing (`Inner::takes_no_tabs`, `page_ready`), and one switching away or in a
+    /// round of its own gives nothing (`Inner::gives_no_tabs`). False, changing nothing, then, when
+    /// `from` does not hold the tab, or while quitting. The session file is left to the two
+    /// windows' next layouts.
     pub fn move_tab(&self, from: &str, to: &str, key: &TabKey) -> bool {
         let mut inner = lock(&self.inner);
         if inner.quitting {
@@ -1172,7 +1183,11 @@ impl AppCore {
         let (Some(source), Some(target)) = (inner.windows.get(from), inner.windows.get(to)) else {
             return false;
         };
-        if source.is_leaving() || source.path != target.path || inner.takes_no_tabs(to, target) {
+        if inner.gives_no_tabs(from, source)
+            || source.path != target.path
+            || inner.takes_no_tabs(to, target)
+            || !target.page_ready
+        {
             return false;
         }
         inner.places.transfer(key, from, to)
@@ -2612,6 +2627,7 @@ mod tests {
         let core = core(dir.path());
         let (w1, path, _) = two_tabs(&core);
         let w2 = attach(&core, &path);
+        core.page_started(&w2);
         let key = core.key_for(&w1, &memo_b()).unwrap();
         assert!(core.move_tab(&w1, &w2, &key));
         assert_eq!(core.key_for(&w2, &memo_b()), Some(key.clone()));
@@ -2621,11 +2637,13 @@ mod tests {
         );
         // The tab is no longer the first window's to give.
         let w3 = attach(&core, &path);
+        core.page_started(&w3);
         assert!(!core.move_tab(&w1, &w3, &key));
         // A window that is leaving, or shows another workspace, takes nothing.
         core.closing(&w3);
         assert!(!core.move_tab(&w2, &w3, &key));
         let other = open(&core, "나");
+        core.page_started(&other);
         assert!(!core.move_tab(&w2, &other, &key));
         assert_eq!(
             core.claim_tabs(&w1, &[memo_b()]).unwrap(),
@@ -2633,6 +2651,7 @@ mod tests {
         );
         // Nothing moves once the app is quitting.
         let w4 = attach(&core, &path);
+        core.page_started(&w4);
         core.start_quit();
         assert!(!core.move_tab(&w2, &w4, &key));
         assert_eq!(core.key_for(&w2, &memo_b()), Some(key));
@@ -2644,6 +2663,7 @@ mod tests {
         let core = core(dir.path());
         let (w1, path, _) = two_tabs(&core);
         let w2 = attach(&core, &path);
+        core.page_started(&w2);
         let na = closed_workspace(&core, "나", &[]);
         core.prepare_switch(&w2, &na).unwrap();
         let key = core.key_for(&w1, &memo_b()).unwrap();
@@ -2657,6 +2677,7 @@ mod tests {
         let core = core(dir.path());
         let (w1, path, _) = two_tabs(&core);
         let w2 = attach(&core, &path);
+        core.page_started(&w2);
         let na = closed_workspace(&core, "나", &[]);
         let key = core.key_for(&w1, &memo_b()).unwrap();
         core.prepare_switch(&w1, &na).unwrap();
@@ -2781,8 +2802,15 @@ mod tests {
         // handed to it only once it starts.
         core.page_loading(&w2);
         assert!(!takes_drops(&core, &w1, &w2));
+        // Nor one picked before it began to load: the transfer checks again.
+        let tabs = [TabRef::Memo { id: "a".into() }];
+        assert_eq!(core.claim_tabs(&w1, &tabs).unwrap(), vec![Ok(())]);
+        let key = core.key_for(&w1, &tabs[0]).unwrap();
+        assert!(!core.move_tab(&w1, &w2, &key));
+        assert_eq!(core.claim_tabs(&w2, &tabs).unwrap(), vec![Err(w1.clone())]);
         core.page_started(&w2);
         assert!(takes_drops(&core, &w1, &w2));
+        assert!(core.move_tab(&w1, &w2, &key));
     }
 
     #[test]
@@ -2829,6 +2857,32 @@ mod tests {
             Begin::Started { .. }
         ));
         assert!(takes_drops(&core, &w1, &w2));
+        assert!(core.move_tab(&w1, &w2, &key));
+    }
+
+    #[test]
+    fn a_window_in_a_close_round_gives_no_tab_away() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, layout) = two_tabs(&core);
+        let w2 = attach(&core, &path);
+        core.page_started(&w1);
+        core.page_started(&w2);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        let Begin::Started { id, .. } = core.begin_flush(FlushGoal::CloseWindow(w1.clone())) else {
+            panic!("expected a round")
+        };
+        // Neither to a window there nor to a new one: the tab stays where it is.
+        assert!(!core.move_tab(&w1, &w2, &key));
+        let w3 = core.join(&path).unwrap();
+        let tab = json!({ "kind": "memo", "memoId": "b" });
+        assert!(core.adopt_tab(&w3, &w1, tab.clone(), key.clone()).is_err());
+        assert_eq!(layouts(&core, &path), vec![layout]);
+        assert_eq!(
+            core.claim_tabs(&w2, &[memo_b()]).unwrap(),
+            vec![Err(w1.clone())]
+        );
+        core.cancel_flush(id);
         assert!(core.move_tab(&w1, &w2, &key));
     }
 
