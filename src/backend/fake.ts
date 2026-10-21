@@ -407,6 +407,8 @@ export class FakeBackend implements Backend {
   switchGate: Promise<void> | null = null;
   /** Set by a test to hold the next `tearOffTab` until it resolves the promise. */
   tearOffGate: Promise<void> | null = null;
+  /** Set by a test: the window is in a close round, whose tabs it still writes but gives to no one. */
+  tearOffBusy = false;
   /** Set by a test to answer `flushDone` as the native side does for a round its timeout already
    * settled while the window stays: the page takes its panes back. */
   staleFlush = false;
@@ -737,7 +739,8 @@ export class FakeBackend implements Backend {
     ref: TabRef,
     at?: { x: number; y: number },
   ): Promise<"moved" | "window"> {
-    this.refuseWhileSwitching();
+    if (this.tearOffBusy || this.switching)
+      throw new BackendError("window-busy", `${this.label} is closing or switching`);
     const gate = this.tearOffGate;
     this.tearOffGate = null;
     await gate;

@@ -315,6 +315,7 @@ export const BACKEND_ERROR_CODES = [
   "no-workspace",
   "already-installed",
   "invalid-extension",
+  "window-busy",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 

@@ -80,6 +80,12 @@ impl From<tauri::Error> for CommandError {
 }
 
 fn io_code(err: &io::Error) -> &'static str {
+    if err
+        .get_ref()
+        .is_some_and(|inner| inner.is::<super::WindowBusy>())
+    {
+        return "window-busy";
+    }
     match err.kind() {
         io::ErrorKind::NotFound => "not-found",
         io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput => "bad-request",

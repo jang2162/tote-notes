@@ -123,7 +123,7 @@
 
 - 녹음이 받는 키에 `Numpad0`~`Numpad9`, `NumpadAdd`·`NumpadSubtract`·`NumpadMultiply`·`NumpadDivide`·`NumpadDecimal`·`NumpadEnter`·`NumpadEqual`, `Insert`, `Help` 를 더한다. 표기: 숫자패드는 「키패드 1」 처럼 `키패드 ` 접두 + 글자(＋−×÷.↩=), `Insert`→「Insert」, `Help`→「Help」.
 - `IntlBackslash` 는 muda 가 macOS 메뉴에 걸지 못한다. 녹음에서 반응하지 않고, Rust `recordable` 도 거절한다(손으로 쓴 settings.json 의 그 항목은 버려진다).
-- 확정한 녹음의 keyup: 녹음을 끝낸 키 조합의 keyup 은, 그 키들이 모두 놓일 때까지 capture 단계에서 막는다(`stop` 이 keyup 리스너를 바로 떼지 않고 「놓일 키 목록」 이 빌 때 뗀다). 창이 포커스를 잃으면 목록을 비운다.
+- 확정한 녹음의 keyup: 녹음을 끝낸 조합의 주 키 keyup(수식키 keyup 은 막지 않는다)은, 그 키들이 모두 놓일 때까지 capture 단계에서 막는다(`stop` 이 keyup 리스너를 바로 떼지 않고 「놓일 키 목록」 이 빌 때 뗀다). 창이 포커스를 잃으면 목록을 비운다.
 
 - [ ] **Step 1: 실패하는 시험**
   - 단위 `records numpad, Insert and Help but not IntlBackslash`(Review Focus 5): `acceleratorFromEvent` 가 `Numpad1`+⌘ → `CmdOrCtrl+Numpad1`, `Insert`+⌥ → `Alt+Insert`, `IntlBackslash`+⌘ → null. 표기 단언. 「has only shortcuts TS reads」 가 계속 통과.

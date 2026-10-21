@@ -162,6 +162,19 @@ test("a tab whose hand-over throws stays editable", async ({ page }) => {
   await expect.poll(() => memoText(page, "a")).toBe("우유 계란!");
 });
 
+test("a tab whose window is closing or switching stays and says why in words", async ({ page }) => {
+  await quietErrors(page, "is closing or switching");
+  await typeInto(page);
+  await page.evaluate(() => {
+    window.__tote.backend.tearOffBusy = true;
+  });
+  await menu(page, MOVE);
+  await expect(page.locator(".status-message")).toHaveText(
+    "창을 닫거나 바꾸는 중이라 탭을 옮기지 못했습니다",
+  );
+  await expect(page.locator(".tab")).toHaveCount(1);
+});
+
 test("a tab the backend does not take stays editable and says why", async ({ page }) => {
   const refused = "ws-1 does not hold the tab";
   await quietErrors(page, refused);

@@ -210,6 +210,19 @@ impl OpenWindow {
     }
 }
 
+/// The window a tab was to leave is closing or switching its workspace (`AppCore::adopt_tab`):
+/// `commands::io_code` answers it with its own code, so the page can say so in words.
+#[derive(Debug)]
+pub struct WindowBusy(String);
+
+impl std::fmt::Display for WindowBusy {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} is closing or switching", self.0)
+    }
+}
+
+impl std::error::Error for WindowBusy {}
+
 impl Inner {
     /// Whether window `label` (`window`) is to take no tab handed to it: it is leaving
     /// (`OpenWindow::is_leaving`), or a round to close it or switch its workspace is open
@@ -217,7 +230,7 @@ impl Inner {
     /// that came after would go with the window. Not part of `window_is_leaving`, which tells a
     /// page answering a round too late whether its window is going.
     fn takes_no_tabs(&self, label: &str, window: &OpenWindow) -> bool {
-        window.is_leaving() || self.flush.targets(label)
+        self.gives_no_tabs(label, window)
     }
 
     /// Whether window `label` (`window`) is to hand no tab to another: it is leaving, or a round to
@@ -583,7 +596,7 @@ impl AppCore {
             ));
         };
         if inner.flush.targets(from) {
-            return Err(io::Error::other(format!("{from} is closing or switching")));
+            return Err(io::Error::other(WindowBusy(from.to_string())));
         }
         if !inner.places.transfer(&key, from, new_label) {
             return Err(io::Error::other(format!("{from} does not hold the tab")));
@@ -2876,7 +2889,11 @@ mod tests {
         assert!(!core.move_tab(&w1, &w2, &key));
         let w3 = core.join(&path).unwrap();
         let tab = json!({ "kind": "memo", "memoId": "b" });
-        assert!(core.adopt_tab(&w3, &w1, tab.clone(), key.clone()).is_err());
+        let refused = core
+            .adopt_tab(&w3, &w1, tab.clone(), key.clone())
+            .unwrap_err();
+        // The page says so in words: a code of its own, not the message.
+        assert_eq!(commands::CommandError::from(refused).code, "window-busy");
         assert_eq!(layouts(&core, &path), vec![layout]);
         assert_eq!(
             core.claim_tabs(&w2, &[memo_b()]).unwrap(),
