@@ -122,3 +122,11 @@ export function refusedShortcut(map: Overrides): string | null {
       .find((id) => !Object.hasOwn(kept, id)) ?? null
   );
 }
+
+/** Whether two maps hold the same entries, `null` ones included, in any order. */
+export function sameShortcutMaps(a: Overrides, b: Overrides): boolean {
+  const keys = Object.keys(a);
+  return (
+    keys.length === Object.keys(b).length && keys.every((k) => Object.hasOwn(b, k) && a[k] === b[k])
+  );
+}

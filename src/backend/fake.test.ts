@@ -178,6 +178,33 @@ describe("FakeBackend shortcuts", () => {
     expect(await current("close-tab")).toBeNull();
   });
 
+  it("refuses a patch made from a map that is no longer the saved one, whole", async () => {
+    const data = defaultFakeData();
+    data.settings.shortcuts = { save: "CmdOrCtrl+Shift+S", rename: null };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    const stale = backend.patchSettings({
+      editorFontSize: 20,
+      shortcuts: { rename: null },
+      shortcutsExpected: {},
+    });
+    await expect(stale).rejects.toMatchObject({
+      code: "bad-request",
+      message: "shortcuts changed",
+    });
+    expect((await backend.settings()).shortcuts).toEqual({
+      save: "CmdOrCtrl+Shift+S",
+      rename: null,
+    });
+    expect((await backend.settings()).editor.fontSize).not.toBe(20);
+
+    // The same entries in another order, `null` included, are the saved map.
+    await backend.patchSettings({
+      shortcuts: {},
+      shortcutsExpected: { rename: null, save: "CmdOrCtrl+Shift+S" },
+    });
+    expect((await backend.settings()).shortcuts).toBeUndefined();
+  });
+
   it("keeps whether the shortcuts are off and every ask", async () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
     expect(backend.data.shortcutsSuspended).toBeUndefined();

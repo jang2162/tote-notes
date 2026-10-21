@@ -224,6 +224,9 @@ export interface SettingsPatch {
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
   shortcuts?: Record<string, string | null>;
+  /** The saved map `shortcuts` was made from. When it is no longer the saved one (another window
+   * saved meanwhile), the whole patch is refused with `bad-request` "shortcuts changed". */
+  shortcutsExpected?: Record<string, string | null>;
 }
 
 /** `ShortcutTable` in src-tauri/src/shortcuts.rs. Shortcuts are Tauri accelerators

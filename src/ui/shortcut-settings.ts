@@ -1,4 +1,4 @@
-import type { Backend, ShortcutCommand, ShortcutTable } from "../backend/types";
+import { errorCode, type Backend, ShortcutCommand, ShortcutTable } from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   acceleratorFromEvent,
@@ -28,6 +28,13 @@ const same = (a: string | null, b: string | null) =>
   a === b || (a !== null && b !== null && sameAccelerator(a, b));
 const shown = (accelerator: string | null) =>
   accelerator === null ? "없음" : formatAccelerator(accelerator);
+/** What `SettingsPatch.apply` answers when the table the save was made from is out of date
+ * (`SHORTCUTS_CHANGED` in src-tauri/src/appdata.rs). */
+const isStale = (error: unknown) =>
+  errorCode(error) === "bad-request" &&
+  error instanceof Error &&
+  error.message === "shortcuts changed";
+const STALE = "다른 창에서 단축키가 바뀌어 다시 읽었습니다. 다시 해 주세요";
 const MODIFIER_SYMBOLS = "⌃⌥⇧⌘";
 
 /** Whether a row whose name is `name` and whose shortcut is `keys` answers `query`: a part of its
@@ -147,6 +154,14 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
 
   /** A key recorded for `id` (`null`: none): saved, unless it is a fixed key or another
    * command's, which the row says instead. */
+  /** The map as saved, which is the table's shortcuts that differ from their default. */
+  const savedMap = (): Shortcuts => {
+    const map: Shortcuts = {};
+    for (const command of table?.commands ?? [])
+      if (!same(command.current, command.default)) map[command.id] = command.current;
+    return map;
+  };
+
   const take = (id: string, accelerator: string | null) => {
     const command = commandOf(id);
     if (!table || !command || same(accelerator, command.current)) return;
@@ -168,9 +183,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
       if (!same(keys, command.default)) map[command.id] = keys;
     }
     try {
-      await backend.patchSettings({ shortcuts: map });
+      await backend.patchSettings({ shortcuts: map, shortcutsExpected: savedMap() });
     } catch (error) {
-      notes.set(id, { kind: "error", message: describeError(error) });
+      if (isStale(error)) await load();
+      notes.set(id, { kind: "error", message: isStale(error) ? STALE : describeError(error) });
       render();
       return;
     }
@@ -321,9 +337,12 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     stop();
     if (!(await confirm("모든 단축키를 기본값으로 되돌릴까요?", "되돌리기"))) return;
     try {
-      await backend.patchSettings({ shortcuts: {} });
+      await backend.patchSettings({ shortcuts: {}, shortcutsExpected: savedMap() });
     } catch (error) {
-      return fail(error);
+      if (!isStale(error)) return fail(error);
+      await load();
+      problem.textContent = STALE;
+      return;
     }
     await load();
   });

@@ -71,7 +71,9 @@ test("recording a new shortcut saves it and the menu table follows", async ({ pa
   // The table the menu and the pane hints read has it too.
   const table = await page.evaluate(() => window.__tote.backend.shortcutTable());
   expect(table.commands.find((c) => c.id === "new-memo")?.current).toBe("CmdOrCtrl+Shift+M");
-  expect(await patches(page)).toEqual([{ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } }]);
+  expect(await patches(page)).toEqual([
+    { shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" }, shortcutsExpected: {} },
+  ]);
 });
 
 test("Backspace clears a shortcut and 되돌리기 brings the default back", async ({ page }) => {
@@ -105,7 +107,9 @@ test("a key another command uses offers 바꾸기 and swaps them in one save", a
 
   await row(panel, "rename").getByRole("button", { name: "바꾸기", exact: true }).click();
   await expect.poll(() => savedMap(page)).toEqual({ "new-memo": null, rename: "CmdOrCtrl+N" });
-  expect(await patches(page)).toEqual([{ shortcuts: { "new-memo": null, rename: "CmdOrCtrl+N" } }]);
+  expect(await patches(page)).toEqual([
+    { shortcuts: { "new-memo": null, rename: "CmdOrCtrl+N" }, shortcutsExpected: {} },
+  ]);
   await expect(keys(panel, "rename")).toHaveText("⌘N");
   await expect(keys(panel, "new-memo")).toHaveText("없음");
   await expect(row(panel, "rename").locator(".shortcut-note")).toHaveCount(0);
@@ -143,7 +147,9 @@ test("swapping back a default leaves it out of the map", async ({ page }) => {
   await row(panel, "new-memo").getByRole("button", { name: "바꾸기", exact: true }).click();
   // 새 메모 is on its default again; only 이름 바꾸기's none is saved.
   await expect.poll(() => savedMap(page)).toEqual({});
-  expect(await patches(page)).toEqual([{ shortcuts: {} }]);
+  expect(await patches(page)).toEqual([
+    { shortcuts: {}, shortcutsExpected: { "new-memo": null, rename: "CmdOrCtrl+N" } },
+  ]);
 });
 
 test("⌘Q is fixed and recording it is refused", async ({ page }) => {
@@ -353,7 +359,9 @@ test("모두 기본값으로 asks first and clears the map", async ({ page }) =>
   await panel.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
   await ask.getByRole("button", { name: "되돌리기", exact: true }).click();
   await expect.poll(() => savedMap(page)).toEqual({});
-  expect(await patches(page)).toEqual([{ shortcuts: {} }]);
+  expect(await patches(page)).toEqual([
+    { shortcuts: {}, shortcutsExpected: { "new-memo": "CmdOrCtrl+Shift+M", save: null } },
+  ]);
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
   await expect(keys(panel, "save")).toHaveText("⌘S");
   await expect(panel.getByRole("button", { name: "모두 기본값으로", exact: true })).toBeDisabled();
@@ -479,4 +487,38 @@ test("a row puts its name, shortcut, default and 되돌리기 on one line, in co
   const plain = await box(keys(panel, "save"));
   expect(plain.x).toBeCloseTo(shortcut.x, 0);
   expect(plain.width).toBeCloseTo(shortcut.width, 0);
+});
+
+test("a shortcut saved from a stale table is refused and the other window's change stays", async ({
+  context,
+}) => {
+  const first = await startWindows(context);
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  const panel = await openShortcuts(second);
+  // Window 2 never hears of window 1's save: its table stays the old one.
+  await second.evaluate(() => {
+    const backend = window.__tote.backend;
+    backend.shortcutTable = () => new Promise(() => {});
+  });
+  await first.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } }),
+  );
+  await expect.poll(() => savedMap(first)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+  await second.evaluate(() => {
+    delete (window.__tote.backend as { shortcutTable?: unknown }).shortcutTable;
+  });
+
+  await record(panel, "save");
+  await second.keyboard.press("Meta+Shift+K");
+  await expect(row(panel, "save").locator(".shortcut-note")).toHaveText(
+    "다른 창에서 단축키가 바뀌어 다시 읽었습니다. 다시 해 주세요",
+  );
+  expect(await savedMap(first)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+
+  await record(panel, "save");
+  await second.keyboard.press("Meta+Shift+K");
+  await expect
+    .poll(() => savedMap(first))
+    .toEqual({ "new-memo": "CmdOrCtrl+Shift+M", save: "CmdOrCtrl+Shift+K" });
 });

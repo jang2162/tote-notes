@@ -304,7 +304,15 @@ pub struct SettingsPatch {
     /// The whole map: what is not in it goes back to its default.
     #[serde(default)]
     pub shortcuts: Option<BTreeMap<String, Option<String>>>,
+    /// The saved map `shortcuts` was made from. A patch whose `shortcuts` came from a table
+    /// another window has changed since is refused, whatever else it names.
+    #[serde(default)]
+    pub shortcuts_expected: Option<BTreeMap<String, Option<String>>>,
 }
+
+/// What `apply` says when `shortcuts_expected` is not the saved map; the settings screen tells
+/// it from the other refusals by this text.
+pub const SHORTCUTS_CHANGED: &str = "shortcuts changed";
 
 /// A key that is present, `null` included, becomes `Some`; a missing key stays `None` through
 /// `#[serde(default)]`. That is what tells "clear it" from "leave it".
@@ -318,8 +326,13 @@ where
 
 impl SettingsPatch {
     /// Refuses the whole patch, changing nothing, when its shortcuts break a rule
-    /// (`shortcuts::validate`).
+    /// (`shortcuts::validate`) or were made from a map that is no longer the saved one.
     pub fn apply(&self, settings: &mut Settings) -> Result<(), String> {
+        if let Some(expected) = &self.shortcuts_expected {
+            if *expected != settings.shortcuts {
+                return Err(SHORTCUTS_CHANGED.into());
+            }
+        }
         if let Some(overrides) = &self.shortcuts {
             shortcuts::validate(overrides)?;
         }
@@ -752,6 +765,38 @@ mod tests {
         let error = patch.apply(&mut settings).unwrap_err();
         assert!(error.contains("save"), "{error}");
         assert_eq!(settings, before);
+    }
+
+    #[test]
+    fn a_shortcut_patch_made_from_a_stale_map_is_refused() {
+        let saved = BTreeMap::from([("save".to_string(), Some("CmdOrCtrl+Shift+S".to_string()))]);
+        let mut settings = Settings {
+            shortcuts: saved.clone(),
+            ..Default::default()
+        };
+        let stale = SettingsPatch {
+            editor_line_numbers: Some(false),
+            shortcuts: Some(BTreeMap::from([("rename".into(), None)])),
+            shortcuts_expected: Some(BTreeMap::new()),
+            ..Default::default()
+        };
+        assert_eq!(stale.apply(&mut settings).unwrap_err(), SHORTCUTS_CHANGED);
+        assert_eq!(settings.shortcuts, saved);
+        assert!(
+            settings.editor.line_numbers,
+            "the other fields are refused with it"
+        );
+
+        let fresh = SettingsPatch {
+            shortcuts: Some(BTreeMap::from([("rename".into(), None)])),
+            shortcuts_expected: Some(saved),
+            ..Default::default()
+        };
+        fresh.apply(&mut settings).unwrap();
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([("rename".to_string(), None)])
+        );
     }
 
     #[test]
