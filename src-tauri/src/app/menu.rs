@@ -285,9 +285,9 @@ impl AcceleratorSlot for MenuItem<Wry> {
     }
 }
 
-/// The menu items with a shortcut: every app command and the fixed items. Their shortcuts follow the saved
-/// settings, and come off while a window records a shortcut so the keys reach the recorder instead
-/// of running a command (spec 「녹음 중에 명령이 실행되지 않게」).
+/// The menu items with a shortcut: every app command and the fixed items. Their shortcuts follow
+/// the saved settings, and come off while a window records a shortcut so the keys reach the
+/// recorder instead of running a command (spec 「녹음 중에 명령이 실행되지 않게」).
 ///
 /// Use it on the main thread only, where `build` made it: in setup, a window or page-load event,
 /// or a closure handed over with `change_shortcuts` (a command or another thread). It sets the

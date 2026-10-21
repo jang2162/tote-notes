@@ -32,6 +32,7 @@ pre-push:
 
 # 순차 실행이다 — 런타임이 맞은 뒤에 설치가 돌아야 한다.
 post-checkout:
+  # post-merge·post-rewrite 와 공유한다.
   jobs: &install
     - name: runtime
       # 새 워크트리는 새 경로라 mise.toml 신뢰가 이어지지 않는다. trust 없이 install 이 실패하면
