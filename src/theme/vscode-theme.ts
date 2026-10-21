@@ -32,6 +32,7 @@ export const CSS_VARIABLES: { variable: string; keys: string[] }[] = [
     keys: ["editorGroup.border", "panel.border", "sideBar.border", "contrastBorder"],
   },
   { variable: "--accent", keys: ["button.background", "focusBorder", "textLink.foreground"] },
+  { variable: "--accent-fg", keys: ["button.foreground"] },
   { variable: "--danger", keys: ["errorForeground", "editorError.foreground"] },
   { variable: "--sidebar-bg", keys: ["sideBar.background", "editorGroupHeader.tabsBackground"] },
   {
@@ -59,6 +60,7 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--muted": "#656d76",
     "--border": "#d8dee4",
     "--accent": "#0969da",
+    "--accent-fg": "#ffffff",
     "--danger": "#cf222e",
     "--sidebar-bg": "#f6f8fa",
     "--active-bg": "#dbeafe",
@@ -80,6 +82,7 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--muted": "#8b9099",
     "--border": "#34363c",
     "--accent": "#4c9aff",
+    "--accent-fg": "#10151c",
     "--danger": "#ff7b72",
     "--sidebar-bg": "#191a1d",
     "--active-bg": "#263449",

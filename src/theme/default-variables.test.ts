@@ -33,7 +33,6 @@ function variables(text: string): Record<string, string> {
  * it there, is noticed too. */
 const SAME = (value: string) => ({ light: value, dark: value });
 const NOT_THEMED: Record<string, { light: string; dark: string }> = {
-  "--accent-fg": { light: "#ffffff", dark: "#10151c" },
   "--large-text-font": SAME('ui-monospace, "SF Mono", Menlo, "Apple SD Gothic Neo", monospace'),
   "--large-text-size": SAME("14px"),
   "--editor-font": SAME("var(--large-text-font)"),

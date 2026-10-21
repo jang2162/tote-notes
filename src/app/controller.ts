@@ -443,6 +443,8 @@ export class AppController implements DocHost, PaneHost {
     window.addEventListener("focus", () => {
       void this.refreshMemos();
       void this.refreshSwitcher();
+      // A first read that failed left the empty panes without their hint: read it again.
+      if (!this.shortcuts) void this.loadShortcuts().then((c) => c && this.shortcutsChanged());
     });
     document.addEventListener("visibilitychange", () => {
       if (document.hidden) void this.flushAll(false);

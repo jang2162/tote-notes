@@ -29,7 +29,7 @@ export function modal<T>(
     };
     const dialog = build(close);
     dialog.setAttribute("aria-modal", "true");
-    const title = dialog.hasAttribute("aria-labelledby") ? null : dialog.querySelector("h1, p");
+    const title = dialog.hasAttribute("aria-labelledby") ? null : namingText(dialog);
     if (title) {
       title.id ||= `modal-title-${++titles}`;
       dialog.setAttribute("aria-labelledby", title.id);
@@ -43,6 +43,13 @@ export function modal<T>(
       backdrop.querySelector<HTMLElement>("input, button.primary")
     )?.focus();
   });
+}
+
+/** The first heading or paragraph with text in it: an empty one would leave the dialog unnamed. */
+export function namingText<T extends { textContent: string | null }>(dialog: {
+  querySelectorAll(selector: string): Iterable<T>;
+}): T | undefined {
+  return [...dialog.querySelectorAll("h1, p")].find((each) => each.textContent?.trim());
 }
 
 /** A key that belongs to an IME composition. WebKit sends the Enter that finishes a Korean syllable

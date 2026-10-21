@@ -31,6 +31,14 @@ describe("themeVariables", () => {
     expect(Object.keys(vars).sort()).toEqual(Object.keys(DEFAULT_VARIABLES.light).sort());
   });
 
+  it("takes the text on the accent colour from button.foreground", () => {
+    const vars = themeVariables({ colors: { "button.foreground": "#123456" } }, "dark");
+    expect(vars["--accent-fg"]).toBe("#123456");
+    expect(themeVariables({ colors: {} }, "light")["--accent-fg"]).toBe(
+      DEFAULT_VARIABLES.light["--accent-fg"],
+    );
+  });
+
   it("fills the line-number variables from the theme's gutter colours", () => {
     const vars = themeVariables(
       {

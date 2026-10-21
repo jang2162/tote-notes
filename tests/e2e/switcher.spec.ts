@@ -209,6 +209,25 @@ test("a list left by a menu action closes and the keys go where the action put t
   await expect(page.locator(".cm-content")).toHaveText("새 글");
 });
 
+test("a list left with the window closes and gives the keys back when the window returns", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  // The window going inactive blurs the focused element with no element taking the focus.
+  await page.evaluate(() => {
+    document.hasFocus = () => false;
+    (document.activeElement as HTMLElement).blur();
+  });
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await page.evaluate(() => delete (document as { hasFocus?: unknown }).hasFocus);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText("돌아옴");
+  await expect(page.locator(".cm-content")).toContainText("돌아옴");
+});
+
 test("「워크스페이스 열기…」 opens the picker", async ({ page }) => {
   await open(page);
   await pickCommand(page, "워크스페이스 열기…");

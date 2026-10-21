@@ -68,8 +68,11 @@ export class WorkspaceSwitcher {
     // The keys stay where they were: a switch that is called off gives them back there.
     this.el.addEventListener("mousedown", (event) => event.preventDefault());
     // The keys went elsewhere (a menu action put them in an editor): the list is no use to them, and
-    // they are not taken back.
-    this.list.addEventListener("focusout", () => this.close(false));
+    // they are not taken back. The window going inactive moves them nowhere (no element takes
+    // them): they go back to where they were, for when the window returns.
+    this.list.addEventListener("focusout", (event) =>
+      this.close(event.relatedTarget === null && !document.hasFocus()),
+    );
     this.button.addEventListener("click", () => (this.isOpen ? this.close() : this.openList()));
   }
 

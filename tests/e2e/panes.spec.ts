@@ -864,6 +864,37 @@ test("the empty pane hint follows the new memo shortcut", async ({ page }) => {
   await expect(hint).toHaveText(EMPTY_HINT);
 });
 
+test("a shortcut table that failed to read is read again when the window takes the focus", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  // The first read fails (the handle is set just before the app starts); the later ones are real.
+  await page.addInitScript(() => {
+    let handle: unknown;
+    Object.defineProperty(window, "__tote", {
+      configurable: true,
+      get: () => handle,
+      set(value: { backend: { shortcutTable(): Promise<unknown> } }) {
+        handle = value;
+        const backend = value.backend;
+        const read = backend.shortcutTable.bind(backend);
+        let failed = false;
+        backend.shortcutTable = () => {
+          if (failed) return read();
+          failed = true;
+          return Promise.reject(new Error("unreadable"));
+        };
+      },
+    });
+  });
+  await start(page, { memos, session: paneSession([[memoTab("a")], []], { focusedPane: 0 }) });
+  const [, right] = await panesByPosition(page);
+  const hint = right.locator(".editor-placeholder p").nth(1);
+  await expect(right.locator(".editor-placeholder p")).toHaveCount(1);
+  await page.evaluate(() => window.dispatchEvent(new Event("focus")));
+  await expect(hint).toHaveText(EMPTY_HINT);
+});
+
 test("the preview hint follows the toggle preview shortcut", async ({ page }) => {
   await start(page, { memos });
   await page.locator(".memo-row", { hasText: "가" }).click();
