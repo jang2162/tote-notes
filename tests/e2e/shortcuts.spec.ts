@@ -599,3 +599,44 @@ test("the keyup of a recorded shortcut reaches nothing", async ({ page }) => {
   await page.keyboard.press("Space");
   expect(await heard()).toEqual(["AltLeft", "Space"]);
 });
+
+/** What reaches the page after the window's capture listeners: the keyups anything else would hear. */
+async function hearKeyups(page: Page): Promise<() => Promise<string[]>> {
+  await page.evaluate(() => {
+    const heard: string[] = [];
+    (window as unknown as { heard: string[] }).heard = heard;
+    document.addEventListener("keyup", (event) => heard.push(event.code));
+  });
+  return () => page.evaluate(() => (window as unknown as { heard: string[] }).heard);
+}
+
+test("releasing ⌘ lets go of the key recorded under it, whose keyup never comes", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page);
+  const heard = await hearKeyups(page);
+  await record(panel, "rename");
+  await page.keyboard.down("Meta");
+  await page.keyboard.down("K");
+  await expect.poll(() => savedMap(page)).toEqual({ rename: "CmdOrCtrl+K" });
+  // WebKit sends no keyup for K here: only ⌘'s comes, and it is not held back.
+  await page.keyboard.up("Meta");
+  expect(await heard()).toEqual(["MetaLeft"]);
+  // K's keyup is heard once K is pressed again: the list was emptied, not left waiting for the old one.
+  await page.keyboard.up("K");
+  expect(await heard()).toEqual(["MetaLeft", "KeyK"]);
+});
+
+test("closing the settings lets go of the key recorded last", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  const heard = await hearKeyups(page);
+  await record(panel, "rename");
+  await page.keyboard.down("Alt");
+  await page.keyboard.down("Space");
+  await expect.poll(() => savedMap(page)).toEqual({ rename: "Alt+Space" });
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(page.locator(".modal.settings")).toHaveCount(0);
+  await page.keyboard.up("Space");
+  await page.keyboard.up("Alt");
+  expect(await heard()).toEqual(["Space", "AltLeft"]);
+});

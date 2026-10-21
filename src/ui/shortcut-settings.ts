@@ -60,7 +60,11 @@ const masked = (name: string) =>
 /** The 단축키 section: every app command with its shortcut, which a click records anew, and the
  * fixed shortcuts below. The map saved is always whole: the commands whose shortcut is not their
  * default (`SettingsPatch.shortcuts`). */
-export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement {
+export function shortcutsSection(options: ShortcutsSectionOptions): {
+  el: HTMLElement;
+  /** Ends a recording and lets go of the keyup of the key that ended one. */
+  dispose(): void;
+} {
   const { backend } = options;
   let table: ShortcutTable | null = null;
   /** The command whose row listens for keys now. */
@@ -97,6 +101,26 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     list.querySelector<HTMLButtonElement>(`.shortcut-row[data-command="${id}"] .shortcut-keys`);
   const commandOf = (id: string) => table?.commands.find((command) => command.id === id);
 
+  /** The codes of the main keys that ended a recording and are still down. */
+  const pressed = new Set<string>();
+  const releasedAll = () => {
+    pressed.clear();
+    window.removeEventListener("keyup", onRelease, true);
+    window.removeEventListener("blur", onReleaseAll);
+  };
+  /** Stops the keyup of a main key that ended a recording, and only that key's. A modifier's keyup
+   * is let through. ⌘ released means the keys pressed under it will send no keyup (WebKit sends none
+   * for a key pressed while ⌘ is down), so the list is emptied rather than wait for them. */
+  const onRelease = (event: KeyboardEvent) => {
+    if (event.key === "Meta") return releasedAll();
+    if (!pressed.has(event.code)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pressed.delete(event.code);
+    if (pressed.size === 0) releasedAll();
+  };
+  const onReleaseAll = () => releasedAll();
+
   // The keys go to the row alone while it records: the window hears them before the editor, the
   // dialogs (Escape) and anything else on the page.
   const onKey = (event: KeyboardEvent) => {
@@ -114,22 +138,6 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     if (result === "cancel") return;
     take(id, result === "clear" ? null : result);
   };
-  /** The codes of the keys that ended a recording and are still down. */
-  const pressed = new Set<string>();
-  const releasedAll = () => {
-    pressed.clear();
-    window.removeEventListener("keyup", onRelease, true);
-    window.removeEventListener("blur", onReleaseAll);
-  };
-  /** Stops the keyup of a key that ended a recording, and only that key's. */
-  const onRelease = (event: KeyboardEvent) => {
-    if (!pressed.has(event.code)) return;
-    event.preventDefault();
-    event.stopImmediatePropagation();
-    pressed.delete(event.code);
-    if (pressed.size === 0) releasedAll();
-  };
-  const onReleaseAll = () => releasedAll();
   const onOutside = (event: Event) => {
     if (recording === null) return;
     if (!(event.target instanceof Node && keysOf(recording)?.contains(event.target))) stop();
@@ -373,7 +381,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
   });
 
   void load();
-  return h(
+  const el = h(
     "div",
     { class: "shortcut-settings" },
     search,
@@ -383,4 +391,11 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     fixedGroup,
     h("div", { class: "settings-row shortcut-footer" }, resetAll),
   );
+  return {
+    el,
+    dispose() {
+      stop();
+      releasedAll();
+    },
+  };
 }

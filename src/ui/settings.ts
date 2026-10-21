@@ -38,6 +38,7 @@ const themeRef = (value: string): ThemeRef | null => {
 /** The settings screen: a list of sections on the left, the picked one's settings on the right.
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
+  let disposeShortcuts = () => {};
   return modal<true>((close) => {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
@@ -331,11 +332,13 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       close(true);
     });
 
+    const shortcuts = shortcutsSection({ backend, onConfigChanged: options.onConfigChanged });
+    disposeShortcuts = shortcuts.dispose;
     const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
       editor: editorSection,
       appearance: appearanceSection,
-      shortcuts: shortcutsSection({ backend, onConfigChanged: options.onConfigChanged }),
+      shortcuts: shortcuts.el,
       extensions: extensionSection,
     };
     const tabs = SECTIONS.map(([section, label]) => {
@@ -402,5 +405,5 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     );
     void refresh();
     return panel;
-  }).then(() => undefined);
+  }).then(() => disposeShortcuts());
 }
