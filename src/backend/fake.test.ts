@@ -205,6 +205,21 @@ describe("FakeBackend shortcuts", () => {
     expect((await backend.settings()).shortcuts).toBeUndefined();
   });
 
+  it("does not count an entry equal to its default as a change of the saved map", async () => {
+    const data = defaultFakeData();
+    data.settings.shortcuts = {
+      save: "CmdOrCtrl+S",
+      rename: null,
+      "new-memo": "CmdOrCtrl+Shift+M",
+    };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    await backend.patchSettings({
+      shortcuts: { "close-tab": null },
+      shortcutsExpected: { "new-memo": "CmdOrCtrl+Shift+M" },
+    });
+    expect((await backend.settings()).shortcuts).toEqual({ "close-tab": null });
+  });
+
   it("keeps whether the shortcuts are off and every ask", async () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
     expect(backend.data.shortcutsSuspended).toBeUndefined();

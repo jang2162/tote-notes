@@ -329,7 +329,9 @@ impl SettingsPatch {
     /// (`shortcuts::validate`) or were made from a map that is no longer the saved one.
     pub fn apply(&self, settings: &mut Settings) -> Result<(), String> {
         if let Some(expected) = &self.shortcuts_expected {
-            if *expected != settings.shortcuts {
+            if shortcuts::without_defaults(expected)
+                != shortcuts::without_defaults(&settings.shortcuts)
+            {
                 return Err(SHORTCUTS_CHANGED.into());
             }
         }
@@ -796,6 +798,34 @@ mod tests {
         assert_eq!(
             settings.shortcuts,
             BTreeMap::from([("rename".to_string(), None)])
+        );
+    }
+
+    #[test]
+    fn an_entry_equal_to_its_default_does_not_make_the_saved_map_stale() {
+        let mut settings = Settings {
+            shortcuts: BTreeMap::from([
+                ("save".to_string(), Some("Cmd+S".to_string())),
+                ("rename".to_string(), None),
+                (
+                    "new-memo".to_string(),
+                    Some("CmdOrCtrl+Shift+M".to_string()),
+                ),
+            ]),
+            ..Default::default()
+        };
+        let patch = SettingsPatch {
+            shortcuts: Some(BTreeMap::from([("close-tab".into(), None)])),
+            shortcuts_expected: Some(BTreeMap::from([(
+                "new-memo".to_string(),
+                Some("CmdOrCtrl+Shift+M".to_string()),
+            )])),
+            ..Default::default()
+        };
+        patch.apply(&mut settings).unwrap();
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([("close-tab".to_string(), None)])
         );
     }
 

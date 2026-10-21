@@ -522,3 +522,55 @@ test("a shortcut saved from a stale table is refused and the other window's chan
     .poll(() => savedMap(first))
     .toEqual({ "new-memo": "CmdOrCtrl+Shift+M", save: "CmdOrCtrl+Shift+K" });
 });
+
+test("an entry saved equal to its default does not make a save look stale", async ({ page }) => {
+  const panel = await startShortcuts(page, {
+    settings: {
+      ...defaultFakeData().settings,
+      shortcuts: { save: "CmdOrCtrl+S", rename: null },
+    },
+  });
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+Shift+M");
+  await expect.poll(() => savedMap(page)).toEqual({ "new-memo": "CmdOrCtrl+Shift+M" });
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveCount(0);
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+});
+
+test("모두 기본값으로 from a stale table is refused and the other window's change stays", async ({
+  context,
+}) => {
+  const first = await startWindows(context);
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  const panel = await openShortcuts(second);
+  // 모두 기본값으로 is off while nothing is changed: give window 2 a table that has something.
+  await first.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { rename: "CmdOrCtrl+K" } }),
+  );
+  await expect(keys(panel, "rename")).toHaveText("⌘K");
+  await second.evaluate(() => {
+    window.__tote.backend.shortcutTable = () => new Promise(() => {});
+  });
+  await first.evaluate(() =>
+    window.__tote.backend.patchSettings({
+      shortcuts: { rename: "CmdOrCtrl+K", "new-memo": "CmdOrCtrl+Shift+M" },
+    }),
+  );
+  await expect
+    .poll(() => savedMap(first))
+    .toEqual({ rename: "CmdOrCtrl+K", "new-memo": "CmdOrCtrl+Shift+M" });
+  await second.evaluate(() => {
+    delete (window.__tote.backend as { shortcutTable?: unknown }).shortcutTable;
+  });
+
+  await panel.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
+  await second.locator(".modal.confirm").getByRole("button", { name: "되돌리기" }).click();
+  await expect(panel.locator(".shortcut-problem")).toHaveText(
+    "다른 창에서 단축키가 바뀌어 다시 읽었습니다. 다시 해 주세요",
+  );
+  expect(await savedMap(first)).toEqual({
+    rename: "CmdOrCtrl+K",
+    "new-memo": "CmdOrCtrl+Shift+M",
+  });
+  await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
+});

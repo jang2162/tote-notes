@@ -172,6 +172,27 @@ pub fn same(a: &str, b: &str) -> bool {
     matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
+/// `map` without the entries that say what their command has anyway: its default, or no shortcut
+/// for a command that has none. The settings screen never saves such an entry, but a file edited
+/// by hand may hold one, and the two maps compared by `SettingsPatch::apply` must not differ by it.
+pub fn without_defaults(
+    map: &BTreeMap<String, Option<String>>,
+) -> BTreeMap<String, Option<String>> {
+    map.iter()
+        .filter(|(id, keys)| {
+            let Some(command) = COMMANDS.iter().find(|c| c.id == id.as_str()) else {
+                return true;
+            };
+            match (keys.as_deref(), command.default) {
+                (None, None) => false,
+                (Some(keys), Some(default)) => !same(keys, default),
+                _ => true,
+            }
+        })
+        .map(|(id, keys)| (id.clone(), keys.clone()))
+        .collect()
+}
+
 /// Whether the settings screen could have recorded it (spec 「화면」): ⌘, ⌃ or ⌥ with a key, or
 /// F1–F12 with no modifier at all. A letter alone, or with only ⇧, would be taken from typing.
 fn recordable(accelerator: &Accelerator) -> bool {

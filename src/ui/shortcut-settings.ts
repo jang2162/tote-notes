@@ -1,4 +1,9 @@
-import { errorCode, type Backend, ShortcutCommand, ShortcutTable } from "../backend/types";
+import {
+  errorCode,
+  type Backend,
+  type ShortcutCommand,
+  type ShortcutTable,
+} from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   acceleratorFromEvent,
@@ -152,8 +157,6 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     }
   }
 
-  /** A key recorded for `id` (`null`: none): saved, unless it is a fixed key or another
-   * command's, which the row says instead. */
   /** The map as saved, which is the table's shortcuts that differ from their default. */
   const savedMap = (): Shortcuts => {
     const map: Shortcuts = {};
@@ -162,6 +165,8 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     return map;
   };
 
+  /** A key recorded for `id` (`null`: none): saved, unless it is a fixed key or another
+   * command's, which the row says instead. */
   const take = (id: string, accelerator: string | null) => {
     const command = commandOf(id);
     if (!table || !command || same(accelerator, command.current)) return;

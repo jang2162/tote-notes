@@ -123,6 +123,19 @@ export function refusedShortcut(map: Overrides): string | null {
   );
 }
 
+/** `map` without the entries that say what their command has anyway (`without_defaults` in
+ * src-tauri/src/shortcuts.rs). */
+export function withoutDefaults(map: Overrides): Overrides {
+  return Object.fromEntries(
+    Object.entries(map).filter(([id, keys]) => {
+      const command = FAKE_SHORTCUT_COMMANDS.find((c) => c.id === id);
+      if (!command) return true;
+      if (keys === null || command.default === null) return keys !== command.default;
+      return !sameAccelerator(keys, command.default);
+    }),
+  );
+}
+
 /** Whether two maps hold the same entries, `null` ones included, in any order. */
 export function sameShortcutMaps(a: Overrides, b: Overrides): boolean {
   const keys = Object.keys(a);

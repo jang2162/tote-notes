@@ -10,6 +10,7 @@ import {
   resolveShortcuts,
   sameShortcutMaps,
   sanitizeShortcuts,
+  withoutDefaults,
 } from "./fake-shortcuts";
 import {
   BackendError,
@@ -1089,7 +1090,7 @@ export class FakeBackend implements Backend {
     // Rust compares with the saved map before it changes anything (`SHORTCUTS_CHANGED`).
     if (patch.shortcutsExpected !== undefined) {
       const saved = sanitizeShortcuts(this.data.settings.shortcuts ?? {});
-      if (!sameShortcutMaps(patch.shortcutsExpected, saved))
+      if (!sameShortcutMaps(withoutDefaults(patch.shortcutsExpected), withoutDefaults(saved)))
         throw new BackendError("bad-request", "shortcuts changed");
     }
     // Rust refuses the whole patch over one entry (`shortcuts::validate`, an `InvalidInput`).
