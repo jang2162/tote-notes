@@ -595,7 +595,11 @@ impl AppCore {
                 format!("{new_label} is not open"),
             ));
         };
-        if inner.flush.targets(from) {
+        if inner
+            .windows
+            .get(from)
+            .is_some_and(|w| inner.gives_no_tabs(from, w))
+        {
             return Err(io::Error::other(WindowBusy(from.to_string())));
         }
         if !inner.places.transfer(&key, from, new_label) {
@@ -2871,6 +2875,23 @@ mod tests {
         ));
         assert!(takes_drops(&core, &w1, &w2));
         assert!(core.move_tab(&w1, &w2, &key));
+    }
+
+    #[test]
+    fn a_window_in_a_switch_gives_no_tab_to_a_new_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, layout) = two_tabs(&core);
+        core.page_started(&w1);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        let na = closed_workspace(&core, "나", &[]);
+        // `prepare_switch` marks the window before any round is open (`in_switch`).
+        core.prepare_switch(&w1, &na).unwrap();
+        let w3 = core.join(&path).unwrap();
+        let tab = json!({ "kind": "memo", "memoId": "b" });
+        let refused = core.adopt_tab(&w3, &w1, tab, key).unwrap_err();
+        assert_eq!(commands::CommandError::from(refused).code, "window-busy");
+        assert_eq!(layouts(&core, &path), vec![layout]);
     }
 
     #[test]

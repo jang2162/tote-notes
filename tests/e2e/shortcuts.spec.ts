@@ -523,6 +523,61 @@ test("a shortcut saved from a stale table is refused and the other window's chan
     .toEqual({ "new-memo": "CmdOrCtrl+Shift+M", save: "CmdOrCtrl+Shift+K" });
 });
 
+test("the stale note stays when a read that began later ends after the refusal", async ({
+  context,
+}) => {
+  const first = await startWindows(context);
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  const panel = await openShortcuts(second);
+  // The first four reads window 2 starts wait until the test lets them end.
+  await second.evaluate(async () => {
+    const backend = window.__tote.backend;
+    const real = backend.shortcutTable.bind(backend);
+    const old = await real();
+    const gates: Array<() => void> = [];
+    (window as unknown as { __gates: typeof gates }).__gates = gates;
+    // The refusal's read (1) answers at once with the old table, so its continuation has run
+    // before the test lets the next one end.
+    backend.shortcutTable = () =>
+      new Promise((resolve, reject) => {
+        const at = gates.length;
+        const end = () => (at === 1 ? resolve(old) : void real().then(resolve, reject));
+        gates.push(end);
+        // Only the first four are held; a read after them ends as it begins.
+        if (at > 3) end();
+      });
+  });
+  const waiting = () =>
+    second.evaluate(() => (window as unknown as { __gates: unknown[] }).__gates.length);
+  const open = (at: number) =>
+    second.evaluate((n) => (window as unknown as { __gates: Array<() => void> }).__gates[n](), at);
+  await first.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } }),
+  );
+  await expect.poll(waiting).toBeGreaterThanOrEqual(1);
+
+  // The refusal starts a read (1). Another window's change makes the controller read the table
+  // (2), and the settings read it again once that ends (3).
+  await record(panel, "save");
+  await second.keyboard.press("Meta+Shift+K");
+  await expect.poll(waiting).toBeGreaterThanOrEqual(2);
+  await first.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { "new-memo": "CmdOrCtrl+Alt+Shift+M" } }),
+  );
+  await expect.poll(waiting).toBeGreaterThanOrEqual(3);
+  await open(2);
+  await expect.poll(waiting).toBeGreaterThanOrEqual(4);
+
+  // The refusal's read ends first and brings nothing; the later one brings the table.
+  await open(1);
+  await open(0);
+  await open(3);
+  await expect(keys(panel, "new-memo")).toHaveText("⌥⇧⌘M");
+  await expect(row(panel, "save").locator(".shortcut-note")).toHaveText(
+    "다른 창에서 단축키가 바뀌어 다시 읽었습니다. 다시 해 주세요",
+  );
+});
+
 test("an entry saved equal to its default does not make a save look stale", async ({ page }) => {
   const panel = await startShortcuts(page, {
     settings: {

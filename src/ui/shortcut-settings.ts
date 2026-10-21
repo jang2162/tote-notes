@@ -218,7 +218,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     try {
       await backend.patchSettings({ shortcuts: map, shortcutsExpected: savedMap() });
     } catch (error) {
-      if (isStale(error)) await load();
+      if (isStale(error)) {
+        void load();
+        await loaded();
+      }
       notes.set(id, { kind: "error", message: isStale(error) ? STALE : describeError(error) });
       render();
       return;
@@ -344,9 +347,18 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
   search.addEventListener("input", filter);
 
   let loads = 0;
+  let latest: Promise<void> = Promise.resolve();
   /** Reads the table again. One that changed — saved here or in another window — ends a
    * recording, whose row may have another shortcut now, and the notes about the old one. */
-  const load = async () => {
+  const load = (): Promise<void> => (latest = read());
+  /** Waits for the last read started, and for any started while waiting: a note put up before it
+   * would be cleared by the table it brings. */
+  const loaded = async () => {
+    let waited;
+    do await (waited = latest);
+    while (waited !== latest);
+  };
+  const read = async () => {
     const at = ++loads;
     try {
       const next = await backend.shortcutTable();
@@ -373,7 +385,8 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
       await backend.patchSettings({ shortcuts: {}, shortcutsExpected: savedMap() });
     } catch (error) {
       if (!isStale(error)) return fail(error);
-      await load();
+      void load();
+      await loaded();
       problem.textContent = STALE;
       return;
     }
