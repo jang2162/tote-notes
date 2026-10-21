@@ -107,9 +107,29 @@ export function shortcutsSection(options: ShortcutsSectionOptions): HTMLElement 
     if (result === null) return;
     const id = recording;
     stop();
+    // The key is still down: its keyup would press the row's button (Space) and record again.
+    pressed.add(event.code);
+    window.addEventListener("keyup", onRelease, true);
+    window.addEventListener("blur", onReleaseAll);
     if (result === "cancel") return;
     take(id, result === "clear" ? null : result);
   };
+  /** The codes of the keys that ended a recording and are still down. */
+  const pressed = new Set<string>();
+  const releasedAll = () => {
+    pressed.clear();
+    window.removeEventListener("keyup", onRelease, true);
+    window.removeEventListener("blur", onReleaseAll);
+  };
+  /** Stops the keyup of a key that ended a recording, and only that key's. */
+  const onRelease = (event: KeyboardEvent) => {
+    if (!pressed.has(event.code)) return;
+    event.preventDefault();
+    event.stopImmediatePropagation();
+    pressed.delete(event.code);
+    if (pressed.size === 0) releasedAll();
+  };
+  const onReleaseAll = () => releasedAll();
   const onOutside = (event: Event) => {
     if (recording === null) return;
     if (!(event.target instanceof Node && keysOf(recording)?.contains(event.target))) stop();

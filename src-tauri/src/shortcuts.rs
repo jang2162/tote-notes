@@ -196,6 +196,10 @@ pub fn without_defaults(
 /// Whether the settings screen could have recorded it (spec 「화면」): ⌘, ⌃ or ⌥ with a key, or
 /// F1–F12 with no modifier at all. A letter alone, or with only ⇧, would be taken from typing.
 fn recordable(accelerator: &Accelerator) -> bool {
+    // muda has no macOS menu key for IntlBackslash: the item would show no shortcut.
+    if accelerator.key() == Code::IntlBackslash {
+        return false;
+    }
     let mods = accelerator.modifiers();
     // The parser reads `Cmd`, `Super` and `CmdOrCtrl` (on macOS) all as META.
     mods.intersects(Modifiers::META | Modifiers::CONTROL | Modifiers::ALT)
@@ -445,6 +449,39 @@ mod tests {
         let saved = overrides(&[("settings", Some("CmdOrCtrl+K"))]);
         assert_eq!(sanitize(&saved), BTreeMap::new());
         assert!(validate(&saved).unwrap_err().contains("settings"));
+    }
+
+    #[test]
+    fn intl_backslash_is_not_recordable() {
+        assert!(parse("CmdOrCtrl+IntlBackslash").is_some());
+        assert!(!parse("CmdOrCtrl+IntlBackslash").is_some_and(|keys| recordable(&keys)));
+        let saved = overrides(&[("rename", Some("CmdOrCtrl+IntlBackslash"))]);
+        assert_eq!(sanitize(&saved), BTreeMap::new());
+        assert!(validate(&saved).unwrap_err().contains("rename"));
+    }
+
+    /// Only the parse is held here: muda's macOS key function (`key_equivalent`) is crate-private.
+    /// That the menu really takes them is for a check on screen.
+    #[test]
+    fn numpad_insert_and_help_shortcuts_parse_and_are_recordable() {
+        for keys in [
+            "CmdOrCtrl+Numpad1",
+            "Alt+Numpad0",
+            "CmdOrCtrl+NumpadAdd",
+            "CmdOrCtrl+NumpadSubtract",
+            "CmdOrCtrl+NumpadMultiply",
+            "CmdOrCtrl+NumpadDivide",
+            "CmdOrCtrl+NumpadDecimal",
+            "CmdOrCtrl+NumpadEnter",
+            "CmdOrCtrl+NumpadEqual",
+            "Alt+Insert",
+            "CmdOrCtrl+Help",
+        ] {
+            assert!(parse(keys).is_some_and(|keys| recordable(&keys)), "{keys}");
+            let saved = overrides(&[("rename", Some(keys))]);
+            assert_eq!(validate(&saved), Ok(()), "{keys}");
+            assert_eq!(sanitize(&saved), saved, "{keys}");
+        }
     }
 
     #[test]

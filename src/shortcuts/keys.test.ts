@@ -104,6 +104,28 @@ describe("acceleratorFromEvent", () => {
     expect(acceleratorFromEvent(key("Delete"))).toBe("clear");
   });
 
+  it("records numpad, Insert and Help but not IntlBackslash", () => {
+    const meta = { meta: true };
+    expect(acceleratorFromEvent(key("Numpad1", meta, "1"))).toBe("CmdOrCtrl+Numpad1");
+    expect(acceleratorFromEvent(key("NumpadAdd", meta, "+"))).toBe("CmdOrCtrl+NumpadAdd");
+    expect(acceleratorFromEvent(key("NumpadEnter", meta, "Enter"))).toBe("CmdOrCtrl+NumpadEnter");
+    expect(acceleratorFromEvent(key("Insert", { alt: true }))).toBe("Alt+Insert");
+    expect(acceleratorFromEvent(key("Help", meta))).toBe("CmdOrCtrl+Help");
+    expect(acceleratorFromEvent(key("IntlBackslash", meta, "<"))).toBeNull();
+    expect(acceleratorFromEvent(key("Numpad1", {}, "1"))).toBeNull();
+    expect(recordableAccelerator("CmdOrCtrl+IntlBackslash")).toBe(false);
+    expect(formatAccelerator("CmdOrCtrl+Numpad1")).toBe("⌘키패드 1");
+    expect(formatAccelerator("CmdOrCtrl+NumpadAdd")).toBe("⌘키패드 ＋");
+    expect(formatAccelerator("CmdOrCtrl+NumpadSubtract")).toBe("⌘키패드 −");
+    expect(formatAccelerator("CmdOrCtrl+NumpadMultiply")).toBe("⌘키패드 ×");
+    expect(formatAccelerator("CmdOrCtrl+NumpadDivide")).toBe("⌘키패드 ÷");
+    expect(formatAccelerator("CmdOrCtrl+NumpadDecimal")).toBe("⌘키패드 .");
+    expect(formatAccelerator("CmdOrCtrl+NumpadEnter")).toBe("⌘키패드 ↩");
+    expect(formatAccelerator("CmdOrCtrl+NumpadEqual")).toBe("⌘키패드 =");
+    expect(formatAccelerator("Alt+Insert")).toBe("⌥Insert");
+    expect(formatAccelerator("CmdOrCtrl+Help")).toBe("⌘Help");
+  });
+
   it("records only what the menu could be given back", () => {
     for (const event of [
       key("KeyN", { meta: true, shift: true }, "N"),

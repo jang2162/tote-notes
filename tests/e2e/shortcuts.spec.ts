@@ -574,3 +574,28 @@ test("모두 기본값으로 from a stale table is refused and the other window'
   });
   await expect(keys(panel, "new-memo")).toHaveText("⇧⌘M");
 });
+
+test("the keyup of a recorded shortcut reaches nothing", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  // What reaches the page after the window's capture listeners: the keyups anything else would hear.
+  await page.evaluate(() => {
+    const heard: string[] = [];
+    (window as unknown as { heard: string[] }).heard = heard;
+    document.addEventListener("keyup", (event) => heard.push(event.code));
+  });
+  const heard = () => page.evaluate(() => (window as unknown as { heard: string[] }).heard);
+  await record(panel, "rename");
+  await page.keyboard.down("Alt");
+  await page.keyboard.down("Space");
+  await expect.poll(() => savedMap(page)).toEqual({ rename: "Alt+Space" });
+  await page.keyboard.up("Space");
+  await page.keyboard.up("Alt");
+  // Space's keyup would press the focused row button and record again; nothing else is held back.
+  await expect(panel.locator(".recording")).toHaveCount(0);
+  expect(await heard()).toEqual(["AltLeft"]);
+  expect(await savedMap(page)).toEqual({ rename: "Alt+Space" });
+  await expect(keys(panel, "rename")).toHaveText("⌥Space");
+  // Only that key's: the next Space keyup is heard again.
+  await page.keyboard.press("Space");
+  expect(await heard()).toEqual(["AltLeft", "Space"]);
+});

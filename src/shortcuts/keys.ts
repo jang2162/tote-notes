@@ -127,6 +127,8 @@ export function sameAccelerator(a: string, b: string): boolean {
 const F1_TO_F12 = /^F([1-9]|1[0-2])$/;
 
 function recordable(keys: Keys): boolean {
+  // muda cannot put IntlBackslash on a macOS menu item.
+  if (keys.code === "IntlBackslash") return false;
   return (
     (keys.mods & (META | CONTROL | ALT)) !== 0 || (keys.mods === 0 && F1_TO_F12.test(keys.code))
   );
@@ -165,6 +167,14 @@ const SYMBOLS: Record<string, string> = {
   End: "↘",
   PageUp: "⇞",
   PageDown: "⇟",
+  NumpadAdd: "키패드 ＋",
+  NumpadSubtract: "키패드 −",
+  NumpadMultiply: "키패드 ×",
+  NumpadDivide: "키패드 ÷",
+  NumpadDecimal: "키패드 .",
+  NumpadEnter: "키패드 ↩",
+  NumpadEqual: "키패드 =",
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, n) => [`Numpad${n}`, `키패드 ${n}`])),
 };
 
 /** As macOS menus write it: ⌃⌥⇧⌘, then the key (`"CmdOrCtrl+Shift+N"` → `"⇧⌘N"`). A string that
@@ -188,9 +198,12 @@ function keyOfCode(code: string): string | null {
   if (/^Key[A-Z]$|^Digit[0-9]$/.test(code)) return code.slice(-1);
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (code.startsWith("Arrow")) return code.slice(5) || null;
+  if (/^Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)$/.test(code)) return code;
   const char = SYMBOLS[code];
   if (char && char.length === 1 && "`\\[],=-.';/".includes(char)) return char;
-  return ["Enter", "Tab", "Space", "Home", "End", "PageUp", "PageDown"].includes(code)
+  return ["Enter", "Tab", "Space", "Home", "End", "PageUp", "PageDown", "Insert", "Help"].includes(
+    code,
+  )
     ? code
     : null;
 }
