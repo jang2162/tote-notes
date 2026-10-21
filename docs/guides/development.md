@@ -87,7 +87,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 
   - 이 패치를 지키는 시험은 `tests/e2e/highlight.spec.ts` 「colours that land just after the editor takes the focus leave the cursor in place」 다. 패치를 빼면 결정적으로 실패한다.
   - `node_modules` 의 파일을 직접 고치지 않는다. pnpm 저장소의 하드 링크라 다른 워크트리까지 바뀐다. 고칠 것은 `pnpm patch @codemirror/view@<판> --edit-dir <임시 폴더>` 로 풀고 고친 뒤 `pnpm patch-commit <임시 폴더>` 로 만든다.
   - `@codemirror/view` 를 올리면 패치의 판 이름이 맞지 않아 `pnpm install` 이 실패한다. 새 판의 `readSelectionRange` 를 보고, 그 분기가 `updateSelection` 전에 `selectionRange.setRange(range)` 를 하면(상위가 고쳤으면) `patchedDependencies` 항목과 패치 파일을 지운다. 아니면 새 판에 같은 한 줄로 패치를 다시 만들고 옛 패치를 지운다. 어느 쪽이든 위 시험을 돌린다.
-  - 패치는 `pnpm install` 때 적용된다. post-checkout 훅은 설치를 돌리지만 merge·pull 로 받은 체크아웃은 훅이 돌지 않으므로, 패치를 들이거나 바꾼 커밋을 merge·pull 로 받은 뒤에는 `pnpm install` 을 다시 돌린다.
+  - 패치는 `pnpm install` 때 적용된다. post-checkout·post-merge·post-rewrite 훅이 설치를 돌린다. 훅을 처음 받은 체크아웃은 `pnpm install` 을 한 번 돌려 훅을 등록한다.
 
 ## 편집기 명령의 이름은 `Function.name` 이 아니라 import 이름에서 얻는다
 
