@@ -1,7 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
-import { paneSession, quietErrors, sessionPane, start } from "./helpers";
+import { parseWindowSession, sessionPanes } from "../../src/core/session";
+import { paneSession, quietErrors, sessionPane, start, startWindows } from "./helpers";
 
 // A tab another window of the workspace let go over this one (`onAdopt`), on the fake backend:
 // the other window is not there, so a test does what it and the native side would — the place
@@ -19,8 +20,9 @@ function adopt(page: Page, id: string): Promise<void> {
   }, id);
 }
 
-/** Makes `readWindowLayout` — a restore's first read, before it makes any tab — wait until the
- * page's `releaseLayout` is called; `layoutReads` counts the reads held meanwhile. */
+/** Makes the next `readWindowLayout` — a restore's first read, before it makes any tab — wait
+ * until the page's `releaseLayout` is called; `layoutReads` counts the reads since. Later reads go
+ * through. */
 async function holdLayoutRead(page: Page): Promise<() => Promise<void>> {
   await page.evaluate(() => {
     const backend = window.__tote.backend;
@@ -29,8 +31,8 @@ async function holdLayoutRead(page: Page): Promise<() => Promise<void>> {
       Object.assign(window, { releaseLayout: resolve, layoutReads: 0 }),
     );
     backend.readWindowLayout = async () => {
-      (window as unknown as { layoutReads: number }).layoutReads += 1;
-      await held;
+      const reads = ((window as unknown as { layoutReads: number }).layoutReads += 1);
+      if (reads === 1) await held;
       return read();
     };
   });
@@ -45,11 +47,17 @@ const memos = {
 };
 const sessionOfA = paneSession([[{ kind: "memo", memoId: "a" }]]);
 
-/** Opens the window on `seed` with its restore held at its first read (`holdLayoutRead`): the first
- * listing fails, so the window restores at the next one, which the test brings about. Returns what
- * lets the restore go on. */
+/** Opens the window on `seed` with its restore held at its first read (`holdRestore`). Returns
+ * what lets the restore go on. */
 async function restoreHeld(page: Page, seed: Partial<FakeData>): Promise<() => Promise<void>> {
   await start(page, { ...seed, failListMemos: 1 });
+  return holdRestore(page);
+}
+
+/** Holds the restore of a window opened with `failListMemos: 1` at its first read
+ * (`holdLayoutRead`): the first listing failed, so the window restores at the next one, which this
+ * brings about. Returns what lets the restore go on. */
+async function holdRestore(page: Page): Promise<() => Promise<void>> {
   await expect(page.locator(".status-message")).toHaveText(`오류: ${LISTING_FAILED}`);
   const release = await holdLayoutRead(page);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
@@ -113,6 +121,101 @@ test("an adopt held while restoring whose memo is gone gives its place back", as
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.places?.["memo:gone"]))
     .toBeUndefined();
+});
+
+/** The first pane of the layout the native side has for window `label` (the fake's `FakeHub`): its
+ * tabs' memo IDs and its active tab. */
+async function hubPane(
+  page: Page,
+  label: string,
+): Promise<{ tabs: (string | false)[]; activeTab: number }> {
+  const json = await page.evaluate(
+    (window) =>
+      JSON.stringify(
+        self.__tote.backend.data.hub?.windows.find((each) => each.label === window)?.layout ?? null,
+      ),
+    label,
+  );
+  const [pane] = sessionPanes(parseWindowSession(JSON.parse(json)).layout);
+  return { tabs: pane.tabs.map((tab) => "memoId" in tab && tab.memoId), activeTab: pane.activeTab };
+}
+
+// Tabs handed to a window still restoring wait for the restore (`pendingAdopts`), and a restore
+// under way writes no layout. A window closed or quit then would leave the tabs in no layout while
+// their places are its own: a round writes them behind the window's own tabs, into the layout the
+// native side has for it.
+test("a window closed before its restore keeps the tabs it was handed", async ({ context }) => {
+  await quietErrors(context, LISTING_FAILED);
+  const page = await startWindows(context, { memos, session: sessionOfA, failListMemos: 1 });
+  const release = await holdRestore(page);
+  // 가 is the window's own tab already: it is not written twice.
+  await adopt(page, "b");
+  await adopt(page, "a");
+  await adopt(page, "c");
+  await page.evaluate(() => window.__tote.backend.requestFlush(1, "quit"));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 1 }]);
+  // The last one handed over is in front, as adopting it would have shown it.
+  expect(await hubPane(page, "ws-1")).toEqual({ tabs: ["a", "b", "c"], activeTab: 2 });
+  // The restore, let go on, makes them once: they are in the layout it reads now.
+  await release();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+});
+
+test("a window with no layout yet keeps the tabs it was handed in a pane of their own", async ({
+  page,
+}) => {
+  await quietErrors(page, LISTING_FAILED);
+  await restoreHeld(page, { memos });
+  await adopt(page, "b");
+  await adopt(page, "c");
+  await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
+  await expect
+    .poll(async () => (await sessionPane(page)).tabs.map((tab) => "memoId" in tab && tab.memoId))
+    .toEqual(["b", "c"]);
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+    .toEqual([{ id: 1 }]);
+});
+
+// A tab handed over whose memo this window has not listed yet waits for a listing (`adoptTab`). A
+// round answered meanwhile would write the window's tabs without it and close the window over it.
+test("a close round waits for a tab still being adopted", async ({ page }) => {
+  await start(page, { memos: { a: memos.a }, session: sessionOfA });
+  await expect(page.locator(".cm-content")).toHaveText("첫째");
+  await page.evaluate((memo) => {
+    const { backend } = window.__tote;
+    // Made in another window a moment ago: listed only by the next listing, which waits.
+    backend.data.memos.b = memo;
+    const list = backend.listMemos.bind(backend);
+    const held = new Promise<void>((resolve) => Object.assign(window, { releaseList: resolve }));
+    backend.listMemos = async () => {
+      await held;
+      return list();
+    };
+    const events: string[] = [];
+    Object.assign(window, { events });
+    const write = backend.writeWindowLayout.bind(backend);
+    backend.writeWindowLayout = (json) => {
+      events.push(json.includes('"memoId":"b"') ? "layout with 나" : "layout");
+      return write(json);
+    };
+    const done = backend.flushDone.bind(backend);
+    backend.flushDone = (id, blocked) => {
+      events.push("answer");
+      return done(id, blocked);
+    };
+  }, memos.b);
+  await adopt(page, "b");
+  await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
+  await page.evaluate(() => (window as unknown as { releaseList(): void }).releaseList());
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { events: string[] }).events))
+    .toContain("answer");
+  const events = await page.evaluate(() => (window as unknown as { events: string[] }).events);
+  expect(events.indexOf("layout with 나")).toBeGreaterThanOrEqual(0);
+  expect(events.indexOf("layout with 나")).toBeLessThan(events.indexOf("answer"));
 });
 
 // The native side sends a tab let go over the window from the moment its page has started (the

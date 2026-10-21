@@ -15,7 +15,14 @@ import type {
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
-import { isSessionPane, parseTab, type SessionNode, type SessionTab } from "../core/session";
+import {
+  isSessionPane,
+  parseTab,
+  parseWindowSession,
+  sessionPanes,
+  type SessionNode,
+  type SessionTab,
+} from "../core/session";
 import { settleComposition } from "../editor/compose";
 import {
   languageData,
@@ -129,6 +136,10 @@ const sameTab = (a: TabRef, b: TabRef) =>
     ? b.kind === "memo" && a.id === b.id
     : b.kind === "external" && a.path === b.path;
 
+/** The place a session entry stands for among every window's tabs. */
+const refOf = (tab: SessionTab): TabRef =>
+  tab.kind === "memo" ? { kind: "memo", id: tab.memoId } : { kind: "external", path: tab.path };
+
 /** A pane this near the editing area's left or top edge (a fraction of it) is at that edge. */
 const EDGE = 1e-9;
 
@@ -218,6 +229,9 @@ export class AppController implements DocHost, PaneHost {
   /** Tabs handed to this window while it restores (`onAdopt`): a restore neither shows a tab nor
    * writes the session, so they are adopted once it is done. */
   private pendingAdopts: { tab: SessionTab; x: number; y: number }[] = [];
+  /** Tabs handed to this window being adopted after its restore (`adoptTab`): a round waits for
+   * them before it writes the window's tabs (`onFlush`). */
+  private readonly adopting = new Set<Promise<void>>();
   /** A memo listing has come through. The session is restored only after one: without the memos
    * its memo tabs have nothing to stand for, and a session written then would drop them. */
   private memosLoaded = false;
@@ -342,7 +356,12 @@ export class AppController implements DocHost, PaneHost {
       const tab = parseTab(parseJson(json));
       if (!tab) this.report(new Error(`not a tab: ${json}`));
       else if (this.restoring) this.pendingAdopts.push({ tab, x, y });
-      else void this.adoptTab(tab, x, y).catch((error: unknown) => this.report(error));
+      else {
+        const adopted: Promise<void> = this.adoptTab(tab, x, y)
+          .catch((error: unknown) => this.report(error))
+          .finally(() => this.adopting.delete(adopted));
+        this.adopting.add(adopted);
+      }
     });
     const first = Promise.all([
       // The first call of a page: after a switch it lets the window write again
@@ -1188,11 +1207,7 @@ export class AppController implements DocHost, PaneHost {
       doc = this.session.tabFor(tab);
       if (!doc) {
         // Its place is this window's already: no other window could take the tab again.
-        const ref: TabRef =
-          tab.kind === "memo"
-            ? { kind: "memo", id: tab.memoId }
-            : { kind: "external", path: tab.path };
-        void this.backend.releaseTab(ref).catch((error: unknown) => console.warn(error));
+        void this.backend.releaseTab(refOf(tab)).catch((error: unknown) => console.warn(error));
         return this.report(new Error("메모를 찾을 수 없습니다"));
       }
       const hit = document.elementsFromPoint(x, y);
@@ -1213,13 +1228,40 @@ export class AppController implements DocHost, PaneHost {
         (closing ? doc.flush() : doc.leave()).catch((error: unknown) => this.report(error)),
       ),
     );
+    if (this.restoring && this.pendingAdopts.length > 0)
+      await this.writeHandedTabs().catch((error: unknown) => this.report(error));
     await this.saveSessionNow();
+  }
+
+  /** A window still restoring writes no session, and the tabs handed to it meanwhile wait for the
+   * restore (`pendingAdopts`) while their places are this window's already. Should it close or the
+   * app quit first, they would be in no window's layout: they go behind the first pane's tabs in the
+   * layout the native side has for the window, which a window with none yet gets with one pane.
+   * Not `SessionSync.build`: with the panes not restored it would write them empty over the saved
+   * ones. A tab the layout has already is left where it is, so a second flush adds nothing. */
+  private async writeHandedTabs(): Promise<void> {
+    const saved = parseWindowSession(parseJson(await this.backend.readWindowLayout()));
+    // Done meanwhile: the restore made the session's tabs and writes them with these.
+    if (!this.restoring) return;
+    const panes = sessionPanes(saved.layout);
+    const has = (tab: SessionTab) =>
+      panes.some((pane) => pane.tabs.some((each) => sameTab(refOf(each), refOf(tab))));
+    const handed = this.pendingAdopts.map(({ tab }) => tab).filter((tab) => !has(tab));
+    if (handed.length === 0) return;
+    const [first] = panes;
+    first.tabs.push(...handed);
+    // Adopting shows the tab: the last one handed over is the one in front.
+    first.activeTab = first.tabs.length - 1;
+    await this.backend.writeWindowLayout(JSON.stringify(saved));
   }
 
   /** Answers with what is still only in memory: the native side asks before closing over it. A
    * window that closes or switches lets go of its tabs before it answers (`leave`). */
   private async onFlush(id: number, goal: FlushGoal): Promise<void> {
     try {
+      // A tab still being adopted is written with the others: a window closing over it would
+      // take it along.
+      await Promise.allSettled(this.adopting);
       // A syllable still being composed goes into its own tab before the tabs are written
       // (closing, quitting, switching the workspace).
       await this.settleCompositions();

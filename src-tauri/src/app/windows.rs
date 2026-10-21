@@ -348,11 +348,13 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
     }
 }
 
-/// A page starting to load in a window recording a shortcut (a reload, as a workspace switch makes)
-/// gives the menu its shortcuts back: the old page's word that it was done may not have arrived.
+/// A page starting to load in a window — a reload, as a workspace switch makes — takes no tab
+/// handed to it until it starts (`AppCore::page_loading`). In a window recording a shortcut it gives
+/// the menu its shortcuts back: the old page's word that it was done may not have arrived.
 pub fn on_page_load(webview: &Webview, payload: &PageLoadPayload<'_>) {
     if payload.event() == PageLoadEvent::Started {
         let label = webview.label().to_string();
+        webview.app_handle().state::<AppCore>().page_loading(&label);
         change_shortcuts(webview.app_handle(), move |menu| menu.resume_if(&label));
     }
 }
@@ -440,7 +442,7 @@ pub struct WindowSpot<'a> {
     pub frame: WindowFrame,
     /// Whether it shows the workspace of the window the tab comes from.
     pub same_workspace: bool,
-    /// `AppCore::window_is_leaving`.
+    /// It takes no tab now (`AppCore::drop_candidates`).
     pub leaving: bool,
 }
 

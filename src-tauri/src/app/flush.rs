@@ -194,6 +194,15 @@ impl FlushCoordinator {
             .any(|round| round.asking && round.goal.window().is_some())
     }
 
+    /// A round closing window `label` or switching its workspace is open, writing or asking. Its
+    /// page may answer before a tab handed to it arrives and write its tabs without it, and the
+    /// tab would go with the window. A quit round targets no window: every window stays.
+    pub fn targets(&self, label: &str) -> bool {
+        self.rounds
+            .values()
+            .any(|round| round.goal.window() == Some(label))
+    }
+
     /// Drops round `id` — its question was answered, either way. True when a quit was waiting on
     /// it.
     pub fn cancel(&mut self, id: u64) -> bool {
@@ -310,6 +319,30 @@ mod tests {
         // A round still asking is not over: its question gives the window back or carries it out.
         let id = asking_close(&mut f);
         assert_eq!(f.ack(id, "a", None), Ack::Pending);
+    }
+
+    #[test]
+    fn a_window_round_targets_its_window_until_it_is_dropped() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"]))
+        else {
+            panic!("expected a round")
+        };
+        assert!(f.targets("a"));
+        assert!(!f.targets("b"));
+        // Still while it asks: 「그래도 닫기」 takes the window.
+        assert!(matches!(
+            f.ack(id, "a", Some(ONE_FAILED.into())),
+            Ack::Blocked { .. }
+        ));
+        assert!(f.targets("a"));
+        f.cancel(id);
+        assert!(!f.targets("a"));
+        let Begin::Started { .. } = f.begin(FlushGoal::Quit, labels(&["a", "b"])) else {
+            panic!("expected a round")
+        };
+        assert!(!f.targets("a"));
+        assert!(!f.targets("b"));
     }
 
     #[test]

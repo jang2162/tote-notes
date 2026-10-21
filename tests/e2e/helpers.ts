@@ -248,7 +248,10 @@ export function menu(page: Page, id: string): Promise<void> {
 /** The app logs each error it reports; the ones a test makes on purpose stay out of the output.
  * Vite's client wraps `console.error` to forward it to the dev server's log, so the filter stays
  * outermost: whatever is assigned later goes under it. */
-export async function quietErrors(page: Page, ...expected: string[]): Promise<void> {
+export async function quietErrors(
+  page: Page | BrowserContext,
+  ...expected: string[]
+): Promise<void> {
   await page.addInitScript((expected) => {
     let inner = console.error.bind(console);
     const filtered = (...args: unknown[]) => {

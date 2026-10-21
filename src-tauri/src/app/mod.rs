@@ -211,6 +211,15 @@ impl OpenWindow {
 }
 
 impl Inner {
+    /// Whether window `label` (`window`) is to take no tab handed to it: it is leaving
+    /// (`OpenWindow::is_leaving`), or a round to close it or switch its workspace is open
+    /// (`FlushCoordinator::targets`). Its page answers that round by writing its tabs, so a tab
+    /// that came after would go with the window. Not part of `window_is_leaving`, which tells a
+    /// page answering a round too late whether its window is going.
+    fn takes_no_tabs(&self, label: &str, window: &OpenWindow) -> bool {
+        window.is_leaving() || self.flush.targets(label)
+    }
+
     /// The labels of the windows on `path`, in opening order.
     fn windows_of(&self, path: &Path) -> Vec<String> {
         let mut windows: Vec<(&String, &OpenWindow)> = self
@@ -631,6 +640,17 @@ impl AppCore {
 
     pub fn layout_of(&self, label: &str) -> Option<Value> {
         lock(&self.inner).windows.get(label)?.layout.clone()
+    }
+
+    /// Window `label`'s page begins to load (`PageLoadEvent::Started`), a reload among others: the
+    /// new page hears a tab handed to it only once it listens, so the window takes none until it
+    /// starts (`page_started`). Should the event come after the page has started on a real
+    /// machine, the window is left 「not ready」 until its next load; a tab let go over it then
+    /// gets a window of its own, so none is lost — the safe way to be wrong.
+    pub fn page_loading(&self, label: &str) {
+        if let Some(window) = lock(&self.inner).windows.get_mut(label) {
+            window.page_ready = false;
+        }
     }
 
     /// Window `label`'s page asks for its workspace (`workspace_info`), the first thing a page
@@ -1116,7 +1136,7 @@ impl AppCore {
     }
 
     /// The windows a tab dragged out of window `from` may land on, most recently focused first:
-    /// whether each shows `from`'s workspace and whether it is leaving (`window_is_leaving`).
+    /// whether each shows `from`'s workspace and whether it is leaving (`Inner::takes_no_tabs`).
     /// `from` is among them. A window not up yet (`opened`) is not. One whose page has not started
     /// (`page_ready`) counts as leaving: it would not hear the tab, and a tab let go over it must not
     /// go to a window it hides either.
@@ -1131,7 +1151,7 @@ impl AppCore {
                 Some(DropCandidate {
                     label: label.clone(),
                     same_workspace: path == Some(&window.path),
-                    leaving: window.is_leaving() || !window.page_ready,
+                    leaving: inner.takes_no_tabs(label, window) || !window.page_ready,
                 })
             })
             .collect()
@@ -1139,7 +1159,8 @@ impl AppCore {
 
     /// Hands the tab `key` from window `from` to window `to`, which shows the same workspace,
     /// neither of them leaving, checked under the lock the transfer takes: a window that began to
-    /// close or switch since `drop_candidates` takes nothing, and one switching away gives nothing
+    /// close or switch since `drop_candidates` — its round only begun — takes nothing
+    /// (`Inner::takes_no_tabs`), and one switching away gives nothing
     /// (its tab is in the session of the workspace it leaves already). False, changing nothing,
     /// then, when `from` does not hold the tab, or while quitting. The session file is left to the
     /// two windows' next layouts.
@@ -1151,7 +1172,7 @@ impl AppCore {
         let (Some(source), Some(target)) = (inner.windows.get(from), inner.windows.get(to)) else {
             return false;
         };
-        if source.is_leaving() || source.path != target.path || target.is_leaving() {
+        if source.is_leaving() || source.path != target.path || inner.takes_no_tabs(to, target) {
             return false;
         }
         inner.places.transfer(key, from, to)
@@ -2745,6 +2766,70 @@ mod tests {
         assert!(!core.is_page_ready(&w1));
         core.page_started(&w1);
         assert!(core.is_page_ready(&w1));
+    }
+
+    #[test]
+    fn a_reloading_page_is_not_a_drop_candidate_until_it_starts_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        core.page_started(&w1);
+        core.page_started(&w2);
+        assert!(takes_drops(&core, &w1, &w2));
+        // A reload — the web content process restarting, say — makes a page that listens for a tab
+        // handed to it only once it starts.
+        core.page_loading(&w2);
+        assert!(!takes_drops(&core, &w1, &w2));
+        core.page_started(&w2);
+        assert!(takes_drops(&core, &w1, &w2));
+    }
+
+    #[test]
+    fn a_window_in_a_close_round_is_not_a_drop_target() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let (w1, path, _) = two_tabs(&core);
+        let w2 = attach(&core, &path);
+        core.page_started(&w1);
+        core.page_started(&w2);
+        let key = core.key_for(&w1, &memo_b()).unwrap();
+        let still_w1s = |core: &AppCore| {
+            assert_eq!(
+                core.claim_tabs(&w2, &[memo_b()]).unwrap(),
+                vec![Err(w1.clone())]
+            );
+        };
+        // Its page may answer the round before the tab arrives: it would write its tabs without
+        // it, and the tab would go with the window.
+        let Begin::Started { id, .. } = core.begin_flush(FlushGoal::CloseWindow(w2.clone())) else {
+            panic!("expected a round")
+        };
+        assert!(!takes_drops(&core, &w1, &w2));
+        assert!(!core.move_tab(&w1, &w2, &key));
+        still_w1s(&core);
+        // 「취소」: the window stays and takes tabs again.
+        core.cancel_flush(id);
+        assert!(takes_drops(&core, &w1, &w2));
+        let na = closed_workspace(&core, "나", &[]);
+        let switch = FlushGoal::SwitchWorkspace {
+            label: w2.clone(),
+            to: na,
+        };
+        let Begin::Started { id, .. } = core.begin_flush(switch) else {
+            panic!("expected a round")
+        };
+        assert!(!takes_drops(&core, &w1, &w2));
+        assert!(!core.move_tab(&w1, &w2, &key));
+        still_w1s(&core);
+        core.cancel_flush(id);
+        // A quit round leaves every window where it is.
+        assert!(matches!(
+            core.begin_flush(FlushGoal::Quit),
+            Begin::Started { .. }
+        ));
+        assert!(takes_drops(&core, &w1, &w2));
+        assert!(core.move_tab(&w1, &w2, &key));
     }
 
     #[test]
