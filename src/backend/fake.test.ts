@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "./fake";
+import type { BackendError, TabRef } from "./types";
 
 describe("FakeBackend settings", () => {
   it("hands out a copy, so a caller's edit is not a save", async () => {
@@ -47,6 +48,53 @@ describe("FakeBackend whileWritingLayout", () => {
     await backend.writeWindowLayout(JSON.stringify({ panes: [], focusedPane: 0 }));
     expect(ran).toBe(0);
     expect(backend.whileWritingLayout).not.toBeNull();
+  });
+});
+
+describe("FakeBackend tear-off during a switch", () => {
+  it("refuses a tab while the switch round is open and until the window stays, as Rust does", async () => {
+    const data = defaultFakeData();
+    data.workspaces.push({
+      name: "개인",
+      path: "/fake/개인",
+      open: false,
+      windows: 0,
+      missing: false,
+    });
+    data.otherWorkspaces = {
+      "/fake/개인": {
+        workspace: { ...data.workspace, id: "workspace-2", name: "개인", path: "/fake/개인" },
+        memos: {},
+        session: null,
+      },
+    };
+    // The switch cannot open its target: the window stays, and the page does not reload.
+    data.unopenable = ["/fake/개인"];
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    const ref: TabRef = { kind: "memo", id: "a" };
+    const tearOff = () =>
+      backend.tearOffTab(JSON.stringify({ kind: "memo", memoId: "a" }), ref).then(
+        () => "moved",
+        (error: BackendError) => error.code,
+      );
+    const inRound: string[] = [];
+    backend.onFlush((id) => {
+      void tearOff().then((code) => {
+        inRound.push(code);
+        return backend.flushDone(id);
+      });
+    });
+    let release = () => {};
+    backend.switchGate = new Promise((resolve) => (release = resolve));
+    const switched = backend.switchWorkspace("/fake/개인");
+    await vi.waitFor(() => expect(inRound).toEqual(["window-busy"]));
+    // Answered, the switch waits before it swaps the workspace: the native side's `in_switch`.
+    await vi.waitFor(() => expect(backend.data.flushed).toHaveLength(1));
+    expect(await tearOff()).toBe("window-busy");
+    release();
+    expect(await switched).toBe("switching");
+    // Stayed: the tab is the backend's to refuse for its own reasons now (it holds no place here).
+    expect(await tearOff()).toBe("io");
   });
 });
 

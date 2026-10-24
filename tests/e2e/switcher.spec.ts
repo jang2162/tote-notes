@@ -349,6 +349,24 @@ test("a memo opened while the window leaves shows nothing", async ({ page }) => 
   await switchedTo(page, "개인");
 });
 
+test("a tab moved out while the window switches stays and says why in words", async ({ page }) => {
+  // One filter for both: a second `quietErrors` would leave only its own words filtered.
+  await quietErrors(page, "is switching workspaces", "is closing or switching");
+  await start(page, seed());
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  const release = await hold(page, "switchGate");
+  await pickWorkspace(page, "개인");
+  await answered(page);
+  await menu(page, "move-tab-to-new-window");
+  await expect(page.locator(".status-message")).toHaveText(
+    "창을 닫거나 바꾸는 중이라 탭을 옮기지 못했습니다",
+  );
+  expect(await page.evaluate(() => window.__tote.backend.data.tornOff ?? [])).toEqual([]);
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await release();
+  await switchedTo(page, "개인");
+});
+
 test("a switch that cannot open its target after writing gives the panes back", async ({
   page,
 }) => {

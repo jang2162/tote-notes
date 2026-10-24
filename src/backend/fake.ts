@@ -398,6 +398,10 @@ export class FakeBackend implements Backend {
   whileWritingLayout: (() => void) | null = null;
   /** The switch's flush round is waiting for this window's answer (`flushThisWindow`). */
   private roundOpen = false;
+  /** Set from the switch's flush round until the window stays or reloads (`switching` from there):
+   * the native side hands no tab out of a window whose round is open or that is in a switch
+   * (`gives_no_tabs` in src-tauri/src/app/mod.rs). */
+  private inSwitch = false;
   /** How long a switch waits after this window's answer before it swaps the workspace and reloads
    * the page: the gap between the round's answer and `switch_window` on the native side, where
    * writes are still taken. */
@@ -739,7 +743,7 @@ export class FakeBackend implements Backend {
     ref: TabRef,
     at?: { x: number; y: number },
   ): Promise<"moved" | "window"> {
-    if (this.tearOffBusy || this.switching)
+    if (this.tearOffBusy || this.inSwitch || this.switching)
       throw new BackendError("window-busy", `${this.label} is closing or switching`);
     const gate = this.tearOffGate;
     this.tearOffGate = null;
@@ -876,6 +880,20 @@ export class FakeBackend implements Backend {
     const other = this.data.otherWorkspaces?.[path];
     if (!target || !other)
       throw new BackendError("not-a-workspace", `${path} is not a tote workspace`);
+    this.inSwitch = true;
+    try {
+      return await this.switchTo(path, target, other);
+    } finally {
+      this.inSwitch = false;
+    }
+  }
+
+  /** `switchWorkspace` once the target is known to be another workspace shown nowhere. */
+  private async switchTo(
+    path: string,
+    target: WorkspaceListItem,
+    other: NonNullable<FakeData["otherWorkspaces"]>[string],
+  ): Promise<"switching"> {
     // A tab that could not be written: the native side asks, and the fake takes 「취소」.
     if ((await this.flushThisWindow()) !== undefined) {
       this.stay();
