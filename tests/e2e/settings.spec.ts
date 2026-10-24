@@ -637,6 +637,27 @@ test("the root is saved with 적용 or Enter and only 닫기 is primary", async 
   await expect(panel.locator("button.primary")).toHaveText(["닫기"]);
 });
 
+test("closing the settings, by Escape or 「닫기」, ends every config subscription it made", async ({
+  page,
+}) => {
+  await start(page);
+  // The controller's listeners for the open settings screen: its own and its shortcut section's.
+  const listening = () =>
+    page.evaluate(
+      () =>
+        (window.__tote.app as unknown as { configListeners: Set<unknown> }).configListeners.size,
+    );
+  for (const close of ["Escape", "닫기"]) {
+    await menu(page, "settings");
+    await expect(page.locator(".modal.settings")).toBeVisible();
+    expect(await listening(), close).toBeGreaterThan(0);
+    if (close === "Escape") await page.keyboard.press("Escape");
+    else await page.getByRole("button", { name: "닫기", exact: true }).click();
+    await expect(page.locator(".modal.settings")).toHaveCount(0);
+    await expect.poll(listening, { message: close }).toBe(0);
+  }
+});
+
 test("the settings dialog is a labelled modal and its sections are tabs", async ({ page }) => {
   await start(page);
   await menu(page, "settings");

@@ -39,6 +39,13 @@ const themeRef = (value: string): ThemeRef | null => {
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
   let disposeShortcuts = () => {};
+  /** The screen's config subscriptions: they end with it, whichever way it closes. */
+  const subscriptions: (() => void)[] = [];
+  const onConfigChanged = (handler: () => void) => {
+    const unsubscribe = options.onConfigChanged(handler);
+    subscriptions.push(unsubscribe);
+    return unsubscribe;
+  };
   return modal<true>((close) => {
     const { backend } = options;
     const panel = h("div", { class: "modal settings", role: "dialog" });
@@ -325,14 +332,11 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         fail(error);
       }
     };
-    const unsubscribe = options.onConfigChanged(() => void refresh());
+    onConfigChanged(() => void refresh());
     const done = h("button", { textContent: "닫기", class: "primary" });
-    done.addEventListener("click", () => {
-      unsubscribe();
-      close(true);
-    });
+    done.addEventListener("click", () => close(true));
 
-    const shortcuts = shortcutsSection({ backend, onConfigChanged: options.onConfigChanged });
+    const shortcuts = shortcutsSection({ backend, onConfigChanged });
     disposeShortcuts = shortcuts.dispose;
     const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
@@ -405,5 +409,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     );
     void refresh();
     return panel;
-  }).then(() => disposeShortcuts());
+  }).then(() => {
+    disposeShortcuts();
+    for (const unsubscribe of subscriptions) unsubscribe();
+  });
 }

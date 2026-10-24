@@ -1640,23 +1640,16 @@ export class AppController implements DocHost, PaneHost {
     // The native menu works under a modal: a second ⌘, must not pile a second screen on the first.
     if (this.settingsOpen) return;
     this.settingsOpen = true;
-    const subscribers = new Set<() => void>();
     await openSettings({
       backend: this.backend,
       registry: () => this.registry,
       onConfigChanged: (handler) => {
-        subscribers.add(handler);
         this.configListeners.add(handler);
-        return () => {
-          subscribers.delete(handler);
-          this.configListeners.delete(handler);
-        };
+        return () => this.configListeners.delete(handler);
       },
       section: this.settingsSection,
       onSection: (section) => (this.settingsSection = section),
     });
-    // Escape closes the screen without its unsubscribe.
-    for (const handler of subscribers) this.configListeners.delete(handler);
     this.settingsOpen = false;
     if (this.focused.tabs.active) this.focused.view.focus();
   }
