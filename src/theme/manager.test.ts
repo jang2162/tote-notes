@@ -5,7 +5,7 @@ import { defaultFakeData, FakeBackend, memoryStorage } from "../backend/fake";
 import type { ExtensionRegistry, ThemeInfo } from "../backend/types";
 import { Registry } from "../extensions/registry";
 import { contrastRatio } from "./contrast";
-import { ThemeManager, type ActiveTheme } from "./manager";
+import { applyToDocument, ThemeManager, type ActiveTheme } from "./manager";
 import { DEFAULT_VARIABLES } from "./vscode-theme";
 
 const registry = new Registry({
@@ -204,5 +204,34 @@ describe("ThemeManager with the bundled themes", () => {
     expect(manager.active.kind).toBe("light");
     expect(manager.active.variables["--input-bg"]).toBe(DEFAULT_VARIABLES.light["--input-bg"]);
     expect(manager.active.variables["--sidebar-bg"]).toBe(DEFAULT_VARIABLES.light["--sidebar-bg"]);
+  });
+});
+
+describe("applyToDocument", () => {
+  it("draws the page as the theme's kind, not the slot it was picked for", () => {
+    const properties: Record<string, string> = {};
+    const root = {
+      dataset: {} as Record<string, string>,
+      style: {
+        colorScheme: "",
+        setProperty: (name: string, value: string) => void (properties[name] = value),
+      },
+    };
+    vi.stubGlobal("document", { documentElement: root });
+    try {
+      // Light+ in the dark slot.
+      applyToDocument({
+        info: null,
+        theme: null,
+        appearance: "dark",
+        kind: "light",
+        variables: { "--bg": "#ffffff" },
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
+    expect(root.style.colorScheme).toBe("light");
+    expect(root.dataset.appearance).toBe("light");
+    expect(properties).toEqual({ "--bg": "#ffffff" });
   });
 });
