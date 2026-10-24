@@ -450,3 +450,46 @@ test("the not-openable notice sits together in the middle", async ({ page }) => 
   expect(Math.abs(inner!.y + inner!.height / 2 - (outer!.y + outer!.height / 2))).toBeLessThan(4);
   expect(button!.y - (title!.y + title!.height)).toBeLessThan(80);
 });
+
+test("pressing a tab as assistive technology does selects it and closes nothing", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
+  // WebKit presses a role=tab element's first button, select, input or editable inside it in its
+  // place (`nativeActionElement`): none may be there, or pressing the tab presses that.
+  expect(
+    await page
+      .locator('[role="tab"]')
+      .evaluateAll((tabs) =>
+        tabs.flatMap((tab) => [
+          ...tab.querySelectorAll("button, select, input, [contenteditable]"),
+        ]),
+      ),
+  ).toHaveLength(0);
+  // A press is a click with no pointer behind it.
+  await page.locator(".tab", { hasText: "가" }).evaluate((tab) => (tab as HTMLElement).click());
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("가");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".cm-content")).toHaveText("첫째");
+});
+
+test("the close mark of a tab closes it, with the mouse and pressed as a button", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  const close = page.locator(".tab", { hasText: "나" }).getByRole("button", { name: "탭 닫기" });
+  await close.click();
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await page
+    .locator(".tab", { hasText: "가" })
+    .getByRole("button", { name: "탭 닫기" })
+    .evaluate((mark) => (mark as HTMLElement).click());
+  await expect(page.locator(".tab")).toHaveCount(0);
+});
