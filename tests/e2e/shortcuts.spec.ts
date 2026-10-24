@@ -695,3 +695,76 @@ test("closing the settings lets go of the key recorded last", async ({ page }) =
   await page.keyboard.up("Alt");
   expect(await heard()).toEqual(["Space", "AltLeft"]);
 });
+
+const menuRuns = (page: Page) =>
+  page.evaluate(() => window.__tote.backend.data.menuCommandRuns ?? []);
+
+/** The number of editor bindings the app's shortcuts make now (`menuKeymap`). */
+const menuKeyCount = (page: Page) =>
+  page.evaluate(() => (window.__tote.app as unknown as { menuKeys: unknown[] }).menuKeys.length);
+
+const withShortcuts = (shortcuts: Record<string, string | null>): Partial<FakeData> => ({
+  settings: { ...defaultFakeData().settings, shortcuts },
+});
+
+test("an app shortcut that is an editor key too runs the app command, not the editor's", async ({
+  page,
+}) => {
+  await start(page, withShortcuts({ "close-tab": "CmdOrCtrl+L" }));
+  await menu(page, "new-memo");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("하나");
+  await expect(page.locator(".status-position")).toHaveText("줄 1, 열 3");
+  await page.keyboard.press("Meta+L");
+  await expect.poll(() => menuRuns(page)).toEqual(["close-tab"]);
+  await expect(page.locator(".tab")).toHaveCount(0);
+});
+
+test("an editor key no app shortcut has stays the editor's, and a table change hands it over in every tab", async ({
+  page,
+}) => {
+  await start(page);
+  await menu(page, "new-memo");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("하나");
+  await menu(page, "new-memo");
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("둘");
+  await page.keyboard.press("Enter");
+  await page.keyboard.type("셋");
+  await page.keyboard.press("ArrowUp");
+  await expect(page.locator(".status-position")).toHaveText("줄 1, 열 2");
+  // selectLine: the line and its break.
+  await page.keyboard.press("Meta+L");
+  await expect(page.locator(".status-position")).toHaveText("줄 2, 열 1");
+  expect(await menuRuns(page)).toEqual([]);
+
+  // As another window's settings screen saves: the first tab is not shown meanwhile.
+  const before = await menuKeyCount(page);
+  await page.evaluate(() =>
+    window.__tote.backend.patchSettings({ shortcuts: { "close-tab": "CmdOrCtrl+L" } }),
+  );
+  await expect.poll(() => menuKeyCount(page)).toBeGreaterThan(before);
+  await page.keyboard.press("Meta+L");
+  await expect.poll(() => menuRuns(page)).toEqual(["close-tab"]);
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+L");
+  await expect.poll(() => menuRuns(page)).toEqual(["close-tab", "close-tab"]);
+  await expect(page.locator(".tab")).toHaveCount(0);
+});
+
+test("an app shortcut wins over the search bar's keys in its fields too", async ({ page }) => {
+  await start(page, withShortcuts({ rename: "CmdOrCtrl+G" }));
+  await menu(page, "new-memo");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("가 가");
+  await page.keyboard.press("Meta+F");
+  const field = page.locator('input.find-bar-input[name=search][main-field="true"]');
+  await expect(field).toBeFocused();
+  await page.keyboard.type("가");
+  // ⌘G is findNext in the bar's fields.
+  await page.keyboard.press("Meta+G");
+  await expect.poll(() => menuRuns(page)).toEqual(["rename"]);
+});

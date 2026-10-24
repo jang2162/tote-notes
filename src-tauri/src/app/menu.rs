@@ -499,20 +499,40 @@ fn route(id: &str) -> Route<'_> {
 }
 
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
-    let id = match route(event.id().as_ref()) {
-        Route::TabMenu(item) => return app.state::<TabMenu>().record(item),
-        Route::App(id) => id,
+    match route(event.id().as_ref()) {
+        Route::TabMenu(item) => app.state::<TabMenu>().record(item),
+        Route::App(id) => run(app, id, target_window(app)),
+    }
+}
+
+/// App command `id` run as if its menu item were picked with `window` in front: the editor hands
+/// over a key the menu has too (`run_menu_command`), so the menu wins as the settings screen
+/// warns. False for an id that is not an app command, which runs nothing.
+pub fn run_command(app: &AppHandle, id: &str, window: WebviewWindow) -> bool {
+    let Some(command) = app_command(id) else {
+        return false;
     };
+    run(app, command.id, Some(window));
+    true
+}
+
+/// The app command `id` names: none for 설정…, tote 종료, a tab menu's items, or anything else.
+fn app_command(id: &str) -> Option<&'static Command> {
+    COMMANDS.iter().find(|command| command.id == id)
+}
+
+/// What menu bar item `id` does, in `window` (the focused one, or the last one used).
+fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
     match id {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
-        "new-window" => new_window(app),
+        "new-window" => new_window(app, window),
         "close-window" => {
-            if let Some(window) = target_window(app) {
+            if let Some(window) = window {
                 let _ = window.close();
             }
         }
-        id => match target_window(app) {
+        id => match window {
             Some(window) => {
                 let _ = app.emit_to(
                     EventTarget::webview_window(window.label()),
@@ -527,8 +547,8 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
 }
 
 /// ⌥⌘N: another window on the workspace of the window it is pressed in, empty, a little off it.
-fn new_window(app: &AppHandle) {
-    let Some(window) = target_window(app) else {
+fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
+    let Some(window) = window else {
         return windows::open_latest(app);
     };
     let Some(path) = app.state::<AppCore>().path_of(window.label()) else {
@@ -663,6 +683,21 @@ mod tests {
             route("move-tab-to-new-window"),
             Route::App("move-tab-to-new-window")
         );
+    }
+
+    #[test]
+    fn only_an_app_command_runs_from_the_editor() {
+        assert_eq!(app_command("close-tab").map(|c| c.id), Some("close-tab"));
+        assert_eq!(app_command("new-window").map(|c| c.id), Some("new-window"));
+        for id in [
+            "quit",
+            "settings",
+            "tab-menu:move-tab-to-new-window",
+            "",
+            "nope",
+        ] {
+            assert!(app_command(id).is_none(), "{id}");
+        }
     }
 
     #[test]

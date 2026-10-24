@@ -10,6 +10,7 @@ import {
   conflict,
   editorBindings,
   formatAccelerator,
+  menuKeymap,
   recordableAccelerator,
   sameAccelerator,
   shortcutHint,
@@ -292,5 +293,33 @@ describe("shortcutHint", () => {
     expect(shortcutHint(table({ "new-memo": null }), "new-memo")).toBeNull();
     expect(shortcutHint(table(), "rename")).toBeNull();
     expect(shortcutHint(table(), "nope")).toBeNull();
+  });
+});
+
+describe("menuKeymap", () => {
+  it("binds the editor keys the app shortcuts have, to the app command, in the search bar too", () => {
+    const ran: string[] = [];
+    const bindings = menuKeymap(
+      table({ rename: "CmdOrCtrl+L", "new-memo": null, save: "Ctrl+Alt+CmdOrCtrl+J" }),
+      (id) => ran.push(id),
+    );
+    // The defaults that are editor keys, and ⌘L; ⌘S and ⌃⌥⌘J are no editor's.
+    expect(bindings.map((b) => b.key)).toEqual([
+      "Mod-l",
+      "Shift-Mod-\\",
+      "Mod-Alt-ArrowUp",
+      "Mod-Alt-ArrowDown",
+    ]);
+    for (const binding of bindings) {
+      expect(binding.scope).toBe("editor search-panel");
+      expect(binding.preventDefault).toBe(true);
+    }
+    expect(bindings[0].run!(null as never)).toBe(true);
+    expect(ran).toEqual(["rename"]);
+  });
+
+  it("binds a key two editor bindings share once", () => {
+    const bindings = menuKeymap(table({ rename: "CmdOrCtrl+F" }), () => {});
+    expect(bindings.filter((b) => b.key === "Mod-f")).toHaveLength(1);
   });
 });

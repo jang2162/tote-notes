@@ -1,5 +1,5 @@
 import type { Extension } from "@codemirror/state";
-import { EditorView, type ViewUpdate } from "@codemirror/view";
+import { EditorView, type KeyBinding, type ViewUpdate } from "@codemirror/view";
 
 import type {
   Backend,
@@ -35,6 +35,7 @@ import {
   languageDataEffect,
   languageEffect,
   lineNumbersEffect,
+  menuKeysEffect,
 } from "../editor/setup";
 import { EMPTY_REGISTRY, languageLabelFor, Registry } from "../extensions/registry";
 import { HighlightClient } from "../highlight/client";
@@ -43,7 +44,7 @@ import {
   workerHighlighting,
   type WorkerHighlighting,
 } from "../highlight/extension";
-import { shortcutHint } from "../shortcuts/keys";
+import { menuKeymap, shortcutHint } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
@@ -213,6 +214,8 @@ export class AppController implements DocHost, PaneHost {
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
   private shortcuts: ShortcutTable | null = null;
+  /** The editors' bindings for the app shortcuts that are editor keys too (`menuKeymap`). */
+  private menuKeys: KeyBinding[] = [];
   private readonly configListeners = new Set<() => void>();
   /** The language-configuration reads by file, settled once a failure has been warned about
    * (public: the UI tests wait for them). */
@@ -539,9 +542,22 @@ export class AppController implements DocHost, PaneHost {
     return this.shortcuts ? shortcutHint(this.shortcuts, id) : undefined;
   }
 
-  /** The empty panes and the status bar name the shortcuts there are now. */
+  /** The empty panes and the status bar name the shortcuts there are now, and the editors give the
+   * keys the menu has too to the menu. */
   private shortcutsChanged(): void {
+    this.menuKeys = this.shortcuts
+      ? menuKeymap(this.shortcuts, (id) => void this.runMenuCommand(id))
+      : [];
+    for (const doc of this.docs) this.reconfigureMenuKeys(doc);
     for (const pane of this.panes) pane.shortcutsChanged();
+  }
+
+  private async runMenuCommand(id: string): Promise<void> {
+    try {
+      await this.backend.runMenuCommand(id);
+    } catch (error) {
+      this.report(error);
+    }
   }
 
   /** The font variables live on the root, where the theme's variables are not: a theme never
@@ -587,6 +603,7 @@ export class AppController implements DocHost, PaneHost {
       languageId: this.languageOf(doc)?.id,
       wrap: options.wrap,
       lineNumbers: this.settings.editor.lineNumbers,
+      menuKeys: this.menuKeys,
       languageData: doc.languageData,
       highlight: this.highlightFor(doc, options.text.length),
       onUpdate: (update) => this.onUpdate(doc, update),
@@ -1694,6 +1711,14 @@ export class AppController implements DocHost, PaneHost {
     // A preview shows the text it was given; give it the restored one.
     const shown = this.paneOf(doc);
     if (doc === shown.tabs.active && doc.mode === "preview") shown.show(doc);
+  }
+
+  private reconfigureMenuKeys(doc: Doc): void {
+    if (!doc.state) return;
+    const effects = [menuKeysEffect(this.menuKeys)];
+    const pane = this.paneOf(doc);
+    if (doc === pane.tabs.active && pane.view.state === doc.state) pane.view.dispatch({ effects });
+    else doc.state = doc.state.update({ effects }).state;
   }
 
   /** Tabs of a viewer have no editor state: only text tabs carry a gutter. */

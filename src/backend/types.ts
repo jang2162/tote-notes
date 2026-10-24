@@ -426,6 +426,9 @@ export interface Backend {
   /** Takes the menu's shortcuts off while this window records one (`on`), and puts them back.
    * The app also puts them back once this window loses focus or closes. */
   suspendShortcuts(on: boolean): Promise<void>;
+  /** Runs app command `id` as its menu item would in this window: the editor had a key the menu
+   * has too, and the menu wins. */
+  runMenuCommand(id: string): Promise<void>;
   /** Where a bundled viewer page loads from. */
   viewerUrl(extensionId: string, entry: string): string;
   /** A URL only this view may use for the file; revoked with `revokeFileTokens(owner)`. */

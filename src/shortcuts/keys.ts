@@ -287,18 +287,22 @@ function cmKeyToAccelerator(name: string): string | null {
 /** What `bindingsOf` names a function no module exports. */
 export const UNNAMED_EDITOR_COMMAND = "편집기 명령";
 
-/** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
- * same key with ⇧), named after the export of the function they run (`commandName`), or 편집기 명령
- * for one no module exports. */
-export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string; name: string }[] {
+interface EditorKey {
+  accelerator: string;
+  name: string;
+  /** The key as CodeMirror names it in the keymap. */
+  key: string;
+}
+
+function keysOf(keymap: readonly KeyBinding[]): EditorKey[] {
   return keymap.flatMap((binding) => {
     const name = binding.mac ?? binding.key;
     if (!name) return [];
-    const found: { accelerator: string; name: string }[] = [];
-    const add = (keys: string, run: KeyBinding["run"]) => {
-      const accelerator = cmKeyToAccelerator(keys);
+    const found: EditorKey[] = [];
+    const add = (key: string, run: KeyBinding["run"]) => {
+      const accelerator = cmKeyToAccelerator(key);
       if (accelerator && run)
-        found.push({ accelerator, name: commandName(run) ?? UNNAMED_EDITOR_COMMAND });
+        found.push({ accelerator, name: commandName(run) ?? UNNAMED_EDITOR_COMMAND, key });
     };
     add(name, binding.run);
     if (binding.shift) add(`Shift-${name}`, binding.shift);
@@ -306,13 +310,54 @@ export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string
   });
 }
 
+/** The keys of `keymap` as macOS has them (a binding's `mac` before its `key`; its `shift` is the
+ * same key with ⇧), named after the export of the function they run (`commandName`), or 편집기 명령
+ * for one no module exports. */
+export function bindingsOf(keymap: readonly KeyBinding[]): { accelerator: string; name: string }[] {
+  return keysOf(keymap).map(({ accelerator, name }) => ({ accelerator, name }));
+}
+
+let editorKeys: EditorKey[] | null = null;
+
+/** The editor's keys (`keysOf`). Read from the keymap itself, so a keymap that changes leaves it
+ * current. */
+function editorKeysNow(): EditorKey[] {
+  editorKeys ??= keysOf(editorKeymap);
+  return editorKeys;
+}
+
 let bindings: { accelerator: string; name: string }[] | null = null;
 
-/** The editor's keys (`bindingsOf`). Read from the keymap itself, so a keymap that changes leaves
- * it current. */
+/** The editor's keys (`bindingsOf`). */
 export function editorBindings(): { accelerator: string; name: string }[] {
-  bindings ??= bindingsOf(editorKeymap);
+  bindings ??= editorKeysNow().map(({ accelerator, name }) => ({ accelerator, name }));
   return bindings;
+}
+
+/** Editor bindings for the app shortcuts that are editor keys too, which run the app command
+ * (`run`) instead of the editor's, in the editor and in its search bar (spec 「편집기 단축키는 고정이
+ * 아니다」). WKWebView hands a key to the page before the menu, and the editor takes it: without
+ * these the editor would win where the settings screen says the menu does. Built for
+ * `Prec.highest`, ahead of every editor binding of the same key. A key no editor binding has is
+ * left to the menu. */
+export function menuKeymap(table: ShortcutTable, run: (id: string) => void): KeyBinding[] {
+  return table.commands.flatMap(({ id, current }) => {
+    if (current === null) return [];
+    const keys = new Set(
+      editorKeysNow()
+        .filter((editor) => sameAccelerator(editor.accelerator, current))
+        .map((editor) => editor.key),
+    );
+    return [...keys].map((key) => ({
+      key,
+      run: () => {
+        run(id);
+        return true;
+      },
+      scope: "editor search-panel",
+      preventDefault: true,
+    }));
+  });
 }
 
 export type Conflict =

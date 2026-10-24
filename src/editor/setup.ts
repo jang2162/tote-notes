@@ -103,6 +103,18 @@ export function lineNumbersEffect(on: boolean) {
   return lineNumberSlot.reconfigure(on ? lineNumbers() : []);
 }
 
+const menuKeySlot = new Compartment();
+
+function menuKeys(bindings: readonly KeyBinding[]): Extension {
+  return Prec.highest(keymap.of(bindings));
+}
+
+/** Swaps the app shortcuts that win over the editor's keys in a state built by `editorExtensions`
+ * (`menuKeymap` in src/shortcuts/keys.ts). */
+export function menuKeysEffect(bindings: readonly KeyBinding[]) {
+  return menuKeySlot.reconfigure(menuKeys(bindings));
+}
+
 const highlightSlot = new Compartment();
 
 /** Swaps the TextMate colours of a state built by `editorExtensions` (`workerHighlighting`'s
@@ -152,6 +164,9 @@ export interface EditorOptions {
   wrap: boolean;
   /** The line-number gutter (the editor setting). */
   lineNumbers: boolean;
+  /** The app shortcuts that are editor keys too, which run the app command instead
+   * (`menuKeymap`); none when absent. */
+  menuKeys?: readonly KeyBinding[];
   onUpdate: (update: ViewUpdate) => void;
   /** From the language's configuration file: comment tokens, bracket pairs, word characters. */
   languageData?: LanguageData;
@@ -176,6 +191,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName, options.languageId)),
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
+    menuKeySlot.of(menuKeys(options.menuKeys ?? [])),
     keymap.of(editorKeymap),
     lineNumberSlot.of(options.lineNumbers ? lineNumbers() : []),
     highlightSlot.of(options.highlight ?? []),

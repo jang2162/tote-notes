@@ -103,6 +103,7 @@ describe("TauriBackend", () => {
       [() => backend.settings(), "get_settings", undefined],
       [() => backend.shortcutTable(), "shortcut_table", undefined],
       [() => backend.suspendShortcuts(true), "suspend_shortcuts", { on: true }],
+      [() => backend.runMenuCommand("close-tab"), "run_menu_command", { id: "close-tab" }],
       [
         () => backend.issueFileToken({ kind: "memo", id: "m" }, "o"),
         "issue_file_token",

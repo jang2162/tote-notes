@@ -189,6 +189,8 @@ export interface FakeData {
   shortcutsSuspended?: boolean;
   /** Every `suspendShortcuts` call, in order. Absent until it is first called. */
   suspendShortcutCalls?: boolean[];
+  /** The app commands `runMenuCommand` ran, in order. Absent until it is first called. */
+  menuCommandRuns?: string[];
   /** Timing marks are kept, as with `TOTE_PERF=1`; they go into `marks`. Absent in old seeds. */
   perf?: boolean;
   marks?: string[];
@@ -1158,6 +1160,15 @@ export class FakeBackend implements Backend {
     this.data.shortcutsSuspended = on;
     (this.data.suspendShortcutCalls ??= []).push(on);
     this.commit();
+  }
+
+  async runMenuCommand(id: string) {
+    // Rust runs only an app command (`menu::run_command`).
+    if (!FAKE_SHORTCUT_COMMANDS.some((command) => command.id === id))
+      throw new BackendError("bad-request", `no app command ${id}`);
+    (this.data.menuCommandRuns ??= []).push(id);
+    this.commit();
+    this.menu(id);
   }
 
   viewerUrl(extensionId: string, entry: string) {
