@@ -26,7 +26,7 @@
 - 접근성(System Events·`orca computer`)으로는 창을 메뉴 막대 밑(y < 메뉴 막대 높이)에 둘 수 없다. 그런 저장 자리가 필요하면 앱을 끈 뒤 워크스페이스 `.tote/sessions/<id>.json` 의 `windows[].frame` 을 고치고 다시 켠다.
 - 화면 확인을 시작하기 전에 `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked` 로 화면이 잠겨 있지 않은지 본다. 잠겨 있으면 앱은 떠도 접근성 창 목록이 비고 `orca computer` 가 `permission_denied` 를 낸다. 잠금은 에이전트가 풀지 않는다 — 그 확인을 사람 확인 표로 넘긴다.
 - 번들 실행 파일을 셸에서 직접 띄우면 앱이 맨 앞으로 오지 않는다. 키를 보내기 전에 창을 앞으로 가져온다(`orca computer … --restore-window` 나 System Events `set frontmost`).
-- 탭(`role="tab"`)에 접근성 「누르기」(`orca computer click --element-index`, AXPress)를 하면 WebKit 은 탭 안의 첫 `<button>`·`<select>`·`<input>`·편집 가능 요소를 대신 누른다(`AccessibilityNodeObject::actionElement` 의 `nativeActionElement`). 그리고 탭의 자식은 표현용이라 트리에 드러나지 않는다. 그래서 닫기 버튼은 탭 안이 아니라 탭 옆의 형제 `<button>` 이다(`src/ui/tab-bar.ts`, 트리에서 탭 「가」 다음에 버튼 「가 탭 닫기」). 탭 누르기는 탭을 고르고, 닫기 버튼 누르기는 그 탭을 닫는다. 이것은 소스와 e2e(`tests/e2e/memo.spec.ts` 「pressing a tab as assistive technology does …」·「the close mark of a tab closes it …」)로 본 것이고 실제 앱 화면 확인 전이다(`docs/superpowers/reports/2026-10-25-tote-notes-smoke-fixes-report.md` 「마무리 회차」 의 화면 확인 후보).
+- 탭(`role="tab"`)에 접근성 「누르기」(`orca computer click --element-index`, AXPress)를 하면 WebKit 은 탭 안의 첫 `<button>`·`<select>`·`<input>`·편집 가능 요소를 대신 누른다(`AccessibilityNodeObject::actionElement` 의 `nativeActionElement`). 그리고 탭의 자식은 표현용이라 트리에 드러나지 않는다. 그래서 닫기 버튼은 탭 안이 아니라 탭 옆의 형제 `<button>` 이다(`src/ui/tab-bar.ts`, 트리에서 탭 「가」 다음에 버튼 「가 탭 닫기」). 탭 누르기는 탭을 고르고, 닫기 버튼 누르기는 그 탭을 닫는다. 소스와 e2e(`tests/e2e/memo.spec.ts` 「pressing a tab as assistive technology does …」·「the close mark of a tab closes it …」)에 더해 2026-10-25 디버그 번들(`1000202`)로 화면 확인했다(`docs/superpowers/reports/2026-10-25-tote-notes-smoke-fixes-report.md` 「마무리 회차」 의 화면 확인 후보 1).
 - `UserNotificationCenter` 권한 확인 창(예: Orca 의 화면 접근 요청)이 뜨면 그 뒤 키 입력과 합성 끌기가 모두 막힌다. 권한은 사람이 정하므로 에이전트는 누르지 않고, 키가 필요 없는 확인만 하며 사람에게 알린다. 이 창은 접근성 창 목록에 없고 CGWindowList(`kCGWindowLayer` 8)로 보인다.
 - 다른 앱의 전역 단축키(런처·떠 있는 패널 등)가 녹음하려는 키를 먼저 가져갈 수 있다. 그런 키는 녹음기에 닿지 않고, 떠 있는 패널이 뜨면 그 뒤 키가 tote 에 가지 않는다. 키가 안 먹으면 CGWindowList 에서 layer 3 이상인 다른 앱 창부터 보고, 그 행은 다른 조합으로 한다.
 - `orca computer type-text` 는 CodeMirror 편집기에 같은 글을 두 번 넣는다(입력칸은 한 번). 편집기에 치는 확인은 CGEvent 키 코드로 보낸다. 한글 입력기가 켜져 있으면 키 코드 입력은 입력기를 거친다.
@@ -38,6 +38,7 @@
 - 시험 워크스페이스 폴더를 손으로 만들 때는 `.tote/workspace.json`(`{"version":1,"id":"<uuid>"}`)도 만든다. 없으면 `state.json` 에 적어도 열리지 않고(stderr 「not a tote workspace」) `$TOTE_DATA_DIR/workspaces/메모` 가 새로 생긴다.
 - 파일 열기 같은 시트의 검색칸은 요소 누르기로 포커스가 가지 않는다. System Events 로 `sheet 1 of window "<제목>"` 안 `AXSearchField` 에 `AXFocused` 를 준다.
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
+- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
