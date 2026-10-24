@@ -400,7 +400,8 @@ export class FakeBackend implements Backend {
   private roundOpen = false;
   /** Set from the switch's flush round until the window stays or reloads (`switching` from there):
    * the native side hands no tab out of a window whose round is open or that is in a switch
-   * (`gives_no_tabs` in src-tauri/src/app/mod.rs). */
+   * (`gives_no_tabs` in src-tauri/src/app/mod.rs). A switch in hub mode keeps the page, so nothing
+   * refuses a tab after it answers "switching" — Rust refuses until the new page starts. */
   private inSwitch = false;
   /** How long a switch waits after this window's answer before it swaps the workspace and reloads
    * the page: the gap between the round's answer and `switch_window` on the native side, where
