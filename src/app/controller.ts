@@ -24,6 +24,7 @@ import {
   type SessionTab,
 } from "../core/session";
 import { settleComposition } from "../editor/compose";
+import { runHistoryMenu } from "../editor/history-menu";
 import {
   languageData,
   parseLanguageConfiguration,
@@ -1511,6 +1512,14 @@ export class AppController implements DocHost, PaneHost {
         case "search-workspace":
           this.sidebar.show("search");
           return this.searchPanel.focus();
+        case "undo":
+        case "redo": {
+          const pane = this.focused;
+          return runHistoryMenu(id, {
+            el: pane.el,
+            editor: pane.surface.showsEditor ? pane.view : null,
+          });
+        }
       }
     } catch (error) {
       this.report(error);

@@ -258,6 +258,8 @@ tote-note 는 서브프로젝트 셋으로 나뉜다. 이 문서는 **코어**�
 
 라이트 테마와 다크 테마를 따로 지정하고 OS 모양을 따른다. VS Code 테마의 `colors` 중 tote UI 에 대응하는 키만 CSS 변수로 옮기고, `tokenColors` 는 하이라이트에 쓴다. 뷰어에도 같은 CSS 변수를 넘긴다.
 
+어느 슬롯에 어느 종류의 테마든 고를 수 있다(다크 슬롯에 Light+ 도 된다). 테마가 주지 않은 CSS 변수는 **슬롯(OS 모양)이 아니라 테마 종류**의 기본값에서 채운다. 종류는 매니페스트의 `uiTheme`(`vs`·`hc-light` 는 라이트, `vs-dark`·`hc-black` 은 다크), 없거나 모르는 값이면 테마 파일의 `type`(`light`·`hcLight`·`dark`·`hc`), 그것도 없으면 슬롯이다(`themeKind`, `src/theme/vscode-theme.ts`). 페이지의 `color-scheme`(스크롤 막대·폼 컨트롤)도 테마 종류를 따른다. 슬롯에서 시작하던 때는 번들 Light+(`editor.background`·`editor.foreground` 만 tote 변수에 닿는다)를 다크 슬롯에 두면 `--fg` 만 검게 바뀌어 띠 입력칸·사이드바 글자가 어두운 바탕 위에서 1.2:1 로 읽히지 않았다(검색 띠 스모크 A-4). 번들 테마 전부를 두 슬롯에 넣어 글자 대비가 4.5:1 이상인지 단위 시험(`src/theme/manager.test.ts`)이 본다. 뷰어 프레임의 `color-scheme` 은 아직 `light dark`(OS 모양)이다 — 뷰어는 변수만 받는다.
+
 ### 뷰어
 
 - **주 뷰어**(`primary`)는 텍스트가 아닌 파일(이미지, PDF 등)을 연다. **미리보기 뷰어**(`preview`)는 텍스트 파일을 다르게 보여 준다(마크다운 등).

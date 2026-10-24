@@ -1,6 +1,12 @@
 import { describe, expect, it } from "vitest";
 
-import { DEFAULT_VARIABLES, loadTheme, themeVariables, tokenTheme } from "./vscode-theme";
+import {
+  DEFAULT_VARIABLES,
+  loadTheme,
+  themeKind,
+  themeVariables,
+  tokenTheme,
+} from "./vscode-theme";
 
 describe("themeVariables", () => {
   it("maps the colour keys tote uses and falls back per key to the appearance's default", () => {
@@ -200,5 +206,19 @@ describe("tokenTheme", () => {
       { settings: { foreground: "#eee" } },
       { scope: ["keyword", "storage"], settings: {} },
     ]);
+  });
+});
+
+describe("themeKind", () => {
+  it("reads the manifest's uiTheme first, then the theme's type, then the slot", () => {
+    expect(themeKind("vs", "dark", "dark")).toBe("light");
+    expect(themeKind("hc-light", undefined, "dark")).toBe("light");
+    expect(themeKind("vs-dark", "light", "light")).toBe("dark");
+    expect(themeKind("hc-black", undefined, "light")).toBe("dark");
+    expect(themeKind("nope", "light", "dark")).toBe("light");
+    expect(themeKind(undefined, "hc", "light")).toBe("dark");
+    expect(themeKind(undefined, "hcLight", "dark")).toBe("light");
+    expect(themeKind(undefined, undefined, "dark")).toBe("dark");
+    expect(themeKind("", "nope", "light")).toBe("light");
   });
 });

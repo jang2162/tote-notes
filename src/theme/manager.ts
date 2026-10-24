@@ -3,6 +3,7 @@ import type { Registry } from "../extensions/registry";
 import {
   DEFAULT_VARIABLES,
   loadTheme,
+  themeKind,
   themeVariables,
   type Appearance,
   type VsCodeTheme,
@@ -12,7 +13,10 @@ export interface ActiveTheme {
   info: ThemeInfo | null;
   /** null when no theme could be read: the defaults of `appearance` apply. */
   theme: VsCodeTheme | null;
+  /** The OS appearance: which slot of the settings `theme` came from. */
   appearance: Appearance;
+  /** What the page is drawn as: the theme's kind (`themeKind`), `appearance` without a theme. */
+  kind: Appearance;
   variables: Record<string, string>;
 }
 
@@ -30,6 +34,7 @@ export class ThemeManager {
     info: null,
     theme: null,
     appearance: "light",
+    kind: "light",
     variables: DEFAULT_VARIABLES.light,
   };
   private readonly listeners: ((active: ActiveTheme) => void)[] = [];
@@ -78,10 +83,9 @@ export class ThemeManager {
     }
     // A slower refresh must not land over a newer one.
     if (generation !== this.generation) return;
-    const variables = theme
-      ? themeVariables(theme, appearance)
-      : { ...DEFAULT_VARIABLES[appearance] };
-    this.active = { info: theme ? info : null, theme, appearance, variables };
+    const kind = theme ? themeKind(info?.uiTheme, theme.type, appearance) : appearance;
+    const variables = theme ? themeVariables(theme, kind) : { ...DEFAULT_VARIABLES[kind] };
+    this.active = { info: theme ? info : null, theme, appearance, kind, variables };
     this.apply(this.active);
     for (const listener of this.listeners) listener(this.active);
   }
@@ -90,6 +94,8 @@ export class ThemeManager {
 export function applyToDocument(active: ActiveTheme): void {
   const root = document.documentElement;
   for (const [name, value] of Object.entries(active.variables)) root.style.setProperty(name, value);
-  root.dataset.appearance = active.appearance;
-  root.style.colorScheme = active.appearance;
+  // The theme's kind, not the OS appearance: a light theme in the dark slot gets light scroll
+  // bars and form controls.
+  root.dataset.appearance = active.kind;
+  root.style.colorScheme = active.kind;
 }

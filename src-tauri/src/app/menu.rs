@@ -1,6 +1,7 @@
-//! The menu bar, and a tab's context menu. Edit uses the system items — in a WKWebView copy and
-//! paste only work through them. Tab actions go to the frontend of the focused window as
-//! `tote://menu`.
+//! The menu bar, and a tab's context menu. Edit uses the system items for the clipboard — in a
+//! WKWebView copy and paste only work through them — but its own for undo and redo: the system's
+//! steps through WebKit's undo stack, which never holds the editor's own changes. Tab actions go
+//! to the frontend of the focused window as `tote://menu`.
 
 use std::collections::BTreeMap;
 use std::io;
@@ -19,7 +20,10 @@ use super::{lifecycle, lock, windows, AppCore};
 
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
-use crate::shortcuts::{self, Command, COMMANDS, QUIT_ACCELERATOR, SETTINGS_ACCELERATOR};
+use crate::shortcuts::{
+    self, Command, COMMANDS, QUIT_ACCELERATOR, REDO_ACCELERATOR, SETTINGS_ACCELERATOR,
+    UNDO_ACCELERATOR,
+};
 
 /// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
 /// and never act as the menu bar's items of the same name.
@@ -44,7 +48,8 @@ fn item(
 enum Slot {
     /// An app command, by its id in `shortcuts::COMMANDS`: its name and shortcut come from there.
     Command(&'static str),
-    /// An item with a name and a shortcut of its own that no setting changes: 설정…, tote 종료.
+    /// An item with a name and a shortcut of its own that no setting changes: 설정…, tote 종료,
+    /// 실행 취소, 실행 복귀.
     Fixed {
         id: &'static str,
         text: &'static str,
@@ -56,8 +61,6 @@ enum Slot {
     Hide,
     HideOthers,
     ShowAll,
-    Undo,
-    Redo,
     Cut,
     Copy,
     Paste,
@@ -84,6 +87,23 @@ const QUIT_ITEM: Slot = Slot::Fixed {
     id: QUIT,
     text: "tote 종료",
     accelerator: QUIT_ACCELERATOR,
+};
+
+/// The ids of 실행 취소 and 실행 복귀: the page of the focused window steps the history of what has
+/// the keys (src/editor/history-menu.ts).
+const UNDO: &str = "undo";
+const REDO: &str = "redo";
+
+const UNDO_ITEM: Slot = Slot::Fixed {
+    id: UNDO,
+    text: "실행 취소",
+    accelerator: UNDO_ACCELERATOR,
+};
+
+const REDO_ITEM: Slot = Slot::Fixed {
+    id: REDO,
+    text: "실행 복귀",
+    accelerator: REDO_ACCELERATOR,
 };
 
 /// The menu bar: each submenu's title and entries, the commands in `shortcuts::COMMANDS` order.
@@ -131,8 +151,8 @@ const MENUS: &[(&str, &[Slot])] = &[
     (
         "편집",
         &[
-            Slot::Undo,
-            Slot::Redo,
+            UNDO_ITEM,
+            REDO_ITEM,
             Slot::Separator,
             Slot::Cut,
             Slot::Copy,
@@ -270,8 +290,6 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 Slot::Hide => menu.hide(),
                 Slot::HideOthers => menu.hide_others(),
                 Slot::ShowAll => menu.show_all(),
-                Slot::Undo => menu.undo(),
-                Slot::Redo => menu.redo(),
                 Slot::Cut => menu.cut(),
                 Slot::Copy => menu.copy(),
                 Slot::Paste => menu.paste(),
@@ -532,6 +550,7 @@ fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
                 let _ = window.close();
             }
         }
+        UNDO | REDO => history(app, id),
         id => match window {
             Some(window) => {
                 let _ = app.emit_to(
@@ -545,6 +564,45 @@ fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
         },
     }
 }
+
+/// 실행 취소, 실행 복귀: the focused window's page steps a history. With no tote window in front
+/// (a dialog's own window has the keys) the key window gets the system action, as the system item
+/// gave it.
+fn history(app: &AppHandle, id: &str) {
+    let focused = app
+        .webview_windows()
+        .into_values()
+        .find(|window| window.is_focused().unwrap_or(false));
+    match focused {
+        Some(window) => {
+            let _ = app.emit_to(
+                EventTarget::webview_window(window.label()),
+                "tote://menu",
+                id,
+            );
+        }
+        None => system_history(id),
+    }
+}
+
+#[cfg(target_os = "macos")]
+fn system_history(id: &str) {
+    let Some(mtm) = objc2::MainThreadMarker::new() else {
+        return;
+    };
+    let action = if id == UNDO {
+        objc2::sel!(undo:)
+    } else {
+        objc2::sel!(redo:)
+    };
+    // SAFETY: `undo:` and `redo:` take the sender, which may be nil, and return nothing.
+    unsafe {
+        objc2_app_kit::NSApplication::sharedApplication(mtm).sendAction_to_from(action, None, None)
+    };
+}
+
+#[cfg(not(target_os = "macos"))]
+fn system_history(_id: &str) {}
 
 /// ⌥⌘N: another window on the workspace of the window it is pressed in, empty, a little off it.
 fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
@@ -692,6 +750,8 @@ mod tests {
         for id in [
             "quit",
             "settings",
+            "undo",
+            "redo",
             "tab-menu:move-tab-to-new-window",
             "",
             "nope",
@@ -775,10 +835,11 @@ mod tests {
     fn suspended_menus_carry_no_accelerators_and_resume_restores_them() {
         let table = shortcuts::effective(&BTreeMap::new());
         let on = accelerators_while(false, &table);
-        assert_eq!(on.len(), COMMANDS.len() + 2);
+        assert_eq!(on.len(), COMMANDS.len() + 4);
         assert!(on.contains(&("new-memo", Some("CmdOrCtrl+N".into()))));
         assert!(on.contains(&("settings", Some("CmdOrCtrl+,".into()))));
         assert!(on.contains(&("quit", Some("CmdOrCtrl+Q".into()))));
+        assert!(on.contains(&("undo", Some("CmdOrCtrl+Z".into()))));
         assert!(on.contains(&("rename", None)));
         let off = accelerators_while(true, &table);
         assert_eq!(off.len(), on.len());
@@ -908,7 +969,12 @@ mod tests {
         assert_eq!(shortcut_label(quit), "tote 종료");
         assert_eq!(
             fixed_items(),
-            [("settings", "CmdOrCtrl+,"), ("quit", "CmdOrCtrl+Q")]
+            [
+                ("settings", "CmdOrCtrl+,"),
+                ("quit", "CmdOrCtrl+Q"),
+                ("undo", "CmdOrCtrl+Z"),
+                ("redo", "CmdOrCtrl+Shift+Z"),
+            ]
         );
 
         let menu = Menu::new();
@@ -921,6 +987,28 @@ mod tests {
         menu.shortcuts.resume_if("ws-1");
         assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
         assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+    }
+
+    #[test]
+    fn undo_and_redo_are_the_apps_items_with_the_fixed_keys() {
+        let edit: Vec<(&str, &str)> = shortcut_items()
+            .iter()
+            .filter(|item| item.menu == "편집")
+            .map(|item| (item.id, item.label))
+            .collect();
+        assert_eq!(edit, [("undo", "실행 취소"), ("redo", "실행 복귀")]);
+        // The settings screen's fixed list names them as the menu does, with the same keys.
+        for (id, name) in edit {
+            let accelerator = fixed_items()
+                .into_iter()
+                .find(|(item, _)| *item == id)
+                .unwrap()
+                .1;
+            assert!(
+                shortcuts::FIXED.contains(&shortcuts::Fixed { name, accelerator }),
+                "{id}"
+            );
+        }
     }
 
     #[test]

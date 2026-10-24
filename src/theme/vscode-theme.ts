@@ -106,6 +106,31 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
 const COLOR =
   /^(#([0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})|(rgb|hsl)a?\(\s*[\d.]+(%|deg)?(\s*[,\s/]\s*[\d.]+(%|deg)?){2,3}\s*\))$/i;
 
+/** Whether a theme is light or dark, which the colours it leaves out start from: its manifest's
+ * `uiTheme` (`vs`, `vs-dark`, `hc-black`, `hc-light`), else its own `type` (`light`, `dark`,
+ * `hc`, `hcLight`), else `fallback` (the OS appearance). Not the slot it is picked for: Light+ in
+ * the dark slot left the dark defaults under its black text (search bar smoke A-4). */
+export function themeKind(
+  uiTheme: string | undefined,
+  type: string | undefined,
+  fallback: Appearance,
+): Appearance {
+  const kinds: Record<string, Appearance> = {
+    vs: "light",
+    "hc-light": "light",
+    "vs-dark": "dark",
+    "hc-black": "dark",
+  };
+  const types: Record<string, Appearance> = {
+    light: "light",
+    hcLight: "light",
+    dark: "dark",
+    hc: "dark",
+  };
+  return (uiTheme && kinds[uiTheme]) || (type && types[type]) || fallback;
+}
+
+/** `appearance`: the theme's kind (`themeKind`), whose defaults fill what the theme leaves out. */
 export function themeVariables(
   theme: Pick<VsCodeTheme, "colors">,
   appearance: Appearance,

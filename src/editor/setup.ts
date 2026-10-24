@@ -28,6 +28,7 @@ import {
 
 import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
+import { historyStaysWithTheKeys } from "./history-menu";
 import { multiRangeIme, redoWithCursors, undoWithCursors } from "./ime";
 import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
 import { searchBar, searchBarKeymap } from "./search-bar";
@@ -196,6 +197,7 @@ export interface EditorOptions {
 export function editorExtensions(options: EditorOptions): Extension[] {
   return [
     history(),
+    historyStaysWithTheKeys,
     drawSelection(),
     dropCursor(),
     EditorState.allowMultipleSelections.of(true),

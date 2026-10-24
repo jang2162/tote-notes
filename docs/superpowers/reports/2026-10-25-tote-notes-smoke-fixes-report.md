@@ -89,3 +89,66 @@
 | 검색 토글 `Aa`·`.*` 가 편집기 글꼴 종류를 따르고 12px 고정                                                                                    | 설정 스모크 D-7                                      | 의도 판단(사람 확인 행). `.search-toggle` 이 `font: 12px var(--editor-font)` 다. 이번 3번으로 `--editor-font` 는 설정값 뒤에 기본 고정폭 목록이 붙은 값이 되었다(없는 글꼴이면 고정폭). UI 글꼴로 바꿀지는 사람이 정한다.                                                                                                                    |
 | settings.json 을 손으로 고쳐 글꼴 이름에 줄바꿈·제어 문자가 들면 `.cm-scroller` 규칙 전체가 무효가 되어 글꼴 크기까지 기본(13px)으로 떨어진다 | 스모크 불합격 고치기 리뷰 Minor 1                    | `src/app/editor-font.ts` 가 따옴표로 감쌀 때 `"`·`\` 만 이스케이프한다. 설정 화면 입력칸은 한 줄이고 `trim()` 해서 손으로 고칠 때만 생긴다. 고칠 방향: `\n`·`\r`·`\f` 를 CSS 이스케이프(`\a `)로 바꾸거나 제어 문자를 지우고, `editor-font.test.ts` 에 한 줄                                                                                 |
 | tauri `MenuItem` 에서 AppKit 지우기(`MenuEntry::clear`)로 가는 연결을 시험이 덮지 않는다                                                      | 스모크 불합격 고치기 리뷰 Minor 2(구현이 밝힌 공백)  | 연결을 되돌려도 시험이 통과함을 리뷰가 실증했다. 위험은 낮다 — 화면 확인 후보 1~5 가 실제 메뉴로 덮는다                                                                                                                                                                                                                                      |
+
+## 재개 스모크 불합격 고치기
+
+2026-10-25, 브랜치 `jang2162/smoke-fixes-2`, 기준 main `c56f743`. 원본은 재개 스모크(워크트리 `jang2162/smoke-run`, 아직 main 에 병합 전)의 불합격 세 행이다: 검색 띠 B-5·A-4, 설정 B-8. 화면 확인은 하지 않았다(다른 워커가 화면에서 디버그 앱을 쓰고 있어 e2e 도 headless 만 돌렸다). 실제 앱으로 다시 볼 것은 아래 「이 회차의 화면 확인 후보」 에 있다.
+
+### 1. 모두 바꾸기 뒤 메뉴 편집 › Undo 가 본문을 되돌리지 못함 (검색 띠 B-5) — `1cc47f7`
+
+- **원인(WebKit 소스로 확정).** 시스템 Undo 항목은 `undo:` 를 first responder 로 보내고, WKWebView 의 `NSUndoManager` 에서 한 칸을 꺼낸다. 그 칸은 WebKit 이 스스로 한 편집(`WebViewImpl::registerEditCommand`)뿐이다. 꺼낸 칸을 되돌릴 때 WebCore 는 그 칸의 편집 루트에 `beforeinput`(`historyUndo`)을 보낸다(`EditCommandComposition::unapply` → `Editor::willUnapplyEditing`). CodeMirror 의 `history()` 는 contentDOM 에서 이것을 받아 자기 `undo` 를 부른다. 그래서 평소 타이핑은 메뉴 Undo 로 되돌려졌다 — 꺼낸 칸이 편집기 타이핑이면 CodeMirror 가 받는다. 모두 바꾸기는 CodeMirror 의 트랜잭션이라 WebKit 기록에 없고, 그 위 칸은 바꾸기 입력칸의 타이핑이었다. 그 칸의 `beforeinput` 은 입력칸으로 가서 입력칸이 되돌려지고 포커스가 그리로 갔다(스모크가 본 그대로).
+- **모두 바꾸기만의 문제가 아니다.** Playwright WebKit 에서 새 페이지마다 편집 하나를 하고 `document.queryCommandEnabled("undo")` 를 봤다. WebKit 기록에 들어가는 것은 글자 타이핑(닫는 괄호 자동 입력이 붙는 `(` 포함)뿐이고, Enter·Backspace·Tab·⌥↑ 줄 옮기기·⇧⌘D·붙여넣기(CodeMirror 처리기)·`view.dispatch` 는 들어가지 않는다. 「바꾸기」 한 번도 같다(트랜잭션). 그래서 옛 항목은 이런 편집만 한 메모에서는 꺼져 있었고, 타이핑 칸이 CodeMirror 기록보다 적으면 중간에 꺼졌다.
+- **고른 방법: 편집 메뉴의 실행 취소·실행 복귀를 앱 항목으로.** `beforeinput` 만 받는 방법은 고르지 않았다. 그 길은 WebKit 기록에 칸이 있을 때만 열리므로 위의 Enter·붙여넣기 등은 그대로 못 되돌리고, 항목의 켜짐도 WebKit 기록을 따른다. 앱 항목(id `undo`·`redo`, 이름 「실행 취소」·「실행 복귀」, 키 ⌘Z·⇧⌘Z 고정)은 `tote://menu` 로 포커스된 창의 페이지에 가고, 페이지(`src/editor/history-menu.ts` `runHistoryMenu`)가 고른다.
+  - 편집기에 포커스가 있으면 그 편집기의 `undoWithCursors`·`redoWithCursors`(⌘Z 키와 같다).
+  - 포커스가 페이지(body)나 칸 자체에 있으면 그 칸의 편집기(편집기를 보일 때).
+  - 입력칸·`select`·편집 가능 요소·뷰어 iframe, 그리고 사이드바·대화상자의 요소이면 `document.execCommand("undo"|"redo")` — WebKit 의 되돌리기 그대로다. WebKit 은 스크립트의 Undo 명령을 받는다(`EditorCommand.cpp` 의 `Undo` 가 `supported`, `WebEditCommandProxy::unapply` 의 주석이 `execCommand()` 길을 적어 둔다). Playwright WebKit 에서도 입력칸 타이핑을 되돌렸다.
+  - tote 창이 아니라 다른 창(시트 등)이 키를 갖고 있으면 Rust 가 key window 에 `undo:`·`redo:` 를 보낸다(`menu::history` → `system_history`, `NSApplication::sendAction_to_from`).
+- **입력칸의 되돌리기가 본문에 닿는 길도 막았다(B-2 의 기대).** WebKit 기록은 창 하나에 하나라서, 입력칸에서 되돌리다 보면 그 아래 칸인 편집기 타이핑에 닿는다. 그 `beforeinput` 은 포커스가 없는 편집기로 가고, CodeMirror 가 본문을 되돌린다(Playwright 로 재현: 입력칸에 포커스를 둔 채 `execCommand("undo")` 가 편집 가능 요소의 타이핑을 되돌렸다). `historyStaysWithTheKeys`(`Prec.highest` 의 `beforeinput` 처리기, `history()` 앞)가 포커스 없는 편집기에 온 `historyUndo`·`historyRedo` 를 버린다. 스모크 B-2 가 합격한 것은 그 세션의 WebKit 기록에 편집기 타이핑이 없었기 때문으로 보인다.
+- **바뀐 것.** `src-tauri/src/app/menu.rs`(시스템 `undo`/`redo` 슬롯을 앱 고정 항목으로, `history`·`system_history`), `src-tauri/src/shortcuts.rs`(`UNDO_ACCELERATOR`·`REDO_ACCELERATOR`), `src/app/controller.ts`(`onMenu` 의 `undo`·`redo`), `src/editor/history-menu.ts`(새 파일), `src/editor/setup.ts`. 앱 고정 항목이 되어 녹음 중에는 설정…·tote 종료처럼 키가 떼어진다.
+- **설계 문서.** 검색 띠 설계 「동작」 에 「메뉴 되돌리기」, 설정·단축키 설계 「하지 않는 것」 의 시스템 편집 메뉴 줄.
+- **시험.** e2e `tests/e2e/search-bar-app.spec.ts`: 「the menu's undo takes back 모두 바꾸기 with the editor's keys, not the bar's typing」(찾기·바꾸기 칸에 키로 친 뒤 모두 바꾸기 → 편집기에서 메뉴 `undo` 가 본문을 되돌리고 바꾸기 칸·포커스는 그대로, `redo`, 포커스를 뗀 채 `undo` 는 칸의 편집기, 끝에 편집기 포커스로 `execCommand("undo")` 를 하면 바꾸기 칸이 지워지고 본문은 그대로 — 옛 항목이 한 일을 고정해 WebKit 이 바뀌면 알린다), 「the menu's undo in a field of the bar takes back the field, never the memo」(편집기에 친 뒤 찾기 칸에 친 것을 메뉴 `undo` 로 되돌리고, 더 눌러도 본문 그대로). Rust `undo_and_redo_are_the_apps_items_with_the_fixed_keys`(편집 메뉴의 항목·이름·키가 `FIXED` 와 같다), `only_an_app_command_runs_from_the_editor` 에 `undo`·`redo`, 고정 항목 목록·녹음 중 떼기 시험의 개수.
+- **구분력.** `historyStaysWithTheKeys` 를 빼면 입력칸 시험이 `Expected: "one two" / Received: "one"` 으로 실패. `onMenu` 의 `undo`·`redo` 분기를 끄면 두 시험 모두 실패(`Expected: "a a a" / Received: "b b b"`, `Expected: "" / Received: "x"`). 「페이지나 칸 자체」 분기를 끄면 첫 시험의 포커스 뗀 단언(258행)만 실패. 모두 복구 뒤 통과.
+- **닿지 않는 것.** 실제 메뉴 클릭이 앱 항목으로 오는 것과 `system_history`(다른 창이 키를 가질 때)는 e2e 가 보지 못한다(가짜 백엔드가 id 를 바로 보낸다). 화면 확인 후보 1~4.
+
+### 2. 다크 슬롯 Light+ 에서 띠 입력칸·사이드바 글자가 안 읽힘 (검색 띠 A-4) — `d0df67a`
+
+- **원인(코드로 확인).** `ThemeManager.refresh` 가 `themeVariables(theme, appearance)` 에 OS 모양(슬롯)을 넘기고, `themeVariables` 는 `DEFAULT_VARIABLES[appearance]` 에서 시작해 테마가 준 키만 덮는다. 번들 Light+·Dark+ 에서 tote 변수에 닿는 키는 `editor.background`·`editor.foreground` 둘뿐이라, 다크 슬롯 Light+ 는 `--bg`·`--fg` 만 라이트가 되고 `--input-bg`·`--panel-bg`·`--sidebar-bg`·`--muted` 는 다크 기본값으로 남았다.
+- **고친 것(브리프가 권한 방향).** `themeKind`(`src/theme/vscode-theme.ts`): 매니페스트 `uiTheme`(`vs`·`hc-light` 라이트, `vs-dark`·`hc-black` 다크), 없거나 모르면 테마 파일 `type`(`light`·`hcLight`·`dark`·`hc`), 그것도 없으면 슬롯. 매니저는 이 종류로 `themeVariables` 를 부르고, `ActiveTheme` 에 `kind` 를 더해 페이지의 `color-scheme`·`data-appearance` 도 종류를 따르게 했다(라이트 테마면 스크롤 막대·폼 컨트롤도 밝게). `appearance` 는 슬롯 그대로다. 테마 종류를 무시하는 다른 방법(테마의 `editor.background` 밝기로 종류를 짐작)은 고르지 않았다 — VS Code 도 매니페스트 `uiTheme` 로 기본 테마를 고른다.
+- **설계 문서.** 코어 설계 「테마」 에 슬롯과 테마 종류 문단, 검색 띠 설계 「색」 에 한 줄. 설계에 슬롯·종류에 대한 서술은 없었다(「OS 모양을 따른다」 뿐).
+- **시험.** 단위 `src/theme/manager.test.ts` 「ThemeManager with the bundled themes」: 번들 매니페스트와 테마 파일을 디스크에서 읽어 **번들 테마 둘 × 슬롯 둘** 네 경우마다 실제 `ThemeManager` 로 고르고, 찾기 칸 글자·자리표시·띠 버튼·띠 토글·사이드바 글자·사이드바 보조 글자·편집기 글자·페이지 보조 글자(8쌍)의 대비가 4.5:1 이상인지 `contrastRatio` 로 본다. 「takes the colours a theme leaves out from its kind, not from the slot」(다크 슬롯 Light+ 의 `kind`·`--input-bg`·`--sidebar-bg`). `vscode-theme.test.ts` 「themeKind」(우선순위 9가지).
+- **구분력.** 매니저가 종류 대신 슬롯을 넘기게 하면 3개 실패(다크 슬롯 Light+, 라이트 슬롯 Dark+, 종류 시험), 같은 슬롯 두 경우는 통과. 실패 값: 다크 슬롯 Light+ 의 찾기 칸 글자 1.15:1, 띠 버튼·사이드바 메모 이름 1.21:1, 페이지 보조 글자 3.21:1. 복구 뒤 통과.
+- **남는 것.** 뷰어 프레임(마크다운 미리보기·미디어)의 `color-scheme` 은 `light dark`(OS 모양)이다. 뷰어는 테마 변수만 받으므로 글자 대비는 같지만, 다크 OS 에서 라이트 테마면 뷰어 안 스크롤 막대·폼 컨트롤은 어두울 수 있다. 라이트 슬롯 Dark+ 는 시스템 모양을 라이트로 바꿔야 해서 화면 확인은 사람 몫이다.
+
+### 3. ⌘+키패드 1 로 건 단축키를 메인 줄 ⌘1 도 실행 (설정 B-8) — `8a67d61`
+
+- **원인(AppKit 실험으로 확인).** 스크래치의 Swift 실험 앱(창 없음, `NSMenu.performKeyEquivalent` 에 합성 키 이벤트)으로 쟀다. 항목 마스크에 `NSEventModifierFlagNumericPad` 가 들어 있어도(읽으면 `0x300000`) AppKit 은 맞출 때 그 플래그를 보지 않는다. 키패드 0~9·−·.·÷·= 항목은 메인 줄 같은 글자 ⌘키에도 실행되고, 메인 줄 항목도 키패드에 실행된다. 두 항목이 있으면 메뉴 순서로 앞의 것이 둘 다 가져간다. 키패드 ＋·× 항목은 메인 줄 ⇧⌘=·⇧⌘8 에도 실행되지만, ⇧⌘=·⇧⌘8 항목은 키패드로 실행되지 않는다. 키패드 ↩ 는 메인 줄 ↩ 와 갈린다.
+- **AppKit 으로 가를 수 있나.** key equivalent·마스크로는 없다(위). 메뉴 대리자 `menuHasKeyEquivalent:forEvent:target:action:` 로 키 맞추기를 대신하면 가를 수 있지만, muda 가 만든 메뉴의 대리자를 바꿔야 해서 고르지 않았다. `key_equivalents.rs` 의 직접 접근(항목의 키·마스크 읽고 쓰기)으로는 가를 수 없다.
+- **고른 것: 같은 키로 본다 — 메인 줄 키로 녹음.** 숫자패드 녹음은 사용자 결정이 아니라 틈 메우기 계획 Task 5 의 결정이었으므로 질문 없이 정했다.
+  - 키패드 0~9·−·.·÷·= 는 메인 줄 키로 녹음한다(⌘키패드 1 → `CmdOrCtrl+1`, 「⌘1」). 양쪽 다 실행되는 것이 실제 동작이라 그 이름이 맞고, 메인 줄 키를 쓰는 명령과 같은 키로 충돌 검사를 받는다. 키패드로 누르던 사람도 그대로 쓸 수 있다. 녹음에서 받지 않는 쪽은 고르지 않았다: 받지 않으면 키패드로만 단축키를 누르는 사람에게 반응 없는 키가 되는데, 메인 줄 키로 녹음해도 키패드가 똑같이 실행하므로 막을 까닭이 없다.
+  - 키패드 ＋·× 는 녹음에서 반응하지 않는다(`IntlBackslash` 와 같은 처리). 어느 이름으로 걸어도 동작을 말하지 못한다(키패드로 걸면 ⇧⌘= 도 실행, 메인 줄로 걸면 키패드가 안 닿음).
+  - 키패드 ↩ 는 그대로 「⌘키패드 ↩」.
+  - Rust `recordable` 은 키패드 ↩ 말고 키패드 키를 거절한다. 손으로 쓴 settings.json 항목과 이 규칙 전 빌드가 녹음해 저장한 항목은 읽을 때 버려진다(그 명령은 기본값으로 돌아간다). 옮겨 적지 않은 것은 `IntlBackslash` 의 선례를 따른 것이고, 숫자패드 녹음이 들어온 지 나흘이라 저장된 값이 거의 없다.
+- **설계 문서.** 설정·단축키 설계 「화면」 의 녹음 목록.
+- **시험.** 단위 `src/shortcuts/keys.test.ts`: 「records a keypad key a menu cannot tell from a main-row key as that key」(14개 키 × 보조키 두 벌, 표기 「⌘1」, `sameAccelerator` 로 `Cmd+1` 과 같음), 「does not record the keypad's ＋ and ×…」, 「records Insert, Help and the keypad's Enter but not IntlBackslash」(옛 시험을 나눔). Rust `the_other_keypad_keys_are_not_recordable`(8개 키 거절·`sanitize` 가 버림·`validate` 오류, 메인 줄 `CmdOrCtrl+1` 은 통과), `the_keypad_enter_insert_and_help_shortcuts_parse_and_are_recordable`. e2e `tests/e2e/shortcuts.spec.ts` 「a keypad key records as its main-row twin, which another command may have」(이름 바꾸기… 가 ⌘1 일 때 새 메모에 ⌘키패드 1 → 「이름 바꾸기… 에 이미 쓰고 있습니다」, 바꾸기 → 「⌘1」 저장, ⌘키패드 ＋ 는 녹음이 이어지고 ⌘키패드 ↩ 는 저장). AppKit 고정 시험 `src-tauri/tests/menu_keypad.rs`(`harness = false`): muda 로 `CmdOrCtrl+Numpad1`·`CmdOrCtrl+2` 항목을 만들어 마스크에 NumericPad 가 있음을 읽고, 메인 줄 ⌘1 이 키패드 항목을, 키패드 ⌘2 가 메인 줄 항목을 실행하는지 본다 — AppKit 이 가르게 되면 실패해 키패드 키를 다시 받을 때를 알린다. 시험 키 이벤트를 만들려고 dev-dependency 로 `objc2-app-kit` 의 `NSGraphicsContext`, `objc2-foundation` 의 `NSGeometry` 기능을 더했다.
+- **구분력.** TS 의 짝 대응을 옛 정규식으로 되돌리면 단위 「…as that key」 와 e2e 가 실패(`element(s) not found`: 충돌 문구가 안 뜸). TS `recordable` 의 키패드 거절 줄을 빼면 단위 「＋ and ×」 가 실패. Rust 거절 줄을 빼면 `the_other_keypad_keys_are_not_recordable` 이 실패. AppKit 고정 시험은 항목을 `Numpad3` 으로 바꾸면 마스크 단언에서 실패. 모두 복구 뒤 통과.
+
+### 이 회차의 화면 확인 후보
+
+디버그 번들(`docs/guides/development.md` 「디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다」)로 본다.
+
+1. **모두 바꾸기 뒤 메뉴 실행 취소(검색 띠 B-5).** 찾기 「줄」·바꾸기 「ZZ」 를 키로 친 뒤 모두 바꾸기, 편집기를 누르고 메뉴 편집 › 실행 취소. **기대:** 본문이 한 번에 돌아오고, 바꾸기 칸 「ZZ」 와 편집기 포커스가 그대로다. 실행 복귀로 다시 바뀐다. 편집 메뉴의 두 항목 이름이 「실행 취소」·「실행 복귀」 이고 ⌘Z·⇧⌘Z 가 보인다.
+2. **Enter·붙여넣기만 한 메모에서 메뉴 실행 취소.** 새 메모에서 Enter 세 번, 메뉴 실행 취소. **기대:** 줄이 줄어든다(옛 항목은 꺼져 있었을 것이다 — 옛 번들이 있으면 비교해 적는다).
+3. **입력칸의 되돌리기는 본문을 건드리지 않는다(검색 띠 B-2 변형).** 편집기에 글자 몇 개를 친 뒤 ⌘F, 찾기 칸에 친다. 찾기 칸에 포커스를 둔 채 메뉴 실행 취소와 ⌘Z 키를 여러 번. **기대:** 찾기 칸 입력이 되돌려지고, 몇 번을 더 눌러도 본문은 그대로다. 메모 목록 거르기 입력칸에서도 같다.
+4. **다른 창이 키를 가질 때.** 파일 › 파일 열기… 대화상자의 검색칸에 글자를 친 뒤 ⌘Z. **기대:** 그 검색칸의 입력이 되돌려진다(`system_history`). 되돌려지지 않거나 메뉴가 꺼져 있으면 대화상자가 앱 모달인지 시트인지와 함께 적는다.
+5. **다크 슬롯 Light+(검색 띠 A-4).** 설정에서 다크 테마를 Light+ 로. **기대:** 띠 입력칸·사이드바·상태 줄이 밝은 바탕에 어두운 글자이고, 스크롤 막대도 밝다. 마크다운 미리보기를 열면 글자는 읽히되 미리보기 안 스크롤 막대가 어두울 수 있다(위 「남는 것」) — 본 그대로 적는다. 라이트 슬롯 Dark+ 는 시스템 모양을 라이트로 바꿔야 하므로 사람이 본다.
+6. **키패드 녹음(설정 B-8).** 아무 명령에 ⌘+키패드 1 을 녹음. **기대:** 「⌘1」 로 저장되고, 메인 줄 ⌘1 과 키패드 ⌘1 모두 그 명령을 실행한다. ⌘+키패드 ＋ 는 반응하지 않는다. ⌘+키패드 ↩ 는 「⌘키패드 ↩」 로 저장되고 메인 줄 ⌘↩ 로는 실행되지 않는다.
+
+### 실행 개수
+
+모두 마지막 커밋(`8a67d61`) 위에서. 부하 `load averages` 9~11.
+
+- vitest `pnpm exec vitest run`: 파일 44, 시험 387 통과.
+- `cargo test --no-fail-fast`: 단위 416 통과, AppKit 하네스 `menu_key_equivalents: ok`·`menu_keypad: ok`(각각 시험 하나짜리 `main`), doc 시험 0.
+- e2e `TOTE_E2E_PORT=1461 pnpm exec playwright test`: 410 통과(worker 7, 57.6초). `Script error`·`Cross-origin` 줄 0.
+- `tsc --noEmit`: 오류 0. oxlint(`--no-error-on-unmatched-pattern -f json`): 파일 167, 규칙 96, 진단 0. 이 판의 oxlint 는 에이전트가 돌리면 깨끗할 때 아무것도 출력하지 않아 `-f json` 으로 개수를 읽었다.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 경고 0. `cargo fmt --all --check`: 차이 0.
