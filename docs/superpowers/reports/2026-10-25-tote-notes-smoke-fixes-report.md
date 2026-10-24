@@ -80,15 +80,15 @@
 
 ## 넘기는 것
 
-| 무엇                                                                                                                                          | 출처                                                 | 까닭·짚은 원인                                                                                                                                                                                                                                                                                                                               |
-| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| 줄번호를 끈 순간 비활성 창의 다른 칸 선택 강조가 거터 폭만큼 어긋나 남았다가 창이 활성화되면 바로잡힘                                         | 설정 스모크 D-3, 스모크 보고 「그 밖에 본 것」       | 원인 미확인. 후보: 거터를 빼는 DOM 갱신은 dispatch 에서 바로 일어나지만 선택 강조(`drawSelection` 층)는 측정 단계(requestAnimationFrame)에서 다시 그린다. 비활성 창에서 WKWebView 가 그 프레임을 미루면 창이 활성화될 때까지 옛 자리에 남는다. 다시 잴 때는 비활성 창에 `requestAnimationFrame` 콜백이 언제 도는지 계측한다.                 |
-| 재시작 복원 뒤 가장 큰 창의 제목이 「Alpha」 에서 「Alpha — 3」 으로 바뀜                                                                     | 자유 분할 스모크 B-18, 스모크 보고 「그 밖에 본 것」 | 원인 짚음: 제목 번호는 창의 정체가 아니라 그 워크스페이스의 창을 연 순서다(`AppCore::titles_of` 가 `windows_of` 순서로 `window_title(name, nth)`). 복원은 창을 다른 순서로 다시 열 수 있어 같은 창이 다른 번호를 받는다. 번호를 창에 붙여 둘지는 판단할 일이다.                                                                              |
-| 새로 고칠 때 콘솔 `Fetch API cannot load ipc://localhost/suspend_shortcuts due to access control checks.`                                     | 설정 스모크 A-9, 스모크 보고 「그 밖에 본 것」       | 원인 짚음: 녹음 중 새로 고치면 `pagehide` → 녹음기 `stop()` 이 `suspendShortcuts(false)` 를 보내는데, 문서가 떠나는 중이라 WebKit 이 그 IPC fetch 를 끊고 이렇게 적는다. 메뉴 키는 Rust `on_page_load` 의 `resume_if` 가 되돌리므로 동작에는 영향이 없다. 잡음을 없애려면 `pagehide` 길에서는 IPC 를 보내지 않는다(되돌리기는 Rust 가 한다). |
-| 대용량 뷰어 도구 막대가 좁은 칸에서 두 줄로 접힘                                                                                              | 설정 스모크 D-6, 스모크 보고 「그 밖에 본 것」       | 원인 미확인. `.large-text-bar` 는 `flex-wrap` 이 없는 flex 이므로 막대 자체가 아니라 자식 안의 글(줄 수·상태 문구)이 줄바꿈되는 것으로 보인다. 후보: 자식에 `white-space: nowrap`·`min-width: 0` 이 없다. 좁은 칸 스크린숏으로 어느 자식이 접히는지부터 본다.                                                                                |
-| 검색 토글 `Aa`·`.*` 가 편집기 글꼴 종류를 따르고 12px 고정                                                                                    | 설정 스모크 D-7                                      | 의도 판단(사람 확인 행). `.search-toggle` 이 `font: 12px var(--editor-font)` 다. 이번 3번으로 `--editor-font` 는 설정값 뒤에 기본 고정폭 목록이 붙은 값이 되었다(없는 글꼴이면 고정폭). UI 글꼴로 바꿀지는 사람이 정한다.                                                                                                                    |
-| settings.json 을 손으로 고쳐 글꼴 이름에 줄바꿈·제어 문자가 들면 `.cm-scroller` 규칙 전체가 무효가 되어 글꼴 크기까지 기본(13px)으로 떨어진다 | 스모크 불합격 고치기 리뷰 Minor 1                    | `src/app/editor-font.ts` 가 따옴표로 감쌀 때 `"`·`\` 만 이스케이프한다. 설정 화면 입력칸은 한 줄이고 `trim()` 해서 손으로 고칠 때만 생긴다. 고칠 방향: `\n`·`\r`·`\f` 를 CSS 이스케이프(`\a `)로 바꾸거나 제어 문자를 지우고, `editor-font.test.ts` 에 한 줄                                                                                 |
-| tauri `MenuItem` 에서 AppKit 지우기(`MenuEntry::clear`)로 가는 연결을 시험이 덮지 않는다                                                      | 스모크 불합격 고치기 리뷰 Minor 2(구현이 밝힌 공백)  | 연결을 되돌려도 시험이 통과함을 리뷰가 실증했다. 위험은 낮다 — 화면 확인 후보 1~5 가 실제 메뉴로 덮는다                                                                                                                                                                                                                                      |
+| 무엇                                                                                                                                          | 출처                                                 | 까닭·짚은 원인                                                                                                                                                                                                                                                                                                                                  |
+| --------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| 줄번호를 끈 순간 비활성 창의 다른 칸 선택 강조가 거터 폭만큼 어긋나 남았다가 창이 활성화되면 바로잡힘                                         | 설정 스모크 D-3, 스모크 보고 「그 밖에 본 것」       | 원인 미확인. 후보: 거터를 빼는 DOM 갱신은 dispatch 에서 바로 일어나지만 선택 강조(`drawSelection` 층)는 측정 단계(requestAnimationFrame)에서 다시 그린다. 비활성 창에서 WKWebView 가 그 프레임을 미루면 창이 활성화될 때까지 옛 자리에 남는다. 다시 잴 때는 비활성 창에 `requestAnimationFrame` 콜백이 언제 도는지 계측한다.                    |
+| 재시작 복원 뒤 가장 큰 창의 제목이 「Alpha」 에서 「Alpha — 3」 으로 바뀜                                                                     | 자유 분할 스모크 B-18, 스모크 보고 「그 밖에 본 것」 | 원인 짚음: 제목 번호는 창의 정체가 아니라 그 워크스페이스의 창을 연 순서다(`AppCore::titles_of` 가 `windows_of` 순서로 `window_title(name, nth)`). 복원은 창을 다른 순서로 다시 열 수 있어 같은 창이 다른 번호를 받는다. 번호를 창에 붙여 둘지는 판단할 일이다.                                                                                 |
+| 새로 고칠 때 콘솔 `Fetch API cannot load ipc://localhost/suspend_shortcuts due to access control checks.`                                     | 설정 스모크 A-9, 스모크 보고 「그 밖에 본 것」       | 원인 짚음: 녹음 중 새로 고치면 `pagehide` → 녹음기 `stop()` 이 `suspendShortcuts(false)` 를 보내는데, 문서가 떠나는 중이라 WebKit 이 그 IPC fetch 를 끊고 이렇게 적는다. 메뉴 키는 Rust `on_page_load` 의 `resume_if` 가 되돌리므로 동작에는 영향이 없다. 잡음을 없애려면 `pagehide` 길에서는 IPC 를 보내지 않는다(되돌리기는 Rust 가 한다).    |
+| 대용량 뷰어 도구 막대가 좁은 칸에서 두 줄로 접힘                                                                                              | 설정 스모크 D-6, 스모크 보고 「그 밖에 본 것」       | 원인 미확인. `.large-text-bar` 는 `flex-wrap` 이 없는 flex 이므로 막대 자체가 아니라 자식 안의 글(줄 수·상태 문구)이 줄바꿈되는 것으로 보인다. 후보: 자식에 `white-space: nowrap`·`min-width: 0` 이 없다. 좁은 칸 스크린숏으로 어느 자식이 접히는지부터 본다.                                                                                   |
+| 검색 토글 `Aa`·`.*` 가 편집기 글꼴 종류를 따르고 12px 고정                                                                                    | 설정 스모크 D-7                                      | 의도 판단(사람 확인 행). `.search-toggle` 이 `font: 12px var(--editor-font)` 다. 이번 3번으로 `--editor-font` 는 설정값 뒤에 기본 고정폭 목록이 붙은 값이 되었다(없는 글꼴이면 고정폭). UI 글꼴로 바꿀지는 사람이 정한다.                                                                                                                       |
+| settings.json 을 손으로 고쳐 글꼴 이름에 줄바꿈·제어 문자가 들면 `.cm-scroller` 규칙 전체가 무효가 되어 글꼴 크기까지 기본(13px)으로 떨어진다 | 스모크 불합격 고치기 리뷰 Minor 1                    | `src/app/editor-font.ts` 가 따옴표로 감쌀 때 `"`·`\` 만 이스케이프한다. 설정 화면 입력칸은 한 줄이고 `trim()` 해서 손으로 고칠 때만 생긴다. 고칠 방향: `\n`·`\r`·`\f` 를 CSS 이스케이프(`\a `)로 바꾸거나 제어 문자를 지우고, `editor-font.test.ts` 에 한 줄 (마무리 회차에서 해결, 커밋 `a23d613`: 따옴표 안의 줄바꿈을 CSS 이스케이프로 쓴다) |
+| tauri `MenuItem` 에서 AppKit 지우기(`MenuEntry::clear`)로 가는 연결을 시험이 덮지 않는다                                                      | 스모크 불합격 고치기 리뷰 Minor 2(구현이 밝힌 공백)  | 연결을 되돌려도 시험이 통과함을 리뷰가 실증했다. 위험은 낮다 — 화면 확인 후보 1~5 가 실제 메뉴로 덮는다 (마무리 회차: 코드 변경 없음. 화면 확인 후보 1~5 가 2026-10-25 화면 확인에서 합격해 실제 메뉴로 덮였다. 그 연결을 보는 자동 시험은 여전히 없다)                                                                                         |
 
 ## 재개 스모크 불합격 고치기
 
@@ -151,4 +151,84 @@
 - `cargo test --no-fail-fast`: 단위 416 통과, AppKit 하네스 `menu_key_equivalents: ok`·`menu_keypad: ok`(각각 시험 하나짜리 `main`), doc 시험 0.
 - e2e `TOTE_E2E_PORT=1461 pnpm exec playwright test`: 410 통과(worker 7, 57.6초). `Script error`·`Cross-origin` 줄 0.
 - `tsc --noEmit`: 오류 0. oxlint(`--no-error-on-unmatched-pattern -f json`): 파일 167, 규칙 96, 진단 0. 이 판의 oxlint 는 에이전트가 돌리면 깨끗할 때 아무것도 출력하지 않아 `-f json` 으로 개수를 읽었다.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 경고 0. `cargo fmt --all --check`: 차이 0.
+
+## 마무리 회차
+
+2026-10-25, 브랜치 `jang2162/smoke-fixes-3`, 기준 main `aaed03c`. 원본은 재개 스모크 화면 확인의 11번(탭 닫기 표시가 접근성 트리에 없음), 재개 스모크 불합격 고치기 리뷰(이하 「둘째 리뷰」)의 Minor 1·3·4·5, 이 보고 「넘기는 것」 의 글꼴 줄바꿈 행, 틈 메우기 보고의 `quietErrors` 행이다. 화면 확인은 하지 않았다(e2e 는 headless 만). 실제 앱으로 볼 것은 아래 「이 회차의 화면 확인 후보」 에 있다.
+
+### 1. 탭의 닫기 표시가 접근성 트리에 없음 (재개 스모크 화면 확인 11번) — `0f7bcd1`, `08d2e96`
+
+- **원인.** ARIA `tab` 은 자식을 표현용으로 다룬다. 앞 회차(`b59ad7d`)가 닫기 표시를 `role="tab"` 요소 안의 `role="button"` span 으로 바꿨으므로, 트리에 버튼이 드러나지 않고 탭 이름이 「first 탭 닫기」 처럼 합쳐졌다. 그래서 접근성 누르기로 탭을 닫을 길이 없었다.
+- **고친 것(브리프가 권한 방향).** 탭 상자(`.tab`, `role="none"`) 안에 라벨(`.tab-label`, `role="tab"`, `aria-selected`, 힌트 `title`)과 그 형제인 진짜 `<button class="tab-close" aria-label="탭 닫기" tabindex="-1">` 를 둔다. 트리는 `tablist` › `tab "가"`, `button "탭 닫기"`, `tab "나" [selected]`, `button "탭 닫기"` 이다(Playwright ARIA 스냅숏). 끌기·가운데 클릭·오른쪽 클릭·마우스 고르기 처리기는 전처럼 탭 상자에 있다. 탭 바 레이아웃은 바꾸기 전후 `.tab`·`.tab-title`·`.tab-close` 상자가 픽셀까지 같다(임시 측정 시험, 커밋하지 않음): 상자의 왼쪽·위아래 여백을 라벨로 옮겼다.
+- **함께 바꾼 둘.**
+  - 닫기 버튼을 `visibility: hidden` 대신 `opacity: 0` 으로 감춘다. `visibility: hidden` 인 버튼은 트리에서 빠져서 비활성 탭은 여전히 누르기로 닫을 수 없다. 마우스로는 탭 위에 있어야 닿고 그때 보이므로 달라지는 것이 없다.
+  - `aria-selected` 를 더했다. 전에는 활성 탭을 트리가 알 수 없었다.
+- **설계·안내 문서.** 코어 설계 「칸」 에 「탭의 닫기 버튼」 줄, `docs/guides/development.md` 의 탭 누르기 줄을 지금 구조로.
+- **시험.** e2e `tests/e2e/memo.spec.ts`: 「pressing a tab as assistive technology does …」 에 탭 수 2·접근 이름이 메모 이름뿐(`toHaveAccessibleName("가")`)·`aria-selected`, 누르기는 `role="tab"` 요소에. 「the close mark of a tab closes it …」 을 탭 셋으로: 닫기 버튼 3개가 모두 트리에 있음, 탭 라벨 가운데 클릭으로 닫힘(전에는 가운데 클릭을 보는 시험이 없었다), 비활성 탭의 닫기 버튼 `click()` 로 그 탭만 닫힘, 마우스 클릭으로 닫힘. `tests/e2e/save-failure.spec.ts` 는 저장 실패 사유를 라벨의 `title` 과 접근 설명에서 읽는다(`08d2e96` — 첫 커밋 뒤 전체 e2e 에서 이 시험이 `.tab` 의 `title` 을 찾다 실패해서 고쳤다). 끌기(`tear-off`·`pane-drag`·`panes`)·⌘W·다음/이전 탭은 기존 시험이 그대로 통과한다.
+- **구분력.** 닫기 버튼을 다시 라벨 안에 두면 구조 단언(`Expected length: 0 / Received length: 2`)이 실패. CSS 를 `visibility: hidden` 으로 되돌리면 버튼 수 단언(`Expected: 2 / Received: 0`)이 실패. 탭의 `auxclick` 처리기를 끄면 가운데 클릭 단언이 실패. 모두 복구 뒤 통과.
+- **남는 것.** 더러운 탭·저장 실패 탭의 ` ●`·` ⚠` 는 `.tab-title::after` 의 생성 내용이라 접근 이름에 들 수 있다(VoiceOver 가 「가 ●」 로 읽을 수 있다). 이번에는 건드리지 않았다.
+
+### 2. `applyToDocument` 가 테마 종류로 `color-scheme` 을 정하는 것 (둘째 리뷰 Minor 1) — `c66e1a6`
+
+- **시험.** `src/theme/manager.test.ts` 「applyToDocument › draws the page as the theme's kind, not the slot it was picked for」: `document` 를 `vi.stubGlobal` 로 두고 `appearance: "dark"`, `kind: "light"` 를 넘겨 `colorScheme`·`data-appearance` 가 `light`, 변수가 그대로 들어가는지 본다.
+- **구분력.** 두 줄을 `active.appearance` 로 되돌리면 `Expected: "light" / Received: "dark"` 로 실패. 복구 뒤 통과.
+
+### 3. `themeKind` 가 프로토타입 키를 종류로 읽음 (둘째 리뷰 Minor 3) — `5acf88d`
+
+- **고친 것.** `uiTheme`·`type` 표를 객체 리터럴에서 `Map` 으로. 모르는 값(`constructor`·`toString`·`__proto__` 등)은 다음 단계(`type` → 슬롯)로 넘어간다.
+- **시험.** `src/theme/vscode-theme.test.ts` 「takes a name the object prototype has for an unknown kind」: 네 경우와, 그 종류로 `themeVariables` 를 부르면 다크 기본 `--bg` 가 나오는지.
+- **구분력.** 고치기 전 코드로 이 시험이 `expected [Function Object] to be 'light'` 로 실패하는 것을 먼저 봤다.
+
+### 4. 저장된 키패드 단축키를 버림 (둘째 리뷰 Minor 4) — `cf61fa0`
+
+- **고친 것.** `shortcuts::from_keypad`(`src-tauri/src/shortcuts.rs`)가 저장값의 키패드 0~9·−·.·÷·= 를 메인 줄 짝 키로 옮긴다(`CmdOrCtrl+Numpad1` → `CmdOrCtrl+1`, 화면이 녹음하는 이름 그대로). settings.json 을 읽는 `shortcut_overrides`(`appdata.rs`)가 `sanitize` 전에 부른다. 키 부분은 muda 와 같이 마지막 `+` 뒤로 가른다(`split_key_and_modifiers`). 근거는 둘째 리뷰의 AppKit 실험: 그 키패드 항목은 원래 메인 줄 키에도 실행됐다.
+- **겹침.** 옮긴 값이 다른 명령과 겹치면 지금의 `sanitize`(`clashing`)가 정한다: 기본값과는 기본값이, 두 재정의 사이에서는 `COMMANDS` 앞의 것이 남는다. 고정 키(⌃1 = 워크스페이스 1)에 닿으면 버린다.
+- **바꾸지 않은 것.** 짝이 없는 키패드 ＋·× 는 지금처럼 버린다. 화면이 보내는 바꿈(`validate`)은 옮기지 않는다 — 화면은 키패드 키를 보내지 않으므로 바꿈에 든 키패드 항목(↩ 말고)은 지금처럼 거절한다.
+- **설계 문서.** 설정·단축키 설계 「화면」 녹음 목록의 settings.json 키패드 항목 줄(옮김, 겹침, ＋·× 는 버림, 바꿈은 거절).
+- **시험.** Rust `a_saved_keypad_key_is_read_as_its_main_row_twin`(8가지 옮김, 짝 없는 키·키패드 ↩·보통 키·파싱 안 되는 값은 그대로이고 `sanitize` 가 판정), `a_keypad_key_moved_onto_a_taken_key_clashes_as_any_override`(두 순서 모두 이름 바꾸기… 가 남고 탭 닫기는 ⌘W, ⌃키패드 1 은 버림), `appdata::a_saved_keypad_shortcut_is_read_as_its_main_row_twin`(settings.json 읽기에서 옮김과 ＋ 버림). `the_other_keypad_keys_are_not_recordable` 는 그대로 통과(바꿈은 거절).
+- **구분력.** `shortcut_overrides` 에서 `from_keypad` 를 빼면 appdata 시험 실패. 짝 표에서 `NumpadEqual` 을 빼면 첫 시험 실패. 옮기기를 통째로 끄면 셋 다 실패(416 통과·3 실패). 모두 `cargo test --lib --no-fail-fast`, 복구 뒤 통과.
+
+### 5. 검색 띠 설계 「메뉴 되돌리기」 문장 (둘째 리뷰 Minor 5) — `2c7f1ae`
+
+- 검색 띠 설계 78행 끝에 리뷰가 준 문장을 그대로 넣었다: 「WebKit 의 기록은 창 하나에 하나라서, 맨 위 칸이 다른 칸의 입력칸 것이면 그 입력칸이 되돌려지고 포커스가 그리로 간다(시스템 항목과 같다).」
+
+### 6. 글꼴 이름의 줄바꿈 (이 보고 「넘기는 것」, 첫 리뷰 Minor 1) — `a23d613`
+
+- **고친 것.** `src/app/editor-font.ts`: 따옴표 안의 `\n`·`\r`·`\f` 를 CSS 이스케이프(`\a `·`\d `·`\c `)로 쓴다. 따옴표로 감싸는 이름과 이미 따옴표인 이름 둘 다. 단어 사이의 줄바꿈은 전처럼 공백이 되어 따옴표 없이 읽힌다. 지우지 않고 이스케이프한 것은 이름을 바꾸지 않기 위해서다. 다른 제어 문자는 CSS 문자열 안에서 문제가 없다(따옴표 없는 이름이면 식별자 검사에 걸려 따옴표로 감싸진다).
+- **설계 문서.** 설정·단축키 설계의 글꼴 칸 줄에 한 문장.
+- **시험.** 단위 `src/app/editor-font.test.ts` 「writes a newline in a name as its escape …」(세 문자, 이미 따옴표인 이름, 단어 사이 줄바꿈, 출력에 날것의 줄바꿈이 없음). e2e `tests/e2e/settings.spec.ts` 「a font that is not there falls back …」 끝에 글꼴 크기 18·이름 `3270\nNope` 단계: 편집기 `.cm-scroller` 의 글꼴 크기가 18px 이고 고정폭.
+- **구분력.** 고치기 전 `editor-font.ts` 로 e2e 가 리뷰가 말한 증상 그대로 `Expected: "18px" / Received: "13px"`, 단위 시험이 `"3270\nNope"` 로 실패. 이미 따옴표인 이름 쪽만 되돌리면 단위 시험이 `"Fira\r\nCode"` 로 실패. 복구 뒤 통과.
+
+### 7. `quietErrors` 회귀 시험의 빈 곳 둘 (틈 메우기 보고 「이번에 닫지 않고 넘기는 것」) — `913b2a5`
+
+- **방법.** Vite 서버 출력은 Playwright 가 `[WebServer] …` 로 찍을 뿐 시험이 읽을 수 없다. 대신 페이지가 Vite 에 보내는 프레임을 읽는다: Vite 클라이언트의 콘솔 감싸개는 HMR 웹소켓으로 `{"event":"vite:forward-console", …}` 를 보내고(`setupForwardConsoleHandler`), 서버는 그것을 받아 `[console.error] …` 로 찍기만 한다. `page.on("websocket")` 의 `framesent` 로 잡는다. 전달이 켜졌는지는 서버가 내준 `/@vite/client` 의 `const forwardConsole = {…}` 로 판정한다.
+- **시험.** `tests/e2e/quiet-errors.spec.ts`: 두 기존 시험이 Vite 로 간 것도 `["other"]` 인지 본다. 새 시험 「every error after the first still goes to Vite, not to the console alone」: 걸러지지 않는 오류 셋이 콘솔과 Vite 양쪽에 모두 간다.
+- **구분력.** `quietErrors` 가 호출마다 자기 필터를 걸게 하면(두 번째 호출의 이른 반환 제거) 「a second filter …」 가 Vite 쪽 단언에서 실패(`alpha` 가 감) — 콘솔 쪽은 통과하므로 옛 시험으로는 못 잡던 것이다. `finally` 의 `inside = false` 를 지우면 새 시험이 Vite 쪽에서 실패(`two`·`three` 가 안 감). 복구 뒤 통과.
+- **한계(시험 머리 주석에 적음).** 전달은 Vite 가 에이전트를 볼 때만 켜진다. 사람의 실행에서는 Vite 쪽 단언을 건너뛰고 「not checked」 주석을 남긴다(에이전트 환경 변수를 지우고 돌려 세 시험 통과·주석을 확인). 보는 것은 페이지가 보낸 프레임이고 서버가 찍은 줄 자체는 아니다.
+
+### 둘째 리뷰 Minor 처리
+
+| Minor | 무엇                                                    | 처리                                                                                                 |
+| ----- | ------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| 1     | `applyToDocument` 의 종류를 시험이 고정하지 않음        | 마무리 회차에서 해결, 커밋 `c66e1a6`                                                                 |
+| 2     | `menu::history` 의 `system_history` 에 시험이 닿지 않음 | 그대로. 가짜 백엔드로는 닿지 않는 길이고, 앞 회차 화면 확인 후보 4(파일 열기 대화상자에서 ⌘Z)가 본다 |
+| 3     | `themeKind` 가 프로토타입 키를 종류로 읽음              | 마무리 회차에서 해결, 커밋 `5acf88d`                                                                 |
+| 4     | 저장된 키패드 단축키를 버림                             | 마무리 회차에서 해결, 커밋 `cf61fa0`                                                                 |
+| 5     | 검색 띠 설계 문장이 실제보다 넓음                       | 마무리 회차에서 해결, 커밋 `2c7f1ae`                                                                 |
+
+### 이 회차의 화면 확인 후보
+
+디버그 번들(`docs/guides/development.md` 「디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다」)로 본다.
+
+1. **탭 닫기 버튼(재개 스모크 화면 확인 11번의 나머지).** 탭 셋을 연 채 접근성 트리(`orca computer` 트리)를 읽는다. **기대:** 탭마다 `AXRadioButton`(이름은 메모 이름뿐, 「탭 닫기」 가 붙지 않는다) 다음에 버튼 「탭 닫기」 가 있고, 비활성 탭의 버튼도 있다. 활성 탭은 선택됨(`AXValue` 1)으로 보인다. ① 비활성 탭에 접근성 누르기(`click --element-index`) → 그 탭이 골라지고 닫히지 않는다(앞 회차 11번 합격이 그대로인지). ② 비활성 탭의 「탭 닫기」 버튼에 접근성 누르기 → 그 탭만 닫히고 활성 탭은 그대로. ③ 활성 탭의 「탭 닫기」 누르기 → 닫힌다. ④ VoiceOver 로 탭을 읽으면 메모 이름(과 선택됨)만 읽고, VO-Space 로 고르며, 다음 항목으로 가면 「탭 닫기, 버튼」 을 읽는다(사람). ⑤ 마우스: 비활성 탭 위에 올리면 × 가 보이고, 누르면 닫힌다. 탭 사이 끌기·가운데 클릭이 전처럼 된다.
+
+### 실행 개수
+
+모두 마지막 코드 커밋(`08d2e96`) 위에서. 부하 `load averages` 16~25.
+
+- vitest `pnpm exec vitest run`: 파일 44, 시험 390 통과(앞 회차 387 + 이 회차 3).
+- `cargo test --no-fail-fast`: 단위 419 통과(416 + 3), main 0, AppKit 하네스 `menu_key_equivalents: ok`·`menu_keypad: ok`, doc 0.
+- e2e `TOTE_E2E_PORT=1461 pnpm exec playwright test`: 411 통과(worker 7, 58.5초, 410 + 새 시험 1). `Script error`·`Cross-origin` 줄 0.
+- `tsc --noEmit`: 오류 0. oxlint(`--no-error-on-unmatched-pattern -f json`): 파일 167, 규칙 96, 진단 0.
 - `cargo clippy --all-targets --all-features -- -D warnings`: 경고 0. `cargo fmt --all --check`: 차이 0.
