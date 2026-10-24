@@ -211,3 +211,77 @@ test("a reload in another pane leaves the focus where it is", async ({ page }) =
   ).toBe(10);
   await expect(findInput(right)).toHaveValue("beta");
 });
+
+// 편집 › 실행 취소 and 실행 복귀 are the app's items (src/editor/history-menu.ts): WebKit's undo
+// stack holds the bar's typing but never 모두 바꾸기, which CodeMirror makes itself.
+
+/** One memo, `text`, in the only pane, its editor with the keys at the end. */
+async function startWith(page: Page, text: string): Promise<Locator> {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", text, { modifiedMs: 1 }) },
+    session: paneSession([[memoTab("a")]]),
+  });
+  const only = pane(page, 0);
+  await expect(editor(only)).toHaveText(text);
+  await editor(only).click();
+  await page.keyboard.press("Meta+ArrowDown");
+  return only;
+}
+
+const memoText = (page: Page) => page.evaluate(() => window.__tote.app.view.state.doc.toString());
+const replaceInput = (target: Locator) => target.locator("input.find-bar-input[name=replace]");
+
+test("the menu's undo takes back 모두 바꾸기 with the editor's keys, not the bar's typing", async ({
+  page,
+}) => {
+  const only = await startWith(page, "a a a");
+  await page.keyboard.press("Meta+Alt+f");
+  await expect(findInput(only)).toBeFocused();
+  // Typed, so that WebKit's undo stack holds it, as it held the smoke's typing.
+  await page.keyboard.type("a");
+  await replaceInput(only).focus();
+  await page.keyboard.type("b");
+  await only.locator('button[name="replace-all"]').click();
+  expect(await memoText(page)).toBe("b b b");
+
+  await editor(only).focus();
+  await menu(page, "undo");
+  expect(await memoText(page)).toBe("a a a");
+  await expect(replaceInput(only)).toHaveValue("b");
+  await expect(editor(only)).toBeFocused();
+  await menu(page, "redo");
+  expect(await memoText(page)).toBe("b b b");
+
+  // Keys on nothing in particular: the focused pane's editor still.
+  await page.evaluate(() => (document.activeElement as HTMLElement).blur());
+  await menu(page, "undo");
+  expect(await memoText(page)).toBe("a a a");
+
+  // What the system item did (spec 「바꾸기」): WebKit's undo with the editor's keys took back the
+  // replace field's typing and left the memo. Should WebKit learn otherwise, this fails.
+  await editor(only).focus();
+  await menu(page, "redo");
+  await page.evaluate(() => document.execCommand("undo"));
+  expect(await memoText(page)).toBe("b b b");
+  await expect(replaceInput(only)).toHaveValue("");
+});
+
+test("the menu's undo in a field of the bar takes back the field, never the memo", async ({
+  page,
+}) => {
+  const only = await startWith(page, "one");
+  // Typed: WebKit's undo stack holds the memo's typing under the field's.
+  await page.keyboard.type(" two");
+  await page.keyboard.press("Meta+f");
+  await expect(findInput(only)).toBeFocused();
+  await page.keyboard.type("x");
+
+  await menu(page, "undo");
+  await expect(findInput(only)).toHaveValue("");
+  await expect(findInput(only)).toBeFocused();
+  // WebKit's next step is the memo's typing: it stays.
+  await menu(page, "undo");
+  await menu(page, "undo");
+  expect(await memoText(page)).toBe("one two");
+  await expect(findInput(only)).toBeFocused();
+});

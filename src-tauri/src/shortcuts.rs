@@ -134,6 +134,11 @@ pub const SETTINGS_ACCELERATOR: &str = "CmdOrCtrl+,";
 /// shortcuts. Recording takes it off too.
 pub const QUIT_ACCELERATOR: &str = "CmdOrCtrl+Q";
 
+/// 실행 취소's and 실행 복귀's shortcuts. The menu items are the app's, not the system's, so that the
+/// editor's own history answers them (src/app/menu.rs); their keys stay the system's.
+pub const UNDO_ACCELERATOR: &str = "CmdOrCtrl+Z";
+pub const REDO_ACCELERATOR: &str = "CmdOrCtrl+Shift+Z";
+
 /// 설정… and tote 종료 stay where they are so the way back to this screen and the way out of the
 /// app are never lost. The system Edit items and macOS's own window items cannot be rebound at all.
 pub const FIXED: &[Fixed] = &[
@@ -148,8 +153,8 @@ pub const FIXED: &[Fixed] = &[
     fixed("워크스페이스 7", "Ctrl+7"),
     fixed("워크스페이스 8", "Ctrl+8"),
     fixed("워크스페이스 9", "Ctrl+9"),
-    fixed("실행 취소", "CmdOrCtrl+Z"),
-    fixed("실행 복귀", "CmdOrCtrl+Shift+Z"),
+    fixed("실행 취소", UNDO_ACCELERATOR),
+    fixed("실행 복귀", REDO_ACCELERATOR),
     fixed("오려두기", "CmdOrCtrl+X"),
     fixed("복사하기", "CmdOrCtrl+C"),
     fixed("붙여넣기", "CmdOrCtrl+V"),
