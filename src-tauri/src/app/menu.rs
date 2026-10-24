@@ -183,15 +183,6 @@ fn shortcut_item(slot: &Slot) -> Option<&'static str> {
     }
 }
 
-/// Every item whose shortcut `MenuShortcuts` keeps, in menu order.
-#[cfg(test)]
-fn shortcut_items() -> Vec<&'static str> {
-    MENUS
-        .iter()
-        .flat_map(|(_, slots)| slots.iter().filter_map(shortcut_item))
-        .collect()
-}
-
 /// The fixed items' ids and shortcuts, in menu order.
 fn fixed_items() -> Vec<(&'static str, &'static str)> {
     MENUS
@@ -223,14 +214,22 @@ fn shortcut_label(slot: &Slot) -> &'static str {
     }
 }
 
+/// Every item whose shortcut `MenuShortcuts` keeps, with its name, in menu order: what `build`
+/// makes and the tests stand in for.
+fn shortcut_items() -> Vec<(&'static str, &'static str)> {
+    MENUS
+        .iter()
+        .flat_map(|(_, slots)| slots.iter())
+        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot))))
+        .collect()
+}
+
 /// Builds the menu bar with the default shortcuts and manages its items as `MenuShortcuts`. The
 /// settings are not loaded yet: setup applies the saved shortcuts (src/lib.rs).
 pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
-    let items = MENUS
-        .iter()
-        .flat_map(|(_, slots)| slots.iter())
-        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot))))
+    let items = shortcut_items()
+        .into_iter()
         .map(|(id, label)| {
             let (_, keys) = keys
                 .iter()
@@ -643,7 +642,7 @@ mod tests {
         fn new() -> Self {
             let items: Vec<_> = shortcut_items()
                 .into_iter()
-                .map(|id| (id, std::sync::Arc::new(Recorder::default())))
+                .map(|(id, _)| (id, std::sync::Arc::new(Recorder::default())))
                 .collect();
             let shortcuts = MenuShortcuts::new(items.clone());
             Self { shortcuts, items }
@@ -825,18 +824,14 @@ mod tests {
 
     #[test]
     fn every_item_with_a_shortcut_has_a_name() {
-        for slot in MENUS
-            .iter()
-            .flat_map(|(_, slots)| slots.iter())
-            .filter(|slot| shortcut_item(slot).is_some())
-        {
-            assert!(!shortcut_label(slot).is_empty(), "{slot:?}");
+        for (id, label) in shortcut_items() {
+            assert!(!label.is_empty(), "{id}");
         }
     }
 
     #[test]
     fn every_item_the_table_puts_a_shortcut_on_is_kept() {
-        let mut kept = shortcut_items();
+        let mut kept: Vec<&str> = shortcut_items().into_iter().map(|(id, _)| id).collect();
         assert!(kept.contains(&SETTINGS));
         assert!(kept.contains(&QUIT));
         let mut put: Vec<&str> = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()))
