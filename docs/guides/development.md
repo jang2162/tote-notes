@@ -25,6 +25,9 @@
 - `orca computer set-value` 로 편집기에 글을 넣기 전에 편집기를 `click --element-index` 로 포커스한다. 포커스가 검색 입력 같은 다른 입력에 있으면 `ok` 를 돌려주면서 값이 그 입력으로 가거나 아무 데도 들어가지 않는다. 넣은 뒤 트리에서 편집기 값을 읽어 확인한다.
 - 접근성(System Events·`orca computer`)으로는 창을 메뉴 막대 밑(y < 메뉴 막대 높이)에 둘 수 없다. 그런 저장 자리가 필요하면 앱을 끈 뒤 워크스페이스 `.tote/sessions/<id>.json` 의 `windows[].frame` 을 고치고 다시 켠다.
 - 화면 확인을 시작하기 전에 `ioreg -n Root -d1 -a | grep -A1 CGSSessionScreenIsLocked` 로 화면이 잠겨 있지 않은지 본다. 잠겨 있으면 앱은 떠도 접근성 창 목록이 비고 `orca computer` 가 `permission_denied` 를 낸다. 잠금은 에이전트가 풀지 않는다 — 그 확인을 사람 확인 표로 넘긴다.
+- 번들 실행 파일을 셸에서 직접 띄우면 앱이 맨 앞으로 오지 않는다. 키를 보내기 전에 창을 앞으로 가져온다(`orca computer … --restore-window` 나 System Events `set frontmost`).
+- 탭에 접근성 「누르기」(`orca computer click --element-index`, AXPress)를 하면 탭이 닫힌다. 누르기가 탭 안의 닫기 버튼으로 간다. 탭을 고를 때는 메뉴 「다음 탭」·「이전 탭」 이나 메모 목록을 누른다.
+- `UserNotificationCenter` 권한 확인 창(예: Orca 의 화면 접근 요청)이 뜨면 그 뒤 키 입력과 합성 끌기가 모두 막힌다. 권한은 사람이 정하므로 에이전트는 누르지 않고, 키가 필요 없는 확인만 하며 사람에게 알린다. 이 창은 접근성 창 목록에 없고 CGWindowList(`kCGWindowLayer` 8)로 보인다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
