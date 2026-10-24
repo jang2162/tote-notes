@@ -1,9 +1,12 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, it, vi } from "vitest";
 
 import { defaultFakeData, FakeBackend, memoryStorage } from "../backend/fake";
-import type { ExtensionRegistry } from "../backend/types";
+import type { ExtensionRegistry, ThemeInfo } from "../backend/types";
 import { Registry } from "../extensions/registry";
+import { contrastRatio } from "./contrast";
 import { ThemeManager, type ActiveTheme } from "./manager";
+import { DEFAULT_VARIABLES } from "./vscode-theme";
 
 const registry = new Registry({
   extensions: [],
@@ -128,5 +131,78 @@ describe("ThemeManager failures and races", () => {
     await older;
     expect(manager.active.info?.label).toBe("Night");
     expect(applied.map((a) => a.info?.label)).toEqual(["Dark+", "Night"]);
+  });
+});
+
+/** The bundled themes as the registry lists them, and their files, read from the bundle. */
+const BUNDLED = new URL("../../src-tauri/resources/extensions/tote.themes/", import.meta.url);
+const bundled: { themes: ThemeInfo[]; files: Record<string, string> } = (() => {
+  const manifest = JSON.parse(readFileSync(new URL("package.json", BUNDLED), "utf8")) as {
+    contributes: { themes: { label: string; uiTheme: string; path: string }[] };
+  };
+  const themes = manifest.contributes.themes.map((t) => ({
+    extension: "tote.themes",
+    label: t.label,
+    uiTheme: t.uiTheme,
+    path: t.path.replace(/^\.\//, ""),
+  }));
+  const files = Object.fromEntries(
+    themes.map((t) => [`tote.themes/${t.path}`, readFileSync(new URL(t.path, BUNDLED), "utf8")]),
+  );
+  return { themes, files };
+})();
+
+describe("ThemeManager with the bundled themes", () => {
+  /** Texts and what they sit on, each at least 4.5:1 (spec 「색」 · 대비 기준). */
+  const TEXTS: [string, string, string][] = [
+    ["--fg", "--input-bg", "text in the find field"],
+    ["--muted", "--input-bg", "placeholder and count in the find field"],
+    ["--fg", "--panel-bg", "the find bar's buttons"],
+    ["--muted", "--panel-bg", "the find bar's idle toggles"],
+    ["--fg", "--sidebar-bg", "the memo names in the sidebar"],
+    ["--muted", "--sidebar-bg", "secondary text in the sidebar"],
+    ["--fg", "--bg", "the editor's text"],
+    ["--muted", "--bg", "secondary text on the page"],
+  ];
+
+  for (const info of bundled.themes) {
+    for (const slot of ["light", "dark"] as const) {
+      it(`${info.label} in the ${slot} slot keeps every text readable`, async () => {
+        const backend = new FakeBackend(
+          memoryStorage(JSON.stringify({ ...defaultFakeData(), extensionFiles: bundled.files })),
+        );
+        backend.data.settings.theme[slot] = { extension: info.extension, label: info.label };
+        const manager = new ThemeManager(
+          backend,
+          () => new Registry({ ...registry.data, themes: bundled.themes }),
+          { media: media(slot === "dark").query, apply: () => {} },
+        );
+        await manager.start();
+        expect(manager.active.info?.label).toBe(info.label);
+        expect(manager.active.appearance).toBe(slot);
+        const v = manager.active.variables;
+        const ratios = TEXTS.map(([fg, bg, what]) => ({
+          what,
+          ratio: Math.round(contrastRatio(v[fg], v[bg]) * 100) / 100,
+        }));
+        expect(ratios.filter((r) => r.ratio < 4.5)).toEqual([]);
+      });
+    }
+  }
+
+  it("takes the colours a theme leaves out from its kind, not from the slot", async () => {
+    const backend = new FakeBackend(
+      memoryStorage(JSON.stringify({ ...defaultFakeData(), extensionFiles: bundled.files })),
+    );
+    backend.data.settings.theme.dark = { extension: "tote.themes", label: "Light+" };
+    const manager = new ThemeManager(
+      backend,
+      () => new Registry({ ...registry.data, themes: bundled.themes }),
+      { media: media(true).query, apply: () => {} },
+    );
+    await manager.start();
+    expect(manager.active.kind).toBe("light");
+    expect(manager.active.variables["--input-bg"]).toBe(DEFAULT_VARIABLES.light["--input-bg"]);
+    expect(manager.active.variables["--sidebar-bg"]).toBe(DEFAULT_VARIABLES.light["--sidebar-bg"]);
   });
 });

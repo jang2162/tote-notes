@@ -56,6 +56,7 @@
 
 - **클래스 이름:** 띠의 CSS 클래스 접두사는 `find-bar` 이다(`.find-bar`, `.find-bar-find` 등). 사이드바 워크스페이스 검색이 `.search-bar` 를 이미 쓰므로 겹치지 않게 했다.
 - 띠 배경 `--panel-bg`, 아래 경계 `--border`. 입력칸 배경은 편집기 배경(`--bg`)보다 한 단계 어둡게/밝게 새 변수 `--input-bg` 로 둔다(설계자 판단. 라이트·다크 기본값을 `src/styles.css` 와 `src/theme/vscode-theme.ts` 의 `DEFAULT_VARIABLES` 양쪽에 같은 값으로 넣고, VS Code 테마의 `input.background` 를 이 변수에 잇는다).
+- 테마가 이 변수들을 주지 않으면 그 테마 **종류**(라이트·다크)의 기본값이 들어간다. 슬롯(OS 모양)의 기본값이 아니다 — 다크 슬롯에 Light+ 를 고르면 띠는 라이트 기본값이다(코어 설계 「테마」, 스모크 A-4).
 - 입력칸 글자 `--fg`, 자리표시 글자 `--muted`, 포커스 테두리 `--accent`.
 - 결과 칠: 나머지 결과는 옅은 노랑(`--search-match`), 지금 결과는 진한 주황 바탕 + 주황 테두리(`--search-match-current`). 새 변수 둘을 위와 같은 방식으로 두고 VS Code 테마의 `editor.findMatchHighlightBackground`·`editor.findMatchBackground`(+`editor.findMatchBorder`)에 잇는다. 칠한 위에서도 글자가 읽혀야 한다(바탕은 반투명).
 - **대비 기준:** 띠의 모든 글자(입력칸 글자, 자리표시, 개수 표시, 버튼 글자, 「결과 없음」·「잘못된 정규식」)가 자기 바탕 위에서 4.5:1 이상, 아이콘·토글 테두리는 3:1 이상. 다크·라이트 기본 테마 둘 다. 이 기준을 맞추려고 라이트 `--muted` 를 `#6e7781` 에서 `#656d76` 으로 진하게 했다(앱 전체 보조 글자에 적용된다). 지난 계획처럼 값으로 계산해 시험으로 고정한다.
