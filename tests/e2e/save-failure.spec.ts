@@ -22,7 +22,9 @@ test("a failing save marks the tab and keeps the text", async ({ page }) => {
   const marker = () =>
     tab.locator(".tab-title").evaluate((el) => getComputedStyle(el, "::after").content);
   expect(await marker()).toBe('" ⚠"');
-  await expect(tab).toHaveAttribute("title", new RegExp(WRITE_FAILED));
+  // On the role=tab label, as its description: the close button beside it has its own.
+  await expect(tab.getByRole("tab")).toHaveAttribute("title", new RegExp(WRITE_FAILED));
+  await expect(tab.getByRole("tab")).toHaveAccessibleDescription(new RegExp(WRITE_FAILED));
   const message = page.locator(".status-message");
   await expect(message).toHaveText(`오류: ${WRITE_FAILED}`);
   await expect(message).toHaveClass(/error/);

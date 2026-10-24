@@ -470,9 +470,22 @@ test("pressing a tab as assistive technology does selects it and closes nothing"
         ]),
       ),
   ).toHaveLength(0);
-  // A press is a click with no pointer behind it.
-  await page.locator(".tab", { hasText: "가" }).evaluate((tab) => (tab as HTMLElement).click());
+  // The close button is beside the tab, not in it: the tab's name is the memo's name alone.
+  await expect(page.getByRole("tab")).toHaveCount(2);
+  await expect(page.getByRole("tab", { name: "가", exact: true })).toHaveAccessibleName("가");
+  await expect(page.getByRole("tab", { name: "나", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  // A press is a click with no pointer behind it, on the role=tab element.
+  await page
+    .getByRole("tab", { name: "가", exact: true })
+    .evaluate((tab) => (tab as HTMLElement).click());
   await expect(page.locator(".tab.active .tab-title")).toHaveText("가");
+  await expect(page.getByRole("tab", { name: "가", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
   await expect(page.locator(".tab")).toHaveCount(2);
   await expect(page.locator(".cm-content")).toHaveText("첫째");
 });
@@ -480,16 +493,80 @@ test("pressing a tab as assistive technology does selects it and closes nothing"
 test("the close mark of a tab closes it, with the mouse and pressed as a button", async ({
   page,
 }) => {
-  await start(page, { memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") } });
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째"), c: fakeMemo("다.md", "") },
+  });
+  await page.locator(".memo-row", { hasText: "다" }).click();
   await page.locator(".memo-row", { hasText: "가" }).click();
   await page.locator(".memo-row", { hasText: "나" }).click();
-  await expect(page.locator(".tab")).toHaveCount(2);
-  const close = page.locator(".tab", { hasText: "나" }).getByRole("button", { name: "탭 닫기" });
-  await close.click();
-  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".tab")).toHaveCount(3);
+  // Every tab's close button is in the accessibility tree, the inactive ones' too.
+  await expect(page.getByRole("button", { name: "탭 닫기" })).toHaveCount(3);
+  // A middle click on a tab closes it.
+  await page.getByRole("tab", { name: "다", exact: true }).click({ button: "middle" });
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
   await page
     .locator(".tab", { hasText: "가" })
     .getByRole("button", { name: "탭 닫기" })
     .evaluate((mark) => (mark as HTMLElement).click());
+  await expect(page.locator(".tab .tab-title")).toHaveText(["나"]);
+  const close = page.locator(".tab", { hasText: "나" }).getByRole("button", { name: "탭 닫기" });
+  await close.click();
   await expect(page.locator(".tab")).toHaveCount(0);
+});
+
+test("a tab's close button is named after its tab and follows a rename", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  // Listed apart from their tabs (VoiceOver's rotor lists the buttons alone), each says whose it is.
+  const names = () =>
+    page
+      .getByRole("button", { name: /탭 닫기$/ })
+      .evaluateAll((marks) => marks.map((mark) => mark.getAttribute("aria-label")));
+  expect(await names()).toEqual(["가 탭 닫기", "나 탭 닫기"]);
+  await expect(page.getByRole("button", { name: "나 탭 닫기", exact: true })).toHaveCount(1);
+  await menu(page, "rename");
+  const input = page.locator(".modal input");
+  await input.fill("목록.md");
+  await input.press("Enter");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "목록"]);
+  await expect(page.getByRole("button", { name: "목록 탭 닫기", exact: true })).toHaveCount(1);
+  expect(await names()).toEqual(["가 탭 닫기", "목록 탭 닫기"]);
+});
+
+test("a close button pressed with the mouse leaves the keys where they were", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "첫째"),
+      b: fakeMemo("나.md", "둘째"),
+      c: fakeMemo("다.md", "셋째"),
+    },
+  });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  await page.locator(".memo-row", { hasText: "다" }).click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const focused = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      return { close: !!el?.closest(".tab-close"), pane: !!el?.closest(".pane") };
+    });
+  // Pressed on an inactive tab's close button, dragged off it and let go: nothing is closed, and
+  // the button, unseen with the pointer gone, must not hold the keys — Space or Enter would close
+  // the tab.
+  const box = (await page.locator(".tab", { hasText: "가" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 200, { steps: 5 });
+  await page.mouse.up();
+  expect(await focused()).toEqual({ close: false, pane: true });
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  // Closing an inactive tab with the mouse leaves the keys in the pane too.
+  await page.locator(".tab", { hasText: "나" }).locator(".tab-close").click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "다"]);
+  expect(await focused()).toEqual({ close: false, pane: true });
 });

@@ -280,6 +280,15 @@ describe("conflict", () => {
     });
   });
 
+  it("holds the keypad's ↩ against the editor's ↩, which the editor hears it as", () => {
+    // CodeMirror goes by `key`, `Enter` for the keypad's ↩ too: its ⌘↩ runs on ⌘keypad ↩.
+    expect(conflict(table(), "rename", "CmdOrCtrl+NumpadEnter")).toEqual({
+      kind: "editor",
+      name: "insertBlankLine",
+    });
+    expect(conflict(table(), "rename", "Ctrl+NumpadEnter")).toBeNull();
+  });
+
   it("does not hold a command's own key against it", () => {
     expect(conflict(table(), "split-pane-down", "CmdOrCtrl+Shift+\\")).toEqual({
       kind: "editor",
@@ -330,6 +339,42 @@ describe("menuKeymap", () => {
     }
     expect(bindings[0].run!(null as never)).toBe(true);
     expect(ran).toEqual(["rename"]);
+  });
+
+  it("tells the keypad's ↩ from the main row's, as the menu does and the editor's key names do not", () => {
+    const ran: string[] = [];
+    const prevented: string[] = [];
+    const press = (code: string) => ({
+      ...key(code, { meta: true }, "Enter"),
+      preventDefault: () => prevented.push(code),
+    });
+    const bindings = menuKeymap(
+      table({ rename: "CmdOrCtrl+NumpadEnter", save: "CmdOrCtrl+Enter" }),
+      (id) => ran.push(id),
+    );
+    const enter = bindings.filter((b) => b.any);
+    expect(enter).toHaveLength(2);
+    for (const binding of enter) expect(binding.scope).toBe("editor search-panel");
+    // How many of the bindings took the key.
+    const any = (code: string) =>
+      enter.filter((b) => b.any!(null as never, press(code) as unknown as KeyboardEvent)).length;
+    expect(any("NumpadEnter")).toBe(1);
+    expect(ran).toEqual(["rename"]);
+    expect(any("Enter")).toBe(1);
+    expect(ran).toEqual(["rename", "save"]);
+    expect(prevented).toEqual(["NumpadEnter", "Enter"]);
+    // Another key, or the same with other modifiers, is the editor's.
+    expect(
+      enter.filter((b) =>
+        b.any!(null as never, { ...press("Enter"), shiftKey: true } as unknown as KeyboardEvent),
+      ),
+    ).toHaveLength(0);
+    expect(any("KeyL")).toBe(0);
+    expect(ran).toEqual(["rename", "save"]);
+    // No editor key is ⌃↩: the menu has it as it is.
+    expect(
+      menuKeymap(table({ rename: "Ctrl+NumpadEnter" }), () => {}).filter((b) => b.any),
+    ).toEqual([]);
   });
 
   it("binds a key two editor bindings share once", () => {

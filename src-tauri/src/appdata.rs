@@ -171,7 +171,8 @@ where
 
 /// The saved shortcut overrides, each entry judged on its own: one that is not a string or `null`,
 /// or that `shortcuts::sanitize` drops, goes and the rest stay. Kept in memory as read, a bad
-/// entry would ride along in every patch the settings screen makes and get each one refused.
+/// entry would ride along in every patch the settings screen makes and get each one refused. A
+/// keypad key an older build recorded is read as its main-row twin first (`shortcuts::from_keypad`).
 fn shortcut_overrides<'de, D>(deserializer: D) -> Result<BTreeMap<String, Option<String>>, D::Error>
 where
     D: serde::Deserializer<'de>,
@@ -185,7 +186,7 @@ where
             _ => None,
         })
         .collect();
-    Ok(shortcuts::sanitize(&saved))
+    Ok(shortcuts::sanitize(&shortcuts::from_keypad(&saved)))
 }
 
 /// Which theme to use under each OS appearance (spec 「테마」). `None` means the bundled default.
@@ -745,6 +746,18 @@ mod tests {
         assert_eq!(settings.editor.font_size, 18);
         let settings = serde_json::from_str::<Settings>(r#"{"shortcuts": ["x"]}"#).unwrap();
         assert_eq!(settings.shortcuts, BTreeMap::new());
+    }
+
+    #[test]
+    fn a_saved_keypad_shortcut_is_read_as_its_main_row_twin() {
+        let settings = serde_json::from_str::<Settings>(
+            r#"{"shortcuts": {"rename": "CmdOrCtrl+Numpad1", "new-memo": "CmdOrCtrl+NumpadAdd"}}"#,
+        )
+        .unwrap();
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([("rename".to_string(), Some("CmdOrCtrl+1".to_string()))])
+        );
     }
 
     #[test]

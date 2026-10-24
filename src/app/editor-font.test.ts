@@ -22,6 +22,18 @@ describe("editorFontStack", () => {
     expect(editorFontStack("initial")).toBe('"initial", var(--large-text-font)');
   });
 
+  it("writes a newline in a name as its escape, which would end the CSS string", () => {
+    expect(editorFontStack("3270\nNope")).toBe('"3270\\a Nope", var(--large-text-font)');
+    expect(editorFontStack('"Fira\r\nCode"')).toBe('"Fira\\d \\a Code", var(--large-text-font)');
+    expect(editorFontStack("'Odd\fName', Menlo")).toBe(
+      "'Odd\\c Name', Menlo, var(--large-text-font)",
+    );
+    // Between words a newline is a space: the name is read bare.
+    expect(editorFontStack("Fira\nCode")).toBe("Fira Code, var(--large-text-font)");
+    for (const setting of ["a\nb 1", '"x\ny"', "'\r'", '1\f2, "3\n"'])
+      expect(editorFontStack(setting)).not.toMatch(/[\n\r\f]/);
+  });
+
   it("is empty for no family, so the default stack stands", () => {
     expect(editorFontStack("")).toBe("");
     expect(editorFontStack(" , ")).toBe("");

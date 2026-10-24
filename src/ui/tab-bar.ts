@@ -89,16 +89,26 @@ export class TabBar {
   }
 
   private tab(tab: TabView): HTMLElement {
-    // Not a <button>: WebKit presses the first button inside a role=tab element in the tab's place
-    // (`nativeActionElement` in AccessibilityNodeObject.cpp), so VoiceOver choosing the tab would
-    // close it. As a span the tab itself takes the press, and the mark is still a button to press.
-    const close = h("span", {
+    // Beside the role=tab element, not in it: a tab's children are presentational, so a close
+    // button inside would not be in the accessibility tree and its name would join the tab's
+    // ("가 탭 닫기"). And WebKit presses the first button inside a role=tab element in the tab's
+    // place (`nativeActionElement` in AccessibilityNodeObject.cpp), so VoiceOver choosing the tab
+    // would close it. Out of the keys' Tab order, as the tabs are. Named after its tab: listed
+    // apart from the tabs (VoiceOver's rotor), every button would read the same.
+    const name = `${tab.title} 탭 닫기`;
+    const close = h("button", {
+      type: "button",
       class: "tab-close",
-      role: "button",
-      ariaLabel: "탭 닫기",
-      title: "탭 닫기",
+      tabIndex: -1,
+      ariaLabel: name,
+      title: name,
       textContent: "×",
     });
+    // The mouse leaves the keys where they were. A button WebKit gives the focus to would hold it
+    // unseen once the pointer is gone (a press dragged off, or a tab that is not active), and Space
+    // or Enter there would close the tab. An accessibility press and `click()` come with no
+    // mousedown.
+    close.addEventListener("mousedown", (event) => event.preventDefault());
     close.addEventListener("click", () => this.actions.close(tab.id));
     const classes = [
       "tab",
@@ -112,8 +122,12 @@ export class TabBar {
       .join(" ");
     const el = h(
       "div",
-      { class: classes, role: "tab", title: tab.hint, data: { id: tab.id } },
-      h("span", { class: "tab-title", textContent: tab.title }),
+      { class: classes, role: "none", data: { id: tab.id } },
+      h(
+        "div",
+        { class: "tab-label", role: "tab", ariaSelected: String(tab.active), title: tab.hint },
+        h("span", { class: "tab-title", textContent: tab.title }),
+      ),
       close,
     );
     el.addEventListener("pointerdown", (event) => {

@@ -720,6 +720,29 @@ test("an app shortcut that is an editor key too runs the app command, not the ed
   await expect(page.locator(".tab")).toHaveCount(0);
 });
 
+// The editor goes by `key`, which is `Enter` for the keypad's ↩ too, so its ⌘↩ (insertBlankLine)
+// would take ⌘keypad ↩. A macOS menu tells the two apart (screen check 6 of the resumed smoke
+// fixes): the editor must too.
+test("in the editor ⌘keypad ↩ runs the app command on it, and the main row's ⌘↩ stays the editor's", async ({
+  page,
+}) => {
+  await start(page, withShortcuts({ save: "CmdOrCtrl+NumpadEnter" }));
+  await menu(page, "new-memo");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const text = () => page.evaluate(() => window.__tote.app.view.state.doc.toString());
+  // One insert: a fast second key on an empty line can land first in WebKit (real input: Task 16).
+  await page.keyboard.insertText("하나");
+  await expect.poll(text).toBe("하나");
+  await page.keyboard.press("Meta+NumpadEnter");
+  // Saving leaves the keys in the editor.
+  await expect.poll(() => menuRuns(page)).toEqual(["save"]);
+  expect(await text()).toBe("하나");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.press("Meta+Enter");
+  await expect.poll(text).toBe("하나\n");
+  expect(await menuRuns(page)).toEqual(["save"]);
+});
+
 test("an editor key no app shortcut has stays the editor's, and a table change hands it over in every tab", async ({
   page,
 }) => {
