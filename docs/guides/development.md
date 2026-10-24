@@ -28,6 +28,10 @@
 - 번들 실행 파일을 셸에서 직접 띄우면 앱이 맨 앞으로 오지 않는다. 키를 보내기 전에 창을 앞으로 가져온다(`orca computer … --restore-window` 나 System Events `set frontmost`).
 - 탭(`role="tab"`)에 접근성 「누르기」(`orca computer click --element-index`, AXPress)를 하면 WebKit 은 탭 안의 첫 `<button>`·`<select>`·`<input>`·편집 가능 요소를 대신 누른다(`AccessibilityNodeObject::actionElement` 의 `nativeActionElement`). 그래서 닫기 표시는 `<button>` 이 아니라 `role="button"` 인 `<span>` 이고(`src/ui/tab-bar.ts`), 누르기는 탭을 고른다. 이것은 소스와 e2e(`tests/e2e/memo.spec.ts` 「pressing a tab as assistive technology does …」)로 본 것이고 실제 앱 화면 확인 전이다(`docs/superpowers/reports/2026-10-25-tote-notes-smoke-fixes-report.md` 「화면 확인 후보」). 확인 전에는 탭을 고를 때 메뉴 「다음 탭」·「이전 탭」 이나 메모 목록을 누른다.
 - `UserNotificationCenter` 권한 확인 창(예: Orca 의 화면 접근 요청)이 뜨면 그 뒤 키 입력과 합성 끌기가 모두 막힌다. 권한은 사람이 정하므로 에이전트는 누르지 않고, 키가 필요 없는 확인만 하며 사람에게 알린다. 이 창은 접근성 창 목록에 없고 CGWindowList(`kCGWindowLayer` 8)로 보인다.
+- 다른 앱의 전역 단축키(런처·떠 있는 패널 등)가 녹음하려는 키를 먼저 가져갈 수 있다. 그런 키는 녹음기에 닿지 않고, 떠 있는 패널이 뜨면 그 뒤 키가 tote 에 가지 않는다. 키가 안 먹으면 CGWindowList 에서 layer 3 이상인 다른 앱 창부터 보고, 그 행은 다른 조합으로 한다.
+- `orca computer type-text` 는 CodeMirror 편집기에 같은 글을 두 번 넣는다(입력칸은 한 번). 편집기에 치는 확인은 CGEvent 키 코드로 보낸다. 한글 입력기가 켜져 있으면 키 코드 입력은 입력기를 거친다.
+- macOS 27 의 한글 2벌식 입력기는 WKWebView 에 `compositionstart`·`compositionend` 를 내지 않는다(글자 keydown 은 keyCode 229, Enter 는 13·`isComposing` false). 「조합 중 Enter」 갈래는 이 판에서는 화면으로 만들 수 없다.
+- 요소 위치가 필요하면 AXUIElement 로 tote 창을 직접 읽는다(`orca computer` 보다 빠르다). 웹 인스펙터를 닫은 뒤 요소 누르기로 입력칸 포커스가 안 가면 System Events 로 `AXWebArea` 에 `AXFocused` 를 준다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
