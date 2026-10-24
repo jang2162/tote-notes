@@ -115,19 +115,21 @@ export function themeKind(
   type: string | undefined,
   fallback: Appearance,
 ): Appearance {
-  const kinds: Record<string, Appearance> = {
-    vs: "light",
-    "hc-light": "light",
-    "vs-dark": "dark",
-    "hc-black": "dark",
-  };
-  const types: Record<string, Appearance> = {
-    light: "light",
-    hcLight: "light",
-    dark: "dark",
-    hc: "dark",
-  };
-  return (uiTheme && kinds[uiTheme]) || (type && types[type]) || fallback;
+  // Maps, not object literals: a user's theme may say "constructor", which a literal would answer
+  // with Object.prototype's function.
+  const kinds = new Map<string, Appearance>([
+    ["vs", "light"],
+    ["hc-light", "light"],
+    ["vs-dark", "dark"],
+    ["hc-black", "dark"],
+  ]);
+  const types = new Map<string, Appearance>([
+    ["light", "light"],
+    ["hcLight", "light"],
+    ["dark", "dark"],
+    ["hc", "dark"],
+  ]);
+  return (uiTheme && kinds.get(uiTheme)) || (type && types.get(type)) || fallback;
 }
 
 /** `appearance`: the theme's kind (`themeKind`), whose defaults fill what the theme leaves out. */

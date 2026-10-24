@@ -221,4 +221,14 @@ describe("themeKind", () => {
     expect(themeKind(undefined, undefined, "dark")).toBe("dark");
     expect(themeKind("", "nope", "light")).toBe("light");
   });
+
+  it("takes a name the object prototype has for an unknown kind", () => {
+    expect(themeKind("constructor", "light", "dark")).toBe("light");
+    expect(themeKind("toString", undefined, "dark")).toBe("dark");
+    expect(themeKind(undefined, "__proto__", "light")).toBe("light");
+    expect(themeKind("hasOwnProperty", "valueOf", "dark")).toBe("dark");
+    // What the kind is for: the defaults the theme's colours are laid over.
+    const kind = themeKind("constructor", "toString", "dark");
+    expect(themeVariables({ colors: {} }, kind)["--bg"]).toBe(DEFAULT_VARIABLES.dark["--bg"]);
+  });
 });
