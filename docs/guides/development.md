@@ -32,6 +32,8 @@
 - `orca computer type-text` 는 CodeMirror 편집기에 같은 글을 두 번 넣는다(입력칸은 한 번). 편집기에 치는 확인은 CGEvent 키 코드로 보낸다. 한글 입력기가 켜져 있으면 키 코드 입력은 입력기를 거친다.
 - macOS 27 의 한글 2벌식 입력기는 WKWebView 에 `compositionstart`·`compositionend` 를 내지 않는다(글자 keydown 은 keyCode 229, Enter 는 13·`isComposing` false). 「조합 중 Enter」 갈래는 이 판에서는 화면으로 만들 수 없다.
 - 요소 위치가 필요하면 AXUIElement 로 tote 창을 직접 읽는다(`orca computer` 보다 빠르다). 웹 인스펙터를 닫은 뒤 요소 누르기로 입력칸 포커스가 안 가면 System Events 로 `AXWebArea` 에 `AXFocused` 를 준다.
+- 웹 인스펙터는 페이지에 포커스를 두고 ⌥⌘I 로 연다(창 안에 붙는다. 포커스가 미리보기 iframe 에 있으면 iframe 쪽으로 가서 열리지 않는다). 콘솔에 글을 넣을 때 `orca computer paste-text` 를 쓰지 않는다 — 넣은 글 뒤에 사람의 클립보드 내용이 따라 들어간 일이 있다. System Events 로 콘솔 입력칸에 `AXFocused` 를 준 뒤 값을 넣고 Return 을 보낸다.
+- 좌표 끌기·클릭 도구가 「맨 위 창이 tote 가 아니다」 로 거부하면 알림 센터 배너부터 의심한다. 배너는 몇 초 뒤 사라지므로 창 목록을 다시 보고 한 번 더 보낸다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
