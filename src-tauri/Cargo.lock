@@ -4097,6 +4097,7 @@ dependencies = [
  "notify",
  "objc2",
  "objc2-app-kit",
+ "objc2-foundation",
  "percent-encoding",
  "regex",
  "serde",

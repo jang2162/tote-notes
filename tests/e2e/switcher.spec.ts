@@ -216,13 +216,31 @@ test("a list left with the window closes and gives the keys back when the window
   await expect(page.locator(".cm-content")).toBeFocused();
   await button(page).click();
   await expect(page.locator(".ws-switcher-list")).toBeVisible();
-  // The window going inactive blurs the focused element with no element taking the focus.
+  // A browser that blurs the focused element as the window goes inactive, with no element taking
+  // the focus. WKWebView does not (the next test).
   await page.evaluate(() => {
     document.hasFocus = () => false;
     (document.activeElement as HTMLElement).blur();
   });
   await expect(page.locator(".ws-switcher-list")).toBeHidden();
   await page.evaluate(() => delete (document as { hasFocus?: unknown }).hasFocus);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.insertText("돌아옴");
+  await expect(page.locator(".cm-content")).toContainText("돌아옴");
+});
+
+test("a list left with the app closes on the window's blur alone and gives the keys back", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  await expect(page.locator(".ws-switcher-list")).toBeFocused();
+  // As WKWebView does when another app comes to the front: the window blurs, and the list keeps
+  // the focus, so no focusout comes.
+  await page.evaluate(() => window.dispatchEvent(new FocusEvent("blur")));
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.insertText("돌아옴");
   await expect(page.locator(".cm-content")).toContainText("돌아옴");

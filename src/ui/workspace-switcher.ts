@@ -68,8 +68,9 @@ export class WorkspaceSwitcher {
     // The keys stay where they were: a switch that is called off gives them back there.
     this.el.addEventListener("mousedown", (event) => event.preventDefault());
     // The keys went elsewhere (a menu action put them in an editor): the list is no use to them, and
-    // they are not taken back. The window going inactive moves them nowhere (no element takes
-    // them): they go back to where they were, for when the window returns.
+    // they are not taken back. A window going inactive that blurs the list moves them nowhere (no
+    // element takes them): they go back to where they were, for when the window returns. WKWebView
+    // does not blur the list then: `onBlur`.
     this.list.addEventListener("focusout", (event) =>
       this.close(event.relatedTarget === null && !document.hasFocus()),
     );
@@ -136,6 +137,7 @@ export class WorkspaceSwitcher {
     document.removeEventListener("keydown", this.onKey, true);
     document.removeEventListener("beforeinput", this.onInput, true);
     document.removeEventListener("mousedown", this.onOutside, true);
+    window.removeEventListener("blur", this.onBlur);
     const back = this.restoreTo;
     this.restoreTo = null;
     this.list.removeAttribute("aria-activedescendant");
@@ -159,6 +161,7 @@ export class WorkspaceSwitcher {
     document.addEventListener("keydown", this.onKey, true);
     document.addEventListener("beforeinput", this.onInput, true);
     document.addEventListener("mousedown", this.onOutside, true);
+    window.addEventListener("blur", this.onBlur);
   }
 
   /** Closes the list, then runs what was chosen: it may hand the keys to a dialog. */
@@ -206,6 +209,12 @@ export class WorkspaceSwitcher {
     event.preventDefault();
     event.stopPropagation();
   };
+
+  /** The window went inactive. WKWebView leaves the focus on the list then and sends no focusout,
+   * only this blur: the list closes and the keys go back to where they were, for when the window
+   * returns. (A frame taking the keys blurs the window too, but the list's focusout comes first and
+   * has closed it.) */
+  private readonly onBlur = (): void => this.close();
 
   private readonly onOutside = (event: MouseEvent): void => {
     if (!this.el.contains(event.target as Node)) this.close();

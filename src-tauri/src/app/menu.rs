@@ -214,13 +214,27 @@ fn shortcut_label(slot: &Slot) -> &'static str {
     }
 }
 
-/// Every item whose shortcut `MenuShortcuts` keeps, with its name, in menu order: what `build`
-/// makes and the tests stand in for.
-fn shortcut_items() -> Vec<(&'static str, &'static str)> {
+/// An item whose shortcut `MenuShortcuts` keeps: its id, its name, and the title of the submenu it
+/// is in.
+struct ShortcutItem {
+    id: &'static str,
+    label: &'static str,
+    menu: &'static str,
+}
+
+/// Every item whose shortcut `MenuShortcuts` keeps, in menu order: what `build` makes and the tests
+/// stand in for.
+fn shortcut_items() -> Vec<ShortcutItem> {
     MENUS
         .iter()
-        .flat_map(|(_, slots)| slots.iter())
-        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot))))
+        .flat_map(|(menu, slots)| slots.iter().map(move |slot| (*menu, slot)))
+        .filter_map(|(menu, slot)| {
+            Some(ShortcutItem {
+                id: shortcut_item(slot)?,
+                label: shortcut_label(slot),
+                menu,
+            })
+        })
         .collect()
 }
 
@@ -230,12 +244,13 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
     let items = shortcut_items()
         .into_iter()
-        .map(|(id, label)| {
+        .map(|ShortcutItem { id, label, menu }| {
             let (_, keys) = keys
                 .iter()
                 .find(|(item, _)| *item == id)
                 .expect("MENUS names only commands of shortcuts::COMMANDS, and the fixed items");
-            Ok((id, item(app, id, label, keys.as_deref())?))
+            let made = item(app, id, label, keys.as_deref())?;
+            Ok((id, MenuEntry { menu, item: made }))
         })
         .collect::<tauri::Result<Vec<_>>>()?;
     let mut bar = MenuBuilder::new(app);
@@ -244,7 +259,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         for slot in *slots {
             if let Some(id) = shortcut_item(slot) {
                 let (_, made) = items.iter().find(|(item, _)| *item == id).unwrap();
-                menu = menu.item(made);
+                menu = menu.item(&made.item);
                 continue;
             }
             menu = match slot {
@@ -273,15 +288,62 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     bar.build()
 }
 
-/// Sets a menu item's shortcut: a `MenuItem`, or a recorder in the tests.
+/// A menu item's shortcut: a `MenuEntry`, or a recorder in the tests.
 pub trait AcceleratorSlot {
-    fn put(&self, accelerator: Option<&str>);
+    /// Puts `accelerator` on the item. `put` hands it only a string that parses.
+    fn set(&self, accelerator: &str);
+    /// Takes the item's shortcut off.
+    fn clear(&self);
 }
 
-impl AcceleratorSlot for MenuItem<Wry> {
-    fn put(&self, accelerator: Option<&str>) {
-        if let Err(err) = self.set_accelerator(accelerator) {
-            eprintln!("tote: menu item {}: {err}", self.id().0);
+/// Gives `slot` shortcut `accelerator`, or none. Tauri turns a string that does not parse into no
+/// shortcut, which muda then never takes off (src/app/key_equivalents.rs): such a string is cleared
+/// here instead, so the item never keeps the key it had before.
+fn put(slot: &impl AcceleratorSlot, accelerator: Option<&str>) {
+    match accelerator {
+        Some(keys) if keys.parse::<muda::accelerator::Accelerator>().is_ok() => slot.set(keys),
+        Some(keys) => {
+            eprintln!("tote: menu shortcut {keys:?} does not parse; the item gets none");
+            slot.clear();
+        }
+        None => slot.clear(),
+    }
+}
+
+/// A menu bar item with a shortcut, and the title of the submenu it is in: how
+/// `key_equivalents::clear` finds it.
+pub(crate) struct MenuEntry {
+    #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
+    menu: &'static str,
+    item: MenuItem<Wry>,
+}
+
+impl AcceleratorSlot for MenuEntry {
+    fn set(&self, accelerator: &str) {
+        if let Err(err) = self.item.set_accelerator(Some(accelerator)) {
+            eprintln!("tote: menu item {}: {err}", self.item.id().0);
+        }
+    }
+
+    fn clear(&self) {
+        // Keeps muda's own record of the shortcut in step; on macOS it leaves the key on the item.
+        if let Err(err) = self.item.set_accelerator(None::<&str>) {
+            eprintln!("tote: menu item {}: {err}", self.item.id().0);
+        }
+        #[cfg(target_os = "macos")]
+        {
+            let cleared = objc2::MainThreadMarker::new().is_some_and(|mtm| {
+                self.item
+                    .text()
+                    .is_ok_and(|text| super::key_equivalents::clear(mtm, self.menu, &text))
+            });
+            if !cleared {
+                eprintln!(
+                    "tote: menu item {} in {}: shortcut not taken off",
+                    self.item.id().0,
+                    self.menu
+                );
+            }
         }
     }
 }
@@ -295,7 +357,7 @@ impl AcceleratorSlot for MenuItem<Wry> {
 /// items while holding its lock, and an item's setter waits for the main thread: called from
 /// elsewhere it would wait for the main thread while the main thread waits for the lock. Debug
 /// builds check the thread.
-pub(crate) struct MenuShortcuts<I = MenuItem<Wry>> {
+pub(crate) struct MenuShortcuts<I = MenuEntry> {
     state: Mutex<ShortcutState<I>>,
     thread: ThreadId,
 }
@@ -372,7 +434,7 @@ impl<I: AcceleratorSlot> ShortcutState<I> {
     fn put(&self) {
         for (id, keys) in accelerators_while(self.suspended_by.is_some(), &self.table) {
             if let Some((_, item)) = self.items.iter().find(|(item, _)| *item == id) {
-                item.put(keys.as_deref());
+                put(item, keys.as_deref());
             }
         }
     }
@@ -437,20 +499,40 @@ fn route(id: &str) -> Route<'_> {
 }
 
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
-    let id = match route(event.id().as_ref()) {
-        Route::TabMenu(item) => return app.state::<TabMenu>().record(item),
-        Route::App(id) => id,
+    match route(event.id().as_ref()) {
+        Route::TabMenu(item) => app.state::<TabMenu>().record(item),
+        Route::App(id) => run(app, id, target_window(app)),
+    }
+}
+
+/// App command `id` run as if its menu item were picked with `window` in front: the editor hands
+/// over a key the menu has too (`run_menu_command`), so the menu wins as the settings screen
+/// warns. False for an id that is not an app command, which runs nothing.
+pub fn run_command(app: &AppHandle, id: &str, window: WebviewWindow) -> bool {
+    let Some(command) = app_command(id) else {
+        return false;
     };
+    run(app, command.id, Some(window));
+    true
+}
+
+/// The app command `id` names: none for 설정…, tote 종료, a tab menu's items, or anything else.
+fn app_command(id: &str) -> Option<&'static Command> {
+    COMMANDS.iter().find(|command| command.id == id)
+}
+
+/// What menu bar item `id` does, in `window` (the focused one, or the last one used).
+fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
     match id {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
-        "new-window" => new_window(app),
+        "new-window" => new_window(app, window),
         "close-window" => {
-            if let Some(window) = target_window(app) {
+            if let Some(window) = window {
                 let _ = window.close();
             }
         }
-        id => match target_window(app) {
+        id => match window {
             Some(window) => {
                 let _ = app.emit_to(
                     EventTarget::webview_window(window.label()),
@@ -465,8 +547,8 @@ pub fn on_event(app: &AppHandle, event: MenuEvent) {
 }
 
 /// ⌥⌘N: another window on the workspace of the window it is pressed in, empty, a little off it.
-fn new_window(app: &AppHandle) {
-    let Some(window) = target_window(app) else {
+fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
+    let Some(window) = window else {
         return windows::open_latest(app);
     };
     let Some(path) = app.state::<AppCore>().path_of(window.label()) else {
@@ -604,6 +686,21 @@ mod tests {
     }
 
     #[test]
+    fn only_an_app_command_runs_from_the_editor() {
+        assert_eq!(app_command("close-tab").map(|c| c.id), Some("close-tab"));
+        assert_eq!(app_command("new-window").map(|c| c.id), Some("new-window"));
+        for id in [
+            "quit",
+            "settings",
+            "tab-menu:move-tab-to-new-window",
+            "",
+            "nope",
+        ] {
+            assert!(app_command(id).is_none(), "{id}");
+        }
+    }
+
+    #[test]
     fn a_tab_menu_closed_without_a_pick_answers_none() {
         let menu = TabMenu::default();
         menu.begin();
@@ -628,8 +725,12 @@ mod tests {
     struct Recorder(Mutex<Vec<Option<String>>>);
 
     impl AcceleratorSlot for std::sync::Arc<Recorder> {
-        fn put(&self, accelerator: Option<&str>) {
-            lock(&self.0).push(accelerator.map(str::to_string));
+        fn set(&self, accelerator: &str) {
+            lock(&self.0).push(Some(accelerator.to_string()));
+        }
+
+        fn clear(&self) {
+            lock(&self.0).push(None);
         }
     }
 
@@ -642,7 +743,7 @@ mod tests {
         fn new() -> Self {
             let items: Vec<_> = shortcut_items()
                 .into_iter()
-                .map(|(id, _)| (id, std::sync::Arc::new(Recorder::default())))
+                .map(|item| (item.id, std::sync::Arc::new(Recorder::default())))
                 .collect();
             let shortcuts = MenuShortcuts::new(items.clone());
             Self { shortcuts, items }
@@ -824,14 +925,51 @@ mod tests {
 
     #[test]
     fn every_item_with_a_shortcut_has_a_name() {
-        for (id, label) in shortcut_items() {
-            assert!(!label.is_empty(), "{id}");
+        for item in shortcut_items() {
+            assert!(!item.label.is_empty(), "{}", item.id);
         }
     }
 
     #[test]
+    fn an_item_is_found_by_its_submenu_and_name() {
+        // `key_equivalents::clear` takes the first item of that name in the submenu of that title.
+        let mut seen: Vec<(&str, &str)> = Vec::new();
+        for item in shortcut_items() {
+            assert!(
+                !seen.contains(&(item.menu, item.label)),
+                "{} / {}",
+                item.menu,
+                item.label
+            );
+            seen.push((item.menu, item.label));
+        }
+        let titles: Vec<&str> = MENUS.iter().map(|(title, _)| *title).collect();
+        let mut unique = titles.clone();
+        unique.dedup();
+        assert_eq!(titles, unique);
+    }
+
+    #[test]
+    fn no_shortcut_and_one_that_does_not_parse_both_take_the_key_off() {
+        let slot = std::sync::Arc::new(Recorder::default());
+        put(&slot, Some("CmdOrCtrl+N"));
+        put(&slot, None);
+        put(&slot, Some("CmdOrCtrl+Nope"));
+        put(&slot, Some("Alt+CmdOrCtrl+Shift+U"));
+        assert_eq!(
+            *lock(&slot.0),
+            [
+                Some("CmdOrCtrl+N".to_string()),
+                None,
+                None,
+                Some("Alt+CmdOrCtrl+Shift+U".to_string()),
+            ]
+        );
+    }
+
+    #[test]
     fn every_item_the_table_puts_a_shortcut_on_is_kept() {
-        let mut kept: Vec<&str> = shortcut_items().into_iter().map(|(id, _)| id).collect();
+        let mut kept: Vec<&str> = shortcut_items().into_iter().map(|item| item.id).collect();
         assert!(kept.contains(&SETTINGS));
         assert!(kept.contains(&QUIT));
         let mut put: Vec<&str> = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()))

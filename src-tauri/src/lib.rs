@@ -125,6 +125,7 @@ pub fn run() {
             commands::patch_settings,
             commands::shortcut_table,
             commands::suspend_shortcuts,
+            commands::run_menu_command,
             commands::issue_file_token,
             commands::revoke_file_tokens,
             commands::resolve_relative,

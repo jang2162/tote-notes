@@ -213,6 +213,9 @@ export class TauriBackend implements Backend {
   suspendShortcuts(on: boolean) {
     return call<void>("suspend_shortcuts", { on });
   }
+  runMenuCommand(id: string) {
+    return call<void>("run_menu_command", { id });
+  }
   viewerUrl(extensionId: string, entry: string) {
     return `tote-ext://localhost/${encodeURIComponent(extensionId)}/${entry.split("/").map(encodeURIComponent).join("/")}`;
   }

@@ -103,6 +103,39 @@ export function lineNumbersEffect(on: boolean) {
   return lineNumberSlot.reconfigure(on ? lineNumbers() : []);
 }
 
+const menuKeySlot = new Compartment();
+
+function menuKeys(bindings: readonly KeyBinding[]): Extension {
+  return Prec.highest(keymap.of(bindings));
+}
+
+/** Swaps the app shortcuts that win over the editor's keys in a state built by `editorExtensions`
+ * (`menuKeymap` in src/shortcuts/keys.ts). */
+export function menuKeysEffect(bindings: readonly KeyBinding[]) {
+  return menuKeySlot.reconfigure(menuKeys(bindings));
+}
+
+/** The editor's font, as CSS values. */
+export interface EditorFont {
+  family: string;
+  size: string;
+}
+
+const fontSlot = new Compartment();
+
+/** The font goes in through the theme, not only the CSS variables: CodeMirror reads its line
+ * heights again only when its theme changes or it redraws, since the content is as tall as the
+ * pane whatever the font. Read through the variables alone, a new font size left the line numbers
+ * at the old line height until the window was resized. */
+function fontTheme(font: EditorFont): Extension {
+  return EditorView.theme({ ".cm-scroller": { fontFamily: font.family, fontSize: font.size } });
+}
+
+/** Swaps the font of a state built by `editorExtensions` (the font settings). */
+export function fontEffect(font: EditorFont) {
+  return fontSlot.reconfigure(fontTheme(font));
+}
+
 const highlightSlot = new Compartment();
 
 /** Swaps the TextMate colours of a state built by `editorExtensions` (`workerHighlighting`'s
@@ -114,11 +147,7 @@ export function highlightEffect(extension: Extension) {
 /** Colours come from the CSS variables in styles.css, which the theme manager fills from the selected theme. */
 const appTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "var(--bg)" },
-  ".cm-scroller": {
-    fontFamily: "var(--editor-font)",
-    fontSize: "var(--editor-size)",
-    lineHeight: "1.55",
-  },
+  ".cm-scroller": { lineHeight: "1.55" },
   ".cm-gutters": {
     backgroundColor: "var(--bg)",
     color: "var(--line-number, var(--muted))",
@@ -152,6 +181,11 @@ export interface EditorOptions {
   wrap: boolean;
   /** The line-number gutter (the editor setting). */
   lineNumbers: boolean;
+  /** The font settings; styles.css's `--editor-font` and `--editor-size` when absent. */
+  font?: EditorFont;
+  /** The app shortcuts that are editor keys too, which run the app command instead
+   * (`menuKeymap`); none when absent. */
+  menuKeys?: readonly KeyBinding[];
   onUpdate: (update: ViewUpdate) => void;
   /** From the language's configuration file: comment tokens, bracket pairs, word characters. */
   languageData?: LanguageData;
@@ -176,8 +210,12 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     options.wrap ? EditorView.lineWrapping : [],
     language.of(languageFor(options.fileName, options.languageId)),
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
+    menuKeySlot.of(menuKeys(options.menuKeys ?? [])),
     keymap.of(editorKeymap),
     lineNumberSlot.of(options.lineNumbers ? lineNumbers() : []),
+    fontSlot.of(
+      fontTheme(options.font ?? { family: "var(--editor-font)", size: "var(--editor-size)" }),
+    ),
     highlightSlot.of(options.highlight ?? []),
     appTheme,
     EditorView.updateListener.of(options.onUpdate),

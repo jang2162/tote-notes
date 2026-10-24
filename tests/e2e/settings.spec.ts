@@ -452,21 +452,22 @@ test("the editor font size follows the setting but the large text viewer stays a
     .poll(() =>
       page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
     )
-    .toBe("Courier");
+    .toBe("Courier, var(--large-text-font)");
   await patch(page, { editorFontFamily: "" });
   await expect
     .poll(() =>
       page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
     )
     .toBe("");
-  // A value CSS cannot read falls back to the default font instead of keeping the last one.
+  // A value CSS cannot read bare is quoted, as one family no one has: the last one is not kept,
+  // and the default font stands behind it.
   await patch(page, { editorFontFamily: '"Fira' });
   await patch(page, { editorFontFamily: "Fira Code; color: red" });
   await expect
     .poll(() =>
       page.evaluate(() => document.documentElement.style.getPropertyValue("--editor-font")),
     )
-    .toBe("");
+    .toBe('"Fira Code; color: red", var(--large-text-font)');
 });
 
 test("settings open on 일반 and remember the last section in the window", async ({ page }) => {
@@ -694,4 +695,83 @@ test("the settings dialog is a labelled modal and its sections are tabs", async 
   await shows("확장");
   await page.keyboard.press("Home");
   await shows("일반");
+});
+
+/** Whether the editor's text is drawn in a font of one width: "iiii" as wide as "MMMM". */
+const editorIsMonospace = (page: Page) =>
+  page.locator(".cm-scroller").evaluate((scroller) => {
+    const width = (text: string) => {
+      const span = document.createElement("span");
+      span.textContent = text;
+      scroller.append(span);
+      const measured = span.getBoundingClientRect().width;
+      span.remove();
+      return measured;
+    };
+    return Math.abs(width("iiiiiiiiii") - width("MMMMMMMMMM")) < 0.5;
+  });
+
+test("a font that is not there falls back to the default monospace, not to serif", async ({
+  page,
+}) => {
+  await start(page, { memos: lineMemos });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  expect(await editorIsMonospace(page)).toBe(true);
+  await patch(page, { editorFontFamily: "NoSuchFont Zz" });
+  await expect
+    .poll(() => page.locator(".cm-scroller").evaluate((el) => getComputedStyle(el).fontFamily))
+    .toContain("NoSuchFont Zz");
+  expect(await editorIsMonospace(page)).toBe(true);
+  // A name CSS cannot read as it is is quoted, and still falls back.
+  await patch(page, { editorFontFamily: "3270 Nope" });
+  await expect
+    .poll(() => page.locator(".cm-scroller").evaluate((el) => getComputedStyle(el).fontFamily))
+    .toContain("3270 Nope");
+  expect(await editorIsMonospace(page)).toBe(true);
+});
+
+/** Each line number's box against its line's: [gutter top, line top, gutter height, line height]. */
+const numberedLines = (page: Page) =>
+  page.locator(".cm-editor").evaluate((editor) => {
+    // Without the spacer CodeMirror sizes the gutter with, which is hidden and has no height.
+    const numbers = [
+      ...editor.querySelectorAll<HTMLElement>(".cm-lineNumbers .cm-gutterElement"),
+    ].filter((el) => el.style.visibility !== "hidden");
+    const lines = [...editor.querySelectorAll(".cm-line")];
+    return lines.map((line, at) => {
+      const a = numbers[at].getBoundingClientRect();
+      const b = line.getBoundingClientRect();
+      return [Math.round(a.top), Math.round(b.top), Math.round(a.height), Math.round(b.height)];
+    });
+  });
+
+test("a new font size remeasures the open editors, so the line numbers stay with their lines", async ({
+  page,
+}) => {
+  await start(page, {
+    // Plain text: Markdown's colours come in a moment later, and their redraw measures the editor
+    // anyway, which would hide a measure the font change did not ask for.
+    memos: { a: fakeMemo("가.txt", "하나\n둘\n셋\n넷\n다섯\n여섯", { modifiedMs: 4 }) },
+  });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await expect(page.locator(".cm-line")).toHaveCount(6);
+  const aligned = (boxes: number[][]) =>
+    boxes.every(([gutterTop, lineTop, gutterHeight, lineHeight]) => {
+      return Math.abs(gutterTop - lineTop) <= 1 && Math.abs(gutterHeight - lineHeight) <= 1;
+    });
+  expect(aligned(await numberedLines(page))).toBe(true);
+  const before = await numberedLines(page);
+  await patch(page, { editorFontSize: 24 });
+  await expect
+    .poll(() => page.locator(".cm-scroller").evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe("24px");
+  // The lines grew; the numbers follow at the next measure, without a click or a resize. Not
+  // polled: some later update of the editor measures it anyway, and would hide a missing one.
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+  const after = await numberedLines(page);
+  expect(after[5][1]).toBeGreaterThan(before[5][1]);
+  expect(aligned(after), JSON.stringify(after)).toBe(true);
 });

@@ -839,6 +839,21 @@ pub fn suspend_shortcuts(app: AppHandle, window: WebviewWindow, on: bool) {
     });
 }
 
+/// App command `id` pressed as a key the editor of `window` has too: it runs as the menu item
+/// would (spec 「무엇을 바꿀 수 있나」, its 편집기 단축키 item). `bad-request` for an id that is
+/// no app command.
+#[tauri::command]
+pub fn run_menu_command(app: AppHandle, window: WebviewWindow, id: String) -> CmdResult<()> {
+    if menu::run_command(&app, &id, window) {
+        Ok(())
+    } else {
+        Err(CommandError::new(
+            "bad-request",
+            format!("no app command {id}"),
+        ))
+    }
+}
+
 /// The path a source names, for this window's workspace.
 fn source_path(core: &AppCore, window: &WebviewWindow, source: &FileSource) -> CmdResult<PathBuf> {
     match source {

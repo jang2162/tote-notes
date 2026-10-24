@@ -89,11 +89,15 @@ export class TabBar {
   }
 
   private tab(tab: TabView): HTMLElement {
-    const close = h("button", {
+    // Not a <button>: WebKit presses the first button inside a role=tab element in the tab's place
+    // (`nativeActionElement` in AccessibilityNodeObject.cpp), so VoiceOver choosing the tab would
+    // close it. As a span the tab itself takes the press, and the mark is still a button to press.
+    const close = h("span", {
       class: "tab-close",
+      role: "button",
+      ariaLabel: "탭 닫기",
       title: "탭 닫기",
       textContent: "×",
-      tabIndex: -1,
     });
     close.addEventListener("click", () => this.actions.close(tab.id));
     const classes = [
@@ -118,6 +122,11 @@ export class TabBar {
     });
     el.addEventListener("mousedown", (event) => {
       if (event.button === 0 && !(event.target as Element).closest(".tab-close"))
+        this.actions.select(tab.id);
+    });
+    // A click no pointer made (an accessibility press, `click()`): the mouse selects on mousedown.
+    el.addEventListener("click", (event) => {
+      if (event.detail === 0 && !(event.target as Element).closest(".tab-close"))
         this.actions.select(tab.id);
     });
     el.addEventListener("auxclick", (event) => {
