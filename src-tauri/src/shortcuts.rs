@@ -234,6 +234,49 @@ fn recordable(accelerator: &Accelerator) -> bool {
             ))
 }
 
+/// The main-row key a macOS menu fires a keypad key's item on too (`KEYPAD_TWINS` in
+/// src/shortcuts/keys.ts), as the settings screen writes it. The keypad's ＋, × and Enter have none.
+fn main_row_twin(key: Code) -> Option<&'static str> {
+    Some(match key {
+        Code::Numpad0 => "0",
+        Code::Numpad1 => "1",
+        Code::Numpad2 => "2",
+        Code::Numpad3 => "3",
+        Code::Numpad4 => "4",
+        Code::Numpad5 => "5",
+        Code::Numpad6 => "6",
+        Code::Numpad7 => "7",
+        Code::Numpad8 => "8",
+        Code::Numpad9 => "9",
+        Code::NumpadSubtract => "-",
+        Code::NumpadDecimal => ".",
+        Code::NumpadDivide => "/",
+        Code::NumpadEqual => "=",
+        _ => return None,
+    })
+}
+
+/// `saved` with each keypad key that has a main-row twin moved to the twin, the rest as it was.
+/// The build before `main_row_twin` recorded `CmdOrCtrl+Numpad1`, whose item fires on ⌘1 anyway, so
+/// the move keeps what the shortcut does. `sanitize` then drops what still cannot stand — the
+/// keypad's ＋ and ×, which no name describes — and settles a clash the move makes.
+pub fn from_keypad(saved: &BTreeMap<String, Option<String>>) -> BTreeMap<String, Option<String>> {
+    saved
+        .iter()
+        .map(|(id, keys)| {
+            let moved = keys.as_deref().and_then(|keys| {
+                let twin = main_row_twin(parse(keys)?.key())?;
+                // The key is after the last `+`, as muda splits it (`split_key_and_modifiers`).
+                Some(match keys.trim().rsplit_once('+') {
+                    Some((mods, _)) => format!("{mods}+{twin}"),
+                    None => twin.to_string(),
+                })
+            });
+            (id.clone(), moved.or_else(|| keys.clone()))
+        })
+        .collect()
+}
+
 /// The overrides of `saved` that can stand, each judged on its own: an unknown command, a string
 /// that does not parse, one the settings screen could not have recorded (it records ⌘, ⌃ or ⌥
 /// with a key, or F1–F12 alone), a fixed shortcut, or one another command ends up with is dropped
@@ -486,8 +529,8 @@ mod tests {
     }
 
     /// A macOS menu fires their item on a main-row key too; the settings screen records the
-    /// main-row key instead, or nothing. One in a settings.json (written by hand, or by the build
-    /// that recorded them) is dropped.
+    /// main-row key instead, or nothing, and a patch with one is refused. One read from a
+    /// settings.json is moved to its twin first (`from_keypad`); ＋ and × have none and are dropped.
     #[test]
     fn the_other_keypad_keys_are_not_recordable() {
         for keys in [
@@ -509,6 +552,72 @@ mod tests {
         // The main-row twin the screen records instead.
         let saved = overrides(&[("rename", Some("CmdOrCtrl+1"))]);
         assert_eq!(validate(&saved), Ok(()));
+    }
+
+    /// The build before the twins recorded the keypad key itself; its item fired on the main-row
+    /// key anyway, so reading it as that key keeps what the shortcut does.
+    #[test]
+    fn a_saved_keypad_key_is_read_as_its_main_row_twin() {
+        for (keys, twin) in [
+            ("CmdOrCtrl+Numpad1", "CmdOrCtrl+1"),
+            ("Alt+Shift+Numpad0", "Alt+Shift+0"),
+            ("CmdOrCtrl+Numpad9", "CmdOrCtrl+9"),
+            ("CmdOrCtrl+num5", "CmdOrCtrl+5"),
+            ("CmdOrCtrl+NumpadSubtract", "CmdOrCtrl+-"),
+            ("CmdOrCtrl+NumpadDecimal", "CmdOrCtrl+."),
+            ("CmdOrCtrl+NumpadDivide", "CmdOrCtrl+/"),
+            ("Ctrl+NumpadEqual", "Ctrl+="),
+        ] {
+            let moved = from_keypad(&overrides(&[("rename", Some(keys))]));
+            assert_eq!(moved, overrides(&[("rename", Some(twin))]), "{keys}");
+            assert!(same(moved["rename"].as_deref().unwrap(), twin), "{keys}");
+            assert_eq!(sanitize(&moved), moved, "{keys}");
+        }
+        // No twin, or no keypad key: left as it was, for `sanitize` to judge.
+        let saved = overrides(&[
+            ("rename", Some("CmdOrCtrl+NumpadAdd")),
+            ("save", Some("CmdOrCtrl+NumpadMultiply")),
+            ("close-tab", Some("CmdOrCtrl+NumpadEnter")),
+            ("new-memo", Some("CmdOrCtrl+K")),
+            ("open-file", None),
+            ("versions", Some("Cmd+++")),
+        ]);
+        assert_eq!(from_keypad(&saved), saved);
+        assert_eq!(
+            sanitize(&from_keypad(&saved)),
+            overrides(&[
+                ("close-tab", Some("CmdOrCtrl+NumpadEnter")),
+                ("new-memo", Some("CmdOrCtrl+K")),
+                ("open-file", None),
+            ])
+        );
+    }
+
+    /// Moved onto a key another command has, the moved override is settled as any clash is.
+    #[test]
+    fn a_keypad_key_moved_onto_a_taken_key_clashes_as_any_override() {
+        // Between two overrides the one later in `COMMANDS` goes: 탭 닫기 after 이름 바꾸기….
+        for saved in [
+            overrides(&[
+                ("rename", Some("CmdOrCtrl+1")),
+                ("close-tab", Some("CmdOrCtrl+Numpad1")),
+            ]),
+            overrides(&[
+                ("rename", Some("CmdOrCtrl+Numpad1")),
+                ("close-tab", Some("CmdOrCtrl+1")),
+            ]),
+        ] {
+            let kept = sanitize(&from_keypad(&saved));
+            assert_eq!(kept.len(), 1, "{saved:?}");
+            assert!(same(kept["rename"].as_deref().unwrap(), "CmdOrCtrl+1"));
+            assert_eq!(
+                shortcut_of(&kept, "close-tab").as_deref(),
+                Some("CmdOrCtrl+W")
+            );
+        }
+        // ⌃1 is 워크스페이스 1's, which no command may take.
+        let saved = overrides(&[("rename", Some("Ctrl+Numpad1"))]);
+        assert_eq!(sanitize(&from_keypad(&saved)), BTreeMap::new());
     }
 
     #[test]
