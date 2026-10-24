@@ -61,16 +61,16 @@
 
 ## 화면 확인 후보
 
-자동 시험이 닫지 못하는 것이다. 에이전트가 화면을 쓰는 확인이 아직 안 돌았다.
+자동 시험이 닫지 못하는 것이다. 2026-10-25 에이전트가 main `1cc500b` 디버그 번들로 확인해 항목마다 결과를 붙였다.
 
-- **숫자패드·Insert·Help 단축키가 실제 메뉴에서 동작하는지.** muda 의 키 변환은 crate-private 라 시험에서 못 불렀다. 소스상 매핑은 있다.
-- **⌘ 조합으로 녹음을 끝낸 뒤 keyup 이 도는지.** WebKit 이 ⌘ 를 누른 채 누른 키의 keyup 을 안 낸다는 가정에 기댄다. ⌘K 로 끝내고 ⌘ 를 놓은 뒤 K 를 다시 쳐서 줄이 녹음을 다시 시작하지 않는지 본다.
-- **`page_loading` 의 도착 순서.** 실기기에서 `Started` 가 `page_started` 보다 늦게 오면 그 창은 다음 로드까지 「준비 안 됨」 으로 남는다. 탭을 잃지는 않지만(새 창으로 간다) 순서를 확인한다.
-- **`post-rewrite` 가 rebase pull 에서 도는지.** `git pull --rebase` 뒤 훅 두 잡(runtime, deps)이 도는지 본다.
-- **첫 `p` 가 빈 대화상자의 이름이 실제로 비지 않은 글로 붙는지.** `dialogs.ts` 의 `namingText` 연결은 자동 시험이 되돌려도 실패하지 않는다.
-- **녹음 중 ⌘Q.** 아무 줄이나 녹음하며 ⌘Q → 앱이 그대로 있고 그 줄 아래 「tote 종료 에 고정된 단축키입니다」. 녹음을 끝낸 뒤 ⌘Q 는 종료(저장하지 못한 메모가 있으면 묻는다). e2e 가 메뉴 키를 못 눌러 Rust 시험은 accelerator 가 떨어지는 것까지만 본다.
-- **진짜 창 비활성화 때 고르개가 키를 돌려주는지.** Playwright 는 `document.hasFocus` 덮어쓰기로 대신했다. 실제 WebKit 이 창 비활성화에서 `hasFocus()` 를 false 로 돌려주는지는 사람이 본다.
-- 이월 문서에서 오는 것: 실기기에서 `window.listen` 의 promise 가 리스너 등록 뒤에 풀리는지, 복원 중 받은 탭이 보이고 세션에 쓰이는지.
+- **숫자패드·Insert·Help 단축키가 실제 메뉴에서 동작하는지.** muda 의 키 변환은 crate-private 라 시험에서 못 불렀다. 소스상 매핑은 있다. **결과(2026-10-25): 보류(권한 창: Orca 화면·오디오 접근 확인 창이 키 입력을 막음)** — 녹음하지 못했다(`2026-10-20-tote-notes-settings-and-shortcuts-smoke.md` B-8 과 같은 확인). 소스로는 muda 0.20.0 `src/accelerator/macos.rs` 가 `Numpad1`→`"1"`(숫자패드 표시 포함), `Insert`→U+F727, `Help`→U+F746 으로 바꾼다. 다만 tauri `MenuItem::set_accelerator` 는 파싱에 실패한 문자열을 `None` 으로 바꾸고, muda 의 macOS `set_accelerator(None)` 은 아무것도 하지 않아(같은 문서 A-2) 파싱 실패는 오류 없이 옛 키를 남긴다.
+- **⌘ 조합으로 녹음을 끝낸 뒤 keyup 이 도는지.** WebKit 이 ⌘ 를 누른 채 누른 키의 keyup 을 안 낸다는 가정에 기댄다. ⌘K 로 끝내고 ⌘ 를 놓은 뒤 K 를 다시 쳐서 줄이 녹음을 다시 시작하지 않는지 본다. **결과(2026-10-25): 보류(권한 창: Orca 화면·오디오 접근 확인 창이 키 입력을 막음)**.
+- **`page_loading` 의 도착 순서.** 실기기에서 `Started` 가 `page_started` 보다 늦게 오면 그 창은 다음 로드까지 「준비 안 됨」 으로 남는다. 탭을 잃지는 않지만(새 창으로 간다) 순서를 확인한다. **결과(2026-10-25): 못 봄** — `AppCore::page_loading`·`page_started`(`src-tauri/src/app/mod.rs:678`·`:688`)에 로그·계측이 없고, 디버거를 붙이는 것은 앱을 멈출 수 있어 하지 않았다. 끝 상태만 봤다: 녹음 중 새로 고침(같은 문서 A-9)과 재시작 세 번 모두 창이 「준비 안 됨」 으로 남지 않고 메뉴 키·탭이 동작했다.
+- **`post-rewrite` 가 rebase pull 에서 도는지.** `git pull --rebase` 뒤 훅 두 잡(runtime, deps)이 도는지 본다. **결과(2026-10-25): 합격** — 임시 폴더에 저장소 둘(origin·clone)을 만들고 이 저장소 `lefthook.yml` 의 post-checkout(`&install`)·post-merge·post-rewrite 블록을 옮겨(명령만 파일에 한 줄 쓰는 echo 로 바꿈) lefthook 2.1.17 로 걸었다. 로컬 커밋이 있는 `git pull --rebase` → post-rewrite 가 인자 `rebase` 로 돌아 `runtime`·`deps` 가 차례로 한 번씩. 한 번 더 rebase pull 도 같음. `git pull --no-rebase` 는 post-merge(인자 `0`)로 둘 다 돈다.
+- **첫 `p` 가 빈 대화상자의 이름이 실제로 비지 않은 글로 붙는지.** `dialogs.ts` 의 `namingText` 연결은 자동 시험이 되돌려도 실패하지 않는다. **결과(2026-10-25): 못 봄(부분)** — 화면에서 띄운 대화상자 셋의 접근성 이름은 맞다: 「이전 버전」, 「새 파일 이름」, 「모든 단축키를 기본값으로 되돌릴까요?」. 첫 `h1`/`p` 가 빈 대화상자를 화면에서 띄울 길을 찾지 못해 그 갈래는 보지 못했다.
+- **녹음 중 ⌘Q.** 아무 줄이나 녹음하며 ⌘Q → 앱이 그대로 있고 그 줄 아래 「tote 종료 에 고정된 단축키입니다」. 녹음을 끝낸 뒤 ⌘Q 는 종료(저장하지 못한 메모가 있으면 묻는다). e2e 가 메뉴 키를 못 눌러 Rust 시험은 accelerator 가 떨어지는 것까지만 본다. **결과(2026-10-25):** `2026-10-20-tote-notes-settings-and-shortcuts-smoke.md` A-11 — 합격.
+- **진짜 창 비활성화 때 고르개가 키를 돌려주는지.** Playwright 는 `document.hasFocus` 덮어쓰기로 대신했다. 실제 WebKit 이 창 비활성화에서 `hasFocus()` 를 false 로 돌려주는지는 사람이 본다. **결과(2026-10-25): 불합격** — 고르개를 펼친 채(✓ Alpha 에 포커스) Finder 를 맨 앞으로(System Events 로 frontmost 가 Finder 임을 확인) 했다가 돌아와도 목록이 열려 있고 포커스가 목록 항목에 남았다(두 번 해 봄). 키가 편집기로 가는지는 권한 확인 창 때문에 보지 못했다. 원인으로 보이는 곳: `src/ui/workspace-switcher.ts:73-75` 는 목록의 `focusout` 으로만 닫는데, 실제 WKWebView 는 앱이 비활성화될 때 그 요소에 `focusout` 을 내지 않는 것으로 보인다(같은 때 창 `blur` 는 온다 — 녹음이 끝나는 것으로 확인, 같은 문서 A-8).
+- 이월 문서에서 오는 것: 실기기에서 `window.listen` 의 promise 가 리스너 등록 뒤에 풀리는지, 복원 중 받은 탭이 보이고 세션에 쓰이는지. **결과(2026-10-25): 못 봄** — 둘 다 그 순간을 볼 계측이 없다. 재시작 세 번 모두 창·칸·탭이 제자리로 돌아왔다(`2026-10-19-tote-notes-free-splits-smoke.md` B-18).
 
 ## 지침 제안
 
