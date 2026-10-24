@@ -1,6 +1,7 @@
 import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import { parseJsonc } from "../core/jsonc";
+import { contrastRatio } from "./contrast";
 
 export type Appearance = "light" | "dark";
 
@@ -110,13 +111,42 @@ export function themeVariables(
   appearance: Appearance,
 ): Record<string, string> {
   const vars = { ...DEFAULT_VARIABLES[appearance] };
+  const picked: Record<string, string> = {};
   for (const { variable, keys } of CSS_VARIABLES) {
     const key = keys.find(
       (k) => typeof theme.colors[k] === "string" && COLOR.test(theme.colors[k]),
     );
-    if (key) vars[variable] = theme.colors[key];
+    if (key) {
+      vars[variable] = theme.colors[key];
+      picked[variable] = key;
+    }
+  }
+  // button.foreground is the text on button.background only: an accent from another key, or one
+  // with no text colour of its own, gets whichever of tote's two accent texts reads better on it.
+  const paired = picked["--accent"] === "button.background" && picked["--accent-fg"];
+  if (!paired) {
+    vars["--accent-fg"] = picked["--accent"]
+      ? textOn(vars["--accent"], vars["--bg"], DEFAULT_VARIABLES[appearance]["--accent-fg"])
+      : DEFAULT_VARIABLES[appearance]["--accent-fg"];
   }
   return vars;
+}
+
+/** The text colour of tote's own accent in each appearance. */
+const ACCENT_TEXTS = [
+  DEFAULT_VARIABLES.light["--accent-fg"],
+  DEFAULT_VARIABLES.dark["--accent-fg"],
+];
+
+/** The accent text with the most contrast on `accent` (mixed over `base`), or `fallback` when a
+ * colour cannot be read. */
+function textOn(accent: string, base: string, fallback: string): string {
+  try {
+    const ratio = (text: string) => contrastRatio(text, accent, base);
+    return ACCENT_TEXTS.reduce((best, text) => (ratio(text) > ratio(best) ? text : best));
+  } catch {
+    return fallback;
+  }
 }
 
 const INCLUDE_DEPTH = 5;

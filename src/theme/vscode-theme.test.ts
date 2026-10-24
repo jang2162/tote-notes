@@ -32,11 +32,35 @@ describe("themeVariables", () => {
   });
 
   it("takes the text on the accent colour from button.foreground", () => {
-    const vars = themeVariables({ colors: { "button.foreground": "#123456" } }, "dark");
+    const vars = themeVariables(
+      { colors: { "button.background": "#0E639C", "button.foreground": "#123456" } },
+      "dark",
+    );
     expect(vars["--accent-fg"]).toBe("#123456");
     expect(themeVariables({ colors: {} }, "light")["--accent-fg"]).toBe(
       DEFAULT_VARIABLES.light["--accent-fg"],
     );
+  });
+
+  it("keeps button.foreground off an accent that did not come from button.background", () => {
+    // No accent in the theme: tote's own accent keeps its own text.
+    expect(
+      themeVariables({ colors: { "button.foreground": "#123456" } }, "dark")["--accent-fg"],
+    ).toBe(DEFAULT_VARIABLES.dark["--accent-fg"]);
+    // An accent from focusBorder or textLink.foreground: the accent text that reads better on it.
+    const dark = DEFAULT_VARIABLES.dark["--accent-fg"];
+    const light = DEFAULT_VARIABLES.light["--accent-fg"];
+    const on = (colors: Record<string, string>, appearance: "light" | "dark") =>
+      themeVariables({ colors: { "button.foreground": "#123456", ...colors } }, appearance)[
+        "--accent-fg"
+      ];
+    expect(on({ focusBorder: "#0E639C" }, "dark")).toBe(light);
+    expect(on({ "textLink.foreground": "#9CDCFE" }, "light")).toBe(dark);
+  });
+
+  it("gives a button.background without button.foreground the accent text that reads better", () => {
+    const vars = themeVariables({ colors: { "button.background": "#9CDCFE" } }, "light");
+    expect(vars["--accent-fg"]).toBe(DEFAULT_VARIABLES.dark["--accent-fg"]);
   });
 
   it("fills the line-number variables from the theme's gutter colours", () => {
