@@ -346,20 +346,51 @@ export function editorBindings(): { accelerator: string; name: string }[] {
   return bindings;
 }
 
+/** Whether the editor runs its key `editor` on `accelerator`. CodeMirror goes by
+ * `KeyboardEvent.key`, which is `Enter` for the keypad's ↩ too, so an editor key on ↩ runs on the
+ * keypad's as well, while a macOS menu tells the two apart. The keypad's other keys are recorded as
+ * their main-row twins (`KEYPAD_TWINS`). */
+function editorRunsOn(editor: string, accelerator: string): boolean {
+  const x = parse(editor);
+  const y = parse(accelerator);
+  if (x === null || y === null) return false;
+  return x.mods === y.mods && x.code === (y.code === "NumpadEnter" ? "Enter" : y.code);
+}
+
+/** The keys the editor hears as one and the menu tells apart (`editorRunsOn`). */
+const ENTERS = new Set(["Enter", "NumpadEnter"]);
+
 /** Editor bindings for the app shortcuts that are editor keys too, which run the app command
  * (`run`) instead of the editor's, in the editor and in its search bar (spec 「무엇을 바꿀
  * 수 있나」, its 편집기 단축키 item). WKWebView hands a key to the page before the menu, and the editor takes it: without
  * these the editor would win where the settings screen says the menu does. Built for
  * `Prec.highest`, ahead of every editor binding of the same key. A key no editor binding has is
- * left to the menu. */
+ * left to the menu. A shortcut on ↩ or the keypad's ↩ is matched on the event's `code`, as the
+ * menu tells them apart: the other ↩ stays the editor's. */
 export function menuKeymap(table: ShortcutTable, run: (id: string) => void): KeyBinding[] {
-  return table.commands.flatMap(({ id, current }) => {
+  return table.commands.flatMap(({ id, current }): KeyBinding[] => {
     if (current === null) return [];
     const keys = new Set(
       editorKeysNow()
-        .filter((editor) => sameAccelerator(editor.accelerator, current))
+        .filter((editor) => editorRunsOn(editor.accelerator, current))
         .map((editor) => editor.key),
     );
+    if (keys.size === 0) return [];
+    if (ENTERS.has(parse(current)!.code))
+      return [
+        {
+          // `any` is what hears the event: a binding's `run` is given the view alone. Ahead of the
+          // editor's bindings at `Prec.highest`, it is asked first for every key.
+          any: (_view, event) => {
+            const pressed = acceleratorFromEvent(event);
+            if (pressed === null || !sameAccelerator(pressed, current)) return false;
+            event.preventDefault();
+            run(id);
+            return true;
+          },
+          scope: "editor search-panel",
+        },
+      ];
     return [...keys].map((key) => ({
       key,
       run: () => {
@@ -386,7 +417,7 @@ export function conflict(table: ShortcutTable, id: string, accelerator: string):
     (c) => c.id !== id && c.current !== null && sameAccelerator(c.current, accelerator),
   );
   if (other) return { kind: "command", id: other.id, label: other.label };
-  const editor = editorBindings().find((b) => sameAccelerator(b.accelerator, accelerator));
+  const editor = editorBindings().find((b) => editorRunsOn(b.accelerator, accelerator));
   if (editor) return { kind: "editor", name: editor.name };
   return null;
 }
