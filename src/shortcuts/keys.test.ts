@@ -126,6 +126,17 @@ describe("acceleratorFromEvent", () => {
     expect(formatAccelerator("CmdOrCtrl+Help")).toBe("⌘Help");
   });
 
+  it("records every numpad key", () => {
+    const codes = [
+      ...Array.from({ length: 10 }, (_, n) => `Numpad${n}`),
+      ...["Add", "Subtract", "Multiply", "Divide", "Decimal", "Enter", "Equal"].map(
+        (name) => `Numpad${name}`,
+      ),
+    ];
+    for (const code of codes)
+      expect(acceleratorFromEvent(key(code, { meta: true })), code).toBe(`CmdOrCtrl+${code}`);
+  });
+
   it("records only what the menu could be given back", () => {
     for (const event of [
       key("KeyN", { meta: true, shift: true }, "N"),
