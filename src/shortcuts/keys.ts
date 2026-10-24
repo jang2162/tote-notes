@@ -335,8 +335,8 @@ export function editorBindings(): { accelerator: string; name: string }[] {
 }
 
 /** Editor bindings for the app shortcuts that are editor keys too, which run the app command
- * (`run`) instead of the editor's, in the editor and in its search bar (spec 「편집기 단축키는 고정이
- * 아니다」). WKWebView hands a key to the page before the menu, and the editor takes it: without
+ * (`run`) instead of the editor's, in the editor and in its search bar (spec 「무엇을 바꿀
+ * 수 있나」, its 편집기 단축키 item). WKWebView hands a key to the page before the menu, and the editor takes it: without
  * these the editor would win where the settings screen says the menu does. Built for
  * `Prec.highest`, ahead of every editor binding of the same key. A key no editor binding has is
  * left to the menu. */

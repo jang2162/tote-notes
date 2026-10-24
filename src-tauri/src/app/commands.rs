@@ -840,7 +840,8 @@ pub fn suspend_shortcuts(app: AppHandle, window: WebviewWindow, on: bool) {
 }
 
 /// App command `id` pressed as a key the editor of `window` has too: it runs as the menu item
-/// would (spec 「편집기 단축키는 고정이 아니다」). `bad-request` for an id that is no app command.
+/// would (spec 「무엇을 바꿀 수 있나」, its 편집기 단축키 item). `bad-request` for an id that is
+/// no app command.
 #[tauri::command]
 pub fn run_menu_command(app: AppHandle, window: WebviewWindow, id: String) -> CmdResult<()> {
     if menu::run_command(&app, &id, window) {
