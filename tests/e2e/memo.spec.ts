@@ -515,6 +515,26 @@ test("the close mark of a tab closes it, with the mouse and pressed as a button"
   await expect(page.locator(".tab")).toHaveCount(0);
 });
 
+test("a tab's close button is named after its tab and follows a rename", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") } });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  // Listed apart from their tabs (VoiceOver's rotor lists the buttons alone), each says whose it is.
+  const names = () =>
+    page
+      .getByRole("button", { name: /탭 닫기$/ })
+      .evaluateAll((marks) => marks.map((mark) => mark.getAttribute("aria-label")));
+  expect(await names()).toEqual(["가 탭 닫기", "나 탭 닫기"]);
+  await expect(page.getByRole("button", { name: "나 탭 닫기", exact: true })).toHaveCount(1);
+  await menu(page, "rename");
+  const input = page.locator(".modal input");
+  await input.fill("목록.md");
+  await input.press("Enter");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "목록"]);
+  await expect(page.getByRole("button", { name: "목록 탭 닫기", exact: true })).toHaveCount(1);
+  expect(await names()).toEqual(["가 탭 닫기", "목록 탭 닫기"]);
+});
+
 test("a close button pressed with the mouse leaves the keys where they were", async ({ page }) => {
   await start(page, {
     memos: {

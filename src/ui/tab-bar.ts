@@ -93,13 +93,15 @@ export class TabBar {
     // button inside would not be in the accessibility tree and its name would join the tab's
     // ("가 탭 닫기"). And WebKit presses the first button inside a role=tab element in the tab's
     // place (`nativeActionElement` in AccessibilityNodeObject.cpp), so VoiceOver choosing the tab
-    // would close it. Out of the keys' Tab order, as the tabs are.
+    // would close it. Out of the keys' Tab order, as the tabs are. Named after its tab: listed
+    // apart from the tabs (VoiceOver's rotor), every button would read the same.
+    const name = `${tab.title} 탭 닫기`;
     const close = h("button", {
       type: "button",
       class: "tab-close",
       tabIndex: -1,
-      ariaLabel: "탭 닫기",
-      title: "탭 닫기",
+      ariaLabel: name,
+      title: name,
       textContent: "×",
     });
     // The mouse leaves the keys where they were. A button WebKit gives the focus to would hold it
