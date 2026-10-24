@@ -350,7 +350,6 @@ test("a memo opened while the window leaves shows nothing", async ({ page }) => 
 });
 
 test("a tab moved out while the window switches stays and says why in words", async ({ page }) => {
-  // One filter for both: a second `quietErrors` would leave only its own words filtered.
   await quietErrors(page, "is switching workspaces", "is closing or switching");
   await start(page, seed());
   await expect(page.locator(".cm-content")).toHaveText("안건");

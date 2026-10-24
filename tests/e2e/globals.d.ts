@@ -76,6 +76,8 @@ declare global {
     };
     /** `dragOut` in tests/e2e/helpers.ts: the screen point of the pointer's last move. */
     lastScreenPoint?: { x: number; y: number };
+    /** `quietErrors` in tests/e2e/helpers.ts: the words of the errors it keeps out of the output. */
+    __quietErrors?: string[];
     /** save-failure.spec.ts: while true the patched `keepExternalDraft` rejects. */
     __toteBroken: boolean;
   }

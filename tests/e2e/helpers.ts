@@ -246,16 +246,33 @@ export function menu(page: Page, id: string): Promise<void> {
 }
 
 /** The app logs each error it reports; the ones a test makes on purpose stay out of the output.
- * Vite's client wraps `console.error` to forward it to the dev server's log, so the filter stays
- * outermost: whatever is assigned later goes under it. */
+ * Vite's client wraps `console.error` to forward it to the dev server's log (`forwardConsole`, on
+ * when Vite sees an agent run it), so the filter stays outermost: whatever is assigned later goes
+ * under it. That wrapper calls the `console.error` it read — the filter — so a call that comes back
+ * into the filter goes straight to the browser's own. A page keeps one filter: a later call adds
+ * its words to it. */
 export async function quietErrors(
   page: Page | BrowserContext,
   ...expected: string[]
 ): Promise<void> {
   await page.addInitScript((expected) => {
-    let inner = console.error.bind(console);
+    if (window.__quietErrors) {
+      window.__quietErrors.push(...expected);
+      return;
+    }
+    const words = (window.__quietErrors = [...expected]);
+    const own = console.error.bind(console);
+    let inner = own;
+    let inside = false;
     const filtered = (...args: unknown[]) => {
-      if (!args.some((arg) => expected.some((text) => String(arg).includes(text)))) inner(...args);
+      if (args.some((arg) => words.some((text) => String(arg).includes(text)))) return;
+      if (inside) return own(...args);
+      inside = true;
+      try {
+        inner(...args);
+      } finally {
+        inside = false;
+      }
     };
     Object.defineProperty(console, "error", {
       configurable: true,
