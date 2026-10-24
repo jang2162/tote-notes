@@ -57,9 +57,19 @@ objc2-foundation = { version = "0.3", default-features = false, features = ["std
 tempfile = "3"
 filetime = "0.2"
 
+# tests/menu_keypad.rs presses keys on a real AppKit menu: it makes the key events.
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+objc2-app-kit = { version = "0.3", default-features = false, features = ["NSGraphicsContext"] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["NSGeometry"] }
+
 # Builds a real AppKit menu bar, so it has to run on the main thread: no test harness.
 [[test]]
 name = "menu_key_equivalents"
+harness = false
+
+# The same, and presses keys on it.
+[[test]]
+name = "menu_keypad"
 harness = false
 
 # No `panic = "abort"`: with unwinding a panicking command fails alone, while abort would take the

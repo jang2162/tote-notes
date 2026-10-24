@@ -129,6 +129,9 @@ const F1_TO_F12 = /^F([1-9]|1[0-2])$/;
 function recordable(keys: Keys): boolean {
   // muda cannot put IntlBackslash on a macOS menu item.
   if (keys.code === "IntlBackslash") return false;
+  // A macOS menu fires a keypad key's item on a main-row key too: only the keypad's Enter is a
+  // key of its own (`KEYPAD_TWINS`).
+  if (keys.code.startsWith("Numpad") && keys.code !== "NumpadEnter") return false;
   return (
     (keys.mods & (META | CONTROL | ALT)) !== 0 || (keys.mods === 0 && F1_TO_F12.test(keys.code))
   );
@@ -167,14 +170,21 @@ const SYMBOLS: Record<string, string> = {
   End: "↘",
   PageUp: "⇞",
   PageDown: "⇟",
-  NumpadAdd: "키패드 ＋",
-  NumpadSubtract: "키패드 −",
-  NumpadMultiply: "키패드 ×",
-  NumpadDivide: "키패드 ÷",
-  NumpadDecimal: "키패드 .",
   NumpadEnter: "키패드 ↩",
-  NumpadEqual: "키패드 =",
-  ...Object.fromEntries(Array.from({ length: 10 }, (_, n) => [`Numpad${n}`, `키패드 ${n}`])),
+};
+
+/** The keypad keys a macOS menu cannot tell from a main-row key, and that key. AppKit leaves
+ * `NSEventModifierFlagNumericPad` out when it matches a key equivalent, so an item on either fires
+ * on both (settings smoke B-8; tried on a menu outside the app). Recorded as the main-row key,
+ * the shortcut says what it does and meets the main-row key's command as the same key. The
+ * keypad's ＋ and × are not recorded: their items fire on ⇧⌘= and ⇧⌘8 too, while an item on those
+ * is not fired by the keypad, so neither name would say what the shortcut does. */
+const KEYPAD_TWINS: Record<string, string> = {
+  ...Object.fromEntries(Array.from({ length: 10 }, (_, n) => [`Numpad${n}`, `${n}`])),
+  NumpadSubtract: "-",
+  NumpadDecimal: ".",
+  NumpadDivide: "/",
+  NumpadEqual: "=",
 };
 
 /** As macOS menus write it: ⌃⌥⇧⌘, then the key (`"CmdOrCtrl+Shift+N"` → `"⇧⌘N"`). A string that
@@ -198,7 +208,9 @@ function keyOfCode(code: string): string | null {
   if (/^Key[A-Z]$|^Digit[0-9]$/.test(code)) return code.slice(-1);
   if (/^F([1-9]|1[0-9]|2[0-4])$/.test(code)) return code;
   if (code.startsWith("Arrow")) return code.slice(5) || null;
-  if (/^Numpad([0-9]|Add|Subtract|Multiply|Divide|Decimal|Enter|Equal)$/.test(code)) return code;
+  const twin = KEYPAD_TWINS[code];
+  if (twin) return twin;
+  if (code === "NumpadEnter") return code;
   const char = SYMBOLS[code];
   if (char && char.length === 1 && "`\\[],=-.';/".includes(char)) return char;
   return ["Enter", "Tab", "Space", "Home", "End", "PageUp", "PageDown", "Insert", "Help"].includes(

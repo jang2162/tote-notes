@@ -768,3 +768,37 @@ test("an app shortcut wins over the search bar's keys in its fields too", async 
   await page.keyboard.press("Meta+G");
   await expect.poll(() => menuRuns(page)).toEqual(["rename"]);
 });
+
+// A macOS menu fires a keypad key's item on the main-row key of the same character too (settings
+// smoke B-8), so the screen records the main-row key and checks it against the commands.
+test("a keypad key records as its main-row twin, which another command may have", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page, {
+    settings: { ...defaultFakeData().settings, shortcuts: { rename: "CmdOrCtrl+1" } },
+  });
+  await expect(keys(panel, "rename")).toHaveText("⌘1");
+  await record(panel, "new-memo");
+  await page.keyboard.press("Meta+Numpad1");
+  await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
+    /이름 바꾸기… 에 이미 쓰고 있습니다/,
+  );
+  await row(panel, "new-memo").getByRole("button", { name: "바꾸기", exact: true }).click();
+  // 이름 바꾸기… has no default: 「없음」 is what it has anyway.
+  await expect.poll(() => savedMap(page)).toEqual({ "new-memo": "CmdOrCtrl+1" });
+  await expect(keys(panel, "new-memo")).toHaveText("⌘1");
+  await expect(keys(panel, "rename")).toHaveText("없음");
+
+  // The keypad's ＋ is not taken: recording goes on until a key it takes.
+  await record(panel, "save");
+  await page.keyboard.press("Meta+NumpadAdd");
+  await expect(keys(panel, "save")).toHaveText("키를 누르세요");
+  await page.keyboard.press("Meta+NumpadEnter");
+  await expect
+    .poll(() => savedMap(page))
+    .toEqual({
+      "new-memo": "CmdOrCtrl+1",
+      save: "CmdOrCtrl+NumpadEnter",
+    });
+  await expect(keys(panel, "save")).toHaveText("⌘키패드 ↩");
+});

@@ -205,6 +205,14 @@ fn recordable(accelerator: &Accelerator) -> bool {
     if accelerator.key() == Code::IntlBackslash {
         return false;
     }
+    // AppKit leaves the keypad flag out when it matches a key equivalent, so a keypad key's item
+    // fires on a main-row key too (settings smoke B-8). The settings screen records such a key as
+    // its main-row twin and never records ＋ and × (`KEYPAD_TWINS`, src/shortcuts/keys.ts); only
+    // the keypad's Enter is a key of its own.
+    if accelerator.key().to_string().starts_with("Numpad") && accelerator.key() != Code::NumpadEnter
+    {
+        return false;
+    }
     let mods = accelerator.modifiers();
     // The parser reads `Cmd`, `Super` and `CmdOrCtrl` (on macOS) all as META.
     mods.intersects(Modifiers::META | Modifiers::CONTROL | Modifiers::ALT)
@@ -468,7 +476,20 @@ mod tests {
     /// Only the parse is held here: muda's macOS key function (`key_equivalent`) is crate-private.
     /// That the menu really takes them is for a check on screen.
     #[test]
-    fn numpad_insert_and_help_shortcuts_parse_and_are_recordable() {
+    fn the_keypad_enter_insert_and_help_shortcuts_parse_and_are_recordable() {
+        for keys in ["CmdOrCtrl+NumpadEnter", "Alt+Insert", "CmdOrCtrl+Help"] {
+            assert!(parse(keys).is_some_and(|keys| recordable(&keys)), "{keys}");
+            let saved = overrides(&[("rename", Some(keys))]);
+            assert_eq!(validate(&saved), Ok(()), "{keys}");
+            assert_eq!(sanitize(&saved), saved, "{keys}");
+        }
+    }
+
+    /// A macOS menu fires their item on a main-row key too; the settings screen records the
+    /// main-row key instead, or nothing. One in a settings.json (written by hand, or by the build
+    /// that recorded them) is dropped.
+    #[test]
+    fn the_other_keypad_keys_are_not_recordable() {
         for keys in [
             "CmdOrCtrl+Numpad1",
             "Alt+Numpad0",
@@ -477,16 +498,17 @@ mod tests {
             "CmdOrCtrl+NumpadMultiply",
             "CmdOrCtrl+NumpadDivide",
             "CmdOrCtrl+NumpadDecimal",
-            "CmdOrCtrl+NumpadEnter",
             "CmdOrCtrl+NumpadEqual",
-            "Alt+Insert",
-            "CmdOrCtrl+Help",
         ] {
-            assert!(parse(keys).is_some_and(|keys| recordable(&keys)), "{keys}");
+            assert!(parse(keys).is_some(), "{keys}");
+            assert!(!parse(keys).is_some_and(|keys| recordable(&keys)), "{keys}");
             let saved = overrides(&[("rename", Some(keys))]);
-            assert_eq!(validate(&saved), Ok(()), "{keys}");
-            assert_eq!(sanitize(&saved), saved, "{keys}");
+            assert_eq!(sanitize(&saved), BTreeMap::new(), "{keys}");
+            assert!(validate(&saved).unwrap_err().contains("rename"), "{keys}");
         }
+        // The main-row twin the screen records instead.
+        let saved = overrides(&[("rename", Some("CmdOrCtrl+1"))]);
+        assert_eq!(validate(&saved), Ok(()));
     }
 
     #[test]

@@ -105,37 +105,51 @@ describe("acceleratorFromEvent", () => {
     expect(acceleratorFromEvent(key("Delete"))).toBe("clear");
   });
 
-  it("records numpad, Insert and Help but not IntlBackslash", () => {
+  it("records Insert, Help and the keypad's Enter but not IntlBackslash", () => {
     const meta = { meta: true };
-    expect(acceleratorFromEvent(key("Numpad1", meta, "1"))).toBe("CmdOrCtrl+Numpad1");
-    expect(acceleratorFromEvent(key("NumpadAdd", meta, "+"))).toBe("CmdOrCtrl+NumpadAdd");
     expect(acceleratorFromEvent(key("NumpadEnter", meta, "Enter"))).toBe("CmdOrCtrl+NumpadEnter");
     expect(acceleratorFromEvent(key("Insert", { alt: true }))).toBe("Alt+Insert");
     expect(acceleratorFromEvent(key("Help", meta))).toBe("CmdOrCtrl+Help");
     expect(acceleratorFromEvent(key("IntlBackslash", meta, "<"))).toBeNull();
-    expect(acceleratorFromEvent(key("Numpad1", {}, "1"))).toBeNull();
     expect(recordableAccelerator("CmdOrCtrl+IntlBackslash")).toBe(false);
-    expect(formatAccelerator("CmdOrCtrl+Numpad1")).toBe("⌘키패드 1");
-    expect(formatAccelerator("CmdOrCtrl+NumpadAdd")).toBe("⌘키패드 ＋");
-    expect(formatAccelerator("CmdOrCtrl+NumpadSubtract")).toBe("⌘키패드 −");
-    expect(formatAccelerator("CmdOrCtrl+NumpadMultiply")).toBe("⌘키패드 ×");
-    expect(formatAccelerator("CmdOrCtrl+NumpadDivide")).toBe("⌘키패드 ÷");
-    expect(formatAccelerator("CmdOrCtrl+NumpadDecimal")).toBe("⌘키패드 .");
     expect(formatAccelerator("CmdOrCtrl+NumpadEnter")).toBe("⌘키패드 ↩");
-    expect(formatAccelerator("CmdOrCtrl+NumpadEqual")).toBe("⌘키패드 =");
     expect(formatAccelerator("Alt+Insert")).toBe("⌥Insert");
     expect(formatAccelerator("CmdOrCtrl+Help")).toBe("⌘Help");
   });
 
-  it("records every numpad key", () => {
-    const codes = [
-      ...Array.from({ length: 10 }, (_, n) => `Numpad${n}`),
-      ...["Add", "Subtract", "Multiply", "Divide", "Decimal", "Enter", "Equal"].map(
-        (name) => `Numpad${name}`,
-      ),
+  // A macOS menu does not tell a keypad key from the main-row key of the same character: an item
+  // with either fires on both (settings smoke B-8).
+  it("records a keypad key a menu cannot tell from a main-row key as that key", () => {
+    const twins: [string, string][] = [
+      ...Array.from({ length: 10 }, (_, n): [string, string] => [`Numpad${n}`, `${n}`]),
+      ["NumpadSubtract", "-"],
+      ["NumpadDecimal", "."],
+      ["NumpadDivide", "/"],
+      ["NumpadEqual", "="],
     ];
-    for (const code of codes)
-      expect(acceleratorFromEvent(key(code, { meta: true })), code).toBe(`CmdOrCtrl+${code}`);
+    for (const [code, twin] of twins) {
+      expect(acceleratorFromEvent(key(code, { meta: true })), code).toBe(`CmdOrCtrl+${twin}`);
+      expect(acceleratorFromEvent(key(code, { alt: true, shift: true })), code).toBe(
+        `Alt+Shift+${twin}`,
+      );
+    }
+    expect(formatAccelerator(acceleratorFromEvent(key("Numpad1", { meta: true })) as string)).toBe(
+      "⌘1",
+    );
+    // So it meets the main-row key's command as the same key.
+    expect(
+      sameAccelerator(acceleratorFromEvent(key("Numpad1", { meta: true })) as string, "Cmd+1"),
+    ).toBe(true);
+    expect(acceleratorFromEvent(key("Numpad1", {}, "1"))).toBeNull();
+  });
+
+  it("does not record the keypad's ＋ and ×, whose items a main-row key fires too", () => {
+    // Their item fires on ⇧⌘= and ⇧⌘8, and an item on those is not fired by the keypad.
+    expect(acceleratorFromEvent(key("NumpadAdd", { meta: true }, "+"))).toBeNull();
+    expect(acceleratorFromEvent(key("NumpadMultiply", { meta: true }, "*"))).toBeNull();
+    for (const code of ["Numpad1", "NumpadAdd", "NumpadMultiply", "NumpadEqual"])
+      expect(recordableAccelerator(`CmdOrCtrl+${code}`), code).toBe(false);
+    expect(recordableAccelerator("CmdOrCtrl+NumpadEnter")).toBe(true);
   });
 
   it("records only what the menu could be given back", () => {
