@@ -490,16 +490,25 @@ body {
   right: -1px;
 }
 
+/* The box around a tab and its close button, which sits beside the role=tab label, not in it. */
 .tab {
   position: relative;
   display: flex;
   align-items: center;
   gap: 4px;
-  padding: 6px 6px 6px 12px;
+  padding: 0 6px 0 0;
   border-right: 1px solid var(--border);
   color: var(--muted);
   white-space: nowrap;
   cursor: default;
+}
+
+/* The label takes the box's left and vertical padding, so pressing anywhere but the close button
+ * is on the tab. */
+.tab-label {
+  display: flex;
+  align-items: center;
+  padding: 6px 0 6px 12px;
 }
 
 .tab.active {
@@ -526,19 +535,25 @@ body {
   color: var(--danger);
 }
 
+/* Hidden by opacity, not visibility: a `visibility: hidden` button leaves the accessibility tree,
+ * and an inactive tab could not be closed by a press. The pointer is over the tab to reach it,
+ * which shows it. */
 .tab-close {
-  visibility: hidden;
+  opacity: 0;
+  margin: 0;
   padding: 0 4px;
   border: 0;
   background: none;
   color: inherit;
   font: inherit;
   cursor: pointer;
+  appearance: none;
 }
 
 .tab:hover .tab-close,
-.tab.active .tab-close {
-  visibility: visible;
+.tab.active .tab-close,
+.tab-close:focus-visible {
+  opacity: 1;
 }
 
 .surface {
