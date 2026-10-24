@@ -102,6 +102,11 @@ export class TabBar {
       title: "탭 닫기",
       textContent: "×",
     });
+    // The mouse leaves the keys where they were. A button WebKit gives the focus to would hold it
+    // unseen once the pointer is gone (a press dragged off, or a tab that is not active), and Space
+    // or Enter there would close the tab. An accessibility press and `click()` come with no
+    // mousedown.
+    close.addEventListener("mousedown", (event) => event.preventDefault());
     close.addEventListener("click", () => this.actions.close(tab.id));
     const classes = [
       "tab",

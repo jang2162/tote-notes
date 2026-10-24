@@ -514,3 +514,39 @@ test("the close mark of a tab closes it, with the mouse and pressed as a button"
   await close.click();
   await expect(page.locator(".tab")).toHaveCount(0);
 });
+
+test("a close button pressed with the mouse leaves the keys where they were", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "첫째"),
+      b: fakeMemo("나.md", "둘째"),
+      c: fakeMemo("다.md", "셋째"),
+    },
+  });
+  await page.locator(".memo-row", { hasText: "가" }).click();
+  await page.locator(".memo-row", { hasText: "나" }).click();
+  await page.locator(".memo-row", { hasText: "다" }).click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const focused = () =>
+    page.evaluate(() => {
+      const el = document.activeElement;
+      return { close: !!el?.closest(".tab-close"), pane: !!el?.closest(".pane") };
+    });
+  // Pressed on an inactive tab's close button, dragged off it and let go: nothing is closed, and
+  // the button, unseen with the pointer gone, must not hold the keys — Space or Enter would close
+  // the tab.
+  const box = (await page.locator(".tab", { hasText: "가" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2 + 200, { steps: 5 });
+  await page.mouse.up();
+  expect(await focused()).toEqual({ close: false, pane: true });
+  await page.keyboard.press("Space");
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나", "다"]);
+  // Closing an inactive tab with the mouse leaves the keys in the pane too.
+  await page.locator(".tab", { hasText: "나" }).locator(".tab-close").click();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가", "다"]);
+  expect(await focused()).toEqual({ close: false, pane: true });
+});
