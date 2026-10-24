@@ -206,18 +206,20 @@ fn fixed_items() -> Vec<(&'static str, &'static str)> {
         .collect()
 }
 
-/// The name of the item `slot` makes: a command's from `shortcuts::COMMANDS`, a fixed item's own.
-fn shortcut_label(slot: &Slot) -> Option<&'static str> {
+/// The name of the item `slot` makes, for a slot `shortcut_item` names: a command's from
+/// `shortcuts::COMMANDS`, a fixed item's own. A name it cannot find is a mistake in `MENUS`, as
+/// in `build`, and panics.
+fn shortcut_label(slot: &Slot) -> &'static str {
     match slot {
-        Slot::Command(id) => Some(
+        Slot::Command(id) => {
             COMMANDS
                 .iter()
                 .find(|command| command.id == *id)
                 .unwrap_or_else(|| panic!("MENUS names only commands of shortcuts::COMMANDS: {id}"))
-                .label,
-        ),
-        Slot::Fixed { text, .. } => Some(text),
-        _ => None,
+                .label
+        }
+        Slot::Fixed { text, .. } => text,
+        _ => unreachable!("only an item with a shortcut is named here"),
     }
 }
 
@@ -228,7 +230,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
     let items = MENUS
         .iter()
         .flat_map(|(_, slots)| slots.iter())
-        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot)?)))
+        .filter_map(|slot| Some((shortcut_item(slot)?, shortcut_label(slot))))
         .map(|(id, label)| {
             let (_, keys) = keys
                 .iter()
@@ -803,7 +805,7 @@ mod tests {
             .flat_map(|(_, slots)| slots.iter())
             .find(|slot| shortcut_item(slot) == Some("quit"))
             .unwrap();
-        assert_eq!(shortcut_label(quit), Some("tote 종료"));
+        assert_eq!(shortcut_label(quit), "tote 종료");
         assert_eq!(
             fixed_items(),
             [("settings", "CmdOrCtrl+,"), ("quit", "CmdOrCtrl+Q")]
@@ -819,6 +821,17 @@ mod tests {
         menu.shortcuts.resume_if("ws-1");
         assert_eq!(menu.shortcut("quit"), Some("CmdOrCtrl+Q".into()));
         assert_eq!(menu.shortcut("settings"), Some("CmdOrCtrl+,".into()));
+    }
+
+    #[test]
+    fn every_item_with_a_shortcut_has_a_name() {
+        for slot in MENUS
+            .iter()
+            .flat_map(|(_, slots)| slots.iter())
+            .filter(|slot| shortcut_item(slot).is_some())
+        {
+            assert!(!shortcut_label(slot).is_empty(), "{slot:?}");
+        }
     }
 
     #[test]
