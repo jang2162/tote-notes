@@ -18,6 +18,29 @@ test("the unsaved-changes question answers with the button pressed; Escape cance
   await expect(page.locator(".modal")).toHaveCount(0);
 });
 
+test("a dialog whose first paragraph is empty is named by the first one with text", async ({
+  page,
+}) => {
+  await page.evaluate(() => {
+    void window.modal((close) => {
+      const dialog = document.createElement("div");
+      dialog.className = "modal";
+      dialog.setAttribute("role", "dialog");
+      // An error line that has nothing to say yet, ahead of the question.
+      const status = document.createElement("p");
+      status.className = "modal-error";
+      const question = document.createElement("p");
+      question.textContent = "이름 붙는 글";
+      const ok = document.createElement("button");
+      ok.textContent = "확인";
+      ok.addEventListener("click", () => close(true));
+      dialog.append(status, question, ok);
+      return dialog;
+    });
+  });
+  await expect(page.getByRole("dialog", { name: "이름 붙는 글" })).toBeVisible();
+});
+
 test("Enter that finishes a composition does not submit", async ({ page }) => {
   await page.evaluate(
     () => void window.promptText("새 파일 이름", "메모.md").then((r) => (window.result = r)),

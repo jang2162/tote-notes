@@ -5,7 +5,13 @@ import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
-import type { askUnsaved, pickLanguage, promptText, workspacePicker } from "../../src/ui/dialogs";
+import type {
+  askUnsaved,
+  modal,
+  pickLanguage,
+  promptText,
+  workspacePicker,
+} from "../../src/ui/dialogs";
 import type { HighlightClient } from "../../src/highlight/client";
 import type { BackendError, LanguageInfo, TextQuery, TextSearch } from "../../src/backend/types";
 import type { ViewerHost } from "../../src/viewer/host";
@@ -45,6 +51,7 @@ declare global {
     promptText: typeof promptText;
     workspacePicker: typeof workspacePicker;
     pickLanguage: typeof pickLanguage;
+    modal: typeof modal;
     result: unknown;
     /** Set by tests/e2e/pages/viewer.ts. */
     viewerHost: ViewerHost;
