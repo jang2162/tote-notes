@@ -2,16 +2,24 @@ const QUOTED = /^(["'])(?:\\.|(?!\1)[^\\])*\1$/;
 const IDENTIFIER = /^-?[_a-zA-Z\u0080-\uFFFF][-_a-zA-Z0-9\u0080-\uFFFF]*$/u;
 /** Words that make a whole `font-family` invalid when written bare. */
 const RESERVED = new Set(["inherit", "initial", "unset", "revert", "revert-layer", "default"]);
+/** What ends a CSS string unescaped: the declaration, and the editor theme's whole `.cm-scroller`
+ * rule with the font size in it, would be thrown away. Only a hand-edited settings.json has them. */
+const NEWLINES = /[\n\r\f]/g;
+
+/** `text`, for inside a CSS string, with each newline written as its escape (`\a `). */
+function escapeNewlines(text: string): string {
+  return text.replace(NEWLINES, (char) => `\\${char.charCodeAt(0).toString(16)} `);
+}
 
 /** One family of a list as CSS reads it: kept when CSS can read it bare or it is quoted already,
  * else quoted. */
 function family(name: string): string {
-  if (QUOTED.test(name)) return name;
+  if (QUOTED.test(name)) return escapeNewlines(name);
   const words = name.split(/\s+/);
   const bare =
     words.every((word) => IDENTIFIER.test(word)) &&
     !(words.length === 1 && RESERVED.has(name.toLowerCase()));
-  return bare ? words.join(" ") : `"${name.replace(/["\\]/g, "\\$&")}"`;
+  return bare ? words.join(" ") : `"${escapeNewlines(name.replace(/["\\]/g, "\\$&"))}"`;
 }
 
 /** The editor's `--editor-font` for the family the settings name (a name or a list), with the

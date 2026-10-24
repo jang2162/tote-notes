@@ -729,6 +729,13 @@ test("a font that is not there falls back to the default monospace, not to serif
     .poll(() => page.locator(".cm-scroller").evaluate((el) => getComputedStyle(el).fontFamily))
     .toContain("3270 Nope");
   expect(await editorIsMonospace(page)).toBe(true);
+  // A newline in a hand-edited name: unescaped it would end the CSS string and throw the editor
+  // theme's rule away, the font size with it.
+  await patch(page, { editorFontSize: 18, editorFontFamily: "3270\nNope" });
+  await expect
+    .poll(() => page.locator(".cm-scroller").evaluate((el) => getComputedStyle(el).fontSize))
+    .toBe("18px");
+  expect(await editorIsMonospace(page)).toBe(true);
 });
 
 /** Each line number's box against its line's: [gutter top, line top, gutter height, line height]. */
