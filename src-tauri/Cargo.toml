@@ -39,18 +39,28 @@ grep-searcher = "0.1"
 # tauri does not re-export `Accelerator`. The version tauri already pulls in.
 muda = { version = "0.20", default-features = false }
 
-# Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs). The versions tao already pulls in.
+# Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs), and takes a shortcut off a menu bar
+# item muda leaves it on (src/app/key_equivalents.rs). The versions tao already pulls in.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
   "std",
   "NSApplication",
+  "NSEvent",
+  "NSMenu",
+  "NSMenuItem",
   "NSResponder",
 ] }
+objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 
 [dev-dependencies]
 tempfile = "3"
 filetime = "0.2"
+
+# Builds a real AppKit menu bar, so it has to run on the main thread: no test harness.
+[[test]]
+name = "menu_key_equivalents"
+harness = false
 
 # No `panic = "abort"`: with unwinding a panicking command fails alone, while abort would take the
 # whole app — and every unsaved edit in it — down with it.
