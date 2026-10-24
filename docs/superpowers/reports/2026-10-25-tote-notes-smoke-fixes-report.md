@@ -222,7 +222,10 @@
 
 디버그 번들(`docs/guides/development.md` 「디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다」)로 본다.
 
-1. **탭 닫기 버튼(재개 스모크 화면 확인 11번의 나머지).** 탭 셋을 연 채 접근성 트리(`orca computer` 트리)를 읽는다. **기대:** 탭마다 `AXRadioButton`(이름은 메모 이름뿐, 「탭 닫기」 가 붙지 않는다) 다음에 버튼 「탭 닫기」 가 있고, 비활성 탭의 버튼도 있다. 활성 탭은 선택됨(`AXValue` 1)으로 보인다. ① 비활성 탭에 접근성 누르기(`click --element-index`) → 그 탭이 골라지고 닫히지 않는다(앞 회차 11번 합격이 그대로인지). ② 비활성 탭의 「탭 닫기」 버튼에 접근성 누르기 → 그 탭만 닫히고 활성 탭은 그대로. ③ 활성 탭의 「탭 닫기」 누르기 → 닫힌다. ④ VoiceOver 로 탭을 읽으면 메모 이름(과 선택됨)만 읽고, VO-Space 로 고르며, 다음 항목으로 가면 「탭 닫기, 버튼」 을 읽는다(사람). ⑤ 마우스: 비활성 탭 위에 올리면 × 가 보이고, 누르면 닫힌다. 탭 사이 끌기·가운데 클릭이 전처럼 된다.
+1. **탭 닫기 버튼(재개 스모크 화면 확인 11번의 나머지).** 탭 셋을 연 채 접근성 트리(`orca computer` 트리)를 읽는다. **기대:** 탭마다 `AXRadioButton`(이름은 메모 이름뿐, 「탭 닫기」 가 붙지 않는다) 다음에 버튼 「<메모 이름> 탭 닫기」(수정 회차 3, 전에는 모두 「탭 닫기」) 가 있고, 비활성 탭의 버튼도 있다. 활성 탭은 선택됨(`AXValue` 1)으로 보인다. ① 비활성 탭에 접근성 누르기(`click --element-index`) → 그 탭이 골라지고 닫히지 않는다(앞 회차 11번 합격이 그대로인지). ② 비활성 탭의 「탭 닫기」 버튼에 접근성 누르기 → 그 탭만 닫히고 활성 탭은 그대로. ③ 활성 탭의 「탭 닫기」 누르기 → 닫힌다. ④ VoiceOver 로 탭을 읽으면 메모 이름(과 선택됨)만 읽고, VO-Space 로 고르며, 다음 항목으로 가면 「<메모 이름> 탭 닫기, 버튼」 을 읽는다(사람). ⑤ 마우스: 비활성 탭 위에 올리면 × 가 보이고, 누르면 닫힌다. 탭 사이 끌기·가운데 클릭이 전처럼 된다.
+2. **닫기 버튼을 누르고 끌어 빼기(수정 회차 1).** 탭 셋(가·나·다, 다가 활성)에서 편집기에 글자를 친 뒤, 비활성 탭 「가」 의 × 위에서 마우스를 누르고 누른 채 아래로 끌어 빼 놓는다. 이어서 Space 와 Enter. **기대:** 탭이 닫히지 않고, 두 키는 편집기에 공백과 줄바꿈으로 들어간다(포커스가 편집기에 남는다). 비활성 탭 「나」 의 × 를 그냥 눌러 닫은 뒤 바로 글자를 치면 편집기에 들어간다. 칸 둘에서 다른 칸의 비활성 탭을 닫은 뒤에도 키가 원래 편집기에 있다.
+3. **VoiceOver 가 닫기 버튼 이름을 읽는 것(수정 회차 3, 사람).** 탭 「가」·「나」 를 연 채 VoiceOver 로터의 버튼 목록을 연다. **기대:** 「가 탭 닫기」·「나 탭 닫기」 로 갈려 보인다. 메모 이름을 바꾸면(파일 › 이름 바꾸기…) 그 버튼 이름이 새 이름으로 바뀐다. 탭 목록 안에서 탭과 버튼이 섞여 읽히는 모양(수정 회차 2, ARIA tablist 규칙을 벗어난 구조)도 본 그대로 적는다.
+4. **편집기 안 키패드 ⌘↩(재개 스모크 화면 확인 6 의 불합격, 수정 회차 4).** 이름 바꾸기… 에 ⌘+키패드 ↩ 를 녹음한다. **기대:** 「⌘키패드 ↩」 로 저장되고 그 줄에 「편집기의 insertBlankLine 을 가립니다」 가 보인다. 메모 편집기에 포커스를 두고 키패드 ⌘↩ → 「새 파일 이름」 대화상자가 열리고 빈 줄은 들어가지 않는다. 메인 줄 ⌘↩ → 빈 줄이 들어가고 대화상자는 열리지 않는다. 검색 띠 입력칸에서도 같다. 거꾸로 이름 바꾸기… 를 메인 줄 ⌘↩ 로 녹음하고 편집기에서 키패드 ⌘↩ → 빈 줄이 들어가고 대화상자가 열리지 않는지(설정 설계의 추론: 메인 줄 ↩ 로 건 메뉴 항목은 키패드 ↩ 에 실행되지 않는다). 편집기 밖(메모 목록)에서 키패드 ⌘↩ 로 메뉴 항목이 실행되는지도 함께 적는다.
 
 ### 실행 개수
 
@@ -231,5 +234,52 @@
 - vitest `pnpm exec vitest run`: 파일 44, 시험 390 통과(앞 회차 387 + 이 회차 3).
 - `cargo test --no-fail-fast`: 단위 419 통과(416 + 3), main 0, AppKit 하네스 `menu_key_equivalents: ok`·`menu_keypad: ok`, doc 0.
 - e2e `TOTE_E2E_PORT=1461 pnpm exec playwright test`: 411 통과(worker 7, 58.5초, 410 + 새 시험 1). `Script error`·`Cross-origin` 줄 0.
+- `tsc --noEmit`: 오류 0. oxlint(`--no-error-on-unmatched-pattern -f json`): 파일 167, 규칙 96, 진단 0.
+- `cargo clippy --all-targets --all-features -- -D warnings`: 경고 0. `cargo fmt --all --check`: 차이 0.
+
+### 수정 회차
+
+2026-10-25, 같은 브랜치. 원본은 마무리 회차 리뷰(`smoke-fixes-3` 워크트리 `.superpowers/handoff/smoke-fixes-3-review.md`)의 결함 1~3 과 재개 스모크 화면 확인 6 의 부분 불합격(키패드 ⌘↩), 리뷰가 본 부하 실패 1건이다. 화면 확인은 하지 않았다(e2e 는 headless 만). 새 화면 확인 후보는 위 「이 회차의 화면 확인 후보」 2~4 에 더했다.
+
+#### 1. 보이지 않는 닫기 버튼이 포커스를 쥐고 Space·Enter 로 탭을 닫음 (리뷰 결함 1, Important) — `086691c`
+
+- **고친 것(리뷰가 권한 방향).** 닫기 버튼의 `mousedown` 에서 `preventDefault()` 해 마우스가 포커스를 옮기지 않는다(`src/ui/tab-bar.ts`). 포커스는 편집기(또는 칸)에 그대로 남는다. 접근성 누르기와 `click()` 은 mousedown 이 없으므로 그대로다. 리뷰의 다른 길(`tabIndex` 빼기 — macOS 키보드 탐색을 켠 사람에게 Tab 순서에 든다, 형제 자리의 `span role=button`)보다 바꾸는 것이 적고 base 보다 낫다(편집기 포커스까지 남는다).
+- **시험.** e2e `tests/e2e/memo.spec.ts` 「a close button pressed with the mouse leaves the keys where they were」: 탭 셋(다가 활성)에서 비활성 탭 「가」 의 × 위에서 누르고 200px 끌어 빼 놓은 뒤 포커스가 `.tab-close` 가 아니고 칸 안이며, Space·Enter 뒤 탭 셋이 그대로. 이어서 비활성 탭 「나」 를 마우스로 닫은 뒤 포커스가 `.tab-close` 가 아니고 칸 안.
+- **구분력.** 고치기 전 코드로 셋 다 따로 실패한다: 첫 포커스 단언(`close: true`), 첫 단언을 뺀 채 Space·Enter 뒤 탭 수(`Expected - 1`, 탭이 닫힘), 앞의 둘을 뺀 채 닫은 뒤 포커스(`pane: false`, 리뷰의 `BODY` 증상). 복구 뒤 통과.
+- **설계.** 코어 설계 「탭의 닫기 버튼」 줄 끝에 리뷰가 준 문장.
+
+#### 2. 닫기 버튼이 tablist 자식 규칙을 벗어남 (리뷰 결함 2, Minor) — `9479e8f`
+
+코디네이터 판정대로 받아들였다. 코드는 바꾸지 않았고 코어 설계 「탭의 닫기 버튼」 줄에 리뷰가 준 「받아들이면 넣을 문장」 을 넣었다.
+
+#### 3. 닫기 버튼 이름이 모두 「탭 닫기」 (리뷰 결함 3, Minor) — `b933627`
+
+- **고친 것.** 버튼의 `aria-label`·`title` 을 `「<탭 이름> 탭 닫기」` 로. 탭 바는 그릴 때마다 탭을 새로 만들므로 이름 바꾸기를 따라간다. 코어 설계 「탭의 닫기 버튼」 줄과 `docs/guides/development.md` 탭 누르기 줄의 이름을 맞췄다. 기존 시험의 `getByRole("button", { name: "탭 닫기" })` 는 exact 가 아니라 그대로 맞는다.
+- **시험.** e2e `memo.spec.ts` 「a tab's close button is named after its tab and follows a rename」: 탭 「가」·「나」 의 버튼 이름이 `["가 탭 닫기", "나 탭 닫기"]`, 「나」 를 `목록.md` 로 이름 바꾸면 `"목록 탭 닫기"`.
+- **구분력.** 고치기 전 코드로 이름 단언이 실패(`"탭 닫기"` 둘). 이름을 탭 id 별로 처음 본 제목에 묶어 두면(이름 바꾸기를 안 따라가면) 「목록 탭 닫기」 단언이 실패. 복구 뒤 통과.
+
+#### 4. 편집기 안에서 ⌘+키패드 ↩ 가 메뉴로 가지 않음 (재개 스모크 화면 확인 6, 부분 불합격) — `ca3a59d`
+
+- **원인(진단 그대로 확인).** `menuKeymap`·`conflict` 가 `CmdOrCtrl+NumpadEnter` 를 편집기의 `Mod-Enter`(`CmdOrCtrl+Enter`)와 다른 키로 봤다. CodeMirror 는 `event.key` 로 키를 맞추고 키패드 ↩ 의 `key` 도 `Enter` 라 ⌘키패드 ↩ 에 `insertBlankLine` 이 실행됐다. e2e 에서 같은 증상이 재현됐다(메뉴 명령 0회).
+- **고른 방향: (a).** 근거: AppKit 은 두 키를 가르므로(화면 확인 6 에서 메인 줄 ⌘↩ 로는 키패드 항목이 실행되지 않았다) 편집기도 메뉴와 똑같이 가르게 하는 것이 「메뉴가 이긴다」 는 설계 규칙 그대로다. (b) 는 사용자가 가를 수 있던 키를 빼앗고, 이미 저장된 `CmdOrCtrl+NumpadEnter` 의 동작도 바꾼다.
+  - `editorRunsOn`: 편집기 키와 단축키를 비교할 때 키패드 ↩ 를 ↩ 로 본다. `conflict` 가 이것을 써서 ⌘키패드 ↩ 를 녹음하면 「편집기의 insertBlankLine 을 가립니다」 경고가 난다. `menuKeymap` 도 이것으로 편집기 키를 고른다.
+  - ↩·키패드 ↩ 에 건 단축키는 키 이름 바인딩 대신 CodeMirror 의 `any` 바인딩 하나로 건다. `KeyBinding.run` 은 뷰만 받아 `code` 를 볼 수 없어서다. `Prec.highest` 의 `any` 는 모든 키에서 편집기 바인딩보다 먼저 불린다(`buildKeymap` 이 `_any.run` 을 모든 키의 실행 목록 앞에 둔다, `@codemirror/view` 6.43.14). 이벤트를 `acceleratorFromEvent` 로 읽어 단축키와 같을 때만 명령을 실행하고 키를 막는다. 다른 쪽 ↩ 는 `false` 로 편집기에 넘긴다.
+  - 그래서 메인 줄 ⌘↩ 로 건 명령도 이제 ⌘키패드 ↩ 는 편집기에 남긴다(전에는 키 이름 바인딩이라 둘 다 명령이었다). 메인 줄 ↩ 항목이 키패드 ↩ 에 실행되지 않는다는 것은 화면 확인 6 의 관찰을 거꾸로 짚은 추론이다 — 화면 확인 후보 4.
+- **같은 꼴의 다른 키.** 편집기 키 109개 중 키패드 키와 글자가 같은 것은 `⌘↩`(insertBlankLine)·`⌘/`(toggleComment)·`↩`·`⇧↩` 뿐이다(`editorBindings()` 를 덤프해 봄). 키패드 ÷ 는 메인 줄 / 로 녹음되고 메뉴도 둘을 같게 보므로 편집기와 어긋나지 않는다. `↩`·`⇧↩` 는 ⌘⌃⌥ 가 없어 녹음되지 않는다. 키패드 ＋·× 는 녹음하지 않는다. 그래서 같은 꼴은 키패드 ↩ 하나다.
+- **시험.** 단위 `src/shortcuts/keys.test.ts`: `conflict` 가 `CmdOrCtrl+NumpadEnter` 를 편집기의 insertBlankLine 과 겹친다고 하고 `Ctrl+NumpadEnter` 는 겹침 없음. `menuKeymap` 이 `CmdOrCtrl+NumpadEnter`·`CmdOrCtrl+Enter` 에 `any` 바인딩 둘을 만들고, 키패드 ↩ 는 앞의 명령만, 메인 줄 ↩ 는 뒤의 명령만 실행하며 키를 막는다. ⇧ 가 더 붙은 ↩ 와 다른 키는 받지 않는다. 편집기 키가 없는 `Ctrl+NumpadEnter` 는 바인딩이 없다. e2e `tests/e2e/shortcuts.spec.ts` 「in the editor ⌘keypad ↩ runs the app command on it, and the main row's ⌘↩ stays the editor's」: 저장을 ⌘키패드 ↩ 로 두고 편집기에서 키패드 ⌘↩ → `save` 한 번·본문 그대로·포커스 편집기, 메인 줄 ⌘↩ → 빈 줄·메뉴 명령 그대로. (`rename` 으로 쓰면 대화상자가 포커스를 가져가 메인 줄 단언이 성립하지 않아 `save` 로 했다.)
+- **구분력.** `keys.ts` 를 통째로 되돌림 → 단위 둘·e2e 의 메뉴 명령 단언 실패. `code` 로 가르는 분기만 끔(키 이름 바인딩으로) → 단위 `menuKeymap` 시험과 e2e 의 메인 줄 ⌘↩ 단언(빈 줄 대신 저장) 실패. 복구 뒤 통과.
+- **설계.** 설정 설계 「편집기 단축키는 고정이 아니다」 줄 끝에 ↩·키패드 ↩ 예외와 추론의 범위.
+
+#### 5. 부하 실패 표본 — `e8b5ee5`
+
+리뷰가 본 `tests/e2e/shortcuts.spec.ts:710` 부하 실패를 이 보고 「넘기는 것」 표에 새 행으로 더했다(전체 실행 1/2, 단독 0/20·부하 30, 첫 줄, 다음에 볼 것). 이 회차의 전체 e2e 1회(아래)에서는 실패하지 않았다.
+
+#### 실행 개수
+
+모두 `e8b5ee5` 위에서(작업 트리 깨끗). 부하 `load averages` 4~11.
+
+- vitest `pnpm exec vitest run`: 파일 44, 시험 392 통과(마무리 회차 390 + 이 회차 2).
+- `cargo test --no-fail-fast`: 단위 419 통과, main 0, AppKit 하네스 `menu_key_equivalents: ok`·`menu_keypad: ok`, doc 0(Rust 는 바꾸지 않았다).
+- e2e `TOTE_E2E_PORT=1461 pnpm exec playwright test`: 414 통과(worker 7, 52.3초, 411 + 새 시험 3). `Script error`·`Cross-origin` 줄 0.
 - `tsc --noEmit`: 오류 0. oxlint(`--no-error-on-unmatched-pattern -f json`): 파일 167, 규칙 96, 진단 0.
 - `cargo clippy --all-targets --all-features -- -D warnings`: 경고 0. `cargo fmt --all --check`: 차이 0.
