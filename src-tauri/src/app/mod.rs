@@ -253,7 +253,6 @@ impl Inner {
         window.is_leaving() || self.flush.targets(label)
     }
 
-    /// The labels of the windows on `path`, in opening order.
     /// The windows a quit waits on. A window whose page is not up has nothing to write and may not
     /// answer, so it would only hold the round to its timeout: one that switched wrote its tabs
     /// before it did, and one still loading has no layout and was never focused.
@@ -269,6 +268,7 @@ impl Inner {
             .collect()
     }
 
+    /// The labels of the windows on `path`, in opening order.
     fn windows_of(&self, path: &Path) -> Vec<String> {
         let mut windows: Vec<(&String, &OpenWindow)> = self
             .windows
@@ -1183,8 +1183,9 @@ impl AppCore {
 
     /// Puts a found update to one window — so however many are open, the person is asked once
     /// (spec 2026-10-25 「제약」): `prefer` when it is open (the window the menu's check was picked
-    /// in), else the one focused last, else the first opened. With no window at all it waits for
-    /// the next one registered. Returns the window to tell (`tote://pending`).
+    /// in), else the one focused last, else the first registered — one not up yet, which `opened`
+    /// has not put in `focus`: the only window, opening as the check ends. With no window at all
+    /// it waits for the next one registered. Returns the window to tell (`tote://pending`).
     pub fn offer_update(&self, offer: UpdateOffer, prefer: Option<&str>) -> Option<String> {
         let mut inner = lock(&self.inner);
         let label = prefer
@@ -2557,6 +2558,20 @@ mod tests {
         assert_eq!(offers(&core, &a), 0);
         // A window that is gone by now is not one to ask in: the latest one is (c, just opened).
         assert_eq!(core.offer_update(offer(), Some("gone")), Some(c.clone()));
+    }
+
+    #[test]
+    fn an_offer_goes_to_a_window_still_opening() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        // Registered, so it took no waiting offer, but not `opened` yet: no window is in focus.
+        let workspace = Workspace::create(&core.workspace_root(), "가").unwrap();
+        let a = core.next_label();
+        let path = workspace.root().to_path_buf();
+        assert!(core.register_window(&a, &path, Some(workspace), None));
+        assert_eq!(core.latest_window(), None);
+        assert_eq!(core.offer_update(offer(), None), Some(a.clone()));
+        assert_eq!(offers(&core, &a), 1);
     }
 
     #[test]

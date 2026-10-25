@@ -208,6 +208,20 @@ describe("TauriBackend", () => {
     await expect(backend.listMemos()).rejects.toMatchObject({ code: "app" });
   });
 
+  // The codes commands.rs `install_update` and `restart_for_update` answer with: the dialog tells
+  // 「받는 중」 and 「다른 창이 저장하는 중」 from a failure by them, and one folded into "app"
+  // would read as a failure with 「다시 시도」.
+  it("keeps the codes of the update commands", async () => {
+    for (const code of ["no-update", "installing", "update-failed"]) {
+      invoke.mockRejectedValueOnce({ code, message: "m" });
+      await expect(backend.installUpdate(() => {})).rejects.toMatchObject({ code });
+    }
+    for (const code of ["not-installed", "busy"]) {
+      invoke.mockRejectedValueOnce({ code, message: "m" });
+      await expect(backend.restartForUpdate()).rejects.toMatchObject({ code });
+    }
+  });
+
   it("names bundled viewer pages by the tote-ext scheme", () => {
     expect(backend.viewerUrl("tote.markdown-preview", "viewer.html")).toBe(
       "tote-ext://localhost/tote.markdown-preview/viewer.html",
