@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use super::flush::{Ack, Begin, FlushGoal};
-use super::{windows, AppCore, PendingOpen, SwitchError};
+use super::{windows, AppCore, PendingOpen, RestartBusy, SwitchError};
 
 /// Long enough to write any memo to a local disk; short enough that a hung page cannot keep tote
 /// from closing.
@@ -27,6 +27,9 @@ pub enum Step {
     /// Tell a waiting macOS 「no」 (Dock quit, logout). Does nothing when macOS is not waiting.
     /// A quit Apple Event held while a close asked is let go by this answer too.
     RefuseSystemQuit,
+    /// The restart for an update is off (「취소」 to its question): the update stays installed for
+    /// the next launch, and the window that asked says so (`tote://restart-off`).
+    RestartOff,
     Ask {
         goal: FlushGoal,
         reasons: Vec<String>,
@@ -48,6 +51,9 @@ pub fn steps_for_answer(goal: FlushGoal, anyway: bool, quit_waiting: bool) -> Ve
     match (goal, anyway) {
         (FlushGoal::Quit, true) => vec![Step::Finish(FlushGoal::Quit)],
         (FlushGoal::Quit, false) => vec![Step::RefuseSystemQuit],
+        (FlushGoal::Restart, true) => vec![Step::Finish(FlushGoal::Restart)],
+        // A Dock quit or a logout the restart absorbed is refused with it.
+        (FlushGoal::Restart, false) => vec![Step::RefuseSystemQuit, Step::RestartOff],
         (close, true) if quit_waiting => vec![Step::Finish(close), Step::BeginQuit],
         (close, true) => vec![Step::Finish(close)],
         (_, false) if quit_waiting => vec![Step::RefuseSystemQuit],
@@ -67,6 +73,14 @@ pub fn begin(app: &AppHandle, goal: FlushGoal) {
     let kind = goal.kind();
     let round = app.state::<AppCore>().begin_flush(goal);
     run(app, round, kind);
+}
+
+/// Writes every window, then starts tote again for the update just installed. Refused while
+/// another round is open: the page says so and the person tries again.
+pub fn begin_restart(app: &AppHandle) -> Result<(), RestartBusy> {
+    let round = app.state::<AppCore>().begin_restart()?;
+    run(app, round, FlushGoal::Restart.kind());
+    Ok(())
 }
 
 /// Carries out what starting a round for a goal of `kind` calls for.
@@ -134,6 +148,9 @@ fn run_steps(app: &AppHandle, id: u64, steps: Vec<Step>) {
                 #[cfg(target_os = "macos")]
                 system_quit::answer(app, false);
             }
+            Step::RestartOff => {
+                let _ = app.emit("tote://restart-off", ());
+            }
             Step::Ask { goal, reasons } => ask_blocked(app, id, goal, &reasons),
         }
     }
@@ -146,6 +163,7 @@ fn blocked_labels(goal: &FlushGoal) -> (&'static str, &'static str) {
         FlushGoal::CloseWindow(_) => ("그래도 닫기", "그래도 닫으면"),
         FlushGoal::SwitchWorkspace { .. } => ("그래도 바꾸기", "그래도 바꾸면"),
         FlushGoal::Quit => ("그래도 종료", "그래도 종료하면"),
+        FlushGoal::Restart => ("그래도 다시 시작", "그래도 다시 시작하면"),
     }
 }
 
@@ -251,6 +269,21 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
                 return;
             }
             app.exit(0);
+            return;
+        }
+        FlushGoal::Restart => {
+            app.state::<AppCore>().start_quit();
+            // A Dock quit or a logout came during the round: it is a quit after all. The update
+            // is installed, so the next launch is the new version.
+            #[cfg(target_os = "macos")]
+            if system_quit::answer(app, true) {
+                return;
+            }
+            // Not `restart()`: called on the main thread it starts the new process at once,
+            // before `RunEvent::Exit` lets the single-instance plugin remove its socket, and the
+            // new process may hand its launch to the old one and end. `request_restart` exits
+            // first, then starts it.
+            app.request_restart();
             return;
         }
     };
@@ -827,6 +860,10 @@ mod tests {
             (close(), ("그래도 닫기", "그래도 닫으면")),
             (switch(), ("그래도 바꾸기", "그래도 바꾸면")),
             (FlushGoal::Quit, ("그래도 종료", "그래도 종료하면")),
+            (
+                FlushGoal::Restart,
+                ("그래도 다시 시작", "그래도 다시 시작하면"),
+            ),
         ] {
             assert_eq!(blocked_labels(&goal), labels);
         }
@@ -841,6 +878,10 @@ mod tests {
             (
                 FlushGoal::Quit,
                 "그래도 종료하면 저장하지 못한 글은 사라집니다.",
+            ),
+            (
+                FlushGoal::Restart,
+                "그래도 다시 시작하면 저장하지 못한 글은 사라집니다.",
             ),
         ] {
             assert_eq!(
@@ -887,6 +928,20 @@ mod tests {
                 vec![Step::Finish(switch()), Step::BeginQuit],
             ),
             (switch(), false, true, vec![Step::RefuseSystemQuit]),
+            // A Dock quit the restart absorbed is answered by `finish` (it quits) or refused
+            // here; either way the windows hear the restart is off.
+            (
+                FlushGoal::Restart,
+                true,
+                false,
+                vec![Step::Finish(FlushGoal::Restart)],
+            ),
+            (
+                FlushGoal::Restart,
+                false,
+                false,
+                vec![Step::RefuseSystemQuit, Step::RestartOff],
+            ),
         ];
         for (goal, anyway, quit_waiting, steps) in table {
             assert_eq!(
@@ -941,6 +996,7 @@ mod tests {
             Exit::NotClosed,
         ] {
             assert!(!keeps_window(&FlushGoal::Quit, exit), "{exit:?}");
+            assert!(!keeps_window(&FlushGoal::Restart, exit), "{exit:?}");
         }
     }
 
@@ -951,6 +1007,10 @@ mod tests {
         assert_eq!(
             steps_for_ack(Ack::Done(close())),
             vec![Step::Finish(close())]
+        );
+        assert_eq!(
+            steps_for_ack(Ack::Done(FlushGoal::Restart)),
+            vec![Step::Finish(FlushGoal::Restart)]
         );
         assert_eq!(
             steps_for_ack(Ack::DoneThenQuit(close())),

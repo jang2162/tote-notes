@@ -225,6 +225,10 @@ impl std::fmt::Display for WindowBusy {
 
 impl std::error::Error for WindowBusy {}
 
+/// Another round — a close, a switch or a quit — is open: the restart waits for it to end.
+#[derive(Debug, PartialEq, Eq)]
+pub struct RestartBusy;
+
 impl Inner {
     /// Whether window `label` (`window`) is to take no tab handed to it: it is leaving
     /// (`OpenWindow::is_leaving`), or a round to close it or switch its workspace is open
@@ -244,6 +248,21 @@ impl Inner {
     }
 
     /// The labels of the windows on `path`, in opening order.
+    /// The windows a quit waits on. A window whose page is not up has nothing to write and may not
+    /// answer, so it would only hold the round to its timeout: one that switched wrote its tabs
+    /// before it did, and one still loading has no layout and was never focused.
+    fn quit_windows(&self) -> Vec<String> {
+        self.windows
+            .iter()
+            .filter(|(label, window)| {
+                !window.closing
+                    && !window.switching
+                    && (window.layout.is_some() || self.focus.contains(*label))
+            })
+            .map(|(label, _)| label.clone())
+            .collect()
+    }
+
     fn windows_of(&self, path: &Path) -> Vec<String> {
         let mut windows: Vec<(&String, &OpenWindow)> = self
             .windows
@@ -1301,21 +1320,21 @@ impl AppCore {
             FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => {
                 vec![label.clone()]
             }
-            // A window whose page is not up has nothing to write and may not answer, so it would
-            // only hold the round to its timeout: one that switched wrote its tabs before it did,
-            // and one still loading has no layout and was never focused.
-            FlushGoal::Quit => inner
-                .windows
-                .iter()
-                .filter(|(label, window)| {
-                    !window.closing
-                        && !window.switching
-                        && (window.layout.is_some() || inner.focus.contains(*label))
-                })
-                .map(|(label, _)| label.clone())
-                .collect(),
+            FlushGoal::Quit | FlushGoal::Restart => inner.quit_windows(),
         };
         inner.flush.begin(goal, windows)
+    }
+
+    /// Starts the write-then-restart round, on the windows a quit would wait on. Under the same
+    /// lock as the check: only when no other round is open, so a restart never joins a close's
+    /// or a switch's question the way a quit does (`Ack::DoneThenQuit`).
+    pub fn begin_restart(&self) -> Result<Begin, RestartBusy> {
+        let mut inner = lock(&self.inner);
+        if !inner.flush.is_idle() {
+            return Err(RestartBusy);
+        }
+        let windows = inner.quit_windows();
+        Ok(inner.flush.begin(FlushGoal::Restart, windows))
     }
 
     pub fn ack_flush(&self, id: u64, label: &str, blocked: Option<String>) -> Ack {
@@ -1340,7 +1359,7 @@ impl AppCore {
                         window.closing = true;
                     }
                 }
-                FlushGoal::Quit => {}
+                FlushGoal::Quit | FlushGoal::Restart => {}
             }
         }
         ack
@@ -2455,6 +2474,59 @@ mod tests {
             core.begin_flush(FlushGoal::Quit),
             Begin::Started { windows, .. } if windows == vec![a.clone()]
         ));
+    }
+
+    #[test]
+    fn a_restart_never_starts_beside_another_round() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let Begin::Started { id, .. } = core.begin_flush(FlushGoal::CloseWindow(a.clone())) else {
+            panic!("expected a close round")
+        };
+        assert_eq!(core.begin_restart(), Err(RestartBusy));
+        assert!(matches!(
+            core.ack_flush(id, &a, None),
+            Ack::Done(FlushGoal::CloseWindow(_))
+        ));
+        let b = open(&core, "나");
+        assert!(matches!(
+            core.begin_restart(),
+            Ok(Begin::Started { windows, .. }) if windows.contains(&b)
+        ));
+    }
+
+    #[test]
+    fn a_restart_waits_on_the_windows_a_quit_would() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let up = open(&core, "가");
+        let path = core.path_of(&up).unwrap();
+        core.set_layout(&up, json!({"focusedPane": 0})).unwrap();
+        // Registered, its page not up yet: no layout, never focused.
+        let loading = core.next_label();
+        assert!(core.register_window(&loading, &path, None, None));
+        let going = open(&core, "나");
+        core.closing(&going);
+        let also_up = open(&core, "다");
+
+        let Ok(Begin::Started {
+            id,
+            windows: restart,
+        }) = core.begin_restart()
+        else {
+            panic!("expected a restart round")
+        };
+        core.cancel_flush(id);
+        let Begin::Started { windows: quit, .. } = core.begin_flush(FlushGoal::Quit) else {
+            panic!("expected a quit round")
+        };
+        assert_eq!(restart, quit);
+        let mut sorted = restart.clone();
+        sorted.sort();
+        let mut want = vec![up, also_up];
+        want.sort();
+        assert_eq!(sorted, want);
     }
 
     #[test]

@@ -23,6 +23,9 @@ pub enum FlushGoal {
         to: PathBuf,
     },
     Quit,
+    /// Quit and start again: an update was installed. Every window a quit would wait on writes
+    /// first, the same way.
+    Restart,
 }
 
 impl FlushGoal {
@@ -33,16 +36,21 @@ impl FlushGoal {
         match self {
             FlushGoal::CloseWindow(_) => "close",
             FlushGoal::SwitchWorkspace { .. } => "switch",
-            FlushGoal::Quit => "quit",
+            FlushGoal::Quit | FlushGoal::Restart => "quit",
         }
     }
 
-    /// The window of a window round; `None` for a quit.
+    /// The window of a window round; `None` for a quit or a restart.
     pub fn window(&self) -> Option<&str> {
         match self {
             FlushGoal::CloseWindow(label) | FlushGoal::SwitchWorkspace { label, .. } => Some(label),
-            FlushGoal::Quit => None,
+            FlushGoal::Quit | FlushGoal::Restart => None,
         }
+    }
+
+    /// Ends tote, to quit or to start again.
+    pub fn is_quit(&self) -> bool {
+        matches!(self, FlushGoal::Quit | FlushGoal::Restart)
     }
 }
 
@@ -101,11 +109,10 @@ impl FlushCoordinator {
         // A quit beside a window round could end in two dialogs at once, one per round; the quit
         // waits on the window round instead, writing or asking. Rounds are kept in id order, so
         // with several the first opened takes it. A quit round already running wins: it absorbs
-        // this one below, and a window round's 「취소」 must not refuse it.
-        let quit_running = self
-            .rounds
-            .values()
-            .any(|round| round.goal == FlushGoal::Quit);
+        // this one below, and a window round's 「취소」 must not refuse it. A restart round runs
+        // like a quit and absorbs the same; a restart itself never joins a window round
+        // (`AppCore::begin_restart` starts one only with no round open).
+        let quit_running = self.rounds.values().any(|round| round.goal.is_quit());
         if goal == FlushGoal::Quit && !quit_running {
             let window_round = self
                 .rounds
@@ -201,6 +208,11 @@ impl FlushCoordinator {
         self.rounds
             .values()
             .any(|round| round.goal.window() == Some(label))
+    }
+
+    /// No round is open, writing or asking.
+    pub fn is_idle(&self) -> bool {
+        self.rounds.is_empty()
     }
 
     /// Drops round `id` — its question was answered, either way. True when a quit was waiting on
@@ -629,6 +641,58 @@ mod tests {
             Begin::AlreadyRunning
         );
         assert!(f.cancel(id));
+    }
+
+    #[test]
+    fn a_restart_waits_for_every_window_like_a_quit() {
+        // The page writes for it as for a quit: it keeps its panes.
+        assert_eq!(FlushGoal::Restart.kind(), "quit");
+        assert_eq!(FlushGoal::Restart.window(), None);
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Restart, labels(&["a", "b"])) else {
+            panic!("expected a round")
+        };
+        assert_eq!(f.ack(id, "a", None), Ack::Pending);
+        assert_eq!(f.ack(id, "b", None), Ack::Done(FlushGoal::Restart));
+    }
+
+    #[test]
+    fn a_restart_absorbs_a_quit_and_a_close() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Restart, labels(&["a", "b"])) else {
+            panic!("expected a round")
+        };
+        // ⌘Q, a Dock quit or a window's close while it writes: the restart covers them.
+        assert_eq!(
+            f.begin(FlushGoal::Quit, labels(&["a", "b"])),
+            Begin::AlreadyRunning
+        );
+        assert_eq!(
+            f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"])),
+            Begin::AlreadyRunning
+        );
+        assert_eq!(f.ack(id, "a", None), Ack::Pending);
+        // Ends as the restart, with no quit joined to it.
+        assert_eq!(f.ack(id, "b", None), Ack::Done(FlushGoal::Restart));
+    }
+
+    #[test]
+    fn is_idle_only_without_rounds() {
+        let mut f = FlushCoordinator::default();
+        assert!(f.is_idle());
+        let Begin::Started { id, .. } = f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"]))
+        else {
+            panic!("expected a round")
+        };
+        assert!(!f.is_idle());
+        assert!(matches!(
+            f.ack(id, "a", Some(ONE_FAILED.into())),
+            Ack::Blocked { .. }
+        ));
+        // Asking is still a round.
+        assert!(!f.is_idle());
+        f.cancel(id);
+        assert!(f.is_idle());
     }
 
     #[test]
