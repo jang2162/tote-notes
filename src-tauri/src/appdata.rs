@@ -149,6 +149,8 @@ pub struct Settings {
     pub extensions: ExtensionSettings,
     #[serde(default, deserialize_with = "lenient")]
     pub editor: EditorSettings,
+    #[serde(default, deserialize_with = "lenient")]
+    pub updates: UpdateSettings,
     /// Command id → the shortcut it has instead of its default, `None` for none (src/shortcuts.rs).
     #[serde(
         default,
@@ -228,6 +230,21 @@ pub struct EditorSettings {
     pub font_family: String,
 }
 
+/// The update check at launch (src/app/update.rs); off, tote sends nothing to github.com unless
+/// the person picks 「업데이트 확인…」.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct UpdateSettings {
+    #[serde(deserialize_with = "lenient_on")]
+    pub auto_check: bool,
+}
+
+impl Default for UpdateSettings {
+    fn default() -> Self {
+        UpdateSettings { auto_check: true }
+    }
+}
+
 const DEFAULT_FONT_SIZE: u8 = 14;
 const FONT_SIZES: std::ops::RangeInclusive<u8> = 11..=24;
 
@@ -302,6 +319,8 @@ pub struct SettingsPatch {
     pub editor_font_size: Option<u8>,
     #[serde(default)]
     pub editor_font_family: Option<String>,
+    #[serde(default)]
+    pub updates_auto_check: Option<bool>,
     /// The whole map: what is not in it goes back to its default.
     #[serde(default)]
     pub shortcuts: Option<BTreeMap<String, Option<String>>>,
@@ -359,6 +378,9 @@ impl SettingsPatch {
         }
         if let Some(family) = &self.editor_font_family {
             settings.editor.font_family = family.clone();
+        }
+        if let Some(on) = self.updates_auto_check {
+            settings.updates.auto_check = on;
         }
         if let Some(overrides) = &self.shortcuts {
             settings.shortcuts = overrides.clone();
@@ -637,6 +659,7 @@ mod tests {
                 font_size: 16,
                 font_family: "D2Coding".into(),
             },
+            updates: UpdateSettings { auto_check: false },
             shortcuts: BTreeMap::from([
                 ("rename".into(), Some("CmdOrCtrl+K".into())),
                 ("new-memo".into(), None),
@@ -722,6 +745,36 @@ mod tests {
         }
         let patch = serde_json::from_str::<SettingsPatch>(r#"{"editorFontSize": 300}"#).unwrap();
         assert_eq!(patch.editor_font_size, Some(24));
+    }
+
+    #[test]
+    fn updates_auto_check_is_on_by_default_and_survives_a_bad_value() {
+        let read = |text: &str| serde_json::from_str::<Settings>(text).unwrap();
+        assert!(read("{}").updates.auto_check);
+        assert!(
+            !read(r#"{"updates": {"autoCheck": false}}"#)
+                .updates
+                .auto_check
+        );
+        let bad = read(r#"{"workspaceRoot": "/x", "updates": {"autoCheck": "no"}}"#);
+        assert!(bad.updates.auto_check);
+        assert_eq!(bad.workspace_root, Some(PathBuf::from("/x")));
+        let bad = read(r#"{"workspaceRoot": "/x", "updates": 3}"#);
+        assert!(bad.updates.auto_check);
+        assert_eq!(bad.workspace_root, Some(PathBuf::from("/x")));
+
+        let mut settings = Settings {
+            workspace_root: Some("/x".into()),
+            ..Default::default()
+        };
+        let patch =
+            serde_json::from_str::<SettingsPatch>(r#"{"updatesAutoCheck": false}"#).unwrap();
+        patch.apply(&mut settings).unwrap();
+        assert!(!settings.updates.auto_check);
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+        assert!(settings.editor.line_numbers);
+        let written = serde_json::to_value(&settings).unwrap();
+        assert_eq!(written["updates"], serde_json::json!({"autoCheck": false}));
     }
 
     #[test]
@@ -890,6 +943,7 @@ mod tests {
                 font_size: 16,
                 font_family: "D2Coding".into(),
             },
+            updates: UpdateSettings { auto_check: false },
             shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
         };
         SettingsPatch {

@@ -38,6 +38,8 @@ pub fn run() {
             requests::handle(app, CliRequest::find_in(&argv).unwrap_or_default());
         }))
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .manage(<app::update::Updates>::default())
         .register_asynchronous_uri_scheme_protocol("tote-file", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let method = request.method().clone();
@@ -80,6 +82,7 @@ pub fn run() {
             start_watching(app.handle().clone());
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
             start_backups(app.handle().clone());
+            app::update::start(app.handle());
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -115,6 +118,8 @@ pub fn run() {
             commands::relocate_workspace,
             commands::open_workspace,
             commands::flush_done,
+            commands::install_update,
+            commands::restart_for_update,
             commands::close_window,
             commands::extension_registry,
             commands::read_extension_file,

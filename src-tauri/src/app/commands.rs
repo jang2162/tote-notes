@@ -12,7 +12,7 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
-use super::{lifecycle, lock, menu, windows, AppCore, PendingOpen};
+use super::{lifecycle, lock, menu, update, windows, AppCore, PendingOpen};
 use crate::appdata::{Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
 use crate::backup::BackupDir;
@@ -706,6 +706,55 @@ pub async fn flush_done(
     blocked: Option<String>,
 ) -> CmdResult<bool> {
     Ok(lifecycle::ack(&app, id, window.label(), blocked))
+}
+
+/// How far `install_update` is, for the page's progress line.
+#[derive(Clone, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum UpdateProgress {
+    Progress { done: u64, total: Option<u64> },
+    Installing,
+}
+
+/// Downloads and installs the update the page was offered — only ever after the person said
+/// 「업데이트하고 다시 시작」 there. The running tote stays as it is until `restart_for_update`.
+#[tauri::command]
+pub async fn install_update(app: AppHandle, on_progress: Channel<UpdateProgress>) -> CmdResult<()> {
+    let updates = app.state::<update::Updates>();
+    let found = updates.begin_install().map_err(|code| {
+        let message = match code {
+            "busy" => "업데이트를 이미 받는 중입니다",
+            _ => "설치할 업데이트가 없습니다",
+        };
+        CommandError::new(code, message)
+    })?;
+    let mut done = 0u64;
+    let installed = found
+        .download_and_install(
+            |chunk, total| {
+                done += chunk as u64;
+                let _ = on_progress.send(UpdateProgress::Progress { done, total });
+            },
+            || {
+                let _ = on_progress.send(UpdateProgress::Installing);
+            },
+        )
+        .await;
+    updates.end_install(installed.is_ok());
+    installed.map_err(|err| CommandError::new("update-failed", err.to_string()))
+}
+
+/// Writes every window, then starts the installed version (`lifecycle::begin_restart`).
+#[tauri::command]
+pub fn restart_for_update(app: AppHandle) -> CmdResult<()> {
+    let installed = app.state::<update::Updates>().installed();
+    update::try_restart(installed, || lifecycle::begin_restart(&app)).map_err(|code| {
+        let message = match code {
+            "busy" => "다른 창이 저장하는 중입니다",
+            _ => "이번 실행에서 설치한 업데이트가 없습니다",
+        };
+        CommandError::new(code, message)
+    })
 }
 
 #[tauri::command]

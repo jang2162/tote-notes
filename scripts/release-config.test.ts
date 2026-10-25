@@ -36,6 +36,25 @@ describe("the release config", () => {
     expect(conf.app.security.csp["connect-src"]).toBe("ipc: http://ipc.localhost tote-file:");
   });
 
+  it("checks for updates at the releases' latest.json, signed for the version announced", () => {
+    const updater = conf.plugins.updater;
+    expect(updater.endpoints).toEqual([
+      "https://github.com/jang2162/tote-notes/releases/latest/download/latest.json",
+    ]);
+    // Without it, an old signed bundle could be announced under a higher version.
+    expect(updater.requireSignedVersion).toBe(true);
+    // The placeholder until the key is made (docs/guides/release-macos.md); the release fails on it.
+    expect(updater.pubkey).toBeTruthy();
+  });
+
+  it("gives the page no updater or process permission", () => {
+    // The check, the download and the restart are Rust's (src-tauri/src/app/update.rs).
+    expect(json("src-tauri/capabilities/default.json").permissions).toEqual([
+      "core:default",
+      "dialog:allow-open",
+    ]);
+  });
+
   it("leaves no trace of the old identifier outside the dated history", () => {
     // Plans, specs and reports under docs/superpowers are history and keep the name they had.
     // Put together so this file does not match itself; `[._]` takes the socket's spelling too.

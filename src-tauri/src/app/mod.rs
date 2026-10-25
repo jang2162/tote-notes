@@ -11,6 +11,7 @@ pub mod lifecycle;
 pub mod menu;
 pub mod places;
 pub mod requests;
+pub mod update;
 pub mod windows;
 
 use std::collections::{HashMap, HashSet};
@@ -39,6 +40,7 @@ use crate::watch::{Batch, WatchTarget, Watcher};
 use crate::workspace::{Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
+use update::UpdateOffer;
 
 /// A poisoned lock only means another command panicked; the data is still the best there is.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -62,6 +64,8 @@ pub enum PendingOpen {
     Notice {
         message: String,
     },
+    /// A new version to ask about (`AppCore::offer_update`).
+    Update(UpdateOffer),
 }
 
 /// What a window asked to switch to calls for (`AppCore::switch_target`).
@@ -153,6 +157,8 @@ struct Inner {
     /// Window label → the CLI requests `hold_request` kept for its switch. Not on the window: a
     /// window that goes mid-switch (`closed`, `release`) must not take them with it.
     held: HashMap<String, Vec<CliRequest>>,
+    /// An update found while no window was open: the next window registered asks about it.
+    waiting_offer: Option<UpdateOffer>,
 }
 
 struct OpenWorkspace {
@@ -298,11 +304,18 @@ impl Inner {
     fn add_window(&mut self, label: &str, path: &Path, layout: Option<Value>) {
         self.serials += 1;
         let serial = self.serials;
+        // Its page takes this with its first `take_pending_opens`.
+        let pending = self
+            .waiting_offer
+            .take()
+            .map(PendingOpen::Update)
+            .into_iter()
+            .collect();
         self.windows.insert(
             label.to_string(),
             OpenWindow {
                 path: path.to_path_buf(),
-                pending: Vec::new(),
+                pending,
                 serial,
                 closing: false,
                 layout,
@@ -377,6 +390,7 @@ impl AppCore {
                 flush: FlushCoordinator::default(),
                 quitting: false,
                 held: HashMap::new(),
+                waiting_offer: None,
             }),
         }
     }
@@ -1165,6 +1179,37 @@ impl AppCore {
 
     pub fn latest_window(&self) -> Option<String> {
         lock(&self.inner).focus.first().cloned()
+    }
+
+    /// Puts a found update to one window — so however many are open, the person is asked once
+    /// (spec 2026-10-25 「제약」): `prefer` when it is open (the window the menu's check was picked
+    /// in), else the one focused last, else the first opened. With no window at all it waits for
+    /// the next one registered. Returns the window to tell (`tote://pending`).
+    pub fn offer_update(&self, offer: UpdateOffer, prefer: Option<&str>) -> Option<String> {
+        let mut inner = lock(&self.inner);
+        let label = prefer
+            .filter(|label| inner.windows.contains_key(*label))
+            .map(str::to_string)
+            .or_else(|| inner.focus.first().cloned())
+            .or_else(|| {
+                inner
+                    .windows
+                    .iter()
+                    .min_by_key(|(_, window)| window.serial)
+                    .map(|(label, _)| label.clone())
+            });
+        match label {
+            Some(label) => {
+                if let Some(window) = inner.windows.get_mut(&label) {
+                    window.pending.push(PendingOpen::Update(offer));
+                }
+                Some(label)
+            }
+            None => {
+                inner.waiting_offer = Some(offer);
+                None
+            }
+        }
     }
 
     pub fn push_pending(&self, label: &str, open: PendingOpen) {
@@ -2474,6 +2519,61 @@ mod tests {
             core.begin_flush(FlushGoal::Quit),
             Begin::Started { windows, .. } if windows == vec![a.clone()]
         ));
+    }
+
+    fn offer() -> UpdateOffer {
+        UpdateOffer {
+            version: "0.2.0".into(),
+            current: "0.1.0".into(),
+            notes: None,
+        }
+    }
+
+    fn offers(core: &AppCore, label: &str) -> usize {
+        core.take_pending(label)
+            .iter()
+            .filter(|open| matches!(open, PendingOpen::Update(_)))
+            .count()
+    }
+
+    #[test]
+    fn an_update_offer_goes_to_one_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        core.focused(&a);
+        assert_eq!(core.offer_update(offer(), None), Some(a.clone()));
+        assert_eq!(offers(&core, &a), 1);
+        assert_eq!(offers(&core, &b), 0);
+        // Handed over once: a window that registers later gets nothing.
+        let c = open(&core, "다");
+        assert_eq!(offers(&core, &c), 0);
+        // The menu's check asks in the window it was picked in.
+        assert_eq!(core.offer_update(offer(), Some(&b)), Some(b.clone()));
+        assert_eq!(offers(&core, &b), 1);
+        assert_eq!(offers(&core, &a), 0);
+        // A window that is gone by now is not one to ask in: the latest one is (c, just opened).
+        assert_eq!(core.offer_update(offer(), Some("gone")), Some(c.clone()));
+    }
+
+    #[test]
+    fn an_offer_with_no_window_waits_for_the_first_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        assert_eq!(core.offer_update(offer(), None), None);
+        let a = open(&core, "가");
+        assert_eq!(core.take_pending(&a), vec![PendingOpen::Update(offer())]);
+        let b = open(&core, "나");
+        assert_eq!(offers(&core, &b), 0);
+    }
+
+    #[test]
+    fn a_pending_update_tells_the_page_its_kind() {
+        assert_eq!(
+            serde_json::to_value(PendingOpen::Update(offer())).unwrap(),
+            json!({"kind": "update", "version": "0.2.0", "current": "0.1.0", "notes": null})
+        );
     }
 
     #[test]

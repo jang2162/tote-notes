@@ -125,7 +125,7 @@ tote-note 는 서브프로젝트 셋으로 나뉜다. 이 문서는 **코어**�
 
 ~/Library/Application Support/tote/   이 기기 전용, 워크스페이스 밖
   machine.json                   기기 ID(최초 실행 때 UUID 생성)·기기 이름(호스트명)
-  settings.json                  워크스페이스 루트, 테마, 확장 활성 상태, 편집기 설정(`editor`: 줄번호·글꼴 크기·글꼴), 기본값과 다른 단축키(`shortcuts`)
+  settings.json                  워크스페이스 루트, 테마, 확장 활성 상태, 편집기 설정(`editor`: 줄번호·글꼴 크기·글꼴), 업데이트 자동 확인(`updates.autoCheck`), 기본값과 다른 단축키(`shortcuts`)
   state.json                     마지막에 열려 있던 창 목록
   buffers/                       외부 파일의 저장 전 수정분
   backups/<워크스페이스 ID>/     스냅샷
