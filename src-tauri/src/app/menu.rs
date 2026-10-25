@@ -16,7 +16,7 @@ use tauri_plugin_dialog::DialogExt;
 
 use super::flush::FlushGoal;
 use super::windows::{cascade, frame_of, monitor_rects, WindowPlan};
-use super::{lifecycle, lock, windows, AppCore};
+use super::{lifecycle, lock, update, windows, AppCore};
 
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
@@ -112,6 +112,7 @@ const MENUS: &[(&str, &[Slot])] = &[
         "tote",
         &[
             Slot::About,
+            Slot::Command("check-updates"),
             Slot::Separator,
             SETTINGS_ITEM,
             Slot::Separator,
@@ -544,6 +545,7 @@ fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
     match id {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
+        "check-updates" => update::check_now(app, window.map(|w| w.label().to_string())),
         "new-window" => new_window(app, window),
         "close-window" => {
             if let Some(window) = window {
@@ -957,6 +959,25 @@ mod tests {
         let json = serde_json::to_value(&table).unwrap();
         assert_eq!(json["commands"][0]["default"], serde_json::Value::Null);
         assert_eq!(json["fixed"][0]["accelerator"], "CmdOrCtrl+,");
+    }
+
+    #[test]
+    fn the_app_menu_offers_the_update_check_under_about() {
+        let (title, slots) = MENUS[0];
+        assert_eq!(title, "tote");
+        assert_eq!(
+            slots[..4],
+            [
+                Slot::About,
+                Slot::Command("check-updates"),
+                Slot::Separator,
+                SETTINGS_ITEM,
+            ]
+        );
+        let check = app_command("check-updates").unwrap();
+        assert_eq!(check.label, "업데이트 확인…");
+        // An app command: the settings screen can give it a key; it has none to begin with.
+        assert_eq!(check.default, None);
     }
 
     #[test]

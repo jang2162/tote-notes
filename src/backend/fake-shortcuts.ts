@@ -4,6 +4,7 @@ import type { FixedShortcut, ShortcutCommand } from "./types";
 /** The fake backend's copy of `COMMANDS` in src-tauri/src/shortcuts.rs, in menu order.
  * fake-shortcuts.test.ts holds it against the table Rust writes out. */
 export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
+  { id: "check-updates", label: "업데이트 확인…", menu: "tote", default: null },
   { id: "install-cli", label: "셸 명령 설치…", menu: "tote", default: null },
   { id: "new-memo", label: "새 메모", menu: "파일", default: "CmdOrCtrl+N" },
   { id: "new-window", label: "새 창", menu: "파일", default: "Alt+CmdOrCtrl+N" },

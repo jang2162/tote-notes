@@ -378,7 +378,18 @@ test("the search filters by name and by shortcut", async ({ page }) => {
   await search.fill("⌘N");
   await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
   await search.fill("");
-  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(24);
+  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(25);
+});
+
+test("the update check command takes a shortcut", async ({ page }) => {
+  const panel = await startShortcuts(page);
+  await expect(row(panel, "check-updates")).toContainText("업데이트 확인…");
+  await expect(row(panel, "check-updates")).toContainText("tote");
+  await expect(keys(panel, "check-updates")).toHaveText("없음");
+  await record(panel, "check-updates");
+  await page.keyboard.press("Alt+Meta+U");
+  await expect.poll(() => savedMap(page)).toEqual({ "check-updates": "Alt+CmdOrCtrl+U" });
+  await expect(keys(panel, "check-updates")).toHaveText("⌥⌘U");
 });
 
 test("the fixed group lists the fixed keys and cannot be edited", async ({ page }) => {

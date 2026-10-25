@@ -1,6 +1,13 @@
 {
   "commands": [
     {
+      "id": "check-updates",
+      "label": "업데이트 확인…",
+      "menu": "tote",
+      "default": null,
+      "current": null
+    },
+    {
       "id": "install-cli",
       "label": "셸 명령 설치…",
       "menu": "tote",

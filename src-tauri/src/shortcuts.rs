@@ -35,6 +35,7 @@ const fn command(
 
 /// In menu order. Whichever of two people's overrides comes later here is the one dropped.
 pub const COMMANDS: &[Command] = &[
+    command("check-updates", "업데이트 확인…", "tote", None),
     command("install-cli", "셸 명령 설치…", "tote", None),
     command("new-memo", "새 메모", "파일", Some("CmdOrCtrl+N")),
     command("new-window", "새 창", "파일", Some("Alt+CmdOrCtrl+N")),
@@ -661,6 +662,7 @@ mod tests {
     #[test]
     fn effective_matches_todays_menu() {
         let expected: &[(&str, Option<&str>)] = &[
+            ("check-updates", None),
             ("install-cli", None),
             ("new-memo", Some("CmdOrCtrl+N")),
             ("new-window", Some("Alt+CmdOrCtrl+N")),
