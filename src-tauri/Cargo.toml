@@ -24,6 +24,9 @@ tauri-plugin-single-instance = "2"
 tauri-plugin-dialog = "2"
 # Checks, downloads and installs updates from Rust (src/app/update.rs).
 tauri-plugin-updater = "2"
+# Its download client gets a stall limit (src/app/update.rs `stall_limit`). The version the updater
+# pulls in: one it moves past fails to build there, and the limit is set again.
+reqwest = { version = "0.13", default-features = false }
 percent-encoding = "2"
 zip = { version = "9", default-features = false, features = ["deflate"] }
 regex = "1"
@@ -56,6 +59,9 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
 objc2-foundation = { version = "0.3", default-features = false, features = ["std", "NSString"] }
 
 [dev-dependencies]
+# The TLS provider the updater installs before its first request, for the stall tests
+# (src/app/update.rs). The version it pulls in.
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
 tempfile = "3"
 filetime = "0.2"
 

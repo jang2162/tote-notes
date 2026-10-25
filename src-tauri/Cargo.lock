@@ -4442,6 +4442,8 @@ dependencies = [
  "objc2-foundation",
  "percent-encoding",
  "regex",
+ "reqwest",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",

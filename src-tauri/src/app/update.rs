@@ -22,6 +22,18 @@ use super::{lock, AppCore, RestartBusy};
 pub const STARTUP_DELAY: Duration = Duration::from_secs(5);
 /// The plugin waits for good by default; a hung request must not keep a manual check open.
 pub const CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+/// A download that gets no byte for this long has stalled — a half-open connection after sleep or
+/// a Wi-Fi change — and fails, so 「다시 시도」 shows where 「받는 중…」 would stay for good. It is
+/// per read, not for the whole download (`Update.timeout` would be): a slow connection that keeps
+/// sending is never cut, however long the ~12 MB takes. A minute rides out a network change that
+/// comes back.
+pub const STALL_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Fails a request that reads nothing for `after`. The updater hands its client builder to this
+/// for the check and for the download of what it found.
+pub fn stall_limit(client: reqwest::ClientBuilder, after: Duration) -> reqwest::ClientBuilder {
+    client.read_timeout(after)
+}
 
 /// Debug builds — `pnpm app:dev`, the `tote-dev` bundle, the `perf` profile — check only when
 /// asked (`TOTE_UPDATE_CHECK=1`): a smoke run must not reach github.com, and an update would
@@ -199,6 +211,7 @@ async fn check(app: &AppHandle) -> Result<Option<Update>, String> {
     let updater = app
         .updater_builder()
         .timeout(CHECK_TIMEOUT)
+        .configure_client(|client| stall_limit(client, STALL_TIMEOUT))
         .build()
         .map_err(|err| err.to_string())?;
     updater.check().await.map_err(|err| err.to_string())
@@ -264,7 +277,10 @@ fn tell(app: &AppHandle, message: String) {
 #[cfg(test)]
 mod tests {
     use std::cell::Cell;
+    use std::io::{Read, Write};
+    use std::net::TcpListener;
     use std::sync::atomic::{AtomicBool, Ordering};
+    use std::time::Instant;
 
     use super::*;
 
@@ -327,6 +343,64 @@ mod tests {
         assert_eq!(try_restart(true, begin(Err(RestartBusy))), Err("busy"));
         assert_eq!(try_restart(true, begin(Ok(()))), Ok(()));
         assert_eq!(begun.get(), 2);
+    }
+
+    /// Serves one response of `parts`, with a pause before each, then holds the connection open.
+    fn serve(parts: Vec<(Duration, &'static [u8])>) -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+        let address = listener.local_addr().unwrap();
+        std::thread::spawn(move || {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut byte = [0u8; 1];
+            while !request.ends_with(b"\r\n\r\n") && stream.read(&mut byte).unwrap() == 1 {
+                request.push(byte[0]);
+            }
+            for (pause, bytes) in parts {
+                std::thread::sleep(pause);
+                if stream.write_all(bytes).is_err() {
+                    return;
+                }
+            }
+            std::thread::sleep(Duration::from_secs(30));
+        });
+        format!("http://{address}/")
+    }
+
+    fn download(url: &str, after: Duration) -> Result<Vec<u8>, reqwest::Error> {
+        // What the updater does before its first request (`Updater::check`).
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        tauri::async_runtime::block_on(async {
+            let client = stall_limit(reqwest::ClientBuilder::new(), after).build()?;
+            Ok(client.get(url).send().await?.bytes().await?.to_vec())
+        })
+    }
+
+    const HEAD: &[u8] = b"HTTP/1.1 200 OK\r\nContent-Length: 6\r\n\r\n";
+
+    #[test]
+    fn a_stalled_download_fails() {
+        let url = serve(vec![(Duration::ZERO, HEAD), (Duration::ZERO, b"abc")]);
+        let started = Instant::now();
+        let err = download(&url, Duration::from_millis(300)).unwrap_err();
+        assert!(err.is_timeout(), "{err:?}");
+        assert!(started.elapsed() < Duration::from_secs(10));
+    }
+
+    #[test]
+    fn a_slow_download_that_keeps_coming_is_not_cut() {
+        // Longer in all than the limit, but never that long without a byte.
+        let step = Duration::from_millis(150);
+        let parts = [&b"a"[..], b"b", b"c", b"d", b"e", b"f"];
+        let mut body = vec![(Duration::ZERO, HEAD)];
+        body.extend(parts.iter().map(|part| (step, *part)));
+        let url = serve(body);
+        let started = Instant::now();
+        assert_eq!(
+            download(&url, Duration::from_millis(500)).unwrap(),
+            b"abcdef"
+        );
+        assert!(started.elapsed() > Duration::from_millis(500));
     }
 
     #[test]
