@@ -38,13 +38,14 @@ describe("the release config", () => {
 
   it("leaves no trace of the old identifier outside the dated history", () => {
     // Plans, specs and reports under docs/superpowers are history and keep the name they had.
+    // Put together so this file does not match itself; `[._]` takes the socket's spelling too.
+    const old = ["dev", "tote", "note"].join("[._]");
     let found = "";
     try {
-      found = execFileSync(
-        "git",
-        ["grep", "-nE", String.raw`dev\.tote\.note|dev_tote_note`, "--", ".", ":!docs/superpowers"],
-        { cwd: ROOT, encoding: "utf8" },
-      );
+      found = execFileSync("git", ["grep", "-nE", old, "--", ".", ":!docs/superpowers"], {
+        cwd: ROOT,
+        encoding: "utf8",
+      });
     } catch (error) {
       // git grep exits 1 when nothing matches.
       if ((error as { status?: number }).status !== 1) throw error;
