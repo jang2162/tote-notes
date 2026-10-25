@@ -31,6 +31,14 @@ describe("the release config", () => {
     expect(conf.bundle.createUpdaterArtifacts).not.toBe(true);
   });
 
+  it("asks for no entitlements under the hardened runtime", () => {
+    // A tote bundle signed ad hoc with the runtime on starts, takes a `tote` command through the
+    // single instance and logs no refusal without any: the app is not sandboxed, and WebKit runs
+    // the page's JavaScript and WebAssembly in its own process. Add one only for a thing that is
+    // refused, with the refusal it fixes.
+    expect(conf.bundle.macOS.entitlements).toBeUndefined();
+  });
+
   it("keeps the page's connections to the app itself", () => {
     // Update checks leave from Rust; the page never talks to github.com.
     expect(conf.app.security.csp["connect-src"]).toBe("ipc: http://ipc.localhost tote-file:");
