@@ -36,6 +36,8 @@ import {
   type ShortcutTable,
   type TextMatch,
   type TextQuery,
+  type UpdateOffer,
+  type UpdateProgress,
   type Version,
   type ViewerInfo,
   type WindowFrame,
@@ -194,6 +196,15 @@ export interface FakeData {
   /** Timing marks are kept, as with `TOTE_PERF=1`; they go into `marks`. Absent in old seeds. */
   perf?: boolean;
   marks?: string[];
+  /** What the update dialog asked of the native side. `memosAtRestart`: every memo's text as the
+   * restart happened, after its round was answered — what the restart's round wrote. Absent until
+   * an update is installed or restarted for. */
+  update?: {
+    installCalls: number;
+    restartCalls: number;
+    restarted: boolean;
+    memosAtRestart: Record<string, string> | null;
+  };
 }
 
 export interface FakeStorage {
@@ -242,6 +253,7 @@ export function defaultFakeData(): FakeData {
       theme: { light: null, dark: null },
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+      updates: { autoCheck: true },
     },
     userExtensions: [],
     packages: {},
@@ -384,7 +396,15 @@ export class FakeBackend implements Backend {
     reveal: [] as ((tab: TabRef) => void)[],
     adopt: [] as ((tab: string, x: number, y: number) => void)[],
     workspaces: [] as (() => void)[],
+    restartOff: [] as (() => void)[],
   };
+  /** What the next `installUpdate` and `restartForUpdate` do instead of succeeding (tests). */
+  private nextInstallFails: string | null = null;
+  private nextRestart: "refused" | "busy" | null = null;
+  /** Holds `installUpdate` halfway until `releaseInstall`. */
+  private installGate: { promise: Promise<void>; release: () => void } | null = null;
+  /** An update was installed in this page's run, as `Updates::installed` keeps it. */
+  private updateInstalled = false;
   /** The fake's own flush rounds (`switchWorkspace`), waiting on this window's answer. */
   private readonly flushWaiters = new Map<number, (blocked: string | undefined) => void>();
   private flushRounds = 0;
@@ -494,6 +514,34 @@ export class FakeBackend implements Backend {
   }
   poke(): void {
     for (const handler of this.handlers.pending) handler();
+  }
+  /** A newer release, as the native side offers it to this window (`AppCore::offer_update`). */
+  offerUpdate(offer: UpdateOffer): void {
+    this.data.pending.push({ kind: "update", ...offer });
+    this.commit();
+    this.poke();
+  }
+  /** The next install fails with `message`, as one run from a read-only folder does. */
+  failNextInstall(message: string): void {
+    this.nextInstallFails = message;
+  }
+  /** The next install stops halfway, at 50%, until `releaseInstall`. */
+  holdInstall(): void {
+    let release = () => {};
+    const promise = new Promise<void>((resolve) => (release = resolve));
+    this.installGate = { promise, release };
+  }
+  releaseInstall(): void {
+    this.installGate?.release();
+    this.installGate = null;
+  }
+  /** The next restart's round ends in 「취소」 to the question about unsaved memos. */
+  refuseNextRestart(): void {
+    this.nextRestart = "refused";
+  }
+  /** The next restart is refused: another window is closing, switching or quitting. */
+  busyNextRestart(): void {
+    this.nextRestart = "busy";
   }
   /** A `tote` request that failed, as the native side queues it for this window. */
   notice(message: string): void {
@@ -943,14 +991,14 @@ export class FakeBackend implements Backend {
   }
 
   /** Asks this window to write everything (`onFlush`) and waits for its answer. */
-  private flushThisWindow(): Promise<string | undefined> {
+  private flushThisWindow(goal: FlushGoal = "switch"): Promise<string | undefined> {
     // Apart from the ids tests hand `requestFlush`.
     const id = 1_000_000 + ++this.flushRounds;
     const answered = new Promise<string | undefined>((resolve) =>
       this.flushWaiters.set(id, resolve),
     );
     this.roundOpen = true;
-    this.requestFlush(id, "switch");
+    this.requestFlush(id, goal);
     return answered.finally(() => {
       this.roundOpen = false;
     });
@@ -1015,6 +1063,61 @@ export class FakeBackend implements Backend {
     this.data.picks = [];
     this.commit();
     return picks;
+  }
+
+  private updateLog(): NonNullable<FakeData["update"]> {
+    return (this.data.update ??= {
+      installCalls: 0,
+      restartCalls: 0,
+      restarted: false,
+      memosAtRestart: null,
+    });
+  }
+
+  async installUpdate(onProgress: (progress: UpdateProgress) => void) {
+    this.updateLog().installCalls += 1;
+    this.commit();
+    const total = 4_000_000;
+    onProgress({ kind: "progress", done: total / 2, total });
+    await this.installGate?.promise;
+    const fails = this.nextInstallFails;
+    this.nextInstallFails = null;
+    if (fails !== null) throw new BackendError("update-failed", fails);
+    onProgress({ kind: "progress", done: total, total });
+    onProgress({ kind: "installing" });
+    this.updateInstalled = true;
+  }
+
+  /** As `lifecycle::begin_restart`: the window writes everything for a quit, then tote starts
+   * again — here, `restarted` is set with the memos as they are then. */
+  async restartForUpdate() {
+    if (!this.updateInstalled)
+      throw new BackendError("not-installed", "이번 실행에서 설치한 업데이트가 없습니다");
+    const next = this.nextRestart;
+    this.nextRestart = null;
+    if (next === "busy") throw new BackendError("busy", "다른 창이 저장하는 중입니다");
+    this.updateLog().restartCalls += 1;
+    this.commit();
+    // Rust answers once the round has begun; the restart comes when it ends.
+    void this.flushThisWindow("quit").then(() => {
+      if (next === "refused") {
+        for (const handler of this.handlers.restartOff) handler();
+        return;
+      }
+      const log = this.updateLog();
+      log.restarted = true;
+      log.memosAtRestart = Object.fromEntries(
+        Object.entries(this.data.memos).map(([id, memo]) => [id, decode(memo.data)]),
+      );
+      this.commit();
+    });
+  }
+
+  onRestartOff(handler: () => void) {
+    this.handlers.restartOff.push(handler);
+    return () => {
+      this.handlers.restartOff = this.handlers.restartOff.filter((each) => each !== handler);
+    };
   }
 
   async flushDone(id: number, blocked?: string) {
@@ -1102,6 +1205,8 @@ export class FakeBackend implements Backend {
   async settings() {
     const settings = structuredClone(this.data.settings);
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    // An old seed has no `updates`; Rust reads a missing one as on.
+    settings.updates ??= { autoCheck: true };
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1129,6 +1234,8 @@ export class FakeBackend implements Backend {
     if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    settings.updates ??= { autoCheck: true };
+    if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
     if (patch.editorLineNumbers !== undefined)
       settings.editor.lineNumbers = patch.editorLineNumbers;
     // Rust takes any number and clamps it, rounding a fraction.

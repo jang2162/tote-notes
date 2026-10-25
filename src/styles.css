@@ -837,6 +837,15 @@ button.danger {
   font-size: 12px;
 }
 
+/* The release notes under an update offer: as written, long ones scroll. */
+.update-notes pre {
+  max-height: 200px;
+  margin: 4px 0 8px;
+  overflow: auto;
+  font: inherit;
+  white-space: pre-wrap;
+}
+
 .modal input {
   box-sizing: border-box;
   width: 100%;

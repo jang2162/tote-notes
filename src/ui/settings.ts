@@ -98,6 +98,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
 
     const rootInput = h("input", { name: "workspaceRoot", placeholder: "~/Tote" });
     rootInput.spellcheck = false;
+    const autoCheck = h("input", { type: "checkbox", name: "updatesAutoCheck" });
+    autoCheck.addEventListener("change", () => void save({ updatesAutoCheck: autoCheck.checked }));
     const generalSection = () => {
       const pick = h("button", { textContent: "폴더 선택…" });
       pick.addEventListener("click", async () => {
@@ -122,6 +124,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         h("p", {
           class: "settings-note root-note",
           textContent: "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
+        }),
+        ...field("실행할 때 업데이트 확인", autoCheck),
+        h("p", {
+          class: "settings-note update-note",
+          textContent:
+            "끄면 tote 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 tote → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
         }),
       );
     };
@@ -320,6 +328,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         fillThemes(new Registry(registry));
         sync(rootInput, current.workspaceRoot ?? "");
         lineNumbers.checked = current.editor.lineNumbers;
+        autoCheck.checked = current.updates.autoCheck;
         sync(fontSize, String(current.editor.fontSize));
         sync(fontFamily, current.editor.fontFamily);
         selectTheme(lightSelect, current.theme.light);

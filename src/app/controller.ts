@@ -55,6 +55,7 @@ import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
+import { openUpdateDialog } from "../ui/update-dialog";
 import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
 import type { TabDrag } from "../ui/tab-bar";
@@ -214,6 +215,7 @@ export class AppController implements DocHost, PaneHost {
     theme: { light: null, dark: null },
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+    updates: { autoCheck: true },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
@@ -1451,6 +1453,9 @@ export class AppController implements DocHost, PaneHost {
         await this.openMemo(open.id);
       } else if (open.kind === "external") {
         await this.openExternal(open.path);
+      } else if (open.kind === "update") {
+        // Not awaited: the dialog stays up while the rest of the opens go on.
+        void openUpdateDialog(this.backend, open);
       } else {
         notices.push(open.message);
       }

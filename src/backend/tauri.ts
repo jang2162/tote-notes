@@ -26,6 +26,7 @@ import {
   type TextQuery,
   type TextScan,
   type TextSearch,
+  type UpdateProgress,
   type Version,
   type WindowFrame,
   type WorkspaceInfo,
@@ -247,6 +248,12 @@ export class TauriBackend implements Backend {
   cancelWorkspaceSearch() {
     return call<void>("cancel_workspace_search");
   }
+  installUpdate(onProgress: (progress: UpdateProgress) => void) {
+    return call<void>("install_update", { onProgress: new Channel<UpdateProgress>(onProgress) });
+  }
+  restartForUpdate() {
+    return call<void>("restart_for_update");
+  }
   perfMark(name: string) {
     // A mark must never be what fails a window.
     void call<void>("perf_mark", { name }).catch(() => {});
@@ -280,6 +287,21 @@ export class TauriBackend implements Backend {
   }
   onPending(handler: () => void) {
     void this.window.listen("tote://pending", () => handler());
+  }
+  onRestartOff(handler: () => void) {
+    // Sent to every window (`Step::RestartOff`); only a dialog waiting on the restart listens.
+    let stopped = false;
+    let unlisten: (() => void) | null = null;
+    void this.window
+      .listen("tote://restart-off", () => handler())
+      .then((stop) => {
+        if (stopped) stop();
+        else unlisten = stop;
+      });
+    return () => {
+      stopped = true;
+      unlisten?.();
+    };
   }
   onConfigChanged(handler: () => void) {
     void this.window.listen("tote://config", () => handler());

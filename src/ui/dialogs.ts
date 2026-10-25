@@ -7,9 +7,12 @@ let titles = 0;
 
 /** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape.
  * The dialog is named by its own `aria-labelledby`, else by its first heading or paragraph. The
- * element marked `data-autofocus` takes the focus, else the first input or primary button. */
+ * element marked `data-autofocus` takes the focus, else the first input or primary button.
+ * While `holdEscape` says so, Escape on top does nothing: the dialog is in the middle of
+ * something that cannot be called off. */
 export function modal<T>(
   build: (close: (value: T | null) => void) => HTMLElement,
+  options: { holdEscape?: () => boolean } = {},
 ): Promise<T | null> {
   return new Promise((resolve) => {
     const backdrop = h("div", { class: "modal-backdrop" });
@@ -25,7 +28,7 @@ export function modal<T>(
       if (openModals[openModals.length - 1] !== backdrop) return;
       event.preventDefault();
       event.stopPropagation();
-      close(null);
+      if (!options.holdEscape?.()) close(null);
     };
     const dialog = build(close);
     dialog.setAttribute("aria-modal", "true");

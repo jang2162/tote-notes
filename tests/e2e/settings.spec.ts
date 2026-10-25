@@ -90,6 +90,24 @@ test("precedence is a radio and problems are listed", async ({ page }) => {
   await expect(panel).toHaveCount(0);
 });
 
+test("the update check switch saves updates.autoCheck", async ({ page }) => {
+  await start(page);
+  const panel = await openSection(page, "일반");
+  const box = panel.getByRole("checkbox", { name: "실행할 때 업데이트 확인" });
+  await expect(box).toBeChecked();
+  await expect(panel.locator(".update-note")).toHaveText(
+    "끄면 tote 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 tote → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
+  );
+  await box.uncheck();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.updates))
+    .toEqual({ autoCheck: false });
+  await page.keyboard.press("Escape");
+  await expect(panel).toHaveCount(0);
+  await openSection(page, "일반");
+  await expect(page.getByRole("checkbox", { name: "실행할 때 업데이트 확인" })).not.toBeChecked();
+});
+
 test("Escape closes only the confirmation on top of the settings screen", async ({ page }) => {
   await start(page, {
     packages: { "/pkg/night.vsix": PKG },
@@ -282,6 +300,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       theme: { light: { extension: "gone.theme", label: "Gone" }, dark: null },
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+      updates: { autoCheck: true },
     },
   });
   await openSection(page, "모양");

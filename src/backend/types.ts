@@ -32,11 +32,27 @@ export interface ExternalInfo {
   draft: { diskChanged: boolean } | null;
 }
 
-/** What a `tote` request left for this window: something to open, or why it failed. */
+/** What a `tote` request left for this window: something to open, or why it failed — or a new
+ * version to ask about (`AppCore::offer_update` in src-tauri/src/app/mod.rs). */
 export type PendingOpen =
   | { kind: "memo"; id: string }
   | { kind: "external"; path: string }
-  | { kind: "notice"; message: string };
+  | { kind: "notice"; message: string }
+  | ({ kind: "update" } & UpdateOffer);
+
+/** A release newer than this one (`UpdateOffer` in src-tauri/src/app/update.rs). */
+export interface UpdateOffer {
+  version: string;
+  current: string;
+  /** The release notes; `null` when the release has none. */
+  notes: string | null;
+}
+
+/** How far `installUpdate` is: bytes downloaded (`total` unknown without a length), then the
+ * install. */
+export type UpdateProgress =
+  | { kind: "progress"; done: number; total: number | null }
+  | { kind: "installing" };
 
 /** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
  * workspace, or an external file. */
@@ -194,6 +210,8 @@ export interface Settings {
   theme: { light: ThemeRef | null; dark: ThemeRef | null };
   extensions: { disabled: string[]; precedence: "user" | "bundled" };
   editor: EditorSettings;
+  /** The check for a new version at launch (src-tauri/src/app/update.rs). */
+  updates: { autoCheck: boolean };
   /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
    * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
   shortcuts?: Record<string, string | null>;
@@ -221,6 +239,7 @@ export interface SettingsPatch {
   editorLineNumbers?: boolean;
   editorFontSize?: number;
   editorFontFamily?: string;
+  updatesAutoCheck?: boolean;
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
   shortcuts?: Record<string, string | null>;
@@ -316,6 +335,11 @@ export const BACKEND_ERROR_CODES = [
   "already-installed",
   "invalid-extension",
   "window-busy",
+  // The update's (src-tauri/src/app/commands.rs `install_update`, `restart_for_update`).
+  "no-update",
+  "update-failed",
+  "not-installed",
+  "busy",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 
@@ -460,6 +484,17 @@ export interface Backend {
   ): Promise<void>;
   /** Stops this window's running workspace search, as a newer one would. */
   cancelWorkspaceSearch(): Promise<void>;
+  /** Downloads and installs the update this window was offered, telling `onProgress` how far it
+   * is. Only ever after the person said so. The running app stays as it is until
+   * `restartForUpdate`. `update-failed` says why it did not install; it can be tried again. */
+  installUpdate(onProgress: (progress: UpdateProgress) => void): Promise<void>;
+  /** Writes every window, then starts the installed version. `busy` while another window closes,
+   * switches or quits; `not-installed` when nothing was installed in this run. A restart the
+   * person called off at the question about unsaved memos comes as `onRestartOff`. */
+  restartForUpdate(): Promise<void>;
+  /** The restart for the installed update is off: it starts with the next launch. Returns the
+   * function that stops listening. */
+  onRestartOff(handler: () => void): () => void;
   /** A timing mark for the performance measurement (tests/measure/perf.md); kept only when the
    * app runs with `TOTE_PERF=1`. Fire and forget. */
   perfMark(name: string): void;
