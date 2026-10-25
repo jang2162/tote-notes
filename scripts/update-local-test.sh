@@ -5,8 +5,10 @@
 # Builds two `perf` bundles of a test app of its own (com.develma.totenotes.updatetest,
 # tote-updatetest) — version 0.0.1 and the version in package.json — signs the newer one's update
 # bundle with a throwaway key, serves it with latest.json on http://127.0.0.1:$PORT and prints
-# how to launch the old one. Nothing here touches the person's tote or the debug app: another
-# identifier, another single-instance socket, and every launch gets TOTE_DATA_DIR.
+# how to launch the old one. Both are signed ad hoc with the hardened runtime, so the install and
+# the restart run under the runtime a release has (its Developer ID signature aside). Nothing here
+# touches the person's tote or the debug app: another identifier, another single-instance socket,
+# and every launch printed here gets TOTE_DATA_DIR.
 #
 # Environment: PORT (default 18765).
 set -euo pipefail
@@ -45,6 +47,7 @@ cat > "$W/update-test.conf.json" <<EOF
 {
   "identifier": "com.develma.totenotes.updatetest",
   "productName": "$NAME",
+  "bundle": { "macOS": { "signingIdentity": "-" } },
   "plugins": {
     "updater": {
       "pubkey": "$(cat "$W/key.pub")",
@@ -90,7 +93,10 @@ cat <<EOF
 
 Ready. The old version ($NAME 0.0.1) checks for updates 5 s after it opens:
   open --env TOTE_DATA_DIR="$W/data" --env TOTE_UPDATE_CHECK=1 "$W/Applications/$NAME.app"
-Requests reach $W/server.log. The tote command of the installed app: $W/bin/tote <file>
+Requests reach $W/server.log. The tote command of the installed app, while that app runs:
+  $W/bin/tote <file>
+With the app not running, the command starts it through "open -n", which drops TOTE_DATA_DIR:
+it would use the debug data folders (~/Tote-dev). Start it as above first.
 When done:
   kill \$(cat "$W/server.pid") && rm -rf "$W"
 EOF

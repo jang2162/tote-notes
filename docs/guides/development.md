@@ -44,10 +44,10 @@
 
 앱 안 업데이트(실행 때 확인 → 질문 → 받기·설치 → 저장하고 다시 시작)는 `bash scripts/update-local-test.sh <빈 임시 폴더>` 로 시험한다. 스크립트가 만드는 것:
 
-- 별도 식별자(`com.develma.totenotes.updatetest`, 이름 `tote-updatetest`)의 `perf` 번들 두 벌 — 낮은 버전 `0.0.1`(폴더의 `Applications/` 에 복사)과 루트 `package.json` 의 버전(업데이트 묶음).
+- 별도 식별자(`com.develma.totenotes.updatetest`, 이름 `tote-updatetest`)의 `perf` 번들 두 벌 — 낮은 버전 `0.0.1`(폴더의 `Applications/` 에 복사)과 루트 `package.json` 의 버전(업데이트 묶음). 두 벌 모두 임시 서명(`signingIdentity: "-"`)이라 hardened runtime 이 켜진다(`codesign -dv` 의 `flags=…(adhoc,runtime)`). 설치·다시 시작이 배포와 같은 런타임 조건에서 돈다.
 - 임시 업데이트 키(`key`, `key.pub`)와 그 공개 키를 넣은 시험 설정(`update-test.conf.json`, 업데이트 주소 `http://127.0.0.1:$PORT/latest.json`, 기본 포트 18765).
 - `serve/` 의 업데이트 묶음·서명·`latest.json` 과 그것을 내는 `python3 -m http.server`(pid 는 `server.pid`, 요청은 `server.log`).
-- 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`).
+- 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`). **시험 앱이 떠 있을 때만** 그 앱(`$W/data`)에 요청을 넘긴다. 꺼져 있으면 `open -n` 으로 앱을 띄워 `TOTE_DATA_DIR` 이 빠지고, 앱이 개발 데이터 폴더(`~/Tote-dev`·`~/Library/Application Support/tote-dev`)를 쓴다. 꺼진 앱을 요청으로 띄우는 확인은 번들 실행 파일(`Contents/MacOS/tote`)에 `TOTE_DATA_DIR` 과 `--tote-request=<json>` 을 직접 준다.
 
 마지막에 낮은 버전을 띄우는 명령(`TOTE_DATA_DIR`·`TOTE_UPDATE_CHECK=1` 을 준다)과 정리 명령(서버 pid 끝내기, 폴더 지우기)을 찍는다.
 
