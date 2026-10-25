@@ -12,6 +12,7 @@
     "dev": "vite",
     "sync:bundled": "node scripts/sync-bundled.ts",
     "build": "tsc --noEmit && vite build",
+    "build:mac": "CI=true tauri build --target universal-apple-darwin",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "tauri": "tauri",

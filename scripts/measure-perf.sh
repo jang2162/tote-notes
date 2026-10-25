@@ -41,13 +41,13 @@ LOAD_WAIT_MAX_SECS=${PERF_LOAD_WAIT_MAX_SECS:-1800}
 
 say() { printf '[perf %s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
 
-# Single-instance goes by identifier, not by binary: any app with dev.tote.note.dev — a tote-dev
-# bundle, `pnpm app:dev` (target/debug/tote), another worktree's — would take the measured app's
-# requests and open the fixtures in its own window, on the person's screen. Its socket is
-# /tmp/dev_tote_note_dev_si.sock (the plugin's `socket_path`). Never connect to it to check: a
-# running app takes any connection as a `tote` request and comes to the front.
+# Single-instance goes by identifier, not by binary: any app with com.develma.totenotes.dev — a
+# tote-dev bundle, `pnpm app:dev` (target/debug/tote), another worktree's — would take the measured
+# app's requests and open the fixtures in its own window, on the person's screen. Its socket is
+# /tmp/com_develma_totenotes_dev_si.sock (the plugin's `socket_path`). Never connect to it to check:
+# a running app takes any connection as a `tote` request and comes to the front.
 socket_owners() {
-  lsof -U 2>/dev/null | awk '$NF ~ /^\/tmp\/dev_tote_note_dev.*_si\.sock$/ {print $2}' | sort -u
+  lsof -U 2>/dev/null | awk '$NF ~ /^\/tmp\/com_develma_totenotes_dev.*_si\.sock$/ {print $2}' | sort -u
 }
 tote_dev_processes() {
   pgrep -fl 'tote-dev\.app/Contents/MacOS/|/target/(debug|release|perf)/tote( |$)' || true
@@ -100,7 +100,7 @@ launch() {
   shift
   # Started by someone else since the last run: stop rather than hand it our requests.
   if [ -n "$(socket_owners)" ]; then
-    echo "another dev.tote.note.dev app took the single-instance socket; stopping" >&2
+    echo "another com.develma.totenotes.dev app took the single-instance socket; stopping" >&2
     exit 1
   fi
   env TOTE_DATA_DIR="$data" TOTE_PERF=1 ${BACKGROUND[@]+"${BACKGROUND[@]}"} "$@" "$BIN" \
