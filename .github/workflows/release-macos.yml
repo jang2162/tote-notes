@@ -66,9 +66,11 @@ jobs:
             exit 1
           fi
 
-      # universal 빌드의 두 타깃을 mise 가 고정한 툴체인에 더한다(mise.toml 은 aarch64 만 쓰는 개발 머신 그대로)
+      # universal 빌드의 두 타깃을 mise 가 고정한 판의 툴체인에 더한다(mise.toml 은 aarch64 만 쓰는 개발 머신 그대로).
+      # 툴체인째 깐다: mise 캐시가 적중하면 rust 는 「설치됨」 으로 건너뛰어지는데 새 러너의 rustup 에는 그 판이 없다.
+      # 있으면 타깃만 더한다. rustup 자신은 러너 이미지 그대로 둔다(--no-self-update)
       - name: Rust 타깃
-        run: rustup target add --toolchain "$(mise current rust)" aarch64-apple-darwin x86_64-apple-darwin
+        run: rustup toolchain install "$(mise current rust)" --profile minimal --no-self-update --target aarch64-apple-darwin,x86_64-apple-darwin
 
       - uses: Swatinem/rust-cache@v2
         with:
