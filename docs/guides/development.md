@@ -40,6 +40,21 @@
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
 - tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
 
+## 업데이트 흐름은 로컬 서버로 시험한다
+
+앱 안 업데이트(실행 때 확인 → 질문 → 받기·설치 → 저장하고 다시 시작)는 `bash scripts/update-local-test.sh <빈 임시 폴더>` 로 시험한다. 스크립트가 만드는 것:
+
+- 별도 식별자(`com.develma.totenotes.updatetest`, 이름 `tote-updatetest`)의 `perf` 번들 두 벌 — 낮은 버전 `0.0.1`(폴더의 `Applications/` 에 복사)과 루트 `package.json` 의 버전(업데이트 묶음).
+- 임시 업데이트 키(`key`, `key.pub`)와 그 공개 키를 넣은 시험 설정(`update-test.conf.json`, 업데이트 주소 `http://127.0.0.1:$PORT/latest.json`, 기본 포트 18765).
+- `serve/` 의 업데이트 묶음·서명·`latest.json` 과 그것을 내는 `python3 -m http.server`(pid 는 `server.pid`, 요청은 `server.log`).
+- 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`).
+
+마지막에 낮은 버전을 띄우는 명령(`TOTE_DATA_DIR`·`TOTE_UPDATE_CHECK=1` 을 준다)과 정리 명령(서버 pid 끝내기, 폴더 지우기)을 찍는다.
+
+- **Why:** 디버그·`perf` 빌드는 `TOTE_UPDATE_CHECK=1` 이 없으면 업데이트를 확인하지 않는다(`src-tauri/src/app/update.rs` `checks_allowed`). 식별자가 따로라 사람의 설치본·개발 앱과 단일 인스턴스·데이터가 섞이지 않는다. 시작 전에 그 식별자의 단일 인스턴스 소켓을 쥔 프로세스가 있으면 멈춘다.
+- 화면 없이 볼 수 있는 것은 요청 기록이다: `TOTE_BACKGROUND=1` 로 띄우면 5초 뒤 `server.log` 에 `GET /latest.json` 이 한 줄 생기고, settings.json 에 `"updates": {"autoCheck": false}` 를 넣고 띄우면 생기지 않는다.
+- 질문·진행 문구·다시 시작·셸 명령 링크가 새 판으로 이어지는지는 창이 있어야 보인다. 사람이나 화면 워커가 찍힌 명령으로 띄워 확인한다.
+
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
 `oxfmt`·`oxlint` 에 파일 여러 개를 넘길 때는 `FILES=(a b c)` 로 담아 `"${FILES[@]}"` 로 넘긴다.
