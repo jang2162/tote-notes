@@ -158,6 +158,7 @@ pub fn run() {
             has_visible_windows: false,
             ..
         } => windows::open_latest(app),
+        RunEvent::Exit => app::update::relaunch(app),
         _ => {}
     });
 }

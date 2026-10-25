@@ -11,7 +11,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_dialog::{DialogExt, MessageDialogButtons, MessageDialogKind};
 
 use super::flush::{Ack, Begin, FlushGoal};
-use super::{windows, AppCore, PendingOpen, RestartBusy, SwitchError};
+use super::{update, windows, AppCore, PendingOpen, RestartBusy, SwitchError};
 
 /// Long enough to write any memo to a local disk; short enough that a hung page cannot keep tote
 /// from closing.
@@ -279,11 +279,11 @@ pub fn finish(app: &AppHandle, goal: FlushGoal) {
             if system_quit::answer(app, true) {
                 return;
             }
-            // Not `restart()`: called on the main thread it starts the new process at once,
-            // before `RunEvent::Exit` lets the single-instance plugin remove its socket, and the
-            // new process may hand its launch to the old one and end. `request_restart` exits
-            // first, then starts it.
-            app.request_restart();
+            // Not tauri's `restart`/`request_restart`: they hand the new process this launch's
+            // arguments (`update::relaunch_command`). `update::relaunch` starts it at
+            // `RunEvent::Exit`, once the single-instance socket is gone.
+            app.state::<update::Updates>().relaunch_on_exit();
+            app.exit(0);
             return;
         }
     };

@@ -6,6 +6,8 @@
 //! (`lifecycle::begin_restart`).
 
 use std::future::Future;
+use std::path::Path;
+use std::process::Command;
 use std::sync::Mutex;
 use std::time::Duration;
 
@@ -95,6 +97,7 @@ struct State<U> {
     found: Option<U>,
     installing: bool,
     installed: bool,
+    relaunch: bool,
 }
 
 impl<U> Default for Updates<U> {
@@ -104,6 +107,7 @@ impl<U> Default for Updates<U> {
                 found: None,
                 installing: false,
                 installed: false,
+                relaunch: false,
             }),
         }
     }
@@ -140,6 +144,40 @@ impl<U: Clone> Updates<U> {
     /// An update was installed in this run: the next launch is the new version.
     pub fn installed(&self) -> bool {
         lock(&self.state).installed
+    }
+
+    /// The restart round wrote every window: once tote is out, `relaunch` starts the new version.
+    pub fn relaunch_on_exit(&self) {
+        lock(&self.state).relaunch = true;
+    }
+
+    pub fn relaunching(&self) -> bool {
+        lock(&self.state).relaunch
+    }
+}
+
+/// What starts the installed version: the bundle's executable, which the update replaced in
+/// place under the same name, with no arguments. tauri's own restart hands the new process this
+/// launch's arguments, and a launch by the `tote` command carries its request there
+/// (`--tote-request`, `cli::front`): the new version would import the file again, or say the
+/// standard input it read is gone. Restarted, tote only restores its session. The environment is
+/// this one's — `TOTE_DATA_DIR` included — as with tauri's.
+pub fn relaunch_command(binary: &Path) -> Command {
+    Command::new(binary)
+}
+
+/// Called at `RunEvent::Exit`: after the single-instance plugin removed its socket there (its
+/// `on_event` runs before the app's), so the new process does not hand its launch to this one
+/// and end.
+pub fn relaunch(app: &AppHandle) {
+    if !app.state::<Updates>().relaunching() {
+        return;
+    }
+    let started = tauri::process::current_binary(&app.env())
+        .and_then(|binary| relaunch_command(&binary).spawn());
+    if let Err(err) = started {
+        // The update is installed all the same: the next launch is the new version.
+        eprintln!("tote: could not start the new version: {err}");
     }
 }
 
@@ -289,6 +327,23 @@ mod tests {
         assert_eq!(try_restart(true, begin(Err(RestartBusy))), Err("busy"));
         assert_eq!(try_restart(true, begin(Ok(()))), Ok(()));
         assert_eq!(begun.get(), 2);
+    }
+
+    #[test]
+    fn the_new_version_starts_with_no_request() {
+        let binary = Path::new("/Applications/tote.app/Contents/MacOS/tote");
+        let command = relaunch_command(binary);
+        assert_eq!(command.get_program(), binary);
+        // Not this launch's arguments: a `--tote-request` there would be handled twice.
+        assert_eq!(command.get_args().count(), 0);
+    }
+
+    #[test]
+    fn a_relaunch_is_asked_for_only_by_the_restart() {
+        let updates = Updates::<u32>::default();
+        assert!(!updates.relaunching());
+        updates.relaunch_on_exit();
+        assert!(updates.relaunching());
     }
 
     #[test]
