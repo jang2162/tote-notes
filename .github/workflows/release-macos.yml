@@ -1,0 +1,226 @@
+# tote 의 macOS 릴리스. 사람이 할 일(인증서·키·비밀 등록, 버전 올리고 태그)은 docs/guides/release-macos.md
+#
+# v* 태그 푸시: universal 빌드 → Developer ID 서명(hardened runtime) → 앱 공증·스테이플(Tauri 번들러)
+#   → 검사(산출물·서명·공증·업데이트 서명) → DMG 공증·스테이플 → 드래프트 릴리스에 전부 올림 → 공개.
+#   어느 단계든 실패하면 공개까지 가지 않는다(릴리스가 없거나 드래프트로 남는다 — 드래프트는 releases/latest 가 아니다).
+# 수동 실행(workflow_dispatch): 서명·공증·릴리스 없이 universal DMG 만 만들어 워크플로 산출물로 올린다. 비밀이 없어도 된다.
+name: release-macos
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+concurrency:
+  group: release-macos-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  macos:
+    runs-on: macos-latest
+    timeout-minutes: 120
+    permissions:
+      contents: write
+    env:
+      RELEASE: ${{ github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v') }}
+      BUNDLE: src-tauri/target/universal-apple-darwin/release/bundle
+    steps:
+      - uses: actions/checkout@v7
+
+      # node·pnpm·rust 버전은 mise.toml 을 따른다(로컬과 같은 버전). rust 는 RUSTUP_TOOLCHAIN 으로 고정된다
+      - uses: jdx/mise-action@v5
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: 버전 확인(태그와 네 곳이 같아야 한다)
+        run: |
+          if [ "$RELEASE" = true ]; then
+            pnpm -s version:check "$GITHUB_REF_NAME"
+          else
+            pnpm -s version:check
+          fi
+          echo "VERSION=$(node -p 'require("./package.json").version')" >> "$GITHUB_ENV"
+
+      # 빌드(20분 남짓) 전에 빠진 것을 이름으로 알린다. 값은 찍지 않는다
+      - name: 비밀·공개 키 확인
+        if: env.RELEASE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          missing=""
+          for name in APPLE_CERTIFICATE APPLE_CERTIFICATE_PASSWORD APPLE_API_ISSUER APPLE_API_KEY APPLE_API_PRIVATE_KEY_BASE64 TAURI_SIGNING_PRIVATE_KEY TAURI_SIGNING_PRIVATE_KEY_PASSWORD; do
+            if [ -z "${!name}" ]; then missing="$missing $name"; fi
+          done
+          if [ -n "$missing" ]; then
+            echo "::error::GitHub 비밀이 없다:$missing (docs/guides/release-macos.md 「GitHub 비밀 등록」)"
+            exit 1
+          fi
+          if grep -q REPLACE_WITH_UPDATER_PUBLIC_KEY src-tauri/tauri.conf.json; then
+            echo "::error::src-tauri/tauri.conf.json 의 plugins.updater.pubkey 가 자리 표시 값이다 (docs/guides/release-macos.md 「업데이트 서명 키」)"
+            exit 1
+          fi
+
+      # universal 빌드의 두 타깃을 mise 가 고정한 툴체인에 더한다(mise.toml 은 aarch64 만 쓰는 개발 머신 그대로)
+      - name: Rust 타깃
+        run: rustup target add --toolchain "$(mise current rust)" aarch64-apple-darwin x86_64-apple-darwin
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      # .p8 는 한 줄 base64 로 받아(여러 줄 비밀은 로그 가림이 줄 단위로 어긋날 수 있다) 러너 임시 폴더에 600 으로 푼다
+      - name: 공증용 API 키 파일
+        if: env.RELEASE == 'true'
+        env:
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          APPLE_API_PRIVATE_KEY_BASE64: ${{ secrets.APPLE_API_PRIVATE_KEY_BASE64 }}
+        run: |
+          umask 077
+          key="$RUNNER_TEMP/AuthKey_${APPLE_API_KEY}.p8"
+          printf '%s' "$APPLE_API_PRIVATE_KEY_BASE64" | base64 --decode > "$key"
+          echo "APPLE_API_KEY_PATH=$key" >> "$GITHUB_ENV"
+
+      # Developer ID 인증서의 발급자(중간 인증서 G2)가 키체인에 없으면 서명 인증서가 무효로 잡혀 codesign 이 실패한다.
+      # 러너 이미지에 있는지 보장되지 않으므로 Apple 에서 받아 SHA-256 을 맞춘 뒤 시스템 키체인에 넣는다.
+      - name: Apple 중간 인증서(Developer ID G2)
+        if: env.RELEASE == 'true'
+        run: |
+          cer="$RUNNER_TEMP/DeveloperIDG2CA.cer"
+          curl -fsSL --retry 3 -o "$cer" https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer
+          echo "f16cd3c54c7f83cea4bf1a3e6a0819c8aaa8e4a1528fd144715f350643d2df3a  $cer" | shasum -a 256 -c -
+          sudo security add-certificates -k /Library/Keychains/System.keychain "$cer" || true
+          security find-certificate -c "Developer ID Certification Authority" /Library/Keychains/System.keychain > /dev/null
+
+      # 인증서는 번들러가 무작위 임시 키체인에 넣고 끝나면 지운다(APPLE_CERTIFICATE·APPLE_CERTIFICATE_PASSWORD).
+      # 공증 자격이 빠지면 번들러는 경고만 남기고 공증을 건너뛴다 — 그래서 아래 「서명·공증 검사」 가 따로 있다.
+      # build:mac 은 CI=true 라서 DMG 의 Finder 꾸미기(AppleScript)를 건너뛴다(러너에서 Finder 를 부를 수 없다).
+      - name: 빌드·서명·앱 공증 (universal)
+        if: env.RELEASE == 'true'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: pnpm build:mac --config '{"bundle":{"createUpdaterArtifacts":true}}'
+
+      - name: 빌드 (수동 실행 — 서명 없음)
+        if: env.RELEASE != 'true'
+        run: pnpm build:mac
+
+      # 두 모드 모두: 유니버설이 아니거나, 버전·식별자가 다르면 여기서 멈춘다
+      - name: 산출물 찾기
+        run: |
+          app="$BUNDLE/macos/tote.app"
+          dmg="$BUNDLE/dmg/tote_${VERSION}_universal.dmg"
+          for f in "$app" "$dmg"; do
+            if [ ! -e "$f" ]; then echo "::error::없다: $f"; find "$BUNDLE" -maxdepth 3 | head -50; exit 1; fi
+          done
+          archs=$(lipo -archs "$app/Contents/MacOS/tote")
+          echo "archs: $archs"
+          for arch in arm64 x86_64; do
+            case " $archs " in *" $arch "*) ;; *) echo "::error::유니버설이 아니다 — $arch 가 없다($archs)"; exit 1 ;; esac
+          done
+          plist="$app/Contents/Info.plist"
+          shown=$(plutil -extract CFBundleShortVersionString raw "$plist")
+          if [ "$shown" != "$VERSION" ]; then echo "::error::앱의 버전 $shown 이 $VERSION 이 아니다"; exit 1; fi
+          id=$(plutil -extract CFBundleIdentifier raw "$plist")
+          if [ "$id" != com.develma.totenotes ]; then echo "::error::앱의 식별자 $id 가 com.develma.totenotes 가 아니다"; exit 1; fi
+          { echo "APP_PATH=$app"; echo "DMG_PATH=$dmg"; echo "TAR_PATH=$BUNDLE/macos/tote.app.tar.gz"; } >> "$GITHUB_ENV"
+
+      - name: 서명·공증 검사(앱)
+        if: env.RELEASE == 'true'
+        run: |
+          codesign --verify --deep --strict --verbose=2 "$APP_PATH"
+          info=$(codesign -dv --verbose=4 "$APP_PATH" 2>&1)
+          echo "$info" | grep -E '^(Authority|TeamIdentifier|Identifier|CodeDirectory)'
+          echo "$info" | grep -q '^Authority=Developer ID Application:' || { echo "::error::Developer ID 로 서명되지 않았다"; exit 1; }
+          echo "$info" | grep -qE '^CodeDirectory .*flags=0x[0-9a-f]*\(runtime\)' || { echo "::error::hardened runtime 이 켜지지 않았다"; exit 1; }
+          xcrun stapler validate "$APP_PATH"
+          spctl --assess --type execute --verbose=4 "$APP_PATH" 2>&1 | tee "$RUNNER_TEMP/spctl-app.txt"
+          grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl-app.txt" || { echo "::error::공증되지 않았다(공증 자격을 확인한다)"; exit 1; }
+
+      # 업데이트 묶음 안의 앱도 스테이플된 것이어야 하고, 서명은 앱에 박힌 공개 키와 짝이어야 한다
+      - name: 업데이트 묶음 검사
+        if: env.RELEASE == 'true'
+        run: |
+          check="$RUNNER_TEMP/updater-check"
+          mkdir -p "$check"
+          tar -xzf "$TAR_PATH" -C "$check"
+          xcrun stapler validate "$check/tote.app"
+          node scripts/verify-updater-sig.ts "$TAR_PATH" "$TAR_PATH.sig" --version "$VERSION"
+
+      # 번들러는 DMG 에 서명만 한다. 받은 DMG 를 열 때 Gatekeeper 가 경고하지 않게 DMG 도 공증·스테이플한다
+      - name: DMG 공증·스테이플
+        if: env.RELEASE == 'true'
+        env:
+          APPLE_API_ISSUER: ${{ secrets.APPLE_API_ISSUER }}
+          APPLE_API_KEY: ${{ secrets.APPLE_API_KEY }}
+        run: |
+          codesign --verify --verbose=2 "$DMG_PATH"
+          auth=(--key "$APPLE_API_KEY_PATH" --key-id "$APPLE_API_KEY" --issuer "$APPLE_API_ISSUER")
+          xcrun notarytool submit "$DMG_PATH" "${auth[@]}" --wait --timeout 60m --output-format json > "$RUNNER_TEMP/notary.json"
+          cat "$RUNNER_TEMP/notary.json"
+          status=$(node -p 'require(process.argv[1]).status' "$RUNNER_TEMP/notary.json")
+          if [ "$status" != Accepted ]; then
+            id=$(node -p 'require(process.argv[1]).id' "$RUNNER_TEMP/notary.json")
+            xcrun notarytool log "$id" "${auth[@]}" || true
+            echo "::error::DMG 공증 결과: $status"
+            exit 1
+          fi
+          xcrun stapler staple "$DMG_PATH"
+          xcrun stapler validate "$DMG_PATH"
+          spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH" 2>&1 | tee "$RUNNER_TEMP/spctl-dmg.txt"
+          grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl-dmg.txt" || { echo "::error::DMG 가 공증되지 않았다"; exit 1; }
+
+      # 이름에 버전을 넣어 릴리스마다 URL 이 다르게 한다(공백이 없어 GitHub 가 이름을 바꾸지 않는다)
+      - name: 릴리스 파일 준비
+        if: env.RELEASE == 'true'
+        run: |
+          out="$RUNNER_TEMP/release"
+          mkdir -p "$out"
+          base="tote_${VERSION}_universal"
+          cp "$DMG_PATH" "$out/$base.dmg"
+          cp "$TAR_PATH" "$out/$base.app.tar.gz"
+          cp "$TAR_PATH.sig" "$out/$base.app.tar.gz.sig"
+          node scripts/updater-json.ts --version "$VERSION" \
+            --url "https://github.com/$GITHUB_REPOSITORY/releases/download/$GITHUB_REF_NAME/$base.app.tar.gz" \
+            --sig "$out/$base.app.tar.gz.sig" \
+            --notes "https://github.com/$GITHUB_REPOSITORY/releases/tag/$GITHUB_REF_NAME" \
+            --out "$out/latest.json"
+          cat "$out/latest.json"
+          echo "RELEASE_DIR=$out" >> "$GITHUB_ENV"
+
+      # 드래프트로 전부 올리고, 올라간 목록을 확인한 뒤에만 공개한다
+      - name: 릴리스 공개
+        if: env.RELEASE == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "tote $VERSION" --generate-notes "$RELEASE_DIR"/*
+          find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/want.txt"
+          gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/got.txt"
+          if ! diff -u "$RUNNER_TEMP/want.txt" "$RUNNER_TEMP/got.txt"; then
+            echo "::error::올라간 파일이 다르다 — 드래프트로 남긴다"
+            exit 1
+          fi
+          gh release edit "$GITHUB_REF_NAME" --draft=false --latest
+
+      - name: DMG 올리기 (수동 실행)
+        if: env.RELEASE != 'true'
+        uses: actions/upload-artifact@v7
+        with:
+          name: tote-${{ env.VERSION }}-universal-unsigned
+          path: ${{ env.DMG_PATH }}
+          if-no-files-found: error
+
+      - name: 임시 키 파일 지우기
+        if: always()
+        run: rm -f "$RUNNER_TEMP"/AuthKey_*.p8
