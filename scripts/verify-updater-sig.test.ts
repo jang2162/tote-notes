@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 
 import { verifyUpdaterSignature } from "./verify-updater-sig.ts";
@@ -32,6 +33,9 @@ beforeAll(() => {
     "0.1.0",
     join(dir, "tote.app.tar.gz"),
   );
+  // Signed with no version, as `tauri signer sign` does without `--app-version`.
+  writeFileSync(join(dir, "unversioned.tar.gz"), "the update bundle");
+  tauri("signer", "sign", "-f", join(dir, "k"), "-p", "test", join(dir, "unversioned.tar.gz"));
   data = readFileSync(join(dir, "tote.app.tar.gz"));
   sig = readFileSync(join(dir, "tote.app.tar.gz.sig"), "utf8");
   pubkey = readFileSync(join(dir, "k.pub"), "utf8");
@@ -76,5 +80,52 @@ describe("verifyUpdaterSignature", () => {
     expect(() => verifyUpdaterSignature(data, "bm90IGEgc2ln", pubkey)).toThrow(
       /서명 파일 형식이 아니다/,
     );
+  });
+});
+
+// The version check is the CLI's, which the release workflow and scripts/update-local-test.sh run:
+// the app has `requireSignedVersion` on, so a signature for another version or none is refused
+// there.
+describe("verify-updater-sig --version", () => {
+  const script = join(dirname(fileURLToPath(import.meta.url)), "verify-updater-sig.ts");
+  const cli = (file: string, version: string) => {
+    try {
+      const out = execFileSync(
+        process.execPath,
+        [
+          script,
+          join(dir, file),
+          join(dir, `${file}.sig`),
+          "--pubkey",
+          pubkey,
+          "--version",
+          version,
+        ],
+        { encoding: "utf8", stdio: "pipe" },
+      );
+      return { code: 0, out };
+    } catch (error) {
+      const e = error as { status: number; stderr: string };
+      return { code: e.status, out: e.stderr };
+    }
+  };
+
+  it("takes the version the file was signed for, with or without the v of the tag", () => {
+    expect(cli("tote.app.tar.gz", "0.1.0").code).toBe(0);
+    expect(cli("tote.app.tar.gz", "v0.1.0").code).toBe(0);
+  });
+
+  it("refuses another version", () => {
+    expect(cli("tote.app.tar.gz", "0.1.1")).toEqual({
+      code: 1,
+      out: expect.stringContaining("서명에 적힌 버전 0.1.0 이 0.1.1 과 다르다"),
+    });
+  });
+
+  it("refuses a signature with no version", () => {
+    expect(cli("unversioned.tar.gz", "0.1.0")).toEqual({
+      code: 1,
+      out: expect.stringContaining("서명에 적힌 버전 (없음) 이 0.1.0 과 다르다"),
+    });
   });
 });
