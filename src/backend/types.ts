@@ -46,6 +46,9 @@ export interface UpdateOffer {
   current: string;
   /** The release notes; `null` when the release has none. */
   notes: string | null;
+  /** How far this run went with an update (`OfferStatus`): another window is downloading it, or
+   * one is installed and only the restart is left. */
+  status: "available" | "installing" | "installed";
 }
 
 /** How far `installUpdate` is: bytes downloaded (`total` unknown without a length), then the
@@ -340,6 +343,7 @@ export const BACKEND_ERROR_CODES = [
   "update-failed",
   "not-installed",
   "busy",
+  "installing",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 

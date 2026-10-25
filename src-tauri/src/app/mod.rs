@@ -1571,6 +1571,7 @@ fn bring_to_front(focus: &mut Vec<String>, label: &str) {
 
 #[cfg(test)]
 mod tests {
+    use super::update::OfferStatus;
     use super::*;
     use crate::appdata::Precedence;
     use serde_json::json;
@@ -2526,6 +2527,7 @@ mod tests {
             version: "0.2.0".into(),
             current: "0.1.0".into(),
             notes: None,
+            status: OfferStatus::Available,
         }
     }
 
@@ -2572,7 +2574,13 @@ mod tests {
     fn a_pending_update_tells_the_page_its_kind() {
         assert_eq!(
             serde_json::to_value(PendingOpen::Update(offer())).unwrap(),
-            json!({"kind": "update", "version": "0.2.0", "current": "0.1.0", "notes": null})
+            json!({
+                "kind": "update",
+                "version": "0.2.0",
+                "current": "0.1.0",
+                "notes": null,
+                "status": "available"
+            })
         );
     }
 

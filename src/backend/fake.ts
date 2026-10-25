@@ -405,6 +405,9 @@ export class FakeBackend implements Backend {
   private installGate: { promise: Promise<void>; release: () => void } | null = null;
   /** An update was installed in this page's run, as `Updates::installed` keeps it. */
   private updateInstalled = false;
+  /** An install is running — this window's, or another's (`installElsewhere`). */
+  private installing = false;
+  private installingElsewhere = false;
   /** The fake's own flush rounds (`switchWorkspace`), waiting on this window's answer. */
   private readonly flushWaiters = new Map<number, (blocked: string | undefined) => void>();
   private flushRounds = 0;
@@ -515,11 +518,22 @@ export class FakeBackend implements Backend {
   poke(): void {
     for (const handler of this.handlers.pending) handler();
   }
-  /** A newer release, as the native side offers it to this window (`AppCore::offer_update`). */
-  offerUpdate(offer: UpdateOffer): void {
-    this.data.pending.push({ kind: "update", ...offer });
+  /** A newer release, as the native side offers it to this window (`AppCore::offer_update`),
+   * with the status `Updates::found` gives it. */
+  offerUpdate(offer: Omit<UpdateOffer, "status">): void {
+    const status =
+      this.installing || this.installingElsewhere
+        ? "installing"
+        : this.updateInstalled
+          ? "installed"
+          : "available";
+    this.data.pending.push({ kind: "update", ...offer, status });
     this.commit();
     this.poke();
+  }
+  /** Another window is downloading the update: offers say so, and an install here is refused. */
+  installElsewhere(): void {
+    this.installingElsewhere = true;
   }
   /** The next install fails with `message`, as one run from a read-only folder does. */
   failNextInstall(message: string): void {
@@ -1074,18 +1088,28 @@ export class FakeBackend implements Backend {
     });
   }
 
+  /** As `Updates::begin_install`: refused while one runs, and nothing downloaded (no call
+   * counted) once one is installed. */
   async installUpdate(onProgress: (progress: UpdateProgress) => void) {
-    this.updateLog().installCalls += 1;
-    this.commit();
-    const total = 4_000_000;
-    onProgress({ kind: "progress", done: total / 2, total });
-    await this.installGate?.promise;
-    const fails = this.nextInstallFails;
-    this.nextInstallFails = null;
-    if (fails !== null) throw new BackendError("update-failed", fails);
-    onProgress({ kind: "progress", done: total, total });
-    onProgress({ kind: "installing" });
-    this.updateInstalled = true;
+    if (this.installing || this.installingElsewhere)
+      throw new BackendError("installing", "다른 창에서 업데이트를 받는 중입니다");
+    if (this.updateInstalled) return;
+    this.installing = true;
+    try {
+      this.updateLog().installCalls += 1;
+      this.commit();
+      const total = 4_000_000;
+      onProgress({ kind: "progress", done: total / 2, total });
+      await this.installGate?.promise;
+      const fails = this.nextInstallFails;
+      this.nextInstallFails = null;
+      if (fails !== null) throw new BackendError("update-failed", fails);
+      onProgress({ kind: "progress", done: total, total });
+      onProgress({ kind: "installing" });
+      this.updateInstalled = true;
+    } finally {
+      this.installing = false;
+    }
   }
 
   /** As `lifecycle::begin_restart`: the window writes everything for a quit, then tote starts

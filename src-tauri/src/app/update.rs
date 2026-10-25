@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager};
 use tauri_plugin_dialog::DialogExt;
 use tauri_plugin_updater::{Update, UpdaterExt};
 
-use super::{lock, AppCore, RestartBusy};
+use super::{lock, windows, AppCore, RestartBusy};
 
 /// After launch, so the check never slows the first window down.
 pub const STARTUP_DELAY: Duration = Duration::from_secs(5);
@@ -87,14 +87,26 @@ pub struct UpdateOffer {
     pub version: String,
     pub current: String,
     pub notes: Option<String>,
+    pub status: OfferStatus,
+}
+
+/// How far this run went with an update when one is offered: the window asks to download it, says
+/// another window is downloading it, or asks only to restart.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum OfferStatus {
+    Available,
+    Installing,
+    Installed,
 }
 
 impl UpdateOffer {
-    fn of(update: &Update) -> UpdateOffer {
+    fn of(update: &Update, status: OfferStatus) -> UpdateOffer {
         UpdateOffer {
             version: update.version.clone(),
             current: update.current_version.clone(),
             notes: update.body.clone().filter(|notes| !notes.trim().is_empty()),
+            status,
         }
     }
 }
@@ -126,24 +138,36 @@ impl<U> Default for Updates<U> {
 }
 
 impl<U: Clone> Updates<U> {
-    /// Keeps `update` for `install_update`. Not while one is being installed: that one goes on.
-    pub fn found(&self, update: U) {
+    /// Keeps `update` for `install_update`, and says how to offer it. Not while one is being
+    /// installed: that one goes on. Once one is installed in this run, a newer find too is only a
+    /// restart away — the restarted version finds it again.
+    pub fn found(&self, update: U) -> OfferStatus {
         let mut state = lock(&self.state);
-        if !state.installing {
-            state.found = Some(update);
+        if state.installing {
+            return OfferStatus::Installing;
+        }
+        state.found = Some(update);
+        if state.installed {
+            OfferStatus::Installed
+        } else {
+            OfferStatus::Available
         }
     }
 
-    /// The update to install now; `Err` with the code the page is told when there is none or one
-    /// is being installed already.
-    pub fn begin_install(&self) -> Result<U, &'static str> {
+    /// The update to install now; `None` when one is installed in this run already, so nothing is
+    /// downloaded again. `Err` with the code the page is told when there is none or one is being
+    /// installed in another window.
+    pub fn begin_install(&self) -> Result<Option<U>, &'static str> {
         let mut state = lock(&self.state);
         if state.installing {
-            return Err("busy");
+            return Err("installing");
+        }
+        if state.installed {
+            return Ok(None);
         }
         let update = state.found.clone().ok_or("no-update")?;
         state.installing = true;
-        Ok(update)
+        Ok(Some(update))
     }
 
     /// The install ended. A failed one keeps the update, so 「다시 시도」 tries it again.
@@ -217,12 +241,17 @@ async fn check(app: &AppHandle) -> Result<Option<Update>, String> {
     updater.check().await.map_err(|err| err.to_string())
 }
 
-/// Keeps `update` and offers it to `prefer`, or to the window a found update goes to.
-fn offer(app: &AppHandle, update: Update, prefer: Option<&str>) {
-    let offer = UpdateOffer::of(&update);
-    app.state::<Updates>().found(update);
-    if let Some(label) = app.state::<AppCore>().offer_update(offer, prefer) {
-        let _ = app.emit_to(EventTarget::webview_window(&label), "tote://pending", ());
+/// Keeps `update` and offers it to `prefer`, or to the window a found update goes to. `false` when
+/// no window is open: the offer waits for the next one.
+fn offer(app: &AppHandle, update: Update, prefer: Option<&str>) -> bool {
+    let status = app.state::<Updates>().found(update.clone());
+    let offer = UpdateOffer::of(&update, status);
+    match app.state::<AppCore>().offer_update(offer, prefer) {
+        Some(label) => {
+            let _ = app.emit_to(EventTarget::webview_window(&label), "tote://pending", ());
+            true
+        }
+        None => false,
     }
 }
 
@@ -240,7 +269,9 @@ pub fn start(app: &AppHandle) {
             || check(&app),
         ));
         match found {
-            StartupCheck::Found(update) => offer(&app, update, None),
+            StartupCheck::Found(update) => {
+                offer(&app, update, None);
+            }
             StartupCheck::Failed(err) => eprintln!("tote: could not check for updates: {err}"),
             StartupCheck::Off | StartupCheck::None => {}
         }
@@ -248,7 +279,8 @@ pub fn start(app: &AppHandle) {
 }
 
 /// 「업데이트 확인…」: checks whatever the setting says — the person asked. A found update is
-/// offered in `window`; anything else is said in a message box.
+/// offered in `window`, or in a window opened for it when none is (tote in the Dock only); anything
+/// else is said in a message box.
 pub fn check_now(app: &AppHandle, window: Option<String>) {
     if !allowed() {
         tell(app, "개발 빌드는 업데이트를 확인하지 않습니다.".into());
@@ -257,7 +289,12 @@ pub fn check_now(app: &AppHandle, window: Option<String>) {
     let app = app.clone();
     tauri::async_runtime::spawn(async move {
         match check(&app).await {
-            Ok(Some(update)) => offer(&app, update, window.as_deref()),
+            Ok(Some(update)) => {
+                // The window opened takes the waiting offer as it registers.
+                if !offer(&app, update, window.as_deref()) {
+                    windows::open_latest(&app);
+                }
+            }
             Ok(None) => tell(
                 &app,
                 format!("tote {} 이 최신 버전입니다.", app.package_info().version),
@@ -424,15 +461,28 @@ mod tests {
     fn an_install_runs_once_and_a_failed_one_can_be_retried() {
         let updates = Updates::<u32>::default();
         assert_eq!(updates.begin_install(), Err("no-update"));
-        updates.found(7);
-        assert_eq!(updates.begin_install(), Ok(7));
-        assert_eq!(updates.begin_install(), Err("busy"));
-        // A newer find does not replace the one being installed.
-        updates.found(8);
+        assert_eq!(updates.found(7), OfferStatus::Available);
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
+        assert_eq!(updates.begin_install(), Err("installing"));
+        // A newer find does not replace the one being installed, and is offered as downloading.
+        assert_eq!(updates.found(8), OfferStatus::Installing);
         updates.end_install(false);
         assert!(!updates.installed());
-        assert_eq!(updates.begin_install(), Ok(7));
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
         updates.end_install(true);
+        assert!(updates.installed());
+    }
+
+    #[test]
+    fn an_installed_update_is_not_downloaded_again() {
+        let updates = Updates::<u32>::default();
+        updates.found(7);
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
+        updates.end_install(true);
+        // The menu's check finds it again (the running version is still the old one): it asks
+        // only for the restart, and an install asked for anyway downloads nothing.
+        assert_eq!(updates.found(7), OfferStatus::Installed);
+        assert_eq!(updates.begin_install(), Ok(None));
         assert!(updates.installed());
     }
 }

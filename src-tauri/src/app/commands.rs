@@ -723,11 +723,15 @@ pub async fn install_update(app: AppHandle, on_progress: Channel<UpdateProgress>
     let updates = app.state::<update::Updates>();
     let found = updates.begin_install().map_err(|code| {
         let message = match code {
-            "busy" => "업데이트를 이미 받는 중입니다",
+            "installing" => "다른 창에서 업데이트를 받는 중입니다",
             _ => "설치할 업데이트가 없습니다",
         };
         CommandError::new(code, message)
     })?;
+    // Installed in this run already: nothing to download, the restart is next.
+    let Some(found) = found else {
+        return Ok(());
+    };
     let mut done = 0u64;
     let installed = found
         .download_and_install(

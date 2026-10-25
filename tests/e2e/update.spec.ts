@@ -122,3 +122,57 @@ test("an update offer opens over the settings screen and Escape closes only it",
   await expect(settings).toBeVisible();
   expect((await updateLog(page))?.installCalls ?? 0).toBe(0);
 });
+
+test("a second offer while the dialog is open does not stack another", async ({ page }) => {
+  await start(page);
+  await offer(page);
+  await expect(dialog(page)).toBeVisible();
+  // The menu's check finding the same release again, in the same window.
+  await offer(page);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.pending.length)).toBe(0);
+  await expect(dialog(page)).toHaveCount(1);
+});
+
+test("an update installed in this run asks only for the restart", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => window.__tote.backend.refuseNextRestart());
+  await offer(page);
+  await page.getByRole("button", { name: "업데이트하고 다시 시작" }).click();
+  await expect(dialog(page)).toContainText("업데이트는 설치됐습니다.");
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+
+  // The menu's check finds it again: the running version is still the old one.
+  await offer(page);
+  await expect(dialog(page)).toContainText(
+    "업데이트는 설치됐습니다. 다음에 tote 를 열면 새 버전으로 시작합니다.",
+  );
+  await expect(page.getByRole("button", { name: "업데이트하고 다시 시작" })).toHaveCount(0);
+  await page.getByRole("button", { name: "다시 시작", exact: true }).click();
+  await expect.poll(async () => (await updateLog(page))?.restarted).toBe(true);
+  expect((await updateLog(page))?.installCalls).toBe(1);
+});
+
+test("an offer while another window downloads the update says so", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => window.__tote.backend.installElsewhere());
+  await offer(page);
+  await expect(dialog(page)).toHaveText("새 버전 tote 0.2.0 을 다른 창에서 받는 중입니다.닫기");
+  await expect(page.getByRole("button", { name: "닫기", exact: true })).toBeFocused();
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  expect((await updateLog(page))?.installCalls ?? 0).toBe(0);
+});
+
+test("accepting after another window began downloading says it is downloading there", async ({
+  page,
+}) => {
+  await start(page);
+  await offer(page);
+  // Both windows were asked before either accepted; the other one was first.
+  await page.evaluate(() => window.__tote.backend.installElsewhere());
+  await page.getByRole("button", { name: "업데이트하고 다시 시작" }).click();
+  await expect(dialog(page)).toHaveText("새 버전 tote 0.2.0 을 다른 창에서 받는 중입니다.닫기");
+  await expect(page.getByRole("button", { name: "다시 시도" })).toHaveCount(0);
+  expect((await updateLog(page))?.installCalls ?? 0).toBe(0);
+});

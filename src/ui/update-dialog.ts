@@ -11,7 +11,8 @@ type Stage =
   | { kind: "restarting" }
   | { kind: "failed"; message: string; step: "install" | "restart" }
   | { kind: "busy" }
-  | { kind: "restart-off" };
+  | { kind: "elsewhere" }
+  | { kind: "installed" };
 
 /** Downloading, installing and restarting are not called off halfway: the buttons are off and
  * Escape does nothing. */
@@ -27,7 +28,7 @@ let open = false;
 export async function openUpdateDialog(backend: Backend, offer: UpdateOffer): Promise<void> {
   if (open) return;
   open = true;
-  let stage: Stage = { kind: "ask" };
+  let stage = first(offer);
   let stopListening = () => {};
   try {
     await modal<true>(
@@ -61,7 +62,11 @@ export async function openUpdateDialog(backend: Backend, offer: UpdateOffer): Pr
               ),
             );
           } catch (error) {
-            go({ kind: "failed", message: messageOf(error), step: "install" });
+            go(
+              errorCode(error) === "installing"
+                ? { kind: "elsewhere" }
+                : { kind: "failed", message: messageOf(error), step: "install" },
+            );
             return;
           }
           await restart();
@@ -70,7 +75,7 @@ export async function openUpdateDialog(backend: Backend, offer: UpdateOffer): Pr
         // 「취소」 to the question about unsaved memos: the update is installed and waits for the
         // next launch, or another press.
         stopListening = backend.onRestartOff(() => {
-          if (stage.kind === "restarting") go({ kind: "restart-off" });
+          if (stage.kind === "restarting") go({ kind: "installed" });
         });
         dialog.replaceChildren(...contents(offer, stage, close, steps));
         return dialog;
@@ -80,6 +85,19 @@ export async function openUpdateDialog(backend: Backend, offer: UpdateOffer): Pr
   } finally {
     stopListening();
     open = false;
+  }
+}
+
+/** Where an offer starts: a window offered an update another is downloading, or one this run
+ * installed already (its restart called off), does not download it again. */
+function first(offer: UpdateOffer): Stage {
+  switch (offer.status) {
+    case "available":
+      return { kind: "ask" };
+    case "installing":
+      return { kind: "elsewhere" };
+    case "installed":
+      return { kind: "installed" };
   }
 }
 
@@ -160,7 +178,12 @@ function contents(
           button("다시 시작", () => void steps.restart(), true),
         ),
       ];
-    case "restart-off":
+    case "elsewhere":
+      return [
+        text(`새 버전 tote ${offer.version} 을 다른 창에서 받는 중입니다.`),
+        buttons(button("닫기", () => close(null), true)),
+      ];
+    case "installed":
       return [
         text("업데이트는 설치됐습니다. 다음에 tote 를 열면 새 버전으로 시작합니다."),
         buttons(
