@@ -1,4 +1,4 @@
-# tote 의 macOS 릴리스. 사람이 할 일(인증서·키·비밀 등록, 버전 올리고 태그)은 docs/guides/release-macos.md
+# Tote Notes 의 macOS 릴리스. 사람이 할 일(인증서·키·비밀 등록, 버전 올리고 태그)은 docs/guides/release-macos.md
 #
 # v* 태그 푸시: universal 빌드 → Developer ID 서명(hardened runtime) → 앱 공증·스테이플(Tauri 번들러)
 #   → 검사(산출물·서명·공증·업데이트 서명) → DMG 공증·스테이플 → 드래프트 릴리스에 전부 올림 → 공개.
@@ -117,11 +117,12 @@ jobs:
         if: env.RELEASE != 'true'
         run: pnpm build:mac
 
-      # 두 모드 모두: 유니버설이 아니거나, 버전·식별자가 다르면 여기서 멈춘다
+      # 두 모드 모두: 유니버설이 아니거나, 버전·식별자·실행 파일 이름이 다르면 여기서 멈춘다.
+      # 앱 이름(Tote Notes)에는 공백이 있다 — 경로는 늘 따옴표로 감싼다
       - name: 산출물 찾기
         run: |
-          app="$BUNDLE/macos/tote.app"
-          dmg="$BUNDLE/dmg/tote_${VERSION}_universal.dmg"
+          app="$BUNDLE/macos/Tote Notes.app"
+          dmg="$BUNDLE/dmg/Tote Notes_${VERSION}_universal.dmg"
           for f in "$app" "$dmg"; do
             if [ ! -e "$f" ]; then echo "::error::없다: $f"; find "$BUNDLE" -maxdepth 3 | head -50; exit 1; fi
           done
@@ -135,7 +136,10 @@ jobs:
           if [ "$shown" != "$VERSION" ]; then echo "::error::앱의 버전 $shown 이 $VERSION 이 아니다"; exit 1; fi
           id=$(plutil -extract CFBundleIdentifier raw "$plist")
           if [ "$id" != com.develma.totenotes ]; then echo "::error::앱의 식별자 $id 가 com.develma.totenotes 가 아니다"; exit 1; fi
-          { echo "APP_PATH=$app"; echo "DMG_PATH=$dmg"; echo "TAR_PATH=$BUNDLE/macos/tote.app.tar.gz"; } >> "$GITHUB_ENV"
+          # 번들 안의 tote 셸 명령 스크립트가 이 이름으로 실행 파일을 찾는다
+          exe=$(plutil -extract CFBundleExecutable raw "$plist")
+          if [ "$exe" != tote ]; then echo "::error::실행 파일 이름 $exe 가 tote 가 아니다"; exit 1; fi
+          { echo "APP_PATH=$app"; echo "DMG_PATH=$dmg"; echo "TAR_PATH=$BUNDLE/macos/Tote Notes.app.tar.gz"; } >> "$GITHUB_ENV"
 
       - name: 서명·공증 검사(앱)
         if: env.RELEASE == 'true'
@@ -156,7 +160,7 @@ jobs:
           check="$RUNNER_TEMP/updater-check"
           mkdir -p "$check"
           tar -xzf "$TAR_PATH" -C "$check"
-          xcrun stapler validate "$check/tote.app"
+          xcrun stapler validate "$check/Tote Notes.app"
           node scripts/verify-updater-sig.ts "$TAR_PATH" "$TAR_PATH.sig" --version "$VERSION"
 
       # 번들러는 DMG 에 서명만 한다. 받은 DMG 를 열 때 Gatekeeper 가 경고하지 않게 DMG 도 공증·스테이플한다
@@ -182,13 +186,14 @@ jobs:
           spctl --assess --type open --context context:primary-signature --verbose=4 "$DMG_PATH" 2>&1 | tee "$RUNNER_TEMP/spctl-dmg.txt"
           grep -q 'source=Notarized Developer ID' "$RUNNER_TEMP/spctl-dmg.txt" || { echo "::error::DMG 가 공증되지 않았다"; exit 1; }
 
-      # 이름에 버전을 넣어 릴리스마다 URL 이 다르게 한다(공백이 없어 GitHub 가 이름을 바꾸지 않는다)
+      # 이름에 버전을 넣어 릴리스마다 URL 이 다르게 한다. GitHub 는 파일 이름의 공백을 바꿔 올리므로
+      # (`Tote Notes_…` → `Tote.Notes_…`) 공백 없는 이름으로 옮겨 latest.json 의 주소와 맞춘다
       - name: 릴리스 파일 준비
         if: env.RELEASE == 'true'
         run: |
           out="$RUNNER_TEMP/release"
           mkdir -p "$out"
-          base="tote_${VERSION}_universal"
+          base="Tote-Notes_${VERSION}_universal"
           cp "$DMG_PATH" "$out/$base.dmg"
           cp "$TAR_PATH" "$out/$base.app.tar.gz"
           cp "$TAR_PATH.sig" "$out/$base.app.tar.gz.sig"
@@ -206,7 +211,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "tote $VERSION" --generate-notes "$RELEASE_DIR"/*
+          gh release create "$GITHUB_REF_NAME" --draft --verify-tag --title "Tote Notes $VERSION" --generate-notes "$RELEASE_DIR"/*
           find "$RELEASE_DIR" -maxdepth 1 -type f -exec basename {} \; | sort > "$RUNNER_TEMP/want.txt"
           gh release view "$GITHUB_REF_NAME" --json assets --jq '.assets[].name' | sort > "$RUNNER_TEMP/got.txt"
           if ! diff -u "$RUNNER_TEMP/want.txt" "$RUNNER_TEMP/got.txt"; then
@@ -219,7 +224,7 @@ jobs:
         if: env.RELEASE != 'true'
         uses: actions/upload-artifact@v7
         with:
-          name: tote-${{ env.VERSION }}-universal-unsigned
+          name: tote-notes-${{ env.VERSION }}-universal-unsigned
           path: ${{ env.DMG_PATH }}
           if-no-files-found: error
 

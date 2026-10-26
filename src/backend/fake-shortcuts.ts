@@ -4,8 +4,8 @@ import type { FixedShortcut, ShortcutCommand } from "./types";
 /** The fake backend's copy of `COMMANDS` in src-tauri/src/shortcuts.rs, in menu order.
  * fake-shortcuts.test.ts holds it against the table Rust writes out. */
 export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
-  { id: "check-updates", label: "업데이트 확인…", menu: "tote", default: null },
-  { id: "install-cli", label: "셸 명령 설치…", menu: "tote", default: null },
+  { id: "check-updates", label: "업데이트 확인…", menu: "Tote Notes", default: null },
+  { id: "install-cli", label: "셸 명령 설치…", menu: "Tote Notes", default: null },
   { id: "new-memo", label: "새 메모", menu: "파일", default: "CmdOrCtrl+N" },
   { id: "new-window", label: "새 창", menu: "파일", default: "Alt+CmdOrCtrl+N" },
   { id: "open-file", label: "파일 열기…", menu: "파일", default: "CmdOrCtrl+O" },
@@ -39,7 +39,7 @@ export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
 /** `FIXED` in src-tauri/src/shortcuts.rs. */
 export const FAKE_FIXED_SHORTCUTS: FixedShortcut[] = [
   { name: "설정…", accelerator: "CmdOrCtrl+," },
-  { name: "tote 종료", accelerator: "CmdOrCtrl+Q" },
+  { name: "Tote Notes 종료", accelerator: "CmdOrCtrl+Q" },
   { name: "워크스페이스 1", accelerator: "Ctrl+1" },
   { name: "워크스페이스 2", accelerator: "Ctrl+2" },
   { name: "워크스페이스 3", accelerator: "Ctrl+3" },

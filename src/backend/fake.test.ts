@@ -137,7 +137,7 @@ describe("FakeBackend shortcuts", () => {
     expect(before.commands.find((c) => c.id === "new-memo")?.current).toBe("CmdOrCtrl+N");
     expect(before.fixed.slice(0, 2)).toEqual([
       { name: "설정…", accelerator: "CmdOrCtrl+," },
-      { name: "tote 종료", accelerator: "CmdOrCtrl+Q" },
+      { name: "Tote Notes 종료", accelerator: "CmdOrCtrl+Q" },
     ]);
 
     await backend.patchSettings({

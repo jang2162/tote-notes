@@ -132,7 +132,7 @@ function contents(
   const text = (line: string) => h("p", { textContent: line });
   const question = () => {
     const parts: Node[] = [
-      text(`새 버전 tote ${offer.version} 이 있습니다. 지금 버전은 ${offer.current} 입니다.`),
+      text(`새 버전 Tote Notes ${offer.version} 이 있습니다. 지금 버전은 ${offer.current} 입니다.`),
     ];
     if (offer.notes) {
       parts.push(
@@ -180,12 +180,12 @@ function contents(
       ];
     case "elsewhere":
       return [
-        text(`새 버전 tote ${offer.version} 을 다른 창에서 받는 중입니다.`),
+        text(`새 버전 Tote Notes ${offer.version} 을 다른 창에서 받는 중입니다.`),
         buttons(button("닫기", () => close(null), true)),
       ];
     case "installed":
       return [
-        text("업데이트는 설치됐습니다. 다음에 tote 를 열면 새 버전으로 시작합니다."),
+        text("업데이트는 설치됐습니다. 다음에 Tote Notes 를 열면 새 버전으로 시작합니다."),
         buttons(
           button("닫기", () => close(null)),
           button("다시 시작", () => void steps.restart(), true),

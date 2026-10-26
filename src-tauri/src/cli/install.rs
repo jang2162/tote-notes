@@ -42,7 +42,10 @@ fn link(script: &Path, at: &Path) -> io::Result<()> {
         Ok(_) => {
             return Err(io::Error::new(
                 io::ErrorKind::AlreadyExists,
-                format!("{} 가 이미 있고 tote 가 만든 것이 아닙니다", at.display()),
+                format!(
+                    "{} 가 이미 있고 Tote Notes 가 만든 것이 아닙니다",
+                    at.display()
+                ),
             ))
         }
         Err(err) if err.kind() == io::ErrorKind::NotFound => {}
@@ -62,14 +65,31 @@ fn link(script: &Path, at: &Path) -> io::Result<()> {
     }
 }
 
-/// A link we made: it points at this script, or at the script of an app of the same bundle name in
-/// its old place. A `tote-dev.app` install leaves `tote.app`'s link alone, and the other way round;
-/// a script outside a bundle (a dev binary) owns only a link to itself.
+/// A link we made: it points at this script, or at the script of the same app in its old place —
+/// an app of the same bundle name, or of the name it had in 0.1.0 (`same_app`). A
+/// `Tote Notes Dev.app` install leaves `Tote Notes.app`'s link alone, and the other way round; a
+/// script outside a bundle (a dev binary) owns only a link to itself.
 fn is_tote_link(script: &Path, at: &Path) -> bool {
     fs::read_link(at).is_ok_and(|target| {
         target == script
-            || app_bundle_name(script).is_some_and(|name| app_bundle_name(&target) == Some(name))
+            || app_bundle_name(script)
+                .zip(app_bundle_name(&target))
+                .is_some_and(|(ours, theirs)| same_app(ours, theirs))
     })
+}
+
+/// Whether two bundle names are one app's. 0.1.0 shipped as `tote.app` (debug `tote-dev.app`):
+/// its link is the renamed app's to replace, or 「셸 명령 설치」 of a `Tote Notes.app` installed
+/// from the DMG would refuse the link the old one made.
+fn same_app(a: &OsStr, b: &OsStr) -> bool {
+    fn current(name: &OsStr) -> &OsStr {
+        match name.to_str() {
+            Some("tote.app") => OsStr::new("Tote Notes.app"),
+            Some("tote-dev.app") => OsStr::new("Tote Notes Dev.app"),
+            _ => name,
+        }
+    }
+    current(a) == current(b)
 }
 
 /// `<name>.app` of the script inside an app bundle, `…/<name>.app/Contents/Resources/bin/tote`.
@@ -98,7 +118,7 @@ mod tests {
     }
 
     fn script(dir: &Path) -> PathBuf {
-        bundled_script(dir, "tote.app")
+        bundled_script(dir, "Tote Notes.app")
     }
 
     #[test]
@@ -175,5 +195,36 @@ mod tests {
         .unwrap();
         install(&script, &bin, &dir.path().join("fb")).unwrap();
         assert_eq!(fs::read_link(bin.join("tote")).unwrap(), script);
+    }
+
+    #[test]
+    fn the_link_of_the_app_under_its_old_name_is_replaced() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("bin");
+        fs::create_dir(&bin).unwrap();
+        let link = |to: &str| {
+            let _ = fs::remove_file(bin.join("tote"));
+            std::os::unix::fs::symlink(to, bin.join("tote")).unwrap();
+        };
+        let old_release = "/Applications/tote.app/Contents/Resources/bin/tote";
+        let old_debug = "/repo/target/debug/bundle/macos/tote-dev.app/Contents/Resources/bin/tote";
+
+        let release = script(dir.path());
+        link(old_release);
+        install(&release, &bin, &dir.path().join("fb")).unwrap();
+        assert_eq!(fs::read_link(bin.join("tote")).unwrap(), release);
+
+        let debug = bundled_script(dir.path(), "Tote Notes Dev.app");
+        link(old_debug);
+        install(&debug, &bin, &dir.path().join("fb")).unwrap();
+        assert_eq!(fs::read_link(bin.join("tote")).unwrap(), debug);
+
+        // The old name of the other app is still the other app's.
+        link(old_release);
+        let err = install(&debug, &bin, &dir.path().join("fb")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
+        link(old_debug);
+        let err = install(&release, &bin, &dir.path().join("fb")).unwrap_err();
+        assert_eq!(err.kind(), io::ErrorKind::AlreadyExists);
     }
 }

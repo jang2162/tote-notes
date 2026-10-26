@@ -297,7 +297,10 @@ pub fn check_now(app: &AppHandle, window: Option<String>) {
             }
             Ok(None) => tell(
                 &app,
-                format!("tote {} 이 최신 버전입니다.", app.package_info().version),
+                format!(
+                    "Tote Notes {} 이 최신 버전입니다.",
+                    app.package_info().version
+                ),
             ),
             Err(err) => tell(&app, format!("업데이트를 확인하지 못했습니다: {err}")),
         }

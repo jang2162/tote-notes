@@ -28,7 +28,7 @@ tote 는 지금 개발자의 맥에서 디버그 번들로만 돈다. 서명·�
 - **업데이트 서명 키는 tote 전용으로 새로 만든다.** 한 키가 새거나 잃으면 두 앱이 함께 업데이트를 잃기 때문이다.
 - **앱 식별자를 `dev.tote.note` 에서 `com.develma.totenotes` 로 바꾼다.** 첫 배포 뒤에는 바꿀 수 없으므로(업데이트가 다른 앱으로 보인다) 지금 keyring-notes(`com.develma.keyringnotes`)와 맞춘다. 개발용 식별자(`src-tauri/tauri.dev.conf.json` 의 `dev.tote.note.dev`)도 같은 꼴(`com.develma.totenotes.dev`)로 맞춘다 — 둘이 다르게 남아야 디버그 앱과 설치본이 서로를 단일 인스턴스로 잡지 않는다(`src-tauri/src/lib.rs` 의 단일 인스턴스 주석).
   - 메모 데이터·settings.json·machine.json 은 식별자와 무관한 `dirs::data_dir()/tote`(`src-tauri/src/appdata.rs`)에 있어 옮겨지지 않는다. 앱은 실서비스에서 WebView 저장소(localStorage)를 쓰지 않는다(`src/backend/fake*.ts` 만 쓴다). 빌더는 식별자에 묶인 다른 상태가 없는지 확인한다.
-- **첫 릴리스는 `v0.1.0`**(지금 `tauri.conf.json`·`Cargo.toml` 의 버전). 앱 이름(`productName`)은 지금처럼 `tote`.
+- **첫 릴리스는 `v0.1.0`**(지금 `tauri.conf.json`·`Cargo.toml` 의 버전). 앱 이름(`productName`)은 지금처럼 `tote`. (2026-10-26 에 `Tote Notes` 로 바꿨다. 실행 파일 이름은 `mainBinaryName` 으로 `tote` 에 고정 — `docs/guides/release-macos.md` 「바꾸면 안 되는 것」.)
 - **설치 파일은 DMG, 빌드는 유니버설.** 지금 `bundle.targets` 는 `["app"]` 뿐이라 DMG 를 만들지 않는다.
 - **공증까지 성공하면 릴리스를 바로 공개한다.** keyring-notes 처럼 드래프트로 전부 올리고, 올라간 목록을 확인한 뒤에만 공개한다. 공개되는 릴리스에는 항상 `latest.json` 이 있어야 한다(없는 릴리스가 `releases/latest` 가 되면 업데이트가 조용히 멈춘다).
 

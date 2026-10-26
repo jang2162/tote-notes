@@ -10,9 +10,9 @@
 
 ## 디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다
 
-에이전트든 사람이든 디버그 번들(`tote-dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> <번들 경로>` 로 연다. 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/Tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다. 띄우기 전에 두 폴더가 이미 있으면(사람이 `pnpm app:dev` 로 띄운 개발 앱의 것일 수 있다) 지우지 말고, 띄우기 직전에 기준 파일(`touch "$S/start-marker"`)을 만들어 끝난 뒤 `find ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
+에이전트든 사람이든 디버그 번들(`Tote Notes Dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> "<번들 경로>"` 로 연다(이름에 공백이 있어 따옴표가 필요하다). 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/Tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다. 띄우기 전에 두 폴더가 이미 있으면(사람이 `pnpm app:dev` 로 띄운 개발 앱의 것일 수 있다) 지우지 말고, 띄우기 직전에 기준 파일(`touch "$S/start-marker"`)을 만들어 끝난 뒤 `find ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
 
-디버그 번들은 `pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json` 으로 만든다. 결과는 `src-tauri/target/debug/bundle/macos/tote-dev.app` 이고 번들 안 실행 파일은 `Contents/MacOS/tote` 다. `--config` 를 빼면 배포 앱과 identifier 가 같은 `tote.app` 이 나와 `tell application "tote-dev"` 같은 절차가 맞지 않는다. 디버그 번들의 식별자는 `com.develma.totenotes.dev`(접근성 도구의 `--app` 값), 배포 앱은 `com.develma.totenotes` 다.
+디버그 번들은 `pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json` 으로 만든다. 결과는 `src-tauri/target/debug/bundle/macos/Tote Notes Dev.app` 이고 번들 안 실행 파일은 `Contents/MacOS/tote` 다(배포 앱과 같다 — `mainBinaryName`). `--config` 를 빼면 배포 앱과 identifier 가 같은 `Tote Notes.app` 이 나와 `tell application "Tote Notes Dev"` 같은 절차가 맞지 않는다. 0.1.0 까지 이름은 `tote.app`·`tote-dev.app` 이었다 — 옛 보고서의 절차는 이 이름으로 적혀 있다. 데이터 폴더(`tote`·`tote-dev`)는 이름과 따로라 그대로다. 앱을 띄우지 않고 창 없이 파일 열기(`RunEvent::Opened`)를 볼 때는 `open -n -g --env TOTE_DATA_DIR=<임시 폴더> --env TOTE_BACKGROUND=1 -a "<번들 경로>" <파일…>` 로 보내고 그 워크스페이스의 `.tote/sessions/*.json` 에 외부 탭 경로가 적히는지 본다. 이미 떠 있는 앱에는 `--env` 없이 `open -g -a "<번들 경로>" <파일>` 로 보낸다(같은 프로세스가 받는다). 디버그 번들의 식별자는 `com.develma.totenotes.dev`(접근성 도구의 `--app` 값), 배포 앱은 `com.develma.totenotes` 다.
 
 - **Why:** 이 변수가 없으면 디버그 앱은 개발용 기본 폴더 두 곳에 쓴다. Dock·Finder 로 열거나 실행 파일 이름을 잘못 적어도 똑같이 빠진다. 두 계획 연속으로 이렇게 폴더가 생겼고, 규칙이 각 계획에만 있어서 다음 계획의 워커가 보지 못했다.
 - 생겼으면 안을 확인해 사람에게 알리고, 동의를 받아 지운다.
@@ -40,7 +40,7 @@
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
 - tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
 - tote 창이 둘 이상일 때는 `orca computer` 의 요소 번호로 누르지 않는다. `--window-id` 를 줘도 다른 창의 트리와 요소가 잡힐 수 있다(질문 창의 「업데이트하고 다시 시작」 에 포커스가 간 적이 있다). 창 제목으로 `AXWindows` 를 골라 AXUIElement 로 직접 누른다.
-- 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「tote 종료」 를 누른다.
+- 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「Tote Notes 종료」(0.1.0 은 「tote 종료」) 를 누른다.
 - 업데이트를 설치하고 다시 시작하지 않은 실행은 AX 창 목록이 비어 `orca computer` 가 `permission_denied` 로 거부한다. 그때는 System Events 로 `entire contents of window 1` 을 받아 그 안의 버튼에 `perform action "AXPress"` 한다. 셸에서 띄웠거나 업데이트로 다시 뜬 앱은 activate 하기 전에는 웹 내용이 AX 트리에 나오지 않는다.
 - 키 입력 직후 버튼을 눌러야 하는 확인(500ms 저장 타이머 전에 일어나야 하는 동작)은 한 프로세스에서 CGEvent 키를 보내고 곧바로 AXPress 하는 작은 도구로 한다. `orca computer` 명령은 한 번에 1초 넘게 걸린다. 판정은 메모 파일의 mtime(`stat -f %Fm`)과 마지막 키 시각의 차이로 한다.
 
@@ -48,7 +48,7 @@
 
 앱 안 업데이트(실행 때 확인 → 질문 → 받기·설치 → 저장하고 다시 시작)는 `bash scripts/update-local-test.sh <빈 임시 폴더>` 로 시험한다. 스크립트가 만드는 것:
 
-- 별도 식별자(`com.develma.totenotes.updatetest`, 이름 `tote-updatetest`)의 `perf` 번들 두 벌 — 낮은 버전 `0.0.1`(폴더의 `Applications/` 에 복사)과 루트 `package.json` 의 버전(업데이트 묶음). 두 벌 모두 임시 서명(`signingIdentity: "-"`)이라 hardened runtime 이 켜진다(`codesign -dv` 의 `flags=…(adhoc,runtime)`). 설치·다시 시작이 배포와 같은 런타임 조건에서 돈다.
+- 별도 식별자(`com.develma.totenotes.updatetest`)의 `perf` 번들 두 벌 — 0.1.0 의 이름 짓기를 따른 낮은 버전 `0.0.1`(`tote-updatetest.app`, 폴더의 `Applications/` 에 복사)과 지금 이름 짓기의 루트 `package.json` 버전(`Tote Notes Updatetest.app` 의 업데이트 묶음, 릴리스처럼 공백 없는 이름 `Tote-Notes-Updatetest_<버전>.app.tar.gz` 으로 낸다). 두 벌 모두 임시 서명(`signingIdentity: "-"`)이라 hardened runtime 이 켜진다(`codesign -dv` 의 `flags=…(adhoc,runtime)`). 설치·다시 시작이 배포와 같은 런타임 조건에서 돈다.
 - 임시 업데이트 키(`key`, `key.pub`)와 그 공개 키를 넣은 시험 설정(`update-test.conf.json`, 업데이트 주소 `http://127.0.0.1:$PORT/latest.json`, 기본 포트 18765).
 - `serve/` 의 업데이트 묶음·서명·`latest.json` 과 그것을 내는 `python3 -m http.server`(pid 는 `server.pid`, 요청은 `server.log`).
 - 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`). **시험 앱이 떠 있을 때만** 그 앱(`$W/data`)에 요청을 넘긴다. 꺼져 있으면 `open -n` 으로 앱을 띄워 `TOTE_DATA_DIR` 이 빠지고, 앱이 개발 데이터 폴더(`~/Tote-dev`·`~/Library/Application Support/tote-dev`)를 쓴다. 꺼진 앱을 요청으로 띄우는 확인은 번들 실행 파일(`Contents/MacOS/tote`)에 `TOTE_DATA_DIR` 과 `--tote-request=<json>` 을 직접 준다.
@@ -57,6 +57,7 @@
 
 - **Why:** 디버그·`perf` 빌드는 `TOTE_UPDATE_CHECK=1` 이 없으면 업데이트를 확인하지 않는다(`src-tauri/src/app/update.rs` `checks_allowed`). 식별자가 따로라 사람의 설치본·개발 앱과 단일 인스턴스·데이터가 섞이지 않는다. 시작 전에 그 식별자의 단일 인스턴스 소켓을 쥔 프로세스가 있으면 멈춘다.
 - 화면 없이 볼 수 있는 것은 요청 기록이다: `TOTE_BACKGROUND=1` 로 띄우면 5초 뒤 `server.log` 에 `GET /latest.json` 이 한 줄 생기고, settings.json 에 `"updates": {"autoCheck": false}` 를 넣고 띄우면 생기지 않는다.
+- 설치 자체(받기·서명 확인·번들 바꿔 넣기)는 창 없이 볼 수 있다. 서버가 떠 있는 동안 `tauri::test::mock_builder()` 로 만든 앱에 같은 업데이터 설정(`plugins.updater`)을 주고 `updater_builder().executable_path("$W/Applications/tote-updatetest.app/Contents/MacOS/tote")` 로 `check()`·`download_and_install()` 을 부르는 작은 프로그램(저장소 밖 임시 폴더의 `cargo` 프로젝트, `tauri` 는 `test` 기능, 판은 `Cargo.lock` 과 같게)을 돌린다. 2026-10-26 결과: 번들 파일 이름은 `tote-updatetest.app` 그대로, 내용은 새 판(`CFBundleName` `Tote Notes Updatetest`), `bin/tote` 링크가 새 번들의 스크립트로 `--help` 를 낸다. 시험 버전이 루트 버전과 같으면 `version_comparator(|_, _| true)` 로 비교를 건너뛴다.
 - 질문·진행 문구·다시 시작·셸 명령 링크가 새 판으로 이어지는지는 창이 있어야 보인다. 사람이나 화면 워커가 찍힌 명령으로 띄워 확인한다.
 
 ## zsh 에서 파일 목록은 배열로 넘긴다

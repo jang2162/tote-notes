@@ -129,7 +129,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         h("p", {
           class: "settings-note update-note",
           textContent:
-            "끄면 tote 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 tote → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
+            "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
         }),
       );
     };

@@ -35,8 +35,8 @@ const fn command(
 
 /// In menu order. Whichever of two people's overrides comes later here is the one dropped.
 pub const COMMANDS: &[Command] = &[
-    command("check-updates", "업데이트 확인…", "tote", None),
-    command("install-cli", "셸 명령 설치…", "tote", None),
+    command("check-updates", "업데이트 확인…", "Tote Notes", None),
+    command("install-cli", "셸 명령 설치…", "Tote Notes", None),
     command("new-memo", "새 메모", "파일", Some("CmdOrCtrl+N")),
     command("new-window", "새 창", "파일", Some("Alt+CmdOrCtrl+N")),
     command("open-file", "파일 열기…", "파일", Some("CmdOrCtrl+O")),
@@ -131,7 +131,7 @@ const fn fixed(name: &'static str, accelerator: &'static str) -> Fixed {
 /// 설정…'s shortcut. The menu item has one like an app command's, which recording takes off too.
 pub const SETTINGS_ACCELERATOR: &str = "CmdOrCtrl+,";
 
-/// tote 종료's shortcut, kept like 설정…'s so the way out of the app is never lost from the
+/// Tote Notes 종료's shortcut, kept like 설정…'s so the way out of the app is never lost from the
 /// shortcuts. Recording takes it off too.
 pub const QUIT_ACCELERATOR: &str = "CmdOrCtrl+Q";
 
@@ -140,11 +140,11 @@ pub const QUIT_ACCELERATOR: &str = "CmdOrCtrl+Q";
 pub const UNDO_ACCELERATOR: &str = "CmdOrCtrl+Z";
 pub const REDO_ACCELERATOR: &str = "CmdOrCtrl+Shift+Z";
 
-/// 설정… and tote 종료 stay where they are so the way back to this screen and the way out of the
+/// 설정… and Tote Notes 종료 stay where they are so the way back to this screen and the way out of the
 /// app are never lost. The system Edit items and macOS's own window items cannot be rebound at all.
 pub const FIXED: &[Fixed] = &[
     fixed("설정…", SETTINGS_ACCELERATOR),
-    fixed("tote 종료", QUIT_ACCELERATOR),
+    fixed("Tote Notes 종료", QUIT_ACCELERATOR),
     fixed("워크스페이스 1", "Ctrl+1"),
     fixed("워크스페이스 2", "Ctrl+2"),
     fixed("워크스페이스 3", "Ctrl+3"),
@@ -625,7 +625,7 @@ mod tests {
     fn quit_is_fixed_and_cannot_be_rebound() {
         assert!(FIXED
             .iter()
-            .any(|f| f.name == "tote 종료" && f.accelerator == "CmdOrCtrl+Q"));
+            .any(|f| f.name == "Tote Notes 종료" && f.accelerator == "CmdOrCtrl+Q"));
         assert_eq!(QUIT_ACCELERATOR, "CmdOrCtrl+Q");
         assert!(COMMANDS.iter().all(|c| c.id != "quit"));
         // A settings.json from before: the entry is dropped as an unknown id.

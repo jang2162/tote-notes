@@ -13,13 +13,28 @@ const conf = json("src-tauri/tauri.conf.json");
 const dev = json("src-tauri/tauri.dev.conf.json");
 
 describe("the release config", () => {
-  it("names the app com.develma.totenotes and the debug build apart from it", () => {
+  it("names the app Tote Notes, com.develma.totenotes, and the debug build apart from it", () => {
     // Fixed once released: a new identifier makes an update look like another app.
     expect(conf.identifier).toBe("com.develma.totenotes");
-    expect(conf.productName).toBe("tote");
+    expect(conf.productName).toBe("Tote Notes");
+    // `Contents/MacOS/tote`: the `tote` script in the bundle runs it by that name
+    // (src-tauri/resources/tote), and the update relaunches it (src-tauri/src/app/update.rs).
+    expect(conf.mainBinaryName).toBe("tote");
     // Apart, so the debug app and the installed one never take each other's single instance.
     expect(dev.identifier).toBe("com.develma.totenotes.dev");
-    expect(dev.productName).toBe("tote-dev");
+    expect(dev.productName).toBe("Tote Notes Dev");
+    expect(dev.mainBinaryName).toBeUndefined();
+  });
+
+  it("looks for the bundles under the app's name and releases them without spaces", () => {
+    const workflow = readFileSync(join(ROOT, ".github/workflows/release-macos.yml"), "utf8");
+    const name = conf.productName;
+    expect(workflow).toContain(`app="$BUNDLE/macos/${name}.app"`);
+    expect(workflow).toContain(`dmg="$BUNDLE/dmg/${name}_\${VERSION}_universal.dmg"`);
+    expect(workflow).toContain(`TAR_PATH=$BUNDLE/macos/${name}.app.tar.gz`);
+    // GitHub turns a space in an asset name into a dot, and latest.json would point at nothing.
+    const base = /base="([^"]*)"/.exec(workflow)?.[1];
+    expect(base).toBe(`${name.replaceAll(" ", "-")}_\${VERSION}_universal`);
   });
 
   it("bundles a DMG under the hardened runtime for macOS 13", () => {

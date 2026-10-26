@@ -96,7 +96,7 @@ test("the update check switch saves updates.autoCheck", async ({ page }) => {
   const box = panel.getByRole("checkbox", { name: "실행할 때 업데이트 확인" });
   await expect(box).toBeChecked();
   await expect(panel.locator(".update-note")).toHaveText(
-    "끄면 tote 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 tote → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
+    "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
   );
   await box.uncheck();
   await expect

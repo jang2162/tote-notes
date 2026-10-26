@@ -1,6 +1,6 @@
-# tote macOS 릴리스하기
+# Tote Notes macOS 릴리스하기
 
-tote 를 Developer ID 로 서명하고 Apple 공증을 받아 GitHub 릴리스(`jang2162/tote-notes`)로 내보내는 방법이다. **태그 하나를 올리면 나머지는 GitHub Actions(`.github/workflows/release-macos.yml`)가 한다.** 사람이 할 일은 처음 한 번의 준비와 릴리스마다의 버전·태그다.
+Tote Notes(저장소·셸 명령 이름은 `tote`)를 Developer ID 로 서명하고 Apple 공증을 받아 GitHub 릴리스(`jang2162/tote-notes`)로 내보내는 방법이다. **태그 하나를 올리면 나머지는 GitHub Actions(`.github/workflows/release-macos.yml`)가 한다.** 사람이 할 일은 처음 한 번의 준비와 릴리스마다의 버전·태그다.
 
 | 한 번만                                                                 | 릴리스마다                     |
 | ----------------------------------------------------------------------- | ------------------------------ |
@@ -104,7 +104,7 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
 
 ## 버전 올리고 릴리스하기
 
-버전의 원천은 **루트 `package.json`** 이고, 아래 명령이 나머지 세 곳(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`)을 맞춘다(`scripts/version.ts`). 손으로 고치지 않는다. 앱의 「tote에 관하여」 가 보이는 버전은 `tauri.conf.json` 의 것이다.
+버전의 원천은 **루트 `package.json`** 이고, 아래 명령이 나머지 세 곳(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`)을 맞춘다(`scripts/version.ts`). 손으로 고치지 않는다. 앱의 「Tote Notes에 관하여」 가 보이는 버전은 `tauri.conf.json` 의 것이다.
 
 ```bash
 pnpm version:set <버전>       # 앞에 v 없이. 예: 0.2.0
@@ -118,26 +118,34 @@ git push origin v<버전>
 
 첫 릴리스는 `v0.1.0` 이다(지금 버전이 `0.1.0` 이므로 `version:set` 없이 태그만 붙인다).
 
-태그가 올라가면 Actions 의 **release-macos** 가 돈다(20~40분, 공증 대기 포함). 순서와 각 단계에서 멈추는 조건은 워크플로 파일 맨 위 주석에 있다. 성공하면 릴리스가 **바로 공개**되고 파일 넷이 붙는다: `tote_<버전>_universal.dmg`, `tote_<버전>_universal.app.tar.gz`, `tote_<버전>_universal.app.tar.gz.sig`, `latest.json`.
+태그가 올라가면 Actions 의 **release-macos** 가 돈다(20~40분, 공증 대기 포함). 순서와 각 단계에서 멈추는 조건은 워크플로 파일 맨 위 주석에 있다. 성공하면 릴리스가 **바로 공개**되고 파일 넷이 붙는다: `Tote-Notes_<버전>_universal.dmg`, `Tote-Notes_<버전>_universal.app.tar.gz`, `Tote-Notes_<버전>_universal.app.tar.gz.sig`, `latest.json`. 빌드가 만드는 이름은 `Tote Notes_<버전>_universal.dmg` 처럼 공백이 있지만, GitHub 가 올릴 때 공백을 점으로 바꿔(`Tote.Notes_…`) `latest.json` 의 주소와 어긋나므로 워크플로가 하이픈 이름으로 옮겨 올린다(「릴리스 파일 준비」 단계).
 
 ## 결과 확인
 
 - 릴리스 페이지에 위 파일 넷이 있고 「Latest」 표시가 붙었는지.
-- 다른 맥(또는 다른 사용자 계정)에서 DMG 를 브라우저로 받아 열고 tote 를 「응용 프로그램」 으로 끌어 실행 — **경고 없이** 열려야 한다. 터미널로도 본다:
+- 다른 맥(또는 다른 사용자 계정)에서 DMG 를 브라우저로 받아 열고 Tote Notes 를 「응용 프로그램」 으로 끌어 실행 — **경고 없이** 열려야 한다. 터미널로도 본다:
   ```bash
-  spctl --assess --type open --context context:primary-signature -v ~/Downloads/tote_<버전>_universal.dmg
+  spctl --assess --type open --context context:primary-signature -v ~/Downloads/Tote-Notes_<버전>_universal.dmg
   # … accepted  source=Notarized Developer ID
   ```
-- 옛 버전이 설치된 맥에서 tote 를 실행하면 몇 초 뒤 「새 버전 tote <버전> 이 있습니다…」 를 묻는다. 「업데이트하고 다시 시작」 → 열린 메모를 저장하고 새 버전으로 다시 뜬다. 메뉴 「tote → 업데이트 확인…」 으로 바로 볼 수도 있다.
+- 옛 버전이 설치된 맥에서 앱을 실행하면 몇 초 뒤 「새 버전 Tote Notes <버전> 이 있습니다…」 를 묻는다(0.1.0 은 「새 버전 tote <버전>…」). 「업데이트하고 다시 시작」 → 열린 메모를 저장하고 새 버전으로 다시 뜬다. 메뉴 「Tote Notes → 업데이트 확인…」(0.1.0 은 「tote → …」) 으로 바로 볼 수도 있다.
+
+## 0.1.0(`tote.app`)을 쓰던 사람
+
+0.1.0 의 앱 이름은 `tote` 였다(번들 `tote.app`). 그 뒤 판은 `Tote Notes` 다.
+
+- **앱 안 업데이트는 설치된 자리에 그대로 들어간다.** 업데이터는 묶음 안의 `Tote Notes.app` 내용을 지금 번들 자리에 바꿔 넣으므로 파일 이름은 `/Applications/tote.app` 으로 남는다. 메뉴·대화상자·Dock 이름은 `Tote Notes` 가 되고 Finder 의 파일 이름만 `tote` 다. 실행 파일 이름(`Contents/MacOS/tote`)과 셸 명령 스크립트 자리가 같아 `tote` 셸 명령 링크는 그대로 맞다(로컬 업데이트 시험으로 확인, 2026-10-26).
+- 파일 이름도 바꾸고 싶으면 앱을 끈 뒤 Finder 에서 `tote.app` 을 `Tote Notes.app` 으로 바꾸고, 앱 메뉴 「셸 명령 설치…」 를 한 번 더 한다(옛 링크는 같은 앱의 것으로 알아보고 바꾼다). 이름만 바꾸고 다시 설치하지 않으면 `tote` 링크가 없어진 자리를 가리켜 명령이 실행되지 않는다.
+- DMG 로 새로 설치하면 `Tote Notes.app` 이 `tote.app` 옆에 생긴다. 식별자가 같은 앱이 둘이므로 `tote.app` 을 지우고 「셸 명령 설치…」 를 다시 한다. 메모·설정은 앱 이름과 무관한 `~/Library/Application Support/tote` 에 있어 그대로다.
 
 ## 비밀 없이 흐름만 시험하기
 
-- **Actions 수동 실행** — Actions → release-macos → **Run workflow**. 서명·공증·릴리스 없이 universal DMG 를 만들어 실행 결과의 Artifacts(`tote-<버전>-universal-unsigned`)에 올린다. 「산출물 찾기」 단계가 유니버설·버전·식별자를 검사한다. 서명이 없으므로 받은 DMG 는 Gatekeeper 가 경고한다 — 빌드가 되는지만 보는 용도다. 워크플로가 기본 브랜치(`main`)에 있어야 수동 실행할 수 있다.
+- **Actions 수동 실행** — Actions → release-macos → **Run workflow**. 서명·공증·릴리스 없이 universal DMG 를 만들어 실행 결과의 Artifacts(`tote-notes-<버전>-universal-unsigned`)에 올린다. 「산출물 찾기」 단계가 유니버설·버전·식별자·실행 파일 이름을 검사한다. 서명이 없으므로 받은 DMG 는 Gatekeeper 가 경고한다 — 빌드가 되는지만 보는 용도다. 워크플로가 기본 브랜치(`main`)에 있어야 수동 실행할 수 있다.
 - **로컬 빌드(서명 없음)**:
   ```bash
   rustup target add --toolchain "$(mise current rust)" x86_64-apple-darwin   # 한 번만
   pnpm build:mac
-  # src-tauri/target/universal-apple-darwin/release/bundle/dmg/tote_<버전>_universal.dmg
+  # "src-tauri/target/universal-apple-darwin/release/bundle/dmg/Tote Notes_<버전>_universal.dmg"
   ```
   `build:mac` 은 `CI=true` 로 돌아 DMG 창 꾸미기(Finder AppleScript)를 건너뛴다. 그 단계를 돌리는 빌드는 Finder 자동화가 막힌 셸(에이전트 샌드박스 등)에서 `bundle_dmg.sh` 가 `Failed running AppleScript`(exit 64)로 실패하고 `bundle/macos/rw.*.dmg` 중간 파일이 남는다.
 - **앱 안 업데이트 흐름** — `scripts/update-local-test.sh` 가 낮은 버전과 지금 버전의 시험 번들, 임시 키, 로컬 `latest.json` 서버를 만든다. 쓰는 법은 `docs/guides/development.md` 「업데이트 흐름은 로컬 서버로 시험한다」 절.
@@ -161,8 +169,8 @@ git push origin v<버전>
 | 업데이트 묶음 검사 / `키 ID 가 다르다`                                                     | `TAURI_SIGNING_PRIVATE_KEY` 와 `tauri.conf.json` 의 `pubkey` 가 짝이 아니다. 보관해 둔 짝을 쓴다. **이미 릴리스한 적이 있으면 공개 키를 바꾸지 않는다**(「업데이트 서명 키」 의 경고).                                                       |
 | DMG 공증·스테이플 / `DMG 공증 결과: Invalid`                                               | 바로 위에 Apple 의 공증 로그(JSON)가 찍힌다. `issues` 의 `message` 를 본다.                                                                                                                                                                  |
 | 릴리스 공개 / `올라간 파일이 다르다` · 업로드 오류                                         | 릴리스는 **드래프트로 남는다**(공개되지 않음). 릴리스 페이지에서 그 드래프트를 지우고 「Re-run all jobs」. 같은 태그의 릴리스가 있으면 만들기 단계가 실패하므로 지우는 것이 먼저다.                                                          |
-| 앱 / `업데이트하지 못했습니다: … Read-only file system`                                    | tote 를 DMG 안이나 「다운로드」 폴더에서(격리된 채) 실행했다. 업데이터가 앱 자리를 바꿀 수 없다. tote 를 「응용 프로그램」 폴더로 옮겨 실행한다.                                                                                             |
-| 앱 / 「업데이트 확인」 이 아무 말이 없다                                                   | 설정 → 일반 「실행할 때 업데이트 확인」 이 꺼져 있거나, 최신 릴리스에 `latest.json` 이 없다(드래프트는 `releases/latest` 가 아니다). 메뉴 「tote → 업데이트 확인…」 은 설정과 상관없이 확인하고 결과를 말한다.                               |
+| 앱 / `업데이트하지 못했습니다: … Read-only file system`                                    | 앱을 DMG 안이나 「다운로드」 폴더에서(격리된 채) 실행했다. 업데이터가 앱 자리를 바꿀 수 없다. 앱을 「응용 프로그램」 폴더로 옮겨 실행한다.                                                                                                   |
+| 앱 / 「업데이트 확인」 이 아무 말이 없다                                                   | 설정 → 일반 「실행할 때 업데이트 확인」 이 꺼져 있거나, 최신 릴리스에 `latest.json` 이 없다(드래프트는 `releases/latest` 가 아니다). 메뉴 「Tote Notes → 업데이트 확인…」 은 설정과 상관없이 확인하고 결과를 말한다.                         |
 
 공개되기 전에 실패한 실행은 사용자에게 아무 영향이 없다 — 드래프트는 `releases/latest` 가 아니라서 앱이 보지 않는다.
 
@@ -172,7 +180,7 @@ git push origin v<버전>
 - **업데이트 서명 키**(「업데이트 서명 키」).
 - **릴리스 파일 이름 모양과 `latest.json` 위치**. 설치된 앱은 `https://github.com/jang2162/tote-notes/releases/latest/download/latest.json` 을 본다(`tauri.conf.json` 의 `plugins.updater.endpoints`). 저장소 이름·소유자를 바꾸면 이 주소도 함께 바뀌어야 하고, 옛 앱은 옛 주소를 계속 본다.
 - **entitlements 를 두지 않는다**(`tauri.conf.json` 의 `bundle.macOS.entitlements` 없음, `scripts/release-config.test.ts` 가 지킨다). hardened runtime 아래에서 tote 는 entitlement 없이 뜨고 `tote` 셸 명령을 받는다 — 샌드박스 앱이 아니고, 페이지의 JavaScript·WebAssembly 는 WebKit 의 별도 프로세스가 돌린다. 서명된 앱에서 막히는 동작이 생기면 그 거절(`log show --last 5m --predicate 'process == "tote"'`)을 푸는 것 하나만 더한다.
-- **`productName` `tote`**. 앱 번들 이름(`tote.app`)과 `tote` 셸 명령의 링크가 이 이름에 묶인다.
+- **번들 안 실행 파일 이름 `tote`**(`tauri.conf.json` 의 `mainBinaryName`, `Contents/MacOS/tote`). 번들 안의 `tote` 셸 명령 스크립트(`src-tauri/resources/tote`)가 이 이름으로 앱을 부르고, 업데이트 뒤 다시 시작도 이 파일을 띄운다. 앱 이름(`productName` `Tote Notes`)은 바꿔도 되지만, 바꾸면 번들·DMG·업데이트 묶음 이름이 함께 바뀌므로 워크플로 「산출물 찾기」·「업데이트 묶음 검사」·「릴리스 파일 준비」 의 이름도 고친다.
 
 ## 참고
 

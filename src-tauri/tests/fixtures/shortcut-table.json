@@ -3,14 +3,14 @@
     {
       "id": "check-updates",
       "label": "업데이트 확인…",
-      "menu": "tote",
+      "menu": "Tote Notes",
       "default": null,
       "current": null
     },
     {
       "id": "install-cli",
       "label": "셸 명령 설치…",
-      "menu": "tote",
+      "menu": "Tote Notes",
       "default": null,
       "current": null
     },
@@ -182,7 +182,7 @@
       "accelerator": "CmdOrCtrl+,"
     },
     {
-      "name": "tote 종료",
+      "name": "Tote Notes 종료",
       "accelerator": "CmdOrCtrl+Q"
     },
     {

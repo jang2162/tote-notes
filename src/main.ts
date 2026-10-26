@@ -30,6 +30,6 @@ void (async () => {
     await app.start();
     handle.ready = true;
   } catch (error) {
-    document.body.textContent = `tote 를 시작하지 못했습니다: ${String(error)}`;
+    document.body.textContent = `Tote Notes 를 시작하지 못했습니다: ${String(error)}`;
   }
 })();

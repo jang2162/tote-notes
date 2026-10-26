@@ -154,14 +154,14 @@ test("swapping back a default leaves it out of the map", async ({ page }) => {
 
 test("⌘Q is fixed and recording it is refused", async ({ page }) => {
   const panel = await startShortcuts(page);
-  await expect(panel.locator(".shortcut-fixed-row").filter({ hasText: "tote 종료" })).toContainText(
-    "⌘Q",
-  );
+  await expect(
+    panel.locator(".shortcut-fixed-row").filter({ hasText: "Tote Notes 종료" }),
+  ).toContainText("⌘Q");
   await expect(row(panel, "quit")).toHaveCount(0);
   await record(panel, "new-memo");
   await page.keyboard.press("Meta+Q");
   await expect(row(panel, "new-memo").locator(".shortcut-note")).toHaveText(
-    "tote 종료 에 고정된 단축키입니다",
+    "Tote Notes 종료 에 고정된 단축키입니다",
   );
   await expect(keys(panel, "new-memo")).toHaveText("⌘N");
   expect(await patches(page)).toEqual([]);
@@ -384,7 +384,7 @@ test("the search filters by name and by shortcut", async ({ page }) => {
 test("the update check command takes a shortcut", async ({ page }) => {
   const panel = await startShortcuts(page);
   await expect(row(panel, "check-updates")).toContainText("업데이트 확인…");
-  await expect(row(panel, "check-updates")).toContainText("tote");
+  await expect(row(panel, "check-updates")).toContainText("Tote Notes");
   await expect(keys(panel, "check-updates")).toHaveText("없음");
   await record(panel, "check-updates");
   await page.keyboard.press("Alt+Meta+U");
@@ -399,7 +399,7 @@ test("the fixed group lists the fixed keys and cannot be edited", async ({ page 
   const rows = fixed.locator(".shortcut-fixed-row");
   await expect(rows).toHaveCount(21);
   await expect(rows.first()).toHaveText(/설정….*⌘,/);
-  await expect(rows.nth(1)).toHaveText(/tote 종료.*⌘Q/);
+  await expect(rows.nth(1)).toHaveText(/Tote Notes 종료.*⌘Q/);
   await expect(rows.filter({ hasText: "복사하기" })).toContainText("⌘C");
   await expect(rows.filter({ hasText: "워크스페이스 1" })).toContainText("⌃1");
   await expect(rows.filter({ hasText: "전체 화면" })).toContainText("⌃⌘F");

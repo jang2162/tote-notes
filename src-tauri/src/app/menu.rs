@@ -74,7 +74,7 @@ enum Slot {
 /// The id of 설정…, whose shortcut is fixed.
 const SETTINGS: &str = "settings";
 
-/// The id of tote 종료, whose shortcut is fixed.
+/// The id of Tote Notes 종료, whose shortcut is fixed.
 const QUIT: &str = "quit";
 
 const SETTINGS_ITEM: Slot = Slot::Fixed {
@@ -85,7 +85,7 @@ const SETTINGS_ITEM: Slot = Slot::Fixed {
 
 const QUIT_ITEM: Slot = Slot::Fixed {
     id: QUIT,
-    text: "tote 종료",
+    text: "Tote Notes 종료",
     accelerator: QUIT_ACCELERATOR,
 };
 
@@ -109,7 +109,7 @@ const REDO_ITEM: Slot = Slot::Fixed {
 /// The menu bar: each submenu's title and entries, the commands in `shortcuts::COMMANDS` order.
 const MENUS: &[(&str, &[Slot])] = &[
     (
-        "tote",
+        "Tote Notes",
         &[
             Slot::About,
             Slot::Command("check-updates"),
@@ -713,7 +713,7 @@ fn link_cli(app: &AppHandle) -> io::Result<Installed> {
     let exe = std::env::current_exe()?;
     if app_bundle(&exe).is_none() {
         return Err(io::Error::other(
-            "앱 번들(tote.app)에서 실행할 때만 설치할 수 있습니다",
+            "앱 번들(Tote Notes.app)에서 실행할 때만 설치할 수 있습니다",
         ));
     }
     let script = app
@@ -964,7 +964,7 @@ mod tests {
     #[test]
     fn the_app_menu_offers_the_update_check_under_about() {
         let (title, slots) = MENUS[0];
-        assert_eq!(title, "tote");
+        assert_eq!(title, "Tote Notes");
         assert_eq!(
             slots[..4],
             [
@@ -987,7 +987,7 @@ mod tests {
             .flat_map(|(_, slots)| slots.iter())
             .find(|slot| shortcut_item(slot) == Some("quit"))
             .unwrap();
-        assert_eq!(shortcut_label(quit), "tote 종료");
+        assert_eq!(shortcut_label(quit), "Tote Notes 종료");
         assert_eq!(
             fixed_items(),
             [
