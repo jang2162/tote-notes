@@ -1,4 +1,5 @@
 /* Theme colours. A later plan fills these from the selected VS Code theme. */
+/* A variable no theme sets (a font, a size, room for focus rings) goes in NOT_THEMED in src/theme/default-variables.test.ts too. */
 :root {
   color-scheme: light dark;
   --bg: #ffffff;
