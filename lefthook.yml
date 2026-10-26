@@ -29,6 +29,9 @@ pre-push:
       run: "cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings"
     - name: typecheck
       run: "pnpm exec tsc --noEmit"
+    # 여러 시험이 함께 읽는 파일(styles.css, tauri.conf.json 등)을 고친 커밋이 다른 영역의 시험을 깨뜨려도 여기서 잡는다.
+    - name: vitest
+      run: "pnpm exec vitest run"
 
 # 순차 실행이다 — 런타임이 맞은 뒤에 설치가 돌아야 한다.
 post-checkout:

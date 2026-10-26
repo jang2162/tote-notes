@@ -82,7 +82,7 @@ stage 하지 않은 변경이 작업 트리에 남아 있으면 lefthook 의 pre
 
 ## pre-push 는 느리다
 
-pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc` 를 돈다. 문서만 고친 브랜치도 마찬가지다.
+pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈다. 문서만 고친 브랜치도 마찬가지다.
 
 - **Why:** 워크트리마다 `src-tauri/target` 이 따로라서, 워크트리의 첫 push 는 처음부터 빌드해 몇 분 걸린다. 멈춘 것이 아니다.
 
