@@ -120,7 +120,7 @@ export function manifestFor(
     name: "languages",
     publisher: "tote",
     version: "1.0.0",
-    displayName: "tote 기본 언어 묶음",
+    displayName: "Tote Notes 기본 언어 묶음",
     contributes: {
       languages: languages.map((lang) => ({
         id: lang.id,
@@ -338,7 +338,7 @@ async function syncThemes() {
     name: "themes",
     publisher: "tote",
     version: "1.0.0",
-    displayName: "tote 기본 테마",
+    displayName: "Tote Notes 기본 테마",
     contributes: {
       themes: THEMES.map((t) => ({
         label: t.label,

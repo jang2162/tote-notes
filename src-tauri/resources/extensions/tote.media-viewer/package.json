@@ -2,7 +2,7 @@
   "name": "media-viewer",
   "publisher": "tote",
   "version": "1.0.0",
-  "displayName": "tote 미디어 뷰어",
+  "displayName": "Tote Notes 미디어 뷰어",
   "tote": {
     "viewers": [
       {

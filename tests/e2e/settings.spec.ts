@@ -41,10 +41,10 @@ test("the settings screen shows the root, the themes and the extensions, and sav
     .toEqual({ extension: "tote.themes", label: "Light+" });
   await section(panel, "확장");
   await expect(panel.locator(".extension-row")).toHaveText([
-    /tote 기본 언어 묶음/,
-    /tote 마크다운 미리보기/,
-    /tote 미디어 뷰어/,
-    /tote 기본 테마/,
+    /Tote Notes 기본 언어 묶음/,
+    /Tote Notes 마크다운 미리보기/,
+    /Tote Notes 미디어 뷰어/,
+    /Tote Notes 기본 테마/,
   ]);
   await expect(panel.locator(".extension-row input[type=checkbox]")).toHaveCount(0); // bundled: no switch
   await expect(panel.locator(".extension-row button")).toHaveCount(0); // bundled: no remove

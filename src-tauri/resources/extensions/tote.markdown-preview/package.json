@@ -2,7 +2,7 @@
   "name": "markdown-preview",
   "publisher": "tote",
   "version": "1.0.0",
-  "displayName": "tote 마크다운 미리보기",
+  "displayName": "Tote Notes 마크다운 미리보기",
   "tote": {
     "viewers": [
       {
