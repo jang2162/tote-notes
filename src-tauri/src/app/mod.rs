@@ -337,6 +337,29 @@ impl Inner {
     }
 }
 
+/// `pin_legacy_root`, saved: the mark goes into `state.json` only once the settings it decided on
+/// are written, so a launch that could not write them tries again next time.
+fn keep_legacy_root(
+    settings: &mut Settings,
+    launch: &mut LaunchState,
+    paths: &AppPaths,
+    home: Option<&Path>,
+) {
+    let checked = launch.legacy_root_checked;
+    if pin_legacy_root(settings, launch, paths, home) {
+        if let Err(err) = settings.save(&paths.settings_file()) {
+            // This run still shows the old root; the next launch writes it again.
+            eprintln!("tote: settings.json: {err}");
+            launch.legacy_root_checked = false;
+        }
+    }
+    if launch.legacy_root_checked != checked {
+        if let Err(err) = launch.save(&paths.launch_file()) {
+            eprintln!("tote: state.json: {err}");
+        }
+    }
+}
+
 impl AppCore {
     /// `bundled_dir`: the extensions folder inside the app bundle's resources.
     pub fn load(bundled_dir: PathBuf) -> Result<AppCore, String> {
@@ -347,24 +370,12 @@ impl AppCore {
             .map_err(|err| format!("settings.json: {err}"))?;
         let mut launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
-        let checked = launch.legacy_root_checked;
-        if pin_legacy_root(
+        keep_legacy_root(
             &mut settings,
             &mut launch,
             &paths,
             dirs::home_dir().as_deref(),
-        ) {
-            if let Err(err) = settings.save(&paths.settings_file()) {
-                // This run still shows the old root; the next launch writes it again.
-                eprintln!("tote: settings.json: {err}");
-                launch.legacy_root_checked = false;
-            }
-        }
-        if launch.legacy_root_checked != checked {
-            if let Err(err) = launch.save(&paths.launch_file()) {
-                eprintln!("tote: state.json: {err}");
-            }
-        }
+        );
         let core = AppCore::new(paths, machine, settings, launch, bundled_dir);
         core.extensions.remove_leftovers();
         Ok(core)
@@ -1632,6 +1643,41 @@ mod tests {
 
     fn saved(core: &AppCore) -> LaunchState {
         LaunchState::load(&core.paths.launch_file()).unwrap()
+    }
+
+    #[test]
+    fn the_old_root_is_marked_checked_only_once_the_settings_naming_it_are_saved() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(
+            None,
+            Some(home.path().join("os")),
+            Some(home.path().into()),
+            false,
+        )
+        .unwrap();
+        Workspace::create(&home.path().join("Tote"), "메모").unwrap();
+        // A folder where settings.json goes: the settings cannot be written, state.json can.
+        fs::create_dir_all(paths.settings_file()).unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        keep_legacy_root(&mut settings, &mut launch, &paths, Some(home.path()));
+        assert_eq!(settings.workspace_root, Some("~/Tote".into()));
+        assert!(!launch.legacy_root_checked);
+        assert!(!paths.launch_file().exists());
+
+        fs::remove_dir(paths.settings_file()).unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        keep_legacy_root(&mut settings, &mut launch, &paths, Some(home.path()));
+        assert_eq!(
+            Settings::load(&paths.settings_file())
+                .unwrap()
+                .workspace_root,
+            Some("~/Tote".into())
+        );
+        assert!(
+            LaunchState::load(&paths.launch_file())
+                .unwrap()
+                .legacy_root_checked
+        );
     }
 
     #[test]
