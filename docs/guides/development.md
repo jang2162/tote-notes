@@ -40,6 +40,7 @@
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
 - tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
 - tote 창이 둘 이상일 때는 `orca computer` 의 요소 번호로 누르지 않는다. `--window-id` 를 줘도 다른 창의 트리와 요소가 잡힐 수 있다(질문 창의 「업데이트하고 다시 시작」 에 포커스가 간 적이 있다). 창 제목으로 `AXWindows` 를 골라 AXUIElement 로 직접 누른다.
+- 설치본과 디버그 번들의 프로세스 이름은 둘 다 `tote` 다(`mainBinaryName`). System Events 로 `process "tote"` 나 `first process whose unix id is <pid>` 를 잡으면 이름으로 다시 찾아 먼저 뜬 쪽(대개 사람의 설치본)을 다룬다. 디버그 앱의 메뉴·창은 pid 로 만든 `AXUIElementCreateApplication(pid)` 나 `orca computer --app com.develma.totenotes.dev` 로 다룬다. 2026-10-26 화면 확인에서 이렇게 설치본의 메뉴를 읽었다.
 - 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「Tote Notes 종료」(0.1.0 은 「tote 종료」) 를 누른다.
 - 업데이트를 설치하고 다시 시작하지 않은 실행은 AX 창 목록이 비어 `orca computer` 가 `permission_denied` 로 거부한다. 그때는 System Events 로 `entire contents of window 1` 을 받아 그 안의 버튼에 `perform action "AXPress"` 한다. 셸에서 띄웠거나 업데이트로 다시 뜬 앱은 activate 하기 전에는 웹 내용이 AX 트리에 나오지 않는다.
 - 키 입력 직후 버튼을 눌러야 하는 확인(500ms 저장 타이머 전에 일어나야 하는 동작)은 한 프로세스에서 CGEvent 키를 보내고 곧바로 AXPress 하는 작은 도구로 한다. `orca computer` 명령은 한 번에 1초 넘게 걸린다. 판정은 메모 파일의 mtime(`stat -f %Fm`)과 마지막 키 시각의 차이로 한다.

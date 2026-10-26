@@ -104,7 +104,7 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
 
 ## 버전 올리고 릴리스하기
 
-버전의 원천은 **루트 `package.json`** 이고, 아래 명령이 나머지 세 곳(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`)을 맞춘다(`scripts/version.ts`). 손으로 고치지 않는다. 앱의 「Tote Notes에 관하여」 가 보이는 버전은 `tauri.conf.json` 의 것이다.
+버전의 원천은 **루트 `package.json`** 이고, 아래 명령이 나머지 세 곳(`src-tauri/tauri.conf.json`, `src-tauri/Cargo.toml`, `src-tauri/Cargo.lock`)을 맞춘다(`scripts/version.ts`). 손으로 고치지 않는다. 앱 메뉴 「About Tote Notes」(muda 가 영어로 만든다)가 보이는 버전은 `tauri.conf.json` 의 것이다.
 
 ```bash
 pnpm version:set <버전>       # 앞에 v 없이. 예: 0.2.0
