@@ -1124,6 +1124,31 @@ mod tests {
         );
     }
 
+    /// The page tells a file that is not text by `not-text` (「텍스트로 열 수 없음」), whether it is
+    /// an outside file or a memo whose error comes wrapped in `WorkspaceError::Io`.
+    #[test]
+    fn a_file_that_is_not_text_reaches_the_page_as_not_text() {
+        use crate::persist::external::ExternalFiles;
+        use crate::session::drafts::DraftStore;
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("녹화.ts");
+        std::fs::write(&video, b"G\0\x11\x10").unwrap();
+        let external = ExternalFiles::new(DraftStore::new(dir.path().join("buffers")));
+        let err = CommandError::from(external.read(&video).unwrap_err());
+        assert_eq!(err.code, "not-text", "{}", err.message);
+
+        let mut workspace = Workspace::create(dir.path(), "메모").unwrap();
+        let memo = workspace.import_memo("녹화.ts", b"G\0\x11\x10").unwrap();
+        let err = CommandError::from(workspace.read_memo(&memo.id).unwrap_err());
+        assert_eq!(err.code, "not-text", "{}", err.message);
+
+        // Other refusals keep their own codes.
+        let gone = crate::persist::read_text(&dir.path().join("없음")).unwrap_err();
+        assert_eq!(CommandError::from(gone).code, "not-found");
+        let bad = io::Error::new(io::ErrorKind::InvalidData, "broken");
+        assert_eq!(CommandError::from(bad).code, "bad-request");
+    }
+
     #[test]
     fn a_recent_workspace_whose_folder_is_gone_is_listed_as_missing() {
         let root = tempfile::tempdir().unwrap();
