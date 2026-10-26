@@ -86,6 +86,10 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 - **Why:** 워크트리마다 `src-tauri/target` 이 따로라서, 워크트리의 첫 push 는 처음부터 빌드해 몇 분 걸린다. 멈춘 것이 아니다.
 
+## 파일을 되돌리면 post-checkout 훅이 돈다
+
+되돌리기 실증으로 `git restore`·`git checkout -- <파일>` 을 하면 post-checkout 훅(`pnpm install`·`ruler apply`)이 매번 돈다. 생성물만 다시 만들고 추적 파일은 바꾸지 않으므로 그대로 둔다.
+
 ## `mise.toml` 의 rust `components` 를 바꾸면 따로 설치한다
 
 바꾼 뒤에는 이미 설치된 툴체인에 `rustup component add <컴포넌트> --toolchain <버전>` 을 따로 돌린다.
