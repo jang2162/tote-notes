@@ -643,6 +643,22 @@ describe("MemoDoc outside changes", () => {
     expect(changes).toContain("reloaded");
   });
 
+  it("디스크 버전 of a memo turned into a video drops the unsaved text, so a close leaves the video", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    const video = fakeFile(new Uint8Array([0, 0, 0, 0x18, 0x66, 0x74, 0x79, 0x70]));
+    backend.data.memos.a.data = video;
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.problem).toBe("not-utf8");
+    expect(doc.state).toBeNull();
+    // The window close writes what the tab holds: the text the person chose to drop must not go.
+    await doc.flush();
+    expect(backend.data.memos.a.data).toEqual(video);
+  });
+
   it("an outside removal raises the deleted banner and keeps the text", async () => {
     const { backend, doc } = await opened("남길 글");
     delete backend.data.memos.a;
