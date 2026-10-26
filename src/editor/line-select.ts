@@ -20,25 +20,36 @@ export function spanOf(state: EditorState, block: { from: number; to: number }):
   return { from: state.doc.lineAt(block.from).from, to: state.doc.lineAt(block.to).to };
 }
 
-/** The selection from the `anchor` lines to the `target` lines, whole lines, as VS Code selects
- * from its line numbers: down, from the anchor's start to past the target's line break; up, from
- * past the anchor's line break to the target's start. The last line has no line break to take. */
+/** Where a selection by lines goes on from: the lines a gutter press started on, or the point a
+ * selection made in the text is anchored at. */
+export type LineAnchor = LineSpan | number;
+
+/** The selection from `anchor` to the `target` lines, the head by whole lines, as VS Code selects
+ * from its line numbers: down, to past the target's line break; up, to the target's start. From
+ * lines, the anchor is the start of them going down and past their line break going up, so they
+ * stay selected. From a point, the anchor stays at the point, and on the point's own line the
+ * head comes back to it. The last line has no line break to take. */
 export function spanLines(
-  anchor: LineSpan,
+  anchor: LineAnchor,
   target: LineSpan,
   length: number,
 ): { anchor: number; head: number } {
   const past = (to: number) => (to < length ? to + 1 : to);
+  if (typeof anchor === "number") {
+    if (target.from > anchor) return { anchor, head: past(target.to) };
+    if (target.to < anchor) return { anchor, head: target.from };
+    return { anchor, head: anchor };
+  }
   if (target.from >= anchor.from)
     return { anchor: anchor.from, head: past(Math.max(target.to, anchor.to)) };
   return { anchor: past(anchor.to), head: target.from };
 }
 
-const setLineAnchor = StateEffect.define<LineSpan>();
+const setLineAnchor = StateEffect.define<LineAnchor>();
 
-/** The lines a selection made from the gutter started on, while that selection stands: ⇧click
- * goes on from them. Any other change of the selection or the text forgets them. */
-const lineAnchor = StateField.define<LineSpan | null>({
+/** Where a selection made from the gutter went on from, while that selection stands: ⇧click goes
+ * on from there. Any other change of the selection or the text forgets it. */
+const lineAnchor = StateField.define<LineAnchor | null>({
   create: () => null,
   update(value, tr) {
     for (const effect of tr.effects) if (effect.is(setLineAnchor)) return effect.value;
@@ -46,16 +57,14 @@ const lineAnchor = StateField.define<LineSpan | null>({
   },
 });
 
-/** Where ⇧click goes on from: the lines the gutter selection started on, or else the line of the
- * selection's anchor. */
-export function anchorLines(state: EditorState): LineSpan {
-  return (
-    state.field(lineAnchor, false) ?? spanOf(state, state.doc.lineAt(state.selection.main.anchor))
-  );
+/** Where ⇧click goes on from: where the gutter selection went on from, or else the selection's
+ * anchor, left where it is (VS Code). */
+export function selectionAnchor(state: EditorState): LineAnchor {
+  return state.field(lineAnchor, false) ?? state.selection.main.anchor;
 }
 
 /** The transaction that selects from `anchor` to `target`, keeping `anchor` for a later ⇧click. */
-export function selectLines(state: EditorState, anchor: LineSpan, target: LineSpan) {
+export function selectLines(state: EditorState, anchor: LineAnchor, target: LineSpan) {
   const { anchor: from, head } = spanLines(anchor, target, state.doc.length);
   return state.update({
     selection: EditorSelection.single(from, head),
@@ -71,13 +80,13 @@ function overshoot(view: EditorView, y: number): number {
 }
 
 /** A press on the line numbers: selects that line, and the lines the pointer passes over while it
- * is held, scrolling when it is held past the editor's edge. With ⇧ it goes on from the lines the
- * selection started on. A change to the text while it is held (a key, another window's change, a
+ * is held, scrolling when it is held past the editor's edge. With ⇧ it goes on from where the
+ * selection started (`selectionAnchor`). A change to the text while it is held (a key, another window's change, a
  * pane swapping in another tab's state) ends the drag: the anchor is a place in the old text. */
 function pressLineNumber(view: EditorView, block: BlockInfo, down: Event): boolean {
   const event = down as MouseEvent;
   if (event.button !== 0 || event.ctrlKey) return false;
-  let anchor: LineSpan | null = null;
+  let anchor: LineAnchor | null = null;
   let doc = view.state.doc;
   let last = event.clientY;
   const selectAt = (y: number) => {
@@ -110,7 +119,7 @@ function pressLineNumber(view: EditorView, block: BlockInfo, down: Event): boole
     view.focus();
     doc = view.state.doc;
     const pressed = spanOf(view.state, view.lineBlockAtHeight(row));
-    anchor = event.shiftKey ? anchorLines(view.state) : pressed;
+    anchor = event.shiftKey ? selectionAnchor(view.state) : pressed;
     view.dispatch(selectLines(view.state, anchor, pressed));
     if (last !== event.clientY) selectAt(last);
   };

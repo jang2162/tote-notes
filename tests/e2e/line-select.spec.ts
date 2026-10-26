@@ -123,10 +123,16 @@ test("⇧click widens the selection by lines from where it started", async ({ pa
   await page.evaluate(() => window.view.dispatch({}));
   await press(page, 4, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 15 });
-  // From a selection made in the text, it goes on from the line of the selection's anchor.
+  // From a selection made in the text, its anchor stays where it is and only the head goes by
+  // lines, as in VS Code: below, to past the line's break; above, to the line's start; on the
+  // anchor's own line, back to the anchor.
   await page.evaluate(() => window.view.dispatch({ selection: { anchor: 7, head: 8 } }));
   await press(page, 1, ["Shift"]);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 0 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 0 });
+  await press(page, 4, ["Shift"]);
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 15 });
+  await press(page, 3, ["Shift"]);
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 7 });
 });
 
 test("a change to the text or a swapped state while the line numbers are held ends the drag", async ({
