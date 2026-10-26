@@ -57,11 +57,14 @@ describe("the release config", () => {
   it("offers tote in Finder for the text it colours, without taking another app's files", () => {
     // Every extension a bundled language claims: tote edits any file that is not media or a PDF
     // (`kind_for`, src-tauri/src/workspace/memo.rs), and these are the ones it highlights.
-    // `.plist` is left out — most of them are binary.
+    // Left out: `.plist`, most of them binary, and `.ts`·`.mts`, which macOS takes for video
+    // (public.mpeg-2-transport-stream, public.avchd-mpeg-2-transport-stream) whatever is inside —
+    // a TypeScript `.ts` gets that type too, so naming either would offer tote for every such
+    // video. tote still opens them when the person picks it.
     const languages = json("src-tauri/resources/extensions/tote.languages/package.json").contributes
       .languages as { extensions?: string[] }[];
     const claimed = new Set(languages.flatMap((l) => (l.extensions ?? []).map((e) => e.slice(1))));
-    claimed.delete("plist");
+    for (const left of ["plist", "ts", "mts"]) claimed.delete(left);
     // The bundler turns these extensions into content types (`extension_to_uti` in tauri-utils)
     // and writes them into the same entry, and macOS ignores an entry's extensions once it names
     // content types: they are named as types in an entry of their own.

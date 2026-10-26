@@ -337,7 +337,7 @@ echo 내용 | tote -    stdin 내용으로 새 메모 만들기
 
 **macOS 가 넘기는 파일.** Finder 의 「다음으로 열기」, tote 를 기본 앱으로 정한 파일, `open -a` 로 연 파일은 `tote <파일…>` 과 같이 연다 — 가장 최근 창에 외부 탭으로, 여러 개면 모두, 폴더는 거절한다. 답할 셸이 없으므로 거절은 그 창의 상태 표시줄에 알린다. 앱이 꺼져 있다가 이 파일로 켜지면 파일은 시작 창들을 연 뒤에 연다(macOS 는 앱 준비가 끝나기 전에 파일을 넘긴다).
 
-앱 번들은 tote 가 색을 입히는 확장자(번들 언어 확장이 주장하는 것, `.plist` 제외)와 `public.plain-text` 형식에 Editor·`Alternate` 로 선언한다. 「다음으로 열기」 목록에 나오되 다른 앱의 기본 지정을 빼앗지 않는다. 목록은 `scripts/release-config.test.ts` 가 번들 언어 확장과 맞춰 본다.
+앱 번들은 tote 가 색을 입히는 확장자(번들 언어 확장이 주장하는 것. `.plist` 는 대개 바이너리라서, `.ts`·`.mts` 는 macOS 가 내용과 상관없이 영상(`public.mpeg-2-transport-stream` 등)으로 보아서 뺀다 — TypeScript `.ts` 도 그 형식을 받으므로 선언하면 모든 영상 `.ts` 에 tote 가 Editor 로 나선다)와 `public.plain-text` 형식에 Editor·`Alternate` 로 선언한다. 「다음으로 열기」 목록에 나오되 다른 앱의 기본 지정을 빼앗지 않는다. 목록은 `scripts/release-config.test.ts` 가 번들 언어 확장과 맞춰 본다.
 
 ## 오류 처리
 
