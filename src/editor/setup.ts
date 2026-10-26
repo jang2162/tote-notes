@@ -20,7 +20,6 @@ import {
   highlightActiveLine,
   highlightSpecialChars,
   keymap,
-  lineNumbers,
   type Command,
   type KeyBinding,
   type ViewUpdate,
@@ -31,6 +30,7 @@ import { altMouseSelection } from "./alt-mouse";
 import { historyStaysWithTheKeys } from "./history-menu";
 import { multiRangeIme, redoWithCursors, undoWithCursors } from "./ime";
 import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
+import { lineNumberGutter } from "./line-select";
 import { searchBar, searchBarKeymap } from "./search-bar";
 
 /** Tab: an indent unit at every cursor; with text selected, indents the selected lines. */
@@ -101,7 +101,7 @@ const lineNumberSlot = new Compartment();
 
 /** Shows or hides the gutter of a state built by `editorExtensions` (the line-number setting). */
 export function lineNumbersEffect(on: boolean) {
-  return lineNumberSlot.reconfigure(on ? lineNumbers() : []);
+  return lineNumberSlot.reconfigure(on ? lineNumberGutter() : []);
 }
 
 const menuKeySlot = new Compartment();
@@ -214,7 +214,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
     menuKeySlot.of(menuKeys(options.menuKeys ?? [])),
     keymap.of(editorKeymap),
-    lineNumberSlot.of(options.lineNumbers ? lineNumbers() : []),
+    lineNumberSlot.of(options.lineNumbers ? lineNumberGutter() : []),
     fontSlot.of(
       fontTheme(options.font ?? { family: "var(--editor-font)", size: "var(--editor-size)" }),
     ),

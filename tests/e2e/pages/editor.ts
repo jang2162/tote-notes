@@ -114,7 +114,7 @@ const view = new EditorView({
     doc,
     extensions: editorExtensions({
       fileName,
-      lineNumbers: false,
+      lineNumbers: !!params.get("linenumbers"),
       // As the app decides it (`setText` in src/app/docs.ts), so the measurement sees its setting.
       wrap: !params.get("nowrap") && longestLine(doc) <= WRAP_LIMIT,
       onUpdate: () => {},
