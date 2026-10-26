@@ -220,6 +220,13 @@ mod tests {
         std::fs::write(paths.launch_file(), b"{ broken").unwrap();
         assert_eq!(root(&Settings::default()), home.path().join("Tote"));
         assert_eq!(std::fs::read(paths.launch_file()).unwrap(), b"{ broken");
+        // The state.json 0.1.0 wrote, without the mark: every person with an old root has one.
+        std::fs::write(
+            paths.launch_file(),
+            "{\"openWindows\": [], \"recent\": [\"/Users/me/Tote/업무\"]}",
+        )
+        .unwrap();
+        assert_eq!(root(&Settings::default()), home.path().join("Tote"));
         // Once the app has checked, the settings say where, even when the person cleared them.
         std::fs::write(paths.launch_file(), b"{\"legacyRootChecked\": true}").unwrap();
         assert_eq!(root(&Settings::default()), home.path().join(".tote"));
