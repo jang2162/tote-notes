@@ -501,15 +501,40 @@ pub fn legacy_root_to_pin(
 
 /// Whether the old root has workspaces, or is there (as a link too) but cannot be read this time
 /// — a volume not yet mounted, a read the system refuses. Those cannot be ruled out, and the root
-/// was the old default anyway, so writing it in only keeps what tote did before.
+/// was the old default anyway, so writing it in only keeps what tote did before. The same goes
+/// for a workspace in a root that reads.
 fn may_hold_workspaces(root: &Path) -> bool {
     if std::fs::symlink_metadata(root).is_err() {
         return false;
     }
     match std::fs::read_dir(root) {
-        Ok(_) => !crate::workspace::Workspace::list(root).is_empty(),
+        Ok(entries) => {
+            !crate::workspace::Workspace::list(root).is_empty()
+                || entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| !entry.file_name().to_string_lossy().starts_with('.'))
+                    .any(|entry| cannot_be_read_now(&entry.path()))
+        }
         Err(err) => err.kind() != io::ErrorKind::NotADirectory,
     }
+}
+
+/// An entry of a root that reads, which may be a workspace not readable this time: a link whose
+/// target is gone, or one whose `workspace.json` the system will not look up. A file, or a folder
+/// without one, is not.
+fn cannot_be_read_now(entry: &Path) -> bool {
+    if std::fs::metadata(entry).is_err() {
+        return true;
+    }
+    let file = entry
+        .join(crate::workspace::TOTE_DIR)
+        .join("workspace.json");
+    std::fs::metadata(file).is_err_and(|err| {
+        !matches!(
+            err.kind(),
+            io::ErrorKind::NotFound | io::ErrorKind::NotADirectory
+        )
+    })
 }
 
 impl LaunchState {
@@ -762,6 +787,39 @@ mod tests {
             &paths,
             Some(home.path())
         ));
+    }
+
+    /// `~/Tote` reads, but a workspace in it does not: one the system refuses, or a link to a
+    /// volume not mounted. The same as the root itself not reading — it cannot be ruled out.
+    #[test]
+    fn an_old_root_whose_workspace_cannot_be_read_now_is_kept() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let home = tempfile::tempdir().unwrap();
+        let paths = release_under(home.path());
+        let old = home.path().join("Tote");
+        let check = || {
+            let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+            pin_legacy_root(&mut settings, &mut launch, &paths, Some(home.path()))
+        };
+        workspace_in(&old, "메모");
+        let memo = old.join("메모");
+        fs::set_permissions(&memo, fs::Permissions::from_mode(0o000)).unwrap();
+        let changed = check();
+        fs::set_permissions(&memo, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(changed);
+
+        fs::remove_dir_all(&memo).unwrap();
+        symlink("/Volumes/not-mounted-now/업무", old.join("업무")).unwrap();
+        assert!(check());
+
+        // A folder that reads and has no `.tote` is one the person keeps there, not a workspace;
+        // nor is anything dotted, which tote never lists.
+        fs::remove_file(old.join("업무")).unwrap();
+        symlink("/Volumes/not-mounted-now/숨김", old.join(".숨김")).unwrap();
+        fs::create_dir(old.join("사진")).unwrap();
+        fs::create_dir_all(old.join("문서/.tote")).unwrap();
+        fs::write(old.join("a.md"), "x").unwrap();
+        assert!(!check());
     }
 
     #[test]
