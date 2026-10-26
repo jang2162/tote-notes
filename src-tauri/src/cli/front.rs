@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::{parse_args, resolve, CliRequest, Parsed, USAGE};
-use crate::appdata::{AppPaths, Settings};
+use crate::appdata::{legacy_root_to_pin, AppPaths, LaunchState, Settings};
 use crate::persist::atomic_write;
 
 /// Runs the command line when the `tote` script started this binary (`TOTE_CLI=1`). Returns the
@@ -57,7 +57,7 @@ fn run(args: &[String]) -> i32 {
     if let Some(warning) = warning {
         eprintln!("{warning}");
     }
-    let root = settings.workspace_root(&app_paths);
+    let root = root_for_cli(&settings, &app_paths, dirs::home_dir().as_deref());
     let cwd = match std::env::current_dir() {
         Ok(cwd) => cwd,
         Err(err) => {
@@ -107,6 +107,22 @@ fn settings_for_cli(path: &Path) -> (Settings, Option<String>) {
         Ok(settings) => (settings, None),
         Err(err) => (Settings::default(), Some(settings_warning(&err))),
     }
+}
+
+/// The root `-w` names a workspace in. Until the app has checked for the old default root
+/// (`legacyRootChecked`), that is the root it will pin when it launches — a new version not
+/// launched yet would otherwise send `-w 업무` to an empty `~/.tote`. Reads only: `state.json`
+/// that does not parse counts as unchecked, as it does for the app, which sets it aside.
+fn root_for_cli(settings: &Settings, paths: &AppPaths, home: Option<&Path>) -> PathBuf {
+    let checked = std::fs::read(paths.launch_file())
+        .ok()
+        .and_then(|bytes| serde_json::from_slice::<LaunchState>(&bytes).ok())
+        .is_some_and(|launch| launch.legacy_root_checked);
+    let mut settings = settings.clone();
+    if let Some(root) = legacy_root_to_pin(&settings, paths, home).filter(|_| !checked) {
+        settings.workspace_root = Some(root);
+    }
+    settings.workspace_root_with_home(paths, home)
 }
 
 fn settings_warning(err: &dyn std::fmt::Display) -> String {
@@ -181,6 +197,38 @@ mod tests {
             app_bundle(Path::new("/repo/src-tauri/target/debug/tote")),
             None
         );
+    }
+
+    #[test]
+    fn before_the_app_has_pinned_the_old_root_the_cli_looks_there_without_writing_it() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(
+            None,
+            Some(home.path().join("os")),
+            Some(home.path().into()),
+            false,
+        )
+        .unwrap();
+        crate::workspace::Workspace::create(&home.path().join("Tote"), "업무").unwrap();
+        let root = |settings: &Settings| root_for_cli(settings, &paths, Some(home.path()));
+        // The new app has not launched yet: `-w 업무` finds the workspace where it will look.
+        assert_eq!(root(&Settings::default()), home.path().join("Tote"));
+        assert!(!paths.settings_file().exists());
+        assert!(!paths.launch_file().exists());
+        // A broken state.json is started over by the app, unchecked, so the same goes here.
+        std::fs::create_dir_all(&paths.data_dir).unwrap();
+        std::fs::write(paths.launch_file(), b"{ broken").unwrap();
+        assert_eq!(root(&Settings::default()), home.path().join("Tote"));
+        assert_eq!(std::fs::read(paths.launch_file()).unwrap(), b"{ broken");
+        // Once the app has checked, the settings say where, even when the person cleared them.
+        std::fs::write(paths.launch_file(), b"{\"legacyRootChecked\": true}").unwrap();
+        assert_eq!(root(&Settings::default()), home.path().join(".tote"));
+        std::fs::remove_file(paths.launch_file()).unwrap();
+        let set = Settings {
+            workspace_root: Some("/w".into()),
+            ..Settings::default()
+        };
+        assert_eq!(root(&set), PathBuf::from("/w"));
     }
 
     #[test]

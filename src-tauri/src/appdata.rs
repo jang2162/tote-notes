@@ -470,25 +470,33 @@ pub fn pin_legacy_root(
         return false;
     }
     launch.legacy_root_checked = true;
+    let Some(legacy) = legacy_root_to_pin(settings, paths, home) else {
+        return false;
+    };
+    settings.workspace_root = Some(legacy);
+    true
+}
+
+/// The old root `pin_legacy_root` writes into `settings`, if any, deciding only: the `tote`
+/// command, which must not write the settings, uses it to look where the app will once launched.
+pub fn legacy_root_to_pin(
+    settings: &Settings,
+    paths: &AppPaths,
+    home: Option<&Path>,
+) -> Option<PathBuf> {
     let unset = settings
         .workspace_root
         .as_ref()
         .is_none_or(|root| root.as_os_str().is_empty());
-    let Some(legacy) = paths.legacy_workspace_root.clone().filter(|_| unset) else {
-        return false;
-    };
+    let legacy = paths.legacy_workspace_root.clone().filter(|_| unset)?;
     let old = Settings {
         workspace_root: Some(legacy.clone()),
         ..Settings::default()
     };
     let holds = |root: &Path| !crate::workspace::Workspace::list(root).is_empty();
-    if !may_hold_workspaces(&old.workspace_root_with_home(paths, home))
-        || holds(&paths.default_workspace_root)
-    {
-        return false;
-    }
-    settings.workspace_root = Some(legacy);
-    true
+    (may_hold_workspaces(&old.workspace_root_with_home(paths, home))
+        && !holds(&paths.default_workspace_root))
+    .then_some(legacy)
 }
 
 /// Whether the old root has workspaces, or is there (as a link too) but cannot be read this time
