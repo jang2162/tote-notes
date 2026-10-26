@@ -4,7 +4,7 @@
 pub mod external;
 
 use std::fs::{self, File};
-use std::io::{self, Write};
+use std::io::{self, Read, Write};
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -89,6 +89,44 @@ pub const BINARY_PROBE_BYTES: usize = 8192;
 /// Whether `bytes` are binary: a NUL within the first `BINARY_PROBE_BYTES` (spec 「백업」).
 pub fn is_binary(bytes: &[u8]) -> bool {
     memchr::memchr(0, &bytes[..bytes.len().min(BINARY_PROBE_BYTES)]).is_some()
+}
+
+/// What `read_text` refuses: the file is not text by `is_binary`'s rule.
+#[derive(Debug)]
+pub struct NotText;
+
+impl std::fmt::Display for NotText {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "not text: a NUL in the first {BINARY_PROBE_BYTES} bytes")
+    }
+}
+
+impl std::error::Error for NotText {}
+
+/// Whether `err` is `read_text` refusing a file that is not text.
+pub fn is_not_text(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<NotText>())
+}
+
+/// The whole file when it is text. One that is not — a video named `.ts`, say — is told by its
+/// first `BINARY_PROBE_BYTES` and read no further: it is never loaded, hashed or sent to a page,
+/// however large. Refused as `InvalidData` carrying `NotText` (`is_not_text`).
+pub fn read_text(path: &Path) -> io::Result<Vec<u8>> {
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    read_text_from(file, size)
+}
+
+fn read_text_from(mut reader: impl Read, size: u64) -> io::Result<Vec<u8>> {
+    let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
+    (&mut reader)
+        .take(BINARY_PROBE_BYTES as u64)
+        .read_to_end(&mut bytes)?;
+    if is_binary(&bytes) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, NotText));
+    }
+    reader.read_to_end(&mut bytes)?;
+    Ok(bytes)
 }
 
 /// Reads JSON from `path`. Missing is `Ok(None)`. A file that does not parse as `T` is moved aside
@@ -261,6 +299,70 @@ mod tests {
         late[BINARY_PROBE_BYTES - 1] = b'a';
         late.push(0);
         assert!(!is_binary(&late));
+    }
+
+    /// A reader of `len` bytes, NUL first when `binary`, that counts what was taken from it.
+    struct Counted {
+        left: u64,
+        binary: bool,
+        taken: std::rc::Rc<std::cell::Cell<u64>>,
+    }
+
+    impl Read for Counted {
+        fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+            let n = buf.len().min(self.left as usize);
+            let at = self.taken.get();
+            for (i, byte) in buf[..n].iter_mut().enumerate() {
+                *byte = if self.binary && at + i as u64 == 0 {
+                    0
+                } else {
+                    b'a'
+                };
+            }
+            self.left -= n as u64;
+            self.taken.set(at + n as u64);
+            Ok(n)
+        }
+    }
+
+    fn counted(len: u64, binary: bool) -> (Counted, std::rc::Rc<std::cell::Cell<u64>>) {
+        let taken = std::rc::Rc::new(std::cell::Cell::new(0));
+        let reader = Counted {
+            left: len,
+            binary,
+            taken: taken.clone(),
+        };
+        (reader, taken)
+    }
+
+    #[test]
+    fn a_binary_file_is_refused_after_its_first_bytes() {
+        const FIFTY_MB: u64 = 50 * 1024 * 1024;
+        let (reader, taken) = counted(FIFTY_MB, true);
+        let err = read_text_from(reader, FIFTY_MB).unwrap_err();
+        assert!(is_not_text(&err), "{err}");
+        assert!(
+            taken.get() <= BINARY_PROBE_BYTES as u64,
+            "read {} bytes",
+            taken.get()
+        );
+        // Text is read whole, past the probe.
+        let (reader, taken) = counted(BINARY_PROBE_BYTES as u64 * 3, false);
+        assert_eq!(
+            read_text_from(reader, 0).unwrap().len(),
+            BINARY_PROBE_BYTES * 3
+        );
+        assert_eq!(taken.get(), BINARY_PROBE_BYTES as u64 * 3);
+        // From disk the same, and other failures are not taken for it.
+        let dir = tempfile::tempdir().unwrap();
+        let video = dir.path().join("영상.ts");
+        fs::write(&video, b"G ").unwrap();
+        assert!(is_not_text(&read_text(&video).unwrap_err()));
+        fs::write(&video, "const a = 1;\n").unwrap();
+        assert_eq!(read_text(&video).unwrap(), b"const a = 1;\n");
+        assert!(!is_not_text(
+            &read_text(&dir.path().join("없음")).unwrap_err()
+        ));
     }
 
     #[test]

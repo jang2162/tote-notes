@@ -1,3 +1,4 @@
+import { BINARY_PROBE_BYTES } from "../core/codec";
 import { basename, splitName } from "../core/names";
 import { parseSessionFile, type SessionTab } from "../core/session";
 import { scanBytes } from "../viewer/large-text";
@@ -227,6 +228,14 @@ export function memoryStorage(initial: string | null = null): FakeStorage {
       text = next;
     },
   };
+}
+
+/** As Rust's `persist::read_text` refuses a file that is not text, by its first bytes. */
+function textOnly(bytes: Uint8Array, name: string): Uint8Array {
+  if (bytes.subarray(0, BINARY_PROBE_BYTES).includes(0)) {
+    throw new BackendError("not-text", `${name}: not text`);
+  }
+  return bytes;
 }
 
 export function defaultFakeData(): FakeData {
@@ -663,7 +672,7 @@ export class FakeBackend implements Backend {
     const memo = this.memo(id);
     this.data.reads[id] = (this.data.reads[id] ?? 0) + 1;
     this.commit();
-    return fromBase64(memo.data);
+    return textOnly(fromBase64(memo.data), memo.file);
   }
 
   async writeMemo(id: string, bytes: Uint8Array) {
@@ -868,8 +877,9 @@ export class FakeBackend implements Backend {
   /** An open file without a draft takes what was read as its base, as the Rust side does. */
   async readExternal(path: string) {
     const data = this.data.files[path];
+    const bytes = data === undefined ? new Uint8Array() : textOnly(fromBase64(data), path);
     if (path in this.bases && !this.data.drafts[path]) this.bases[path] = data ?? null;
-    return data === undefined ? new Uint8Array() : fromBase64(data);
+    return bytes;
   }
 
   async readExternalDraft(path: string) {
@@ -1358,7 +1368,7 @@ export class FakeBackend implements Backend {
   async scanText(source: FileSource) {
     const found = this.sourceBytes(source);
     if (!found) throw new BackendError("not-found", JSON.stringify(source));
-    return scanBytes(fromBase64(found.data));
+    return scanBytes(textOnly(fromBase64(found.data), JSON.stringify(source)));
   }
 
   async searchText(source: FileSource, query: TextQuery, fromLine: number, _requestId: number) {

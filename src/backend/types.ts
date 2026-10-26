@@ -346,6 +346,8 @@ export const BACKEND_ERROR_CODES = [
   "already-installed",
   "invalid-extension",
   "window-busy",
+  // A read refused after the file's first bytes: it is not text (`persist::read_text`).
+  "not-text",
   // The update's (src-tauri/src/app/commands.rs `install_update`, `restart_for_update`).
   "no-update",
   "update-failed",

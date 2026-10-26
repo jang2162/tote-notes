@@ -86,6 +86,9 @@ fn io_code(err: &io::Error) -> &'static str {
     {
         return "window-busy";
     }
+    if crate::persist::is_not_text(err) {
+        return "not-text";
+    }
     match err.kind() {
         io::ErrorKind::NotFound => "not-found",
         io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput => "bad-request",

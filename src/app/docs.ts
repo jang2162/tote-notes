@@ -360,6 +360,16 @@ export abstract class Doc {
     this.host.changed(this, "reloaded");
   }
 
+  /** A read for `reload` was refused because the file is no longer text (`not-text`): the tab
+   * shows that, as `reload` would have from the bytes. `false` for any other failure. */
+  protected reloadRefused(error: unknown): boolean {
+    if (errorCode(error) !== "not-text") return false;
+    this.state = null;
+    this.problem = "not-utf8";
+    this.host.changed(this, "reloaded");
+    return true;
+  }
+
   /** A tab that could not show its text (not UTF-8, a line too long) reads the file again after
    * another app changed it: the change may have mended it. A tab never read stays unread. */
   protected async retryProblem(): Promise<void> {
@@ -376,6 +386,11 @@ export abstract class Doc {
       bytes = await this.read();
     } catch (error) {
       const code = errorCode(error);
+      // Told by its first bytes, without sending the rest: what `decodeText` would say below.
+      if (code === "not-text") {
+        this.problem = "not-utf8";
+        return;
+      }
       this.problem = code === "not-found" || code === "unknown-memo" ? "missing" : "unreadable";
       this.error = error;
       return;
@@ -590,6 +605,7 @@ export class MemoDoc extends Doc {
     try {
       bytes = await this.host.backend.readMemo(this.info.id);
     } catch (error) {
+      if (this.reloadRefused(error)) return;
       return this.fail(error);
     }
     // Typed while it was read: that text must not be replaced.
@@ -613,13 +629,14 @@ export class MemoDoc extends Doc {
   private async takeDisk(): Promise<void> {
     this.host.writes.cancel(this.saveKey);
     this.cancelRetry();
-    let bytes: Uint8Array;
+    let bytes: Uint8Array | null;
     try {
       bytes = await this.host.backend.readMemo(this.info.id);
     } catch (error) {
-      return this.fail(error);
+      if (!this.reloadRefused(error)) return this.fail(error);
+      bytes = null;
     }
-    this.reload(bytes);
+    if (bytes) this.reload(bytes);
     this.setBanner(null);
     this.clearSaveFailed();
   }
@@ -913,6 +930,7 @@ export class ExternalDoc extends Doc {
     try {
       bytes = await this.host.backend.readExternal(this.path);
     } catch (error) {
+      if (this.reloadRefused(error)) return;
       return this.fail(error);
     }
     if (this.modified) return this.raiseConflict();
@@ -933,16 +951,19 @@ export class ExternalDoc extends Doc {
 
   /** 「디스크 버전」: the edits and their draft go for the file's text. */
   private async takeDisk(): Promise<void> {
-    let bytes: Uint8Array;
+    let bytes: Uint8Array | null;
     try {
       await this.discard();
       bytes = await this.host.backend.readExternal(this.path);
     } catch (error) {
-      return this.fail(error);
+      if (!this.reloadRefused(error)) return this.fail(error);
+      bytes = null;
     }
     this.exists = true;
-    this.size = bytes.length;
-    this.reload(bytes);
+    if (bytes) {
+      this.size = bytes.length;
+      this.reload(bytes);
+    }
     this.setBanner(null);
   }
 

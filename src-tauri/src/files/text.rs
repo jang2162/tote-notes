@@ -9,6 +9,8 @@ use std::path::Path;
 
 use serde::{Deserialize, Serialize};
 
+use crate::persist::{is_binary, NotText, BINARY_PROBE_BYTES};
+
 pub const CHECKPOINT_LINES: u64 = 1000;
 pub const SEARCH_PAGE: usize = 200;
 const READ_CHUNK: usize = 1 << 20;
@@ -36,6 +38,16 @@ pub fn scan(path: &Path) -> io::Result<TextScan> {
 /// came after the size the viewer was told is not part of this scan.
 fn scan_reader(reader: impl Read, size: u64) -> io::Result<TextScan> {
     let mut reader = reader.take(size);
+    // A file over the editor's limit comes here unread: a video named `.ts` is turned away by its
+    // first bytes (`persist::read_text`'s rule) instead of being scanned to its end.
+    let mut head = Vec::with_capacity(BINARY_PROBE_BYTES);
+    (&mut reader)
+        .take(BINARY_PROBE_BYTES as u64)
+        .read_to_end(&mut head)?;
+    if is_binary(&head) {
+        return Err(io::Error::new(io::ErrorKind::InvalidData, NotText));
+    }
+    let mut reader = head.as_slice().chain(reader);
     let mut buf = vec![0u8; READ_CHUNK];
     let mut offset: u64 = 0;
     let mut line: u64 = 0;
@@ -172,6 +184,32 @@ mod tests {
         let path = dir.path().join("big.log");
         fs::write(&path, lines.join("\n")).unwrap();
         (dir, path)
+    }
+
+    #[test]
+    fn a_scan_turns_a_binary_file_away_by_its_first_bytes() {
+        /// 50MB of NULs that counts what was taken from it.
+        struct Video(u64);
+        impl Read for Video {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                buf.fill(0);
+                self.0 += buf.len() as u64;
+                Ok(buf.len())
+            }
+        }
+        let mut video = Video(0);
+        let err = scan_reader(&mut video, 50 * 1024 * 1024).unwrap_err();
+        assert!(crate::persist::is_not_text(&err), "{err}");
+        assert!(
+            video.0 <= BINARY_PROBE_BYTES as u64,
+            "read {} bytes",
+            video.0
+        );
+        // The head of a text file is scanned with the rest.
+        let text = "a\n".repeat(BINARY_PROBE_BYTES);
+        let scan = scan_reader(text.as_bytes(), text.len() as u64).unwrap();
+        assert_eq!(scan.line_count, BINARY_PROBE_BYTES as u64 + 1);
+        assert_eq!(scan.size, text.len() as u64);
     }
 
     #[test]

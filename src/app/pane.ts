@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
 
-import type { Backend, ViewerInfo } from "../backend/types";
+import { errorCode, type Backend, type ViewerInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import type { Registry } from "../extensions/registry";
 import type { ThemeManager } from "../theme/manager";
@@ -459,7 +459,10 @@ export class Pane {
         this.pendingLine = null;
       this.revoke(owner);
       if (stale()) return;
-      this.host.report(error);
+      // Not text after all, by its first bytes (a video named `.ts` over 100MB): said as a text
+      // file that is not text is, not as a failure.
+      if (errorCode(error) === "not-text") doc.problem = "not-utf8";
+      else this.host.report(error);
       this.showProblem(doc);
     }
   }

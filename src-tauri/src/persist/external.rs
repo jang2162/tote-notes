@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::{atomic_write, content_hash};
+use super::{atomic_write, content_hash, is_not_text, read_text};
 use crate::session::drafts::DraftStore;
 use crate::workspace::{kind_for, FileKind};
 
@@ -72,14 +72,17 @@ impl ExternalFiles {
             ));
         }
         // Only a file the editor can open is read and hashed: a video opened through `tote` must
-        // not be loaded into memory. Such a file has no base; a missing one has base `None`.
+        // not be loaded into memory, whether its name says so (`kind_for`) or only its first bytes
+        // do (`read_text`, a video named `.ts`). Such a file has no base, so a change to it is
+        // never read either (`outside_state`); a missing one has base `None`.
         let editable = meta.as_ref().is_some_and(|m| is_editable(path, m.len()));
-        let tracked = meta.is_none() || editable;
-        let disk_hash = if editable {
-            Some(content_hash(&fs::read(path)?))
-        } else {
-            None
+        let text = match editable.then(|| read_text(path)) {
+            Some(Ok(bytes)) => Some(bytes),
+            Some(Err(err)) if !is_not_text(&err) => return Err(err),
+            _ => None,
         };
+        let tracked = meta.is_none() || text.is_some();
+        let disk_hash = text.as_deref().map(content_hash);
         let (base, draft) = match self.drafts.get(path)? {
             Some((header, _)) => {
                 // A draft is only made while the file is editable, so an uneditable file has
@@ -108,12 +111,13 @@ impl ExternalFiles {
         })
     }
 
-    /// The file's bytes; a path that does not exist yet reads as empty. An open file without a
+    /// The file's bytes; a path that does not exist yet reads as empty, one that is not text is
+    /// refused after its first bytes (`read_text`). An open file without a
     /// draft takes what is read as its base: a tab reading it again after another app changed it
     /// edits from there, so a draft it makes later is not taken for a change on disk. A draft
     /// keeps the base it was made against.
     pub fn read(&self, path: &Path) -> io::Result<Vec<u8>> {
-        let bytes = match fs::read(path) {
+        let bytes = match read_text(path) {
             Ok(bytes) => Some(bytes),
             Err(err) if err.kind() == io::ErrorKind::NotFound => None,
             Err(err) => return Err(err),
@@ -140,7 +144,7 @@ impl ExternalFiles {
             None => fs::metadata(path)
                 .ok()
                 .filter(|m| is_editable(path, m.len()))
-                .and_then(|_| fs::read(path).ok())
+                .and_then(|_| read_text(path).ok())
                 .map(|bytes| content_hash(&bytes)),
         };
         self.drafts.put(path, base.as_deref(), contents)
@@ -184,7 +188,7 @@ impl ExternalFiles {
             return Some(ExternalState::Modified);
         };
         let same = is_editable(path, meta.len())
-            && fs::read(path).is_ok_and(|bytes| content_hash(&bytes) == base);
+            && read_text(path).is_ok_and(|bytes| content_hash(&bytes) == base);
         (!same).then_some(ExternalState::Modified)
     }
 
@@ -207,6 +211,31 @@ mod tests {
 
     fn files(dir: &Path) -> ExternalFiles {
         ExternalFiles::new(DraftStore::new(dir.join("buffers")))
+    }
+
+    #[test]
+    fn a_video_under_a_text_name_is_neither_read_nor_hashed() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext = files(dir.path());
+        // 50MB, a NUL first: what MPEG-TS starts with is `G` then binary bytes.
+        let video = dir.path().join("녹화.ts");
+        let file = fs::File::create(&video).unwrap();
+        file.set_len(50 * 1024 * 1024).unwrap();
+        drop(file);
+        let info = ext.open(&video).unwrap();
+        assert_eq!((info.exists, info.kind), (true, FileKind::Text));
+        // No base: the file was not taken in to be hashed, and a change to it is not read.
+        assert!(!ext.bases_lock().contains_key(&video));
+        let err = ext.read(&video).unwrap_err();
+        assert!(crate::persist::is_not_text(&err), "{err}");
+        assert_eq!(ext.outside_state(&video), Some(ExternalState::Modified));
+        // A text file that turns binary is news, and is not read whole to find out.
+        let text = dir.path().join("a.ts");
+        fs::write(&text, "const a = 1;\n").unwrap();
+        ext.open(&text).unwrap();
+        assert!(ext.bases_lock().contains_key(&text));
+        fs::write(&text, b"G\0\x11").unwrap();
+        assert_eq!(ext.outside_state(&text), Some(ExternalState::Modified));
     }
 
     #[test]

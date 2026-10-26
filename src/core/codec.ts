@@ -11,7 +11,7 @@ export interface DecodedText {
 
 const BOM = [0xef, 0xbb, 0xbf];
 /** The binary test the spec uses for backups too: a NUL byte in the first 8 KB. */
-const BINARY_PROBE_BYTES = 8192;
+export const BINARY_PROBE_BYTES = 8192;
 const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: true });
 const encoder = new TextEncoder();
 

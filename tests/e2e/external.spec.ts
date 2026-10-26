@@ -79,6 +79,72 @@ test("a file that is not text shows a placeholder", async ({ page }) => {
   await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
 });
 
+// MPEG-TS starts with `G` and binary bytes. Rust tells it from its first bytes and refuses the read
+// (`persist::read_text`, its tests count the bytes taken); the fake refuses the same way, and the
+// page must not wait for bytes that never come.
+const VIDEO = new Uint8Array([0x47, 0x00, 0x11, 0x10]);
+
+test("a video named .ts sent by a tote command says it is not text, its bytes never sent", async ({
+  page,
+}) => {
+  await start(page, { files: { "/x/녹화.ts": fakeFile(VIDEO), "/x/a.ts": fakeFile("let a;") } });
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const read = backend.readExternal.bind(backend);
+    (window as unknown as { sent: number[] }).sent = [];
+    backend.readExternal = async (path) => {
+      const bytes = await read(path);
+      (window as unknown as { sent: number[] }).sent.push(bytes.length);
+      return bytes;
+    };
+    // What Finder's 「다음으로 열기」 queues too (`CliRequest::opened`).
+    backend.data.pending = [{ kind: "external", path: "/x/녹화.ts" }];
+    backend.poke();
+  });
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("녹화.ts");
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(page.getByRole("button", { name: "텍스트로 열기" })).toHaveCount(0);
+  expect(await page.evaluate(() => (window as unknown as { sent: number[] }).sent)).toEqual([]);
+  // A TypeScript `.ts` beside it is text and opens.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    backend.data.pending = [{ kind: "external", path: "/x/a.ts" }];
+    backend.poke();
+  });
+  await expect(page.locator(".cm-content")).toHaveText("let a;");
+});
+
+test("a video named .ts over 100MB says it is not text instead of being scanned", async ({
+  page,
+}) => {
+  await start(page, { files: { "/x/큰녹화.ts": fakeFile(VIDEO) } });
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const open = backend.openExternal.bind(backend);
+    // Over the editor's limit: the tab goes to the large text viewer, whose scan refuses it.
+    backend.openExternal = async (path) => ({ ...(await open(path)), size: 200 * 1024 * 1024 });
+    backend.data.pending = [{ kind: "external", path: "/x/큰녹화.ts" }];
+    backend.poke();
+  });
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(page.locator(".large-text")).toHaveCount(0);
+});
+
+test("an open file another app turns into a video shows it is not text", async ({ page }) => {
+  await start(page, { files: { "/x/a.ts": fakeFile("let a;") }, picks: ["/x/a.ts"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("let a;");
+  await page.evaluate(
+    ([data]) => {
+      const backend = window.__tote.backend;
+      backend.data.files["/x/a.ts"] = data;
+      backend.outside({ kind: "external", path: "/x/a.ts", state: "modified" });
+    },
+    [fakeFile(VIDEO)] as const,
+  );
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+});
+
 test("a .txt that is not UTF-8 says so at once, without 텍스트로 열기", async ({ page }) => {
   await start(page, {
     files: { "/x/latin1.txt": fakeFile(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) },

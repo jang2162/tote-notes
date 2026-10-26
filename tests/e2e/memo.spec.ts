@@ -570,3 +570,13 @@ test("a close button pressed with the mouse leaves the keys where they were", as
   await expect(page.locator(".tab .tab-title")).toHaveText(["가", "다"]);
   expect(await focused()).toEqual({ close: false, pane: true });
 });
+
+test("a video in the workspace under a text name says it is not text", async ({ page }) => {
+  // MPEG-TS: `G` and binary bytes. Rust refuses the read after the first bytes (`read_memo`).
+  const video = fakeFile(new Uint8Array([0x47, 0x00, 0x11]));
+  await start(page, {
+    memos: { a: { file: "녹화.ts", autoTitle: false, data: video, modifiedMs: 1 } },
+  });
+  await page.locator(".memo-row", { hasText: "녹화" }).click();
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+});

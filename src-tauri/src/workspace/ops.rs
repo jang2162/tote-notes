@@ -9,7 +9,7 @@ use super::index::{file_id, MemoEntry};
 use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
 use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
 use crate::persist::external::MAX_EDITOR_BYTES;
-use crate::persist::{atomic_write, content_hash};
+use crate::persist::{atomic_write, content_hash, read_text};
 
 impl Workspace {
     pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
@@ -21,9 +21,11 @@ impl Workspace {
         Ok(self.root.join(&self.entry(id)?.file))
     }
 
+    /// Refused after its first bytes when the memo is not text (`read_text`): a video in the
+    /// workspace under a text name is not loaded to be turned away by the page.
     pub fn read_memo(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
         let file = &self.entry(id)?.file;
-        Ok(fs::read(self.root.join(file))?)
+        Ok(read_text(&self.root.join(file))?)
     }
 
     /// Writes by ID. A file deleted under us is written again: the editor's text is the newest
@@ -274,6 +276,19 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn a_memo_that_is_not_text_is_refused_unread() {
+        let (_root, mut ws) = workspace();
+        let video = ws.import_memo("녹화.ts", b"G\0\x11\x10").unwrap();
+        let err = ws.read_memo(&video.id).unwrap_err();
+        let WorkspaceError::Io(io) = &err else {
+            panic!("{err}");
+        };
+        assert!(crate::persist::is_not_text(io), "{err}");
+        let text = ws.import_memo("a.ts", b"const a = 1;").unwrap();
+        assert_eq!(ws.read_memo(&text.id).unwrap(), b"const a = 1;");
     }
 
     #[test]
