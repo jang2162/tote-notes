@@ -35,6 +35,18 @@ describe("the release config", () => {
     // GitHub turns a space in an asset name into a dot, and latest.json would point at nothing.
     const base = /base="([^"]*)"/.exec(workflow)?.[1];
     expect(base).toBe(`${name.replaceAll(" ", "-")}_\${VERSION}_universal`);
+    // The update archive is uploaded under the name latest.json points at; the check of the
+    // uploaded list only sees what was uploaded, so a wrong address would be published.
+    const named = (pattern: RegExp) => pattern.exec(workflow)?.[1].replaceAll("$base", base!);
+    const archive = `Tote-Notes_\${VERSION}_universal.app.tar.gz`;
+    expect(named(/cp "\$TAR_PATH" "\$out\/([^"]*)"/)).toBe(archive);
+    expect(named(/cp "\$TAR_PATH\.sig" "\$out\/([^"]*)"/)).toBe(`${archive}.sig`);
+    expect(
+      named(
+        /--url "https:\/\/github\.com\/\$GITHUB_REPOSITORY\/releases\/download\/\$GITHUB_REF_NAME\/([^"]*)"/,
+      ),
+    ).toBe(archive);
+    expect(named(/--sig "\$out\/([^"]*)"/)).toBe(`${archive}.sig`);
   });
 
   it("bundles a DMG under the hardened runtime for macOS 13", () => {
