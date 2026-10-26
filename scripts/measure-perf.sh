@@ -32,7 +32,7 @@ touch "$MARKER"
 FIXTURES=${1:?usage: TOTE_DATA_DIR=<scratch> pnpm perf:measure <fixtures dir>}
 FIXTURES=$(cd "$FIXTURES" && pwd)
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
-APP="$ROOT/src-tauri/target/perf/bundle/macos/tote-dev.app"
+APP="$ROOT/src-tauri/target/perf/bundle/macos/Tote Notes Dev.app"
 BIN="$APP/Contents/MacOS/tote"
 RESULTS="$ROOT/tests/measure/results"
 RUNS=5
@@ -50,7 +50,7 @@ socket_owners() {
   lsof -U 2>/dev/null | awk '$NF ~ /^\/tmp\/com_develma_totenotes_dev.*_si\.sock$/ {print $2}' | sort -u
 }
 tote_dev_processes() {
-  pgrep -fl 'tote-dev\.app/Contents/MacOS/|/target/(debug|release|perf)/tote( |$)' || true
+  pgrep -fl '(Tote Notes Dev|tote-dev)\.app/Contents/MacOS/|/target/(debug|release|perf)/tote( |$)' || true
 }
 if [ -n "$(socket_owners)" ] || [ -n "$(tote_dev_processes)" ]; then
   echo "a tote-dev (a bundle or pnpm app:dev) is running; quit it first:" >&2
