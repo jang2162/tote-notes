@@ -37,12 +37,32 @@ pub struct CliRequest {
     /// Text read from stdin (`tote -`), parked in a file under the app data folder.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub stdin_file: Option<PathBuf>,
+    /// What was turned away before the request reached the app, for the window that takes it to
+    /// say: the files macOS opened with tote (`opened`) have no shell to answer. Never on the
+    /// wire — the `tote` command prints its own.
+    #[serde(skip)]
+    pub notices: Vec<String>,
 }
 
 impl CliRequest {
     pub fn to_arg(&self) -> String {
         let json = serde_json::to_string(self).expect("plain data always serialises");
         format!("{REQUEST_FLAG}{json}")
+    }
+
+    /// The files macOS hands tote — Finder's 「다음으로 열기」, tote as a file's default app,
+    /// `open -a` — asked as `tote <파일…>` asks: external tabs in the latest window, a folder
+    /// turned away as `resolve` turns it away.
+    pub fn opened(urls: &[tauri::Url]) -> CliRequest {
+        let mut request = CliRequest::default();
+        for url in urls {
+            match url.to_file_path() {
+                Ok(path) if path.is_dir() => request.notices.push(folder_refused(&path)),
+                Ok(path) => request.files.push(path),
+                Err(()) => eprintln!("tote: 파일이 아닌 주소는 열 수 없습니다: {url}"),
+            }
+        }
+        request
     }
 
     pub fn find_in<I, S>(args: I) -> Option<CliRequest>
@@ -159,7 +179,7 @@ pub fn resolve(
     for path in paths {
         let path = absolute(cwd, path);
         if path.is_dir() {
-            rejected.push(format!("폴더는 열 수 없습니다: {}", path.display()));
+            rejected.push(folder_refused(&path));
         } else if import && !path.is_file() {
             rejected.push(format!("가져올 파일이 없습니다: {}", path.display()));
         } else {
@@ -171,10 +191,14 @@ pub fn resolve(
             workspace,
             files,
             import,
-            stdin_file: None,
+            ..CliRequest::default()
         },
         rejected,
     })
+}
+
+fn folder_refused(path: &Path) -> String {
+    format!("폴더는 열 수 없습니다: {}", path.display())
 }
 
 #[cfg(test)]
@@ -254,6 +278,35 @@ mod tests {
     }
 
     #[test]
+    fn files_macos_opens_with_tote_are_asked_like_the_tote_command() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join("폴더")).unwrap();
+        let (a, b) = (dir.path().join("a b.md"), dir.path().join("한글.sh"));
+        fs::write(&a, "").unwrap();
+        fs::write(&b, "").unwrap();
+        let url = |path: &Path| tauri::Url::from_file_path(path).unwrap();
+        let request = CliRequest::opened(&[
+            url(&a),
+            url(&dir.path().join("폴더")),
+            "https://example.com/x.md".parse().unwrap(),
+            url(&b),
+        ]);
+        assert_eq!(request.files, vec![a, b]);
+        assert_eq!(
+            request.notices,
+            vec![format!(
+                "폴더는 열 수 없습니다: {}",
+                dir.path().join("폴더").display()
+            )]
+        );
+        assert_eq!((request.workspace, request.import), (None, false));
+        // The notices stay in this process: a request on the wire carries only what it asks.
+        let mut sent = CliRequest::opened(&[url(&dir.path().join("폴더"))]);
+        sent = CliRequest::find_in([sent.to_arg()]).unwrap();
+        assert!(sent.notices.is_empty());
+    }
+
+    #[test]
     fn importing_needs_an_existing_file() {
         let dir = tempfile::tempdir().unwrap();
         let resolved = resolve(None, &args(&["없음.txt"]), true, dir.path(), dir.path()).unwrap();
@@ -306,7 +359,7 @@ mod tests {
             workspace: Some("업무".into()),
             files: vec!["/a b/파일.sh".into()],
             import: true,
-            stdin_file: None,
+            ..CliRequest::default()
         };
         let argv = vec![
             "/Applications/tote.app/Contents/MacOS/tote".to_string(),

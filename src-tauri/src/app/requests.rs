@@ -2,8 +2,9 @@
 
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
-use tauri::{AppHandle, Emitter, EventTarget, Manager};
+use tauri::{AppHandle, Emitter, EventTarget, Manager, Url};
 
 use super::{commands, lock, windows, AppCore, PendingOpen};
 use crate::cli::CliRequest;
@@ -40,6 +41,9 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
             // comes to the front as it would for a request that worked.
             if let Some(label) = core.latest_window() {
                 windows::focus(app, &label);
+                for notice in request.notices {
+                    notify(app, &label, notice);
+                }
                 notify(app, &label, message);
                 poke(app, &label);
             }
@@ -55,6 +59,10 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
     let Some(workspace) = core.workspace(&label) else {
         return;
     };
+    for notice in &request.notices {
+        eprintln!("tote: {notice}");
+        notify(app, &label, notice.clone());
+    }
     // A memo made here is new to the workspace's other windows too.
     let mut made = false;
     for path in &request.files {
@@ -105,6 +113,29 @@ pub fn handle(app: &AppHandle, request: CliRequest) {
         commands::memos_changed(app, &label);
     }
     poke(app, &label);
+}
+
+/// Files macOS opened with tote (`RunEvent::Opened`) before the app was set up: launched by a
+/// file, AppKit hands it over before `applicationDidFinishLaunching`, which is when Tauri runs
+/// `setup`. `opened_after_setup` takes them once `AppCore` is there.
+#[derive(Default)]
+pub struct EarlyOpens(Mutex<Vec<Url>>);
+
+/// Opens what macOS handed tote as `tote <파일…>` would, now or once setup is done.
+pub fn opened(app: &AppHandle, urls: Vec<Url>) {
+    if app.try_state::<AppCore>().is_none() {
+        lock(&app.state::<EarlyOpens>().0).extend(urls);
+        return;
+    }
+    handle(app, CliRequest::opened(&urls));
+}
+
+/// Setup is done: the files that came before it open now, after the start-up windows.
+pub fn opened_after_setup(app: &AppHandle) {
+    let urls = std::mem::take(&mut *lock(&app.state::<EarlyOpens>().0));
+    if !urls.is_empty() {
+        handle(app, CliRequest::opened(&urls));
+    }
 }
 
 const STDIN_FAILED: &str = "표준 입력을 받지 못했습니다";

@@ -39,14 +39,87 @@
   "bundle": {
     "active": true,
     "targets": ["app", "dmg"],
-    "macOS": { "minimumSystemVersion": "13.0", "hardenedRuntime": true },
-    "resources": { "resources/tote": "bin/tote", "resources/extensions": "extensions" },
+    "macOS": {
+      "minimumSystemVersion": "13.0",
+      "hardenedRuntime": true
+    },
+    "resources": {
+      "resources/tote": "bin/tote",
+      "resources/extensions": "extensions"
+    },
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
+    ],
+    "fileAssociations": [
+      {
+        "ext": [
+          "text",
+          "md",
+          "markdown",
+          "sh",
+          "bash",
+          "zsh",
+          "command",
+          "jsonc",
+          "json5",
+          "yaml",
+          "yml",
+          "toml",
+          "ini",
+          "cfg",
+          "conf",
+          "env",
+          "js",
+          "mjs",
+          "cjs",
+          "jsx",
+          "ts",
+          "mts",
+          "cts",
+          "py",
+          "pyi",
+          "css",
+          "xsl",
+          "xslt",
+          "sql",
+          "go",
+          "rs",
+          "java",
+          "c",
+          "h",
+          "cpp",
+          "cc",
+          "cxx",
+          "hpp",
+          "hh",
+          "hxx",
+          "diff",
+          "patch",
+          "dockerfile",
+          "mk",
+          "mak"
+        ],
+        "name": "Text Document",
+        "role": "Editor",
+        "rank": "Alternate"
+      },
+      {
+        "ext": [],
+        "contentTypes": [
+          "public.plain-text",
+          "public.json",
+          "public.xml",
+          "public.svg-image",
+          "public.html"
+        ],
+        "name": "Plain Text",
+        "role": "Editor",
+        "rank": "Alternate"
+      }
     ]
   }
 }

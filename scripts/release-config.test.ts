@@ -39,6 +39,37 @@ describe("the release config", () => {
     expect(conf.bundle.macOS.entitlements).toBeUndefined();
   });
 
+  it("offers tote in Finder for the text it colours, without taking another app's files", () => {
+    // Every extension a bundled language claims: tote edits any file that is not media or a PDF
+    // (`kind_for`, src-tauri/src/workspace/memo.rs), and these are the ones it highlights.
+    // `.plist` is left out — most of them are binary.
+    const languages = json("src-tauri/resources/extensions/tote.languages/package.json").contributes
+      .languages as { extensions?: string[] }[];
+    const claimed = new Set(languages.flatMap((l) => (l.extensions ?? []).map((e) => e.slice(1))));
+    claimed.delete("plist");
+    // The bundler turns these extensions into content types (`extension_to_uti` in tauri-utils)
+    // and writes them into the same entry, and macOS ignores an entry's extensions once it names
+    // content types: they are named as types in an entry of their own.
+    const typed: Record<string, string> = {
+      txt: "public.plain-text",
+      html: "public.html",
+      htm: "public.html",
+      json: "public.json",
+      xml: "public.xml",
+      svg: "public.svg-image",
+    };
+    const [byExtension, byType] = conf.bundle.fileAssociations;
+    expect(byExtension.contentTypes).toBeUndefined();
+    expect(byExtension.ext.filter((e: string) => e in typed)).toEqual([]);
+    expect(byType.ext).toEqual([]);
+    expect(new Set(byType.contentTypes)).toEqual(new Set(Object.values(typed)));
+    expect(new Set([...byExtension.ext, ...Object.keys(typed)])).toEqual(claimed);
+    for (const association of conf.bundle.fileAssociations) {
+      // Alternate: listed under 「다음으로 열기」, never made the default over the person's choice.
+      expect(association).toMatchObject({ role: "Editor", rank: "Alternate" });
+    }
+  });
+
   it("keeps the page's connections to the app itself", () => {
     // Update checks leave from Rust; the page never talks to github.com.
     expect(conf.app.security.csp["connect-src"]).toBe("ipc: http://ipc.localhost tote-file:");

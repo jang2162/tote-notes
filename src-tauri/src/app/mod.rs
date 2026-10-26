@@ -3296,7 +3296,7 @@ mod tests {
             workspace: Some(name.into()),
             files: vec![PathBuf::from("/tmp/a.md")],
             import: true,
-            stdin_file: None,
+            ..CliRequest::default()
         }
     }
 

@@ -40,6 +40,7 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .manage(<app::update::Updates>::default())
+        .manage(requests::EarlyOpens::default())
         .register_asynchronous_uri_scheme_protocol("tote-file", |ctx, request, responder| {
             let app = ctx.app_handle().clone();
             let method = request.method().clone();
@@ -81,6 +82,7 @@ pub fn run() {
             app::lifecycle::hook_system_quit(app.handle());
             start_watching(app.handle().clone());
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
+            requests::opened_after_setup(app.handle());
             start_backups(app.handle().clone());
             app::update::start(app.handle());
             Ok(())
@@ -158,6 +160,10 @@ pub fn run() {
             has_visible_windows: false,
             ..
         } => windows::open_latest(app),
+        // Finder's 「다음으로 열기」, tote as a file's default app, `open -a`: launched by the
+        // file or already running, macOS hands the files over here, not in argv.
+        #[cfg(target_os = "macos")]
+        RunEvent::Opened { urls } => requests::opened(app, urls),
         RunEvent::Exit => app::update::relaunch(app),
         _ => {}
     });
