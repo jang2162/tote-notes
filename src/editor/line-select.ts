@@ -72,14 +72,17 @@ function overshoot(view: EditorView, y: number): number {
 
 /** A press on the line numbers: selects that line, and the lines the pointer passes over while it
  * is held, scrolling when it is held past the editor's edge. With ⇧ it goes on from the lines the
- * selection started on. */
+ * selection started on. A change to the text while it is held (a key, another window's change, a
+ * pane swapping in another tab's state) ends the drag: the anchor is a place in the old text. */
 function pressLineNumber(view: EditorView, block: BlockInfo, down: Event): boolean {
   const event = down as MouseEvent;
   if (event.button !== 0 || event.ctrlKey) return false;
   let anchor: LineSpan | null = null;
+  let doc = view.state.doc;
   let last = event.clientY;
   const selectAt = (y: number) => {
     if (!anchor) return;
+    if (view.state.doc !== doc) return end();
     const target = view.lineBlockAtHeight(y - view.documentTop);
     view.dispatch(selectLines(view.state, anchor, spanOf(view.state, target)));
   };
@@ -105,6 +108,7 @@ function pressLineNumber(view: EditorView, block: BlockInfo, down: Event): boole
   const row = block.top + block.height / 2;
   const begin = () => {
     view.focus();
+    doc = view.state.doc;
     const pressed = spanOf(view.state, view.lineBlockAtHeight(row));
     anchor = event.shiftKey ? anchorLines(view.state) : pressed;
     view.dispatch(selectLines(view.state, anchor, pressed));

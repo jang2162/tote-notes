@@ -126,6 +126,43 @@ test("⇧click widens the selection by lines from where it started", async ({ pa
   expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 0 });
 });
 
+test("a change to the text or a swapped state while the line numbers are held ends the drag", async ({
+  page,
+}) => {
+  const errors: string[] = [];
+  page.on("pageerror", (error) => errors.push(error.message));
+  /** Holds line `n`'s number, does `meanwhile`, and drags on to where line `to` was. */
+  async function holdThen(n: number, meanwhile: () => Promise<unknown>, to: number) {
+    const at = await gutterPoint(page, n);
+    const end = await gutterPoint(page, to);
+    await page.mouse.move(at.x, at.y);
+    await page.mouse.down();
+    await meanwhile();
+    await page.mouse.move(end.x, end.y, { steps: 4 });
+    await page.mouse.up();
+  }
+  await openDoc(page, DOC);
+  // The last line gone, the line held is past the end of the text.
+  await holdThen(4, () => page.keyboard.press("Backspace"), 1);
+  expect(await text(page)).toBe("one\n\nthree\n");
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 11 });
+  expect(errors).toEqual([]);
+  // The first line gone, its old place is another line's: the drag selects nothing from it.
+  await openDoc(page, DOC);
+  await holdThen(1, () => page.keyboard.press("Backspace"), 3);
+  expect(await text(page)).toBe("\nthree\nfour");
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 0 });
+  // A pane swaps the editor's state for another tab's: another text altogether.
+  await openDoc(page, DOC);
+  await holdThen(
+    4,
+    () => page.evaluate(() => window.view.setState(window.EditorState.create({ doc: "a\nb" }))),
+    1,
+  );
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 0 });
+  expect(errors).toEqual([]);
+});
+
 test("a wrapped line is selected whole from any of its rows", async ({ page }) => {
   await page.setViewportSize({ width: 400, height: 600 });
   const long = Array.from({ length: 40 }, (_, i) => `word${i}`).join(" ");
