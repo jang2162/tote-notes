@@ -37,6 +37,7 @@ const NOT_THEMED: Record<string, { light: string; dark: string }> = {
   "--large-text-size": SAME("14px"),
   "--editor-font": SAME("var(--large-text-font)"),
   "--editor-size": SAME("14px"),
+  "--focus-ring-room": SAME("4px"),
 };
 
 describe("styles.css and DEFAULT_VARIABLES", () => {
