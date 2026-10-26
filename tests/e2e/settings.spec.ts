@@ -314,7 +314,7 @@ test("the root field shows the default root, and its folder dialog opens at the 
 }) => {
   // `~/.tote` is hidden: a dialog left to start where it last was cannot be walked into it.
   await start(page, {
-    roots: { current: "/Users/me/.tote", default: "/Users/me/.tote", defaultShown: "~/.tote" },
+    roots: { current: "/Users/me/Notes", default: "/Users/me/.tote", defaultShown: "~/.tote" },
     picks: ["/Users/me/메모들"],
   });
   await menu(page, "settings");
@@ -322,8 +322,9 @@ test("the root field shows the default root, and its folder dialog opens at the 
   await expect(root).toHaveAttribute("placeholder", "~/.tote");
   await page.locator(".modal.settings button", { hasText: "폴더 선택…" }).click();
   await expect(root).toHaveValue("/Users/me/메모들");
+  // The root in use, not the default: the settings name another one.
   expect(await page.evaluate(() => window.__tote.backend.data.folderStarts)).toEqual([
-    "/Users/me/.tote",
+    "/Users/me/Notes",
   ]);
 });
 
