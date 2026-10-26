@@ -145,6 +145,27 @@ test("an open file another app turns into a video shows it is not text", async (
   await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
 });
 
+test("디스크 버전 of an edited file turned into a video shows it is not text", async ({ page }) => {
+  await start(page, { files: { "/x/a.ts": fakeFile("let a;") }, picks: ["/x/a.ts"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("let a;");
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.type(" let b;");
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+  await page.evaluate(
+    ([data]) => {
+      const backend = window.__tote.backend;
+      backend.data.files["/x/a.ts"] = data;
+      backend.outside({ kind: "external", path: "/x/a.ts", state: "modified" });
+    },
+    [fakeFile(VIDEO)] as const,
+  );
+  const banner = page.locator(".banner");
+  await banner.getByRole("button", { name: "디스크 버전" }).click();
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(banner).toBeHidden();
+});
+
 test("a .txt that is not UTF-8 says so at once, without 텍스트로 열기", async ({ page }) => {
   await start(page, {
     files: { "/x/latin1.txt": fakeFile(new Uint8Array([0x63, 0x61, 0x66, 0xe9])) },

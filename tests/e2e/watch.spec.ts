@@ -147,6 +147,32 @@ test("디스크 버전 replaces the text and clears the banner", async ({ page }
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("두유");
 });
 
+/** MPEG-TS under a text name: `G` and binary bytes, which the backend refuses to read as text. */
+const VIDEO = new Uint8Array([0x47, 0x00, 0x11, 0x10]);
+
+test("a memo another app turns into a video shows it is not text", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("장보기.ts", "let a;") } });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("let a;");
+  await page.evaluate(
+    ([data]) => Object.assign(window.__tote.backend.data.memos.a, { data, modifiedMs: 900 }),
+    [fakeFile(VIDEO)] as const,
+  );
+  await outside(page, { kind: "modified", id: "a" });
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+});
+
+test("디스크 버전 of a memo turned into a video shows it is not text", async ({ page }) => {
+  await typeWhileChangedElsewhere(page);
+  await expect(banner(page)).toBeVisible();
+  await page.evaluate(([data]) => Object.assign(window.__tote.backend.data.memos.a, { data }), [
+    fakeFile(VIDEO),
+  ] as const);
+  await banner(page).getByRole("button", { name: "디스크 버전" }).click();
+  await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+  await expect(banner(page)).toBeHidden();
+});
+
 test("a deleted memo keeps its text and 다시 저장 brings it back", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
   await page.locator(".memo-row", { hasText: "장보기" }).click();
