@@ -69,8 +69,13 @@ describe("selectLines", () => {
     expect(anchorLines(typed)).toEqual(
       spanOf(typed, typed.doc.lineAt(typed.selection.main.anchor)),
     );
-    // A transaction that leaves both alone keeps it.
-    expect(anchorLines(pressed.update({}).state)).toEqual(line(pressed, 3));
+  });
+
+  it("keeps the anchor through a transaction that leaves the selection and the text alone", () => {
+    // Selected upward, whose anchor (past line 3's break) sits on line 4: kept, ⇧click goes on
+    // from line 3; forgotten, it would go on from line 4.
+    const up = selectLines(state(), line(state(), 3), line(state(), 1)).state;
+    expect(anchorLines(up.update({}).state)).toEqual(line(up, 3));
   });
 
   it("is a pointer selection of one range", () => {

@@ -118,6 +118,9 @@ test("⇧click widens the selection by lines from where it started", async ({ pa
   await press(page, 3);
   await press(page, 1, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 0 });
+  // A transaction that touches neither the selection nor the text (as colours landing do) does
+  // not make it forget the line pressed first.
+  await page.evaluate(() => window.view.dispatch({}));
   await press(page, 4, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 15 });
   // From a selection made in the text, it goes on from the line of the selection's anchor.
