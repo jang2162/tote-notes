@@ -8,10 +8,10 @@ tote 를 Developer ID 로 서명하고 Apple 공증을 받아 GitHub 릴리스(`
 | tote 전용 업데이트 서명 키 → 공개 키를 커밋                             | 결과 확인                      |
 | GitHub 비밀 7개 등록                                                    |                                |
 
-> ⚠ 비밀 파일(`.p12`, `.p8`, 업데이트 키)과 비밀번호를 저장소 폴더 안에 두지 않는다. 아래 명령은 모두 저장소 밖 `~/tote-release/` 에서 한다.
+> ⚠ 비밀 파일(`.p12`, `.p8`, 업데이트 키)과 비밀번호를 저장소 폴더 안에 두지 않는다. 아래 명령은 모두 저장소 밖 `~/macos-app-release/` 에서 한다. keyring-notes 와 함께 쓰는 보관 폴더라 Apple 자격(`DeveloperID.p12`, `AuthKey_<키ID>.p8` 와 그 base64 파일)이 이미 들어 있다.
 >
 > ```bash
-> mkdir -p ~/tote-release && chmod 700 ~/tote-release && cd ~/tote-release
+> mkdir -p ~/macos-app-release && chmod 700 ~/macos-app-release && cd ~/macos-app-release
 > ```
 
 ## Apple 자격 — keyring-notes 것을 다시 쓴다
@@ -22,7 +22,7 @@ GitHub 비밀은 다시 읽을 수 없다. keyring-notes 저장소의 비밀을 
 
 1. **Developer ID 인증서(`.p12`)**
    - `.p12` 보관본이 있으면 그것을 쓴다. 내보내기 비밀번호가 `APPLE_CERTIFICATE_PASSWORD` 다.
-   - 없으면 그 인증서가 든 맥에서 다시 내보낸다: 키체인 접근 → 로그인 → 「내 인증서」 탭 → `Developer ID Application: …` 오른쪽 클릭 → 「내보내기」 → 형식 `.p12`, 이름 `DeveloperID.p12`, `~/tote-release/` 에 저장 → 내보내기 비밀번호를 정한다. 「내 인증서」 탭에서 내보내야 개인 키가 함께 들어간다.
+   - 없으면 그 인증서가 든 맥에서 다시 내보낸다: 키체인 접근 → 로그인 → 「내 인증서」 탭 → `Developer ID Application: …` 오른쪽 클릭 → 「내보내기」 → 형식 `.p12`, 이름 `DeveloperID.p12`, `~/macos-app-release/` 에 저장 → 내보내기 비밀번호를 정한다. 「내 인증서」 탭에서 내보내야 개인 키가 함께 들어간다.
    - 인증서가 키체인에 있는지는 `security find-identity -v -p codesigning` 에 `"Developer ID Application: 이름 (TEAMID1234)"` 줄이 있는지로 본다.
    - 한 줄 base64 로 바꾼다. 이 파일 내용이 `APPLE_CERTIFICATE` 다.
      ```bash
@@ -60,7 +60,7 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
 1. <https://appstoreconnect.apple.com/access/integrations/api> (사용자 및 액세스 → 통합 → App Store Connect API → **팀 키**). 처음이면 Account Holder 가 「액세스 요청」 을 한 번 한다.
 2. 「API 키 생성」(+) → 이름 `tote-notes-notary`, 액세스 **Developer** → 생성.
 3. 표의 **키 ID** → `APPLE_API_KEY`. 표 위의 **Issuer ID** → `APPLE_API_ISSUER`.
-4. **「API 키 다운로드」** → `AuthKey_<키ID>.p8`. **한 번만 받을 수 있다** — 바로 `~/tote-release/` 로 옮긴다. 잃으면 그 키를 폐기하고 새로 만든다.
+4. **「API 키 다운로드」** → `AuthKey_<키ID>.p8`. **한 번만 받을 수 있다** — 바로 `~/macos-app-release/` 로 옮긴다. 잃으면 그 키를 폐기하고 새로 만든다.
 5. base64 와 자격 확인은 위 「Apple 자격 — keyring-notes 것을 다시 쓴다」 의 2와 같다.
 
 ## 업데이트 서명 키 — tote 전용으로 새로 만든다
@@ -72,7 +72,7 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
 1. 키 만들기(비밀번호를 묻는다 — 반드시 정한다):
    ```bash
    cd /path/to/tote-notes
-   pnpm tauri signer generate -w ~/tote-release/tote-notes-updater.key
+   pnpm tauri signer generate -w ~/macos-app-release/tote-notes-updater.key
    ```
    `tote-notes-updater.key`(비밀 키, 한 줄)와 `tote-notes-updater.key.pub`(공개 키)가 생긴다.
 2. **보관** — 아래 둘을 **모두** 한다. GitHub 비밀은 다시 읽을 수 없으므로 보관처가 아니다.
@@ -81,14 +81,14 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
    - 저장소·클라우드 드라이브 일반 폴더·메신저·메일에 두지 않는다.
 3. **공개 키를 앱에 넣고 커밋** — `src-tauri/tauri.conf.json` 의 `plugins.updater.pubkey` 를 `.pub` 파일 내용(한 줄)으로 바꾼다. 자리 표시 값은 `REPLACE_WITH_UPDATER_PUBLIC_KEY` 다. 공개 키는 비밀이 아니다. 키를 처음 만들 때만 한다.
    ```bash
-   cat ~/tote-release/tote-notes-updater.key.pub   # 이 한 줄을 pubkey 값으로
+   cat ~/macos-app-release/tote-notes-updater.key.pub   # 이 한 줄을 pubkey 값으로
    git add src-tauri/tauri.conf.json && git commit -m "build: the update signing public key" && git push
    ```
    자리 표시 값이 남아 있거나 비밀 키와 짝이 안 맞으면 릴리스 워크플로가 실패한다(짝이 안 맞는 릴리스는 기존 사용자의 업데이트를 조용히 깨기 때문이다).
 
 ## GitHub 비밀 등록
 
-저장소 → Settings → Secrets and variables → Actions → **New repository secret**. 또는 `gh` 로 파일에서 바로 넣는다(값이 셸 기록에 남지 않는다). 값은 전부 **한 줄**이어야 한다 — 여러 줄 값은 로그 가림이 줄 단위로 어긋날 수 있다. 명령은 `~/tote-release/` 에서 돌린다.
+저장소 → Settings → Secrets and variables → Actions → **New repository secret**. 또는 `gh` 로 파일에서 바로 넣는다(값이 셸 기록에 남지 않는다). 값은 전부 **한 줄**이어야 한다 — 여러 줄 값은 로그 가림이 줄 단위로 어긋날 수 있다. 명령은 `~/macos-app-release/` 에서 돌린다.
 
 | 이름                                 | 값                                | `gh` 로 넣기                                                                                |
 | ------------------------------------ | --------------------------------- | ------------------------------------------------------------------------------------------- |
@@ -100,7 +100,7 @@ Apple ID 비밀번호 대신 API 키로 공증한다(2단계 인증·앱 암호�
 | `TAURI_SIGNING_PRIVATE_KEY`          | `tote-notes-updater.key` 내용     | `gh secret set TAURI_SIGNING_PRIVATE_KEY -R jang2162/tote-notes < tote-notes-updater.key`   |
 | `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` | 업데이트 키의 비밀번호            | `gh secret set TAURI_SIGNING_PRIVATE_KEY_PASSWORD -R jang2162/tote-notes`                   |
 
-등록이 끝나면 `~/tote-release/` 의 `*.base64.txt` 는 지워도 된다. 원본 `.p12`·`.p8` 와 업데이트 키는 보관처에 둔다.
+등록이 끝나면 `~/macos-app-release/` 의 `*.base64.txt` 는 지워도 된다. 원본 `.p12`·`.p8` 와 업데이트 키는 보관처에 둔다.
 
 ## 버전 올리고 릴리스하기
 
