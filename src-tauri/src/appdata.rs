@@ -482,11 +482,26 @@ pub fn pin_legacy_root(
         ..Settings::default()
     };
     let holds = |root: &Path| !crate::workspace::Workspace::list(root).is_empty();
-    if !holds(&old.workspace_root_with_home(paths, home)) || holds(&paths.default_workspace_root) {
+    if !may_hold_workspaces(&old.workspace_root_with_home(paths, home))
+        || holds(&paths.default_workspace_root)
+    {
         return false;
     }
     settings.workspace_root = Some(legacy);
     true
+}
+
+/// Whether the old root has workspaces, or is there (as a link too) but cannot be read this time
+/// — a volume not yet mounted, a read the system refuses. Those cannot be ruled out, and the root
+/// was the old default anyway, so writing it in only keeps what tote did before.
+fn may_hold_workspaces(root: &Path) -> bool {
+    if std::fs::symlink_metadata(root).is_err() {
+        return false;
+    }
+    match std::fs::read_dir(root) {
+        Ok(_) => !crate::workspace::Workspace::list(root).is_empty(),
+        Err(err) => err.kind() != io::ErrorKind::NotADirectory,
+    }
 }
 
 impl LaunchState {
@@ -694,6 +709,51 @@ mod tests {
         // The new default already has workspaces: it is in use, the old one is not shown over it.
         workspace_in(&home.path().join(".tote"), "메모");
         assert!(!check(&mut Settings::default()));
+    }
+
+    /// `~/Tote` is there but cannot be read this time: an unmounted volume behind a link, or a
+    /// folder the system refuses. Its workspaces cannot be ruled out, so it is kept, as before.
+    #[test]
+    fn an_old_root_that_cannot_be_read_now_is_kept() {
+        use std::os::unix::fs::{symlink, PermissionsExt};
+        let home = tempfile::tempdir().unwrap();
+        let paths = release_under(home.path());
+        let old = home.path().join("Tote");
+        symlink("/Volumes/not-mounted-now/Tote", &old).unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        assert!(pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            Some(home.path())
+        ));
+        assert_eq!(settings.workspace_root, Some("~/Tote".into()));
+
+        fs::remove_file(&old).unwrap();
+        workspace_in(&old, "메모");
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o000)).unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        let changed = pin_legacy_root(&mut settings, &mut launch, &paths, Some(home.path()));
+        fs::set_permissions(&old, fs::Permissions::from_mode(0o755)).unwrap();
+        assert!(changed);
+        // The root in use is the old one, so the first window's `메모` is not made under the new
+        // default — which would leave the old root unpinned for good once it reads again.
+        assert_eq!(
+            settings.workspace_root_with_home(&paths, Some(home.path())),
+            old
+        );
+        assert!(!paths.default_workspace_root.exists());
+
+        // A file named `Tote` is not a root anyone used.
+        fs::remove_dir_all(&old).unwrap();
+        fs::write(&old, "x").unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        assert!(!pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            Some(home.path())
+        ));
     }
 
     #[test]
