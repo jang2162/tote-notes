@@ -26,6 +26,8 @@
   /* The editor settings replace these on the page's root; the large text viewer keeps its own. */
   --editor-font: var(--large-text-font);
   --editor-size: 14px;
+  /* WebKit draws a focus ring 3px outside a control; a box that clips leaves this much room. */
+  --focus-ring-room: 4px;
   font:
     13px/1.4 -apple-system,
     BlinkMacSystemFont,
@@ -1060,9 +1062,15 @@ button.danger {
   font-weight: 600;
 }
 
+/* The panel scrolls, so it clips: the padding is room for a control's focus ring (3px outside its
+   border) at the panel's edges, the margin takes it back so the controls stay where they were, and
+   the scroll padding keeps that room when Tab scrolls a control into view. */
 .settings-panel {
   min-height: 0;
+  margin: calc(-1 * var(--focus-ring-room));
+  padding: var(--focus-ring-room);
   overflow: auto;
+  scroll-padding: var(--focus-ring-room);
 }
 
 /* Labels on the left, their controls on the right. */
