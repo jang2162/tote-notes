@@ -127,7 +127,7 @@ describe("LineTokenizer", () => {
     expect(t.tokensIfCached(100, 110)).toBeNull();
     // Asking did not catch up from the end of the cache.
     expect(t.cachedLines).toBe(0);
-    t.advance(1000, 100);
+    t.advance(Infinity, 100);
     const lines = t.tokensIfCached(100, 110);
     expect(lines).toHaveLength(10);
     expect(decode(lines![0])[0]).toEqual([0, KEYWORD, false]);
@@ -136,9 +136,9 @@ describe("LineTokenizer", () => {
 
   it("advance stops at the line it is given", () => {
     const t = new LineTokenizer(grammar, Array.from({ length: 50 }, () => "let x").join("\n"));
-    expect(t.advance(1000, 20)).toBe(true);
+    expect(t.advance(Infinity, 20)).toBe(true);
     expect(t.cachedLines).toBe(20);
-    expect(t.advance(1000)).toBe(true);
+    expect(t.advance(Infinity)).toBe(true);
     expect(t.cachedLines).toBe(50);
   });
 

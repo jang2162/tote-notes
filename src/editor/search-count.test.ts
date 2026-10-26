@@ -14,42 +14,53 @@ function state(doc: string, from = 0, to = from): EditorState {
   return EditorState.create({ doc, selection: { anchor: from, head: to } });
 }
 
+/** A clock that never moves: tests of what a count finds must not stop early on a slow machine. */
+const still = () => 0;
+
+function count(s: EditorState, query: SearchQuery) {
+  return countMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, still);
+}
+
+function find(s: EditorState, query: SearchQuery) {
+  return findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, still);
+}
+
 describe("countMatches", () => {
   it("ignores case by default and honours caseSensitive", () => {
     const s = state("my my My");
-    expect(countMatches(s, new SearchQuery({ search: "my" })).total).toBe(3);
-    expect(countMatches(s, new SearchQuery({ search: "my", caseSensitive: true })).total).toBe(2);
+    expect(count(s, new SearchQuery({ search: "my" })).total).toBe(3);
+    expect(count(s, new SearchQuery({ search: "my", caseSensitive: true })).total).toBe(2);
   });
 
   it("numbers the match equal to the main selection, null for a bare cursor", () => {
     const query = new SearchQuery({ search: "my" });
-    expect(countMatches(state("my my My", 3, 5), query).current).toBe(2);
-    expect(countMatches(state("my my My", 3), query).current).toBeNull();
-    expect(countMatches(state("my my My", 3, 4), query).current).toBeNull();
+    expect(count(state("my my My", 3, 5), query).current).toBe(2);
+    expect(count(state("my my My", 3), query).current).toBeNull();
+    expect(count(state("my my My", 3, 4), query).current).toBeNull();
   });
 
   it("stops at the limit", () => {
     const doc = "a ".repeat(5000);
     const query = new SearchQuery({ search: "a" });
-    expect(countMatches(state(doc, 0, 1), query)).toEqual({
+    expect(count(state(doc, 0, 1), query)).toEqual({
       total: COUNT_LIMIT,
       capped: true,
       current: 1,
     });
     // The 4000th match starts at 2 * 3999.
-    expect(countMatches(state(doc, 7998, 7999), query).current).toBeNull();
+    expect(count(state(doc, 7998, 7999), query).current).toBeNull();
   });
 
   it("is not capped at exactly the limit, and numbers the match that is the last one counted", () => {
     const doc = "a ".repeat(COUNT_LIMIT);
     const query = new SearchQuery({ search: "a" });
-    expect(countMatches(state(doc), query)).toEqual({
+    expect(count(state(doc), query)).toEqual({
       total: COUNT_LIMIT,
       capped: false,
       current: null,
     });
     const last = 2 * (COUNT_LIMIT - 1);
-    expect(countMatches(state(doc, last, last + 1), query)).toEqual({
+    expect(count(state(doc, last, last + 1), query)).toEqual({
       total: COUNT_LIMIT,
       capped: false,
       current: COUNT_LIMIT,
@@ -59,19 +70,17 @@ describe("countMatches", () => {
   it("an empty-matching regexp still finishes", () => {
     const doc = Array.from({ length: 100 }, (_, i) => `line ${i}`).join("\n");
     // One empty match at each of the 100 line starts; `a*` matches empty at every position.
-    expect(countMatches(state(doc), new SearchQuery({ search: "^", regexp: true }))).toMatchObject({
+    expect(count(state(doc), new SearchQuery({ search: "^", regexp: true }))).toMatchObject({
       total: 100,
       capped: false,
     });
-    const every = countMatches(state(doc), new SearchQuery({ search: "a*", regexp: true }));
+    const every = count(state(doc), new SearchQuery({ search: "a*", regexp: true }));
     expect(every.total).toBeLessThanOrEqual(COUNT_LIMIT);
   });
 
   it("numbers an empty match under the cursor as the current one", () => {
     // Line starts are 0, 2 and 4: the cursor on the second line start is the second match.
-    expect(
-      countMatches(state("a\nb\nc", 2), new SearchQuery({ search: "^", regexp: true })),
-    ).toEqual({
+    expect(count(state("a\nb\nc", 2), new SearchQuery({ search: "^", regexp: true }))).toEqual({
       total: 3,
       capped: false,
       current: 2,
@@ -139,7 +148,7 @@ describe("findMatches", () => {
         new SearchQuery({ search: "needle" }),
         COUNT_LIMIT,
         COUNT_BUDGET_MS,
-        () => 0,
+        still,
       ),
     ).toEqual({ total: 1, capped: false, current: null });
   });
@@ -167,7 +176,7 @@ describe("findMatches", () => {
     ])
       for (const step of [7, 11, 16]) {
         const what = `${query.search} every ${step}ms`;
-        const stopped = findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, () => 0);
+        const stopped = findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, still);
         const now = ticking(step);
         let found = findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, now);
         expect(found.resume, what).not.toBeNull();
@@ -204,13 +213,13 @@ describe("findMatches", () => {
 
   it("leaves nothing to resume once the count ends or reaches the limit", () => {
     const query = new SearchQuery({ search: "a" });
-    expect(findMatches(state("a a a"), query)).toEqual({
+    expect(find(state("a a a"), query)).toEqual({
       from: [0, 2, 4],
       to: [1, 3, 5],
       capped: false,
       resume: null,
     });
-    const many = findMatches(state("a ".repeat(5000)), query);
+    const many = find(state("a ".repeat(5000)), query);
     expect(many.from.length).toBe(COUNT_LIMIT);
     expect(many.capped).toBe(true);
     expect(many.resume).toBeNull();
@@ -222,7 +231,7 @@ describe("findMatches", () => {
     );
     expect(first.from.length).toBe(COUNT_LIMIT);
     expect(first.resume).not.toBeNull();
-    const resumed = findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, () => 0, first);
+    const resumed = findMatches(s, query, COUNT_LIMIT, COUNT_BUDGET_MS, still, first);
     expect(resumed.from.length).toBe(COUNT_LIMIT);
     expect(resumed.capped).toBe(true);
     expect(resumed.resume).toBeNull();
@@ -231,7 +240,7 @@ describe("findMatches", () => {
 
 describe("currentMatch", () => {
   it("finds the selection among the matches", () => {
-    const found = findMatches(state(long()), new SearchQuery({ search: "ab" }));
+    const found = find(state(long()), new SearchQuery({ search: "ab" }));
     expect(found.from.length).toBe(500);
     expect(currentMatch(found, { from: 0, to: 2 })).toBe(1);
     expect(currentMatch(found, { from: 3 * 237, to: 3 * 237 + 2 })).toBe(238);
