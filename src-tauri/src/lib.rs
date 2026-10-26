@@ -129,6 +129,7 @@ pub fn run() {
             commands::remove_extension,
             commands::set_extension_enabled,
             commands::get_settings,
+            commands::workspace_roots,
             commands::patch_settings,
             commands::shortcut_table,
             commands::suspend_shortcuts,

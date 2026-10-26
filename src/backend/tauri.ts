@@ -21,6 +21,7 @@ import {
   type SearchEvent,
   type SearchQuery,
   type Settings,
+  type WorkspaceRoots,
   type SettingsPatch,
   type ShortcutTable,
   type TextQuery,
@@ -205,6 +206,9 @@ export class TauriBackend implements Backend {
   settings() {
     return call<Settings>("get_settings");
   }
+  workspaceRoots() {
+    return call<WorkspaceRoots>("workspace_roots");
+  }
   patchSettings(patch: SettingsPatch) {
     return call<void>("patch_settings", { patch });
   }
@@ -269,8 +273,8 @@ export class TauriBackend implements Backend {
     });
     return typeof picked === "string" ? picked : null;
   }
-  async pickFolder() {
-    const picked = await open({ multiple: false, directory: true });
+  async pickFolder(start?: string) {
+    const picked = await open({ multiple: false, directory: true, defaultPath: start });
     return typeof picked === "string" ? picked : null;
   }
 

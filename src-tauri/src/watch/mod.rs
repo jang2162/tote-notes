@@ -339,6 +339,22 @@ mod tests {
     }
 
     #[test]
+    fn a_workspace_under_a_hidden_root_is_heard() {
+        // The default root is `~/.tote`: the dot rules are for entries in the workspace folder,
+        // not for the folders above it.
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join(".tote/메모");
+        fs::create_dir_all(folder.join(".tote")).unwrap();
+        let root = fs::canonicalize(&folder).unwrap();
+        let (watcher, batches) = watcher();
+        watcher.watch_workspace("ws-1", &folder).unwrap();
+        fs::write(folder.join("메모.md"), "x").unwrap();
+        let (target, batch) = batches.recv_timeout(WAIT).expect("a batch");
+        assert_eq!(target, WatchTarget::Workspace("ws-1".into()));
+        assert_eq!(batch.touched, BTreeSet::from([root.join("메모.md")]));
+    }
+
+    #[test]
     fn events_under_dot_tote_are_dropped() {
         let dir = tempfile::tempdir().unwrap();
         // Not the tempdir itself: its `.tmp…` name is a dot name, so the dot rule alone would drop

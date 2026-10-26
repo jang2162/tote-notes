@@ -309,6 +309,24 @@ test("a theme that is not installed shows the default", async ({ page }) => {
   );
 });
 
+test("the root field shows the default root, and its folder dialog opens at the root in use", async ({
+  page,
+}) => {
+  // `~/.tote` is hidden: a dialog left to start where it last was cannot be walked into it.
+  await start(page, {
+    roots: { current: "/Users/me/.tote", default: "/Users/me/.tote", defaultShown: "~/.tote" },
+    picks: ["/Users/me/메모들"],
+  });
+  await menu(page, "settings");
+  const root = page.locator(".modal.settings input[name=workspaceRoot]");
+  await expect(root).toHaveAttribute("placeholder", "~/.tote");
+  await page.locator(".modal.settings button", { hasText: "폴더 선택…" }).click();
+  await expect(root).toHaveValue("/Users/me/메모들");
+  expect(await page.evaluate(() => window.__tote.backend.data.folderStarts)).toEqual([
+    "/Users/me/.tote",
+  ]);
+});
+
 test("a folder dialog that fails says so instead of vanishing", async ({ page }) => {
   await start(page);
   await page.evaluate(() => {

@@ -25,7 +25,9 @@ use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 use serde::Serialize;
 use serde_json::Value;
 
-use crate::appdata::{device_name, AppPaths, LaunchState, Machine, Settings, SettingsPatch};
+use crate::appdata::{
+    device_name, pin_legacy_root, AppPaths, LaunchState, Machine, Settings, SettingsPatch,
+};
 use crate::backup::snapshot::{self, Taken};
 use crate::backup::{retention, BackupDir, SnapshotName};
 use crate::cli::CliRequest;
@@ -341,10 +343,28 @@ impl AppCore {
         let paths = AppPaths::resolve().ok_or("could not find the app data folder")?;
         let machine = Machine::load_or_create(&paths.machine_file(), device_name)
             .map_err(|err| format!("machine.json: {err}"))?;
-        let settings = Settings::load(&paths.settings_file())
+        let mut settings = Settings::load(&paths.settings_file())
             .map_err(|err| format!("settings.json: {err}"))?;
-        let launch =
+        let mut launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
+        let checked = launch.legacy_root_checked;
+        if pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            dirs::home_dir().as_deref(),
+        ) {
+            if let Err(err) = settings.save(&paths.settings_file()) {
+                // This run still shows the old root; the next launch writes it again.
+                eprintln!("tote: settings.json: {err}");
+                launch.legacy_root_checked = false;
+            }
+        }
+        if launch.legacy_root_checked != checked {
+            if let Err(err) = launch.save(&paths.launch_file()) {
+                eprintln!("tote: state.json: {err}");
+            }
+        }
         let core = AppCore::new(paths, machine, settings, launch, bundled_dir);
         core.extensions.remove_leftovers();
         Ok(core)

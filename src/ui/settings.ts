@@ -96,7 +96,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       if (!(await save(patch)) && synced.get(input) === sent) synced.set(input, before);
     };
 
-    const rootInput = h("input", { name: "workspaceRoot", placeholder: "~/Tote" });
+    // The placeholder is the default root, as the backend names it once the screen has asked.
+    const rootInput = h("input", { name: "workspaceRoot" });
     rootInput.spellcheck = false;
     const autoCheck = h("input", { type: "checkbox", name: "updatesAutoCheck" });
     autoCheck.addEventListener("change", () => void save({ updatesAutoCheck: autoCheck.checked }));
@@ -104,7 +105,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       const pick = h("button", { textContent: "폴더 선택…" });
       pick.addEventListener("click", async () => {
         try {
-          const folder = await backend.pickFolder();
+          // At the root in use: the default one, `~/.tote`, is hidden from a dialog left where it was.
+          const folder = await backend.pickFolder((await backend.workspaceRoots()).current);
           if (folder) rootInput.value = folder;
         } catch (error) {
           fail(error);
@@ -321,12 +323,14 @@ export function openSettings(options: SettingsOptions): Promise<void> {
 
     const refresh = async () => {
       try {
-        const [current, registry] = await Promise.all([
+        const [current, registry, roots] = await Promise.all([
           backend.settings(),
           backend.extensionRegistry(),
+          backend.workspaceRoots(),
         ]);
         fillThemes(new Registry(registry));
         sync(rootInput, current.workspaceRoot ?? "");
+        rootInput.placeholder = roots.defaultShown;
         lineNumbers.checked = current.editor.lineNumbers;
         autoCheck.checked = current.updates.autoCheck;
         sync(fontSize, String(current.editor.fontSize));

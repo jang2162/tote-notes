@@ -32,6 +32,7 @@ import {
   type SearchMatch,
   type SearchQuery,
   type Settings,
+  type WorkspaceRoots,
   type SettingsPatch,
   type ShortcutTable,
   type TextMatch,
@@ -89,6 +90,10 @@ export interface FakeData {
   workspaces: WorkspaceListItem[];
   /** What the next 「파일 열기」 dialog returns. */
   picks: string[];
+  /** `workspaceRoots()`. */
+  roots: WorkspaceRoots;
+  /** Where each folder dialog was asked to open (`pickFolder`), `null` for nowhere. */
+  folderStarts: (string | null)[];
   /** Every `relocateWorkspace` call, in order. */
   relocations: { from: string; to: string }[];
   /** Folders `relocateWorkspace` refuses with `not-a-workspace`. */
@@ -240,6 +245,8 @@ export function defaultFakeData(): FakeData {
     pending: [],
     workspaces: [{ name: "메모", path: "/fake/메모", open: true, windows: 1, missing: false }],
     picks: [],
+    roots: { current: "/fake", default: "/fake", defaultShown: "~/.tote" },
+    folderStarts: [],
     relocations: [],
     notWorkspaces: [],
     clock: 1000,
@@ -1486,7 +1493,12 @@ export class FakeBackend implements Backend {
     return picked;
   }
 
-  async pickFolder() {
+  async workspaceRoots() {
+    return structuredClone(this.data.roots);
+  }
+
+  async pickFolder(start?: string) {
+    this.data.folderStarts.push(start ?? null);
     const picked = this.data.picks.shift() ?? null;
     this.commit();
     return picked;

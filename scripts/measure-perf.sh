@@ -58,7 +58,7 @@ if [ -n "$(socket_owners)" ] || [ -n "$(tote_dev_processes)" ]; then
   exit 1
 fi
 
-DEV_DIRS=("$HOME/Tote-dev" "$HOME/Library/Application Support/tote-dev")
+DEV_DIRS=("$HOME/.tote-dev" "$HOME/Tote-dev" "$HOME/Library/Application Support/tote-dev")
 dev_dirs_before=""
 for dir in "${DEV_DIRS[@]}"; do [ -e "$dir" ] && dev_dirs_before+="$dir;"; done
 

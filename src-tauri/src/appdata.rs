@@ -15,12 +15,16 @@ use crate::shortcuts;
 pub struct AppPaths {
     pub data_dir: PathBuf,
     pub default_workspace_root: PathBuf,
+    /// The default root until 0.1.0, as `settings.json` would name it (`~/Tote`, debug
+    /// `~/Tote-dev`): `pin_legacy_root` keeps it for the person who has workspaces there. `None`
+    /// under `TOTE_DATA_DIR`, whose root never moved.
+    pub legacy_workspace_root: Option<PathBuf>,
 }
 
 impl AppPaths {
     /// `TOTE_DATA_DIR` moves everything for one run — workspaces included — so tests and smoke
-    /// checks never touch real notes. Debug builds use `tote-dev` and `~/Tote-dev` so a development
-    /// run never touches the notes of an installed tote. A `TOTE_DATA_DIR` that is empty or
+    /// checks never touch real notes. Debug builds use `tote-dev` and `~/.tote-dev` so a
+    /// development run never touches the notes of an installed tote. A `TOTE_DATA_DIR` that is empty or
     /// relative gives `None` instead of falling back: it would land in the working folder, or in
     /// the development folder the override exists to avoid.
     pub fn resolve() -> Option<AppPaths> {
@@ -45,12 +49,14 @@ impl AppPaths {
             return Some(AppPaths {
                 default_workspace_root: dir.join("workspaces"),
                 data_dir: dir,
+                legacy_workspace_root: None,
             });
         }
         let suffix = if debug { "-dev" } else { "" };
         Some(AppPaths {
             data_dir: os_data_dir?.join(format!("tote{suffix}")),
-            default_workspace_root: home?.join(format!("Tote{suffix}")),
+            default_workspace_root: home?.join(format!(".tote{suffix}")),
+            legacy_workspace_root: Some(PathBuf::from(format!("~/Tote{suffix}"))),
         })
     }
 
@@ -435,6 +441,52 @@ pub struct LaunchState {
     /// Workspaces by last use, most recent first.
     #[serde(default)]
     pub recent: Vec<PathBuf>,
+    /// `pin_legacy_root` has run: once, so a root the person clears afterwards stays the default.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub legacy_root_checked: bool,
+}
+
+/// `path` as a person writes it in `settings.json`: under home as `~/…`.
+pub fn shown_from_home(path: &Path, home: Option<&Path>) -> String {
+    match home.and_then(|home| path.strip_prefix(home).ok()) {
+        Some(rest) if rest.as_os_str().is_empty() => "~".into(),
+        Some(rest) => format!("~/{}", rest.display()),
+        None => path.display().to_string(),
+    }
+}
+
+/// Until 0.1.0 an unset `workspaceRoot` meant `~/Tote`; now it means `~/.tote`. On the first launch
+/// that knows this, settings that leave the root unset while the old folder holds a workspace (and
+/// the new one none) get the old root written in, so the person's memos stay where tote looks.
+/// Returns whether `settings` changed; `launch` is marked checked either way, and the caller keeps
+/// the mark only once the settings are saved.
+pub fn pin_legacy_root(
+    settings: &mut Settings,
+    launch: &mut LaunchState,
+    paths: &AppPaths,
+    home: Option<&Path>,
+) -> bool {
+    if launch.legacy_root_checked {
+        return false;
+    }
+    launch.legacy_root_checked = true;
+    let unset = settings
+        .workspace_root
+        .as_ref()
+        .is_none_or(|root| root.as_os_str().is_empty());
+    let Some(legacy) = paths.legacy_workspace_root.clone().filter(|_| unset) else {
+        return false;
+    };
+    let old = Settings {
+        workspace_root: Some(legacy.clone()),
+        ..Settings::default()
+    };
+    let holds = |root: &Path| !crate::workspace::Workspace::list(root).is_empty();
+    if !holds(&old.workspace_root_with_home(paths, home)) || holds(&paths.default_workspace_root) {
+        return false;
+    }
+    settings.workspace_root = Some(legacy);
+    true
 }
 
 impl LaunchState {
@@ -545,12 +597,135 @@ mod tests {
         let release = AppPaths::from_parts(None, os.clone(), home.clone(), false).unwrap();
         let debug = AppPaths::from_parts(None, os, home, true).unwrap();
         assert_eq!(release.data_dir, PathBuf::from("/os/tote"));
-        assert_eq!(release.default_workspace_root, PathBuf::from("/home/Tote"));
+        assert_eq!(release.default_workspace_root, PathBuf::from("/home/.tote"));
         assert_eq!(debug.data_dir, PathBuf::from("/os/tote-dev"));
         assert_eq!(
             debug.default_workspace_root,
-            PathBuf::from("/home/Tote-dev")
+            PathBuf::from("/home/.tote-dev")
         );
+        assert_eq!(release.legacy_workspace_root, Some("~/Tote".into()));
+        assert_eq!(debug.legacy_workspace_root, Some("~/Tote-dev".into()));
+        let overridden =
+            AppPaths::from_parts(Some("/t".into()), None, Some("/home".into()), false).unwrap();
+        assert_eq!(overridden.legacy_workspace_root, None);
+    }
+
+    /// The paths of a release whose home is `home`.
+    fn release_under(home: &Path) -> AppPaths {
+        AppPaths::from_parts(None, Some(home.join("os")), Some(home.to_path_buf()), false).unwrap()
+    }
+
+    fn workspace_in(root: &Path, name: &str) {
+        crate::workspace::Workspace::create(root, name).unwrap();
+    }
+
+    #[test]
+    fn a_path_under_home_is_shown_with_a_tilde() {
+        let home = Some(Path::new("/Users/me"));
+        assert_eq!(
+            shown_from_home(Path::new("/Users/me/.tote"), home),
+            "~/.tote"
+        );
+        assert_eq!(shown_from_home(Path::new("/Users/me"), home), "~");
+        assert_eq!(
+            shown_from_home(Path::new("/Users/mein/x"), home),
+            "/Users/mein/x"
+        );
+        assert_eq!(
+            shown_from_home(Path::new("/data/workspaces"), None),
+            "/data/workspaces"
+        );
+    }
+
+    #[test]
+    fn workspaces_under_the_old_default_root_stay_where_tote_looks() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = release_under(home.path());
+        workspace_in(&home.path().join("Tote"), "메모");
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        assert!(pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            Some(home.path())
+        ));
+        assert_eq!(settings.workspace_root, Some("~/Tote".into()));
+        assert_eq!(
+            settings.workspace_root_with_home(&paths, Some(home.path())),
+            home.path().join("Tote")
+        );
+        assert!(launch.legacy_root_checked);
+        // Once: a root the person clears afterwards is the new default from then on.
+        settings.workspace_root = None;
+        assert!(!pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            Some(home.path())
+        ));
+        assert_eq!(settings.workspace_root, None);
+    }
+
+    #[test]
+    fn the_old_root_is_left_alone_when_it_holds_no_workspace_or_a_root_is_set() {
+        let home = tempfile::tempdir().unwrap();
+        let paths = release_under(home.path());
+        let check = |settings: &mut Settings| {
+            let mut launch = LaunchState::default();
+            let changed = pin_legacy_root(settings, &mut launch, &paths, Some(home.path()));
+            assert!(launch.legacy_root_checked);
+            changed
+        };
+        // No ~/Tote, or one with only other folders and files in it.
+        assert!(!check(&mut Settings::default()));
+        fs::create_dir_all(home.path().join("Tote/사진")).unwrap();
+        fs::write(home.path().join("Tote/a.md"), "x").unwrap();
+        assert!(!check(&mut Settings::default()));
+        workspace_in(&home.path().join("Tote"), "메모");
+        // A root the person wrote, the new default included, is theirs.
+        for root in ["~/.tote", "/elsewhere"] {
+            let mut settings = Settings {
+                workspace_root: Some(root.into()),
+                ..Default::default()
+            };
+            assert!(!check(&mut settings));
+            assert_eq!(settings.workspace_root, Some(root.into()));
+        }
+        // The new default already has workspaces: it is in use, the old one is not shown over it.
+        workspace_in(&home.path().join(".tote"), "메모");
+        assert!(!check(&mut Settings::default()));
+    }
+
+    #[test]
+    fn an_empty_root_counts_as_unset_and_the_override_root_never_moves() {
+        let home = tempfile::tempdir().unwrap();
+        workspace_in(&home.path().join("Tote"), "메모");
+        let mut settings = Settings {
+            workspace_root: Some("".into()),
+            ..Default::default()
+        };
+        let paths = release_under(home.path());
+        let mut launch = LaunchState::default();
+        assert!(pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &paths,
+            Some(home.path())
+        ));
+        let overridden = AppPaths::from_parts(
+            Some(home.path().join("t")),
+            None,
+            Some(home.path().into()),
+            false,
+        )
+        .unwrap();
+        let (mut settings, mut launch) = (Settings::default(), LaunchState::default());
+        assert!(!pin_legacy_root(
+            &mut settings,
+            &mut launch,
+            &overridden,
+            Some(home.path())
+        ));
     }
 
     #[test]
@@ -1068,6 +1243,7 @@ mod tests {
         let mut launch = LaunchState {
             recent: vec!["/w/a".into(), "/gone/옛".into(), "/w/b".into()],
             open_windows: vec!["/gone/옛".into(), "/w/b".into()],
+            ..Default::default()
         };
         launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
         assert_eq!(
@@ -1109,6 +1285,7 @@ mod tests {
         let mut launch = LaunchState {
             recent: vec!["/gone/옛".into(), "/new/옛".into()],
             open_windows: vec!["/gone/옛".into(), "/w/다른".into(), "/gone/옛".into()],
+            ..Default::default()
         };
         launch.relocate(Path::new("/gone/옛"), Path::new("/new/옛"));
         assert_eq!(
@@ -1127,6 +1304,7 @@ mod tests {
         let mut launch = LaunchState {
             recent: vec![],
             open_windows: vec!["/w/A".into(), "/w/B".into(), "/w/A".into()],
+            ..Default::default()
         };
         launch.switch_open(Path::new("/w/A"), Path::new("/w/C"));
         assert_eq!(

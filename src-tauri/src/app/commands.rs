@@ -13,7 +13,7 @@ use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
 use super::{lifecycle, lock, menu, update, windows, AppCore, PendingOpen};
-use crate::appdata::{Settings, SettingsPatch};
+use crate::appdata::{shown_from_home, Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
 use crate::backup::BackupDir;
 use crate::extensions::file_inside;
@@ -856,6 +856,26 @@ pub async fn set_extension_enabled(
 #[tauri::command]
 pub fn get_settings(core: State<'_, AppCore>) -> Settings {
     core.settings()
+}
+
+/// The workspace root in use and the one an unset `workspaceRoot` means, for the settings screen:
+/// the default as its placeholder, the root in use as where its folder dialog opens.
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct WorkspaceRoots {
+    current: PathBuf,
+    default: PathBuf,
+    default_shown: String,
+}
+
+#[tauri::command]
+pub fn workspace_roots(core: State<'_, AppCore>) -> WorkspaceRoots {
+    let default = core.paths.default_workspace_root.clone();
+    WorkspaceRoots {
+        current: core.workspace_root(),
+        default_shown: shown_from_home(&default, dirs::home_dir().as_deref()),
+        default,
+    }
 }
 
 #[tauri::command]

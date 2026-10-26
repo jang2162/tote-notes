@@ -232,6 +232,14 @@ export interface EditorSettings {
 export const EDITOR_FONT_SIZE_MIN = 11;
 export const EDITOR_FONT_SIZE_MAX = 24;
 
+/** `WorkspaceRoots` in src-tauri/src/app/commands.rs: absolute paths, and the default as the
+ * settings screen shows it (home as `~`). */
+export interface WorkspaceRoots {
+  current: string;
+  default: string;
+  defaultShown: string;
+}
+
 /** The settings fields one change names (`SettingsPatch` in src-tauri/src/appdata.rs). A key left
  * out is kept as it is; `null` clears it. */
 export interface SettingsPatch {
@@ -447,6 +455,8 @@ export interface Backend {
   removeExtension(id: string): Promise<void>;
   setExtensionEnabled(id: string, enabled: boolean): Promise<void>;
   settings(): Promise<Settings>;
+  /** The workspace root in use and the one an unset `workspaceRoot` means. */
+  workspaceRoots(): Promise<WorkspaceRoots>;
   /** Saves only the fields `patch` names, so two windows changing different fields keep both. */
   patchSettings(patch: SettingsPatch): Promise<void>;
   /** The app commands with their shortcuts as the saved settings make them. */
@@ -507,7 +517,9 @@ export interface Backend {
   perfConfig(): Promise<PerfConfig>;
   /** The 「확장 설치」 dialog (.vsix / .zip); null when cancelled. */
   pickExtensionPackage(): Promise<string | null>;
-  pickFolder(): Promise<string | null>;
+  /** The folder dialog, opening at `start` when given. Without it the dialog starts where it was
+   * last, from where a hidden folder such as `~/.tote` cannot be walked into. */
+  pickFolder(start?: string): Promise<string | null>;
   /** Settings or the extension set changed somewhere (this window included). */
   onConfigChanged(handler: () => void): void;
 

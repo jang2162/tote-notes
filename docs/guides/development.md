@@ -10,7 +10,7 @@
 
 ## 디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다
 
-에이전트든 사람이든 디버그 번들(`Tote Notes Dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> "<번들 경로>"` 로 연다(이름에 공백이 있어 따옴표가 필요하다). 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/Tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다. 띄우기 전에 두 폴더가 이미 있으면(사람이 `pnpm app:dev` 로 띄운 개발 앱의 것일 수 있다) 지우지 말고, 띄우기 직전에 기준 파일(`touch "$S/start-marker"`)을 만들어 끝난 뒤 `find ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
+에이전트든 사람이든 디버그 번들(`Tote Notes Dev.app`)을 띄울 때는 `open --env TOTE_DATA_DIR=<임시 폴더> "<번들 경로>"` 로 연다(이름에 공백이 있어 따옴표가 필요하다). 띄우기 전에 번들 경로가 맞는지 확인하고, 끝나면 `~/.tote-dev` 와 `~/Library/Application Support/tote-dev` 가 새로 생기지 않았는지 본다(0.1.0 까지 디버그 기본 루트였던 `~/Tote-dev` 도 본다 — 그 안에 워크스페이스가 있으면 앱이 처음 뜰 때 그 자리를 설정에 적는다). 띄우기 전에 두 폴더가 이미 있으면(사람이 `pnpm app:dev` 로 띄운 개발 앱의 것일 수 있다) 지우지 말고, 띄우기 직전에 기준 파일(`touch "$S/start-marker"`)을 만들어 끝난 뒤 `find ~/.tote-dev ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
 
 디버그 번들은 `pnpm tauri build --debug --config src-tauri/tauri.dev.conf.json` 으로 만든다. 결과는 `src-tauri/target/debug/bundle/macos/Tote Notes Dev.app` 이고 번들 안 실행 파일은 `Contents/MacOS/tote` 다(배포 앱과 같다 — `mainBinaryName`). `--config` 를 빼면 배포 앱과 identifier 가 같은 `Tote Notes.app` 이 나와 `tell application "Tote Notes Dev"` 같은 절차가 맞지 않는다. 0.1.0 까지 이름은 `tote.app`·`tote-dev.app` 이었다 — 옛 보고서의 절차는 이 이름으로 적혀 있다. 데이터 폴더(`tote`·`tote-dev`)는 이름과 따로라 그대로다. 앱을 띄우지 않고 창 없이 파일 열기(`RunEvent::Opened`)를 볼 때는 `open -n -g --env TOTE_DATA_DIR=<임시 폴더> --env TOTE_BACKGROUND=1 -a "<번들 경로>" <파일…>` 로 보내고 그 워크스페이스의 `.tote/sessions/*.json` 에 외부 탭 경로가 적히는지 본다. 이미 떠 있는 앱에는 `--env` 없이 `open -g -a "<번들 경로>" <파일>` 로 보낸다(같은 프로세스가 받는다). 디버그 번들의 식별자는 `com.develma.totenotes.dev`(접근성 도구의 `--app` 값), 배포 앱은 `com.develma.totenotes` 다.
 
@@ -51,7 +51,7 @@
 - 별도 식별자(`com.develma.totenotes.updatetest`)의 `perf` 번들 두 벌 — 0.1.0 의 이름 짓기를 따른 낮은 버전 `0.0.1`(`tote-updatetest.app`, 폴더의 `Applications/` 에 복사)과 지금 이름 짓기의 루트 `package.json` 버전(`Tote Notes Updatetest.app` 의 업데이트 묶음, 릴리스처럼 공백 없는 이름 `Tote-Notes-Updatetest_<버전>.app.tar.gz` 으로 낸다). 두 벌 모두 임시 서명(`signingIdentity: "-"`)이라 hardened runtime 이 켜진다(`codesign -dv` 의 `flags=…(adhoc,runtime)`). 설치·다시 시작이 배포와 같은 런타임 조건에서 돈다.
 - 임시 업데이트 키(`key`, `key.pub`)와 그 공개 키를 넣은 시험 설정(`update-test.conf.json`, 업데이트 주소 `http://127.0.0.1:$PORT/latest.json`, 기본 포트 18765).
 - `serve/` 의 업데이트 묶음·서명·`latest.json` 과 그것을 내는 `python3 -m http.server`(pid 는 `server.pid`, 요청은 `server.log`).
-- 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`). **시험 앱이 떠 있을 때만** 그 앱(`$W/data`)에 요청을 넘긴다. 꺼져 있으면 `open -n` 으로 앱을 띄워 `TOTE_DATA_DIR` 이 빠지고, 앱이 개발 데이터 폴더(`~/Tote-dev`·`~/Library/Application Support/tote-dev`)를 쓴다. 꺼진 앱을 요청으로 띄우는 확인은 번들 실행 파일(`Contents/MacOS/tote`)에 `TOTE_DATA_DIR` 과 `--tote-request=<json>` 을 직접 준다.
+- 낮은 버전의 `tote` 셸 명령 링크(`bin/tote`). **시험 앱이 떠 있을 때만** 그 앱(`$W/data`)에 요청을 넘긴다. 꺼져 있으면 `open -n` 으로 앱을 띄워 `TOTE_DATA_DIR` 이 빠지고, 앱이 개발 데이터 폴더(`~/.tote-dev`·`~/Library/Application Support/tote-dev`)를 쓴다. 꺼진 앱을 요청으로 띄우는 확인은 번들 실행 파일(`Contents/MacOS/tote`)에 `TOTE_DATA_DIR` 과 `--tote-request=<json>` 을 직접 준다.
 
 마지막에 낮은 버전을 띄우는 명령(`TOTE_DATA_DIR`·`TOTE_UPDATE_CHECK=1` 을 준다)과 정리 명령(서버 pid 끝내기, 폴더 지우기)을 찍는다.
 

@@ -102,7 +102,7 @@ The update installs into that bundle: it stays $OLD_NAME.app, with the new name 
 Requests reach $W/server.log. The tote command of the installed app, while that app runs:
   $W/bin/tote <file>
 With the app not running, the command starts it through "open -n", which drops TOTE_DATA_DIR:
-it would use the debug data folders (~/Tote-dev). Start it as above first.
+it would use the debug data folders (~/.tote-dev). Start it as above first.
 When done:
   kill \$(cat "$W/server.pid") && rm -rf "$W"
 EOF
