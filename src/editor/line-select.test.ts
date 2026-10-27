@@ -44,6 +44,7 @@ describe("spanLines", () => {
   it("from a point in the text, leaves the point where it is and takes the head by lines", () => {
     expect(spanLines(7, line(s, 1))).toEqual({ anchor: 7, head: 0 });
     expect(spanLines(7, line(s, 4))).toEqual({ anchor: 7, head: 15 });
+    expect(spanLines(1, line(s, 3))).toEqual({ anchor: 1, head: 10 });
     expect(spanLines(7, line(s, 2))).toEqual({ anchor: 7, head: 4 });
     // On the point's own line the head comes back to the point.
     expect(spanLines(7, line(s, 3))).toEqual({ anchor: 7, head: 7 });
