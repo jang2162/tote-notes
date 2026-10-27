@@ -19,43 +19,43 @@ const range = (s: EditorState) => [s.selection.main.anchor, s.selection.main.hea
 
 describe("spanLines", () => {
   const s = state();
-  const length = s.doc.length;
 
-  it("selects one line up to the next line's start", () => {
-    expect(spanLines(line(s, 1), line(s, 1), length)).toEqual({ anchor: 0, head: 4 });
-    // An empty line is its line break.
-    expect(spanLines(line(s, 2), line(s, 2), length)).toEqual({ anchor: 4, head: 5 });
+  it("selects one line up to its end, its line break left out", () => {
+    expect(spanLines(line(s, 1), line(s, 1))).toEqual({ anchor: 0, head: 3 });
+    expect(spanLines(line(s, 3), line(s, 3))).toEqual({ anchor: 5, head: 10 });
+    // An empty line has nothing to select: the cursor goes to its start.
+    expect(spanLines(line(s, 2), line(s, 2))).toEqual({ anchor: 4, head: 4 });
   });
 
-  it("takes the last line to its end, with no line break to take", () => {
-    expect(spanLines(line(s, 4), line(s, 4), length)).toEqual({ anchor: 11, head: 15 });
+  it("takes the last line and a one-line text to their end", () => {
+    expect(spanLines(line(s, 4), line(s, 4))).toEqual({ anchor: 11, head: 15 });
     const one = EditorState.create({ doc: "only" });
-    expect(spanLines(line(one, 1), line(one, 1), 4)).toEqual({ anchor: 0, head: 4 });
-    // An empty last line has nothing to select: the cursor goes to its start.
+    expect(spanLines(line(one, 1), line(one, 1))).toEqual({ anchor: 0, head: 4 });
     const empty = EditorState.create({ doc: "a\n" });
-    expect(spanLines(line(empty, 2), line(empty, 2), 2)).toEqual({ anchor: 2, head: 2 });
+    expect(spanLines(line(empty, 2), line(empty, 2))).toEqual({ anchor: 2, head: 2 });
   });
 
-  it("goes down from the anchor's start and up from past its line break", () => {
-    expect(spanLines(line(s, 2), line(s, 4), length)).toEqual({ anchor: 4, head: 15 });
-    expect(spanLines(line(s, 3), line(s, 1), length)).toEqual({ anchor: 11, head: 0 });
+  it("goes down from the anchor's start and up from its end", () => {
+    expect(spanLines(line(s, 2), line(s, 4))).toEqual({ anchor: 4, head: 15 });
+    expect(spanLines(line(s, 1), line(s, 3))).toEqual({ anchor: 0, head: 10 });
+    expect(spanLines(line(s, 3), line(s, 1))).toEqual({ anchor: 10, head: 0 });
   });
 
   it("from a point in the text, leaves the point where it is and takes the head by lines", () => {
-    expect(spanLines(7, line(s, 1), length)).toEqual({ anchor: 7, head: 0 });
-    expect(spanLines(7, line(s, 4), length)).toEqual({ anchor: 7, head: 15 });
-    expect(spanLines(7, line(s, 2), length)).toEqual({ anchor: 7, head: 4 });
+    expect(spanLines(7, line(s, 1))).toEqual({ anchor: 7, head: 0 });
+    expect(spanLines(7, line(s, 4))).toEqual({ anchor: 7, head: 15 });
+    expect(spanLines(7, line(s, 2))).toEqual({ anchor: 7, head: 4 });
     // On the point's own line the head comes back to the point.
-    expect(spanLines(7, line(s, 3), length)).toEqual({ anchor: 7, head: 7 });
+    expect(spanLines(7, line(s, 3))).toEqual({ anchor: 7, head: 7 });
     // At a line's end, the next line is below it; on an empty line, that line is its own.
-    expect(spanLines(10, line(s, 4), length)).toEqual({ anchor: 10, head: 15 });
-    expect(spanLines(4, line(s, 2), length)).toEqual({ anchor: 4, head: 4 });
+    expect(spanLines(10, line(s, 4))).toEqual({ anchor: 10, head: 15 });
+    expect(spanLines(4, line(s, 2))).toEqual({ anchor: 4, head: 4 });
   });
 
   it("keeps every line of an anchor that holds several", () => {
     const folded = spanOf(s, { from: 0, to: 5 });
     expect(folded).toEqual({ from: 0, to: 10 });
-    expect(spanLines(folded, line(s, 1), length)).toEqual({ anchor: 0, head: 11 });
+    expect(spanLines(folded, line(s, 1))).toEqual({ anchor: 0, head: 10 });
   });
 });
 
@@ -65,9 +65,10 @@ describe("selectLines", () => {
     // Before any press, ⇧click goes on from the selection's anchor.
     expect(selectionAnchor(s)).toBe(12);
     s = selectLines(s, line(s, 3), line(s, 1)).state;
-    expect(range(s)).toEqual([11, 0]);
+    expect(range(s)).toEqual([10, 0]);
     expect(selectionAnchor(s)).toEqual(line(s, 3));
-    // ⇧click below: from line 3 down, not from where the upward selection's anchor sits (line 4).
+    // ⇧click below: from line 3's start down, not from where the upward selection's anchor sits
+    // (line 3's end), which would leave line 3 out.
     s = selectLines(s, selectionAnchor(s), line(s, 4)).state;
     expect(range(s)).toEqual([5, 15]);
   });
@@ -81,8 +82,8 @@ describe("selectLines", () => {
   });
 
   it("keeps the anchor through a transaction that leaves the selection and the text alone", () => {
-    // Selected upward, whose anchor (past line 3's break) sits on line 4: kept, ⇧click goes on
-    // from line 3; forgotten, it would go on from line 4.
+    // Selected upward, whose anchor sits at line 3's end: kept, ⇧click goes on from line 3's
+    // start; forgotten, it would go on from that end.
     const up = selectLines(state(), line(state(), 3), line(state(), 1)).state;
     expect(selectionAnchor(up.update({}).state)).toEqual(line(up, 3));
   });

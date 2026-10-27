@@ -24,31 +24,28 @@ export function spanOf(state: EditorState, block: { from: number; to: number }):
  * selection made in the text is anchored at. */
 export type LineAnchor = LineSpan | number;
 
-/** The selection from `anchor` to the `target` lines, the head by whole lines, as VS Code selects
- * from its line numbers: down, to past the target's line break; up, to the target's start. From
- * lines, the anchor is the start of them going down and past their line break going up, so they
- * stay selected. From a point, the anchor stays at the point, and on the point's own line the
- * head comes back to it. The last line has no line break to take. */
-export function spanLines(
-  anchor: LineAnchor,
-  target: LineSpan,
-  length: number,
-): { anchor: number; head: number } {
-  const past = (to: number) => (to < length ? to + 1 : to);
+/** The selection from `anchor` to the `target` lines, the head by whole lines: down, to the
+ * target's end; up, to the target's start. The last line break is left out, unlike VS Code (the
+ * user asked for it), so an empty line on its own is a cursor at its start. From lines, the anchor
+ * is the start of them going down and their end going up, so they stay selected. From a point,
+ * the anchor stays at the point, and on the point's own line the head comes back to it. */
+export function spanLines(anchor: LineAnchor, target: LineSpan): { anchor: number; head: number } {
   if (typeof anchor === "number") {
-    if (target.from > anchor) return { anchor, head: past(target.to) };
+    if (target.from > anchor) return { anchor, head: target.to };
     if (target.to < anchor) return { anchor, head: target.from };
     return { anchor, head: anchor };
   }
   if (target.from >= anchor.from)
-    return { anchor: anchor.from, head: past(Math.max(target.to, anchor.to)) };
-  return { anchor: past(anchor.to), head: target.from };
+    return { anchor: anchor.from, head: Math.max(target.to, anchor.to) };
+  return { anchor: anchor.to, head: target.from };
 }
 
 const setLineAnchor = StateEffect.define<LineAnchor>();
 
 /** Where a selection made from the gutter went on from, while that selection stands: ⇧click goes
- * on from there. Any other change of the selection or the text forgets it. */
+ * on from there. An upward selection's anchor sits at the end of the line pressed, and going down
+ * from that point would leave the line behind. Any other change of the selection or the text
+ * forgets it. */
 const lineAnchor = StateField.define<LineAnchor | null>({
   create: () => null,
   update(value, tr) {
@@ -65,7 +62,7 @@ export function selectionAnchor(state: EditorState): LineAnchor {
 
 /** The transaction that selects from `anchor` to `target`, keeping `anchor` for a later ⇧click. */
 export function selectLines(state: EditorState, anchor: LineAnchor, target: LineSpan) {
-  const { anchor: from, head } = spanLines(anchor, target, state.doc.length);
+  const { anchor: from, head } = spanLines(anchor, target);
   return state.update({
     selection: EditorSelection.single(from, head),
     effects: setLineAnchor.of(anchor),

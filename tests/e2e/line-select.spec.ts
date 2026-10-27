@@ -3,8 +3,8 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeMemo } from "../../src/backend/fake";
 import { paneSession, start } from "./helpers";
 
-// Pressing the line numbers selects whole lines, as VS Code does (settings spec 「줄번호와 편집기
-// 설정」).
+// Pressing the line numbers selects whole lines, the last line break left out (settings spec
+// 「줄번호와 편집기 설정」).
 
 async function open(page: Page, query: string) {
   await page.goto(`/tests/e2e/pages/editor.html?linenumbers=1&${query}`);
@@ -56,7 +56,7 @@ const text = (page: Page) => page.evaluate(() => window.view.state.doc.toString(
 // Lines: "one" 0-3, "" 4, "three" 5-10, "four" 11-15.
 const DOC = "one\n\nthree\nfour";
 
-test("a click on a line number selects the line through its line break, the editor keeping the keys", async ({
+test("a click on a line number selects the line up to its end, the editor keeping the keys", async ({
   page,
 }) => {
   await openDoc(page, DOC);
@@ -64,17 +64,17 @@ test("a click on a line number selects the line through its line break, the edit
   // that the editor has the keys, not which of the two gave them.
   await page.evaluate(() => (document.activeElement as HTMLElement).blur());
   await press(page, 3);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 11 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 10 });
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Backspace");
-  expect(await text(page)).toBe("one\n\nfour");
+  expect(await text(page)).toBe("one\n\n\nfour");
 });
 
 test("an empty line, the last line and a one-line text", async ({ page }) => {
   await openDoc(page, DOC);
+  // An empty line has nothing to select: the cursor goes to its start.
   await press(page, 2);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 4, head: 5 });
-  // The last line has no line break to take.
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 4, head: 4 });
   await press(page, 4);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 15 });
   await openDoc(page, "only");
@@ -91,7 +91,7 @@ test("a click replaces several cursors with the one line", async ({ page }) => {
     });
   });
   await press(page, 1);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 4 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 3 });
 });
 
 test("dragging over the line numbers selects the lines passed over, down and up", async ({
@@ -100,9 +100,11 @@ test("dragging over the line numbers selects the lines passed over, down and up"
   await openDoc(page, DOC);
   await drag(page, 2, 4);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 4, head: 15 });
-  // Up: from past the pressed line's break to the start of the line the pointer is on.
+  await drag(page, 1, 3);
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 10 });
+  // Up: from the pressed line's end to the start of the line the pointer is on.
   await drag(page, 3, 1);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 0 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 10, head: 0 });
 });
 
 test("⇧click widens the selection by lines from where it started", async ({ page }) => {
@@ -110,22 +112,22 @@ test("⇧click widens the selection by lines from where it started", async ({ pa
   await press(page, 2);
   await press(page, 4, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 4, head: 15 });
-  // Above the line it started on: that line stays in the selection.
+  // Above the line it started on: that line (empty, line 2) stays in the selection.
   await press(page, 1, ["Shift"]);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 0 });
-  // Started upward, it still goes on from the line pressed first, not from the line the anchor
-  // (past that line's break) sits on.
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 4, head: 0 });
+  // Started upward, it still goes on from the start of the line pressed first, not from its end
+  // where the anchor sits.
   await press(page, 3);
   await press(page, 1, ["Shift"]);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 0 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 10, head: 0 });
   // A transaction that touches neither the selection nor the text (as colours landing do) does
   // not make it forget the line pressed first.
   await page.evaluate(() => window.view.dispatch({}));
   await press(page, 4, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 5, head: 15 });
   // From a selection made in the text, its anchor stays where it is and only the head goes by
-  // lines, as in VS Code: below, to past the line's break; above, to the line's start; on the
-  // anchor's own line, back to the anchor.
+  // lines, as in VS Code: below, to the line's end; above, to the line's start; on the anchor's
+  // own line, back to the anchor.
   await page.evaluate(() => window.view.dispatch({ selection: { anchor: 7, head: 8 } }));
   await press(page, 1, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 0 });
@@ -133,6 +135,10 @@ test("⇧click widens the selection by lines from where it started", async ({ pa
   expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 15 });
   await press(page, 3, ["Shift"]);
   expect(await range(page)).toEqual({ ranges: 1, anchor: 7, head: 7 });
+  // From a line's end, the next line is below it.
+  await page.evaluate(() => window.view.dispatch({ selection: { anchor: 10 } }));
+  await press(page, 4, ["Shift"]);
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 10, head: 15 });
 });
 
 test("a change to the text or a swapped state while the line numbers are held ends the drag", async ({
@@ -156,10 +162,11 @@ test("a change to the text or a swapped state while the line numbers are held en
   expect(await text(page)).toBe("one\n\nthree\n");
   expect(await range(page)).toEqual({ ranges: 1, anchor: 11, head: 11 });
   expect(errors).toEqual([]);
-  // The first line gone, its old place is another line's: the drag selects nothing from it.
+  // The first line's text gone, the lines held are out of date: the drag selects nothing from
+  // them.
   await openDoc(page, DOC);
   await holdThen(1, () => page.keyboard.press("Backspace"), 3);
-  expect(await text(page)).toBe("\nthree\nfour");
+  expect(await text(page)).toBe("\n\nthree\nfour");
   expect(await range(page)).toEqual({ ranges: 1, anchor: 0, head: 0 });
   // A pane swaps the editor's state for another tab's: another text altogether.
   await openDoc(page, DOC);
@@ -180,7 +187,7 @@ test("a wrapped line is selected whole from any of its rows", async ({ page }) =
   const bottom = await gutterPoint(page, 2, 0.9);
   expect(bottom.y - top.y).toBeGreaterThan(40); // it does wrap
   await page.mouse.click(bottom.x, bottom.y);
-  expect(await range(page)).toEqual({ ranges: 1, anchor: 6, head: 6 + long.length + 1 });
+  expect(await range(page)).toEqual({ ranges: 1, anchor: 6, head: 6 + long.length });
 });
 
 test("held past the editor's bottom, a drag scrolls and goes on selecting", async ({ page }) => {
@@ -222,7 +229,9 @@ test("in the app, a line number selects the line of the memo for the keys", asyn
   await number.click();
   await expect(page.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Backspace");
+  // The line's text goes and its line stays, empty.
   await expect(page.locator(".cm-content")).toHaveText("우유두유");
+  await expect(page.locator(".cm-line")).toHaveCount(3);
 });
 
 test("a line number of another pane gives that pane the keys, on its line", async ({ page }) => {
@@ -241,5 +250,6 @@ test("a line number of another pane gives that pane the keys, on its line", asyn
   await expect(right.locator(".cm-content")).toBeFocused();
   await page.keyboard.press("Backspace");
   await expect(right.locator(".cm-content")).toHaveText("넷째");
+  await expect(right.locator(".cm-line")).toHaveCount(2);
   await expect(left.locator(".cm-content")).toHaveText("첫째둘째");
 });
