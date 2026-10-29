@@ -3,5 +3,10 @@
   "identifier": "default",
   "description": "What a workspace window may call besides tote's own commands",
   "windows": ["ws-*"],
-  "permissions": ["core:default", "dialog:allow-open"]
+  "permissions": [
+    "core:default",
+    "dialog:allow-open",
+    "core:window:allow-start-dragging",
+    "core:window:allow-toggle-maximize"
+  ]
 }

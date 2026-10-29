@@ -72,6 +72,11 @@ pub fn layout_frame(layout: &Value) -> Option<WindowFrame> {
     usable(serde_json::from_value(layout.get("frame")?.clone()).ok()?)
 }
 
+/// Whether the layout says the sidebar was folded away; anything but JSON `true` reads as open.
+pub fn layout_sidebar_collapsed(layout: &Value) -> bool {
+    layout.get("sidebarCollapsed") == Some(&Value::Bool(true))
+}
+
 fn usable(frame: WindowFrame) -> Option<WindowFrame> {
     let finite = [frame.x, frame.y, frame.width, frame.height]
         .iter()
@@ -167,6 +172,20 @@ mod tests {
         assert_eq!(read_layouts(root.path(), "d").unwrap(), Vec::<Value>::new());
         assert!(!file.exists());
         assert_eq!(corrupt_copies(file.parent().unwrap()), 1);
+    }
+
+    #[test]
+    fn the_sidebar_is_collapsed_only_when_the_layout_says_true() {
+        assert!(layout_sidebar_collapsed(&json!({"sidebarCollapsed": true})));
+        for layout in [
+            json!({"sidebarCollapsed": "true"}),
+            json!({"sidebarCollapsed": 1}),
+            json!({"sidebarCollapsed": null}),
+            json!({"sidebarCollapsed": false}),
+            json!({"panes": []}),
+        ] {
+            assert!(!layout_sidebar_collapsed(&layout), "{layout}");
+        }
     }
 
     #[test]

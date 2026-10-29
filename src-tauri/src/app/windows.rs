@@ -18,13 +18,30 @@ use super::menu::{change_shortcuts, MenuShortcuts};
 use super::places::TabKey;
 use super::{lifecycle, requests, AppCore, DropCandidate, SwitchTarget};
 use crate::cli::CliRequest;
-use crate::session::{layout_frame, WindowFrame};
+use crate::session::{layout_frame, layout_sidebar_collapsed, WindowFrame};
 use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
 
 const DEFAULT_WIDTH: f64 = 1100.0;
 const DEFAULT_HEIGHT: f64 = 760.0;
 /// How far right and down a new window sits from the window it came from.
 const NEAR_OFFSET: f64 = 24.0;
+/// Where the macOS traffic lights sit on the overlaid title bar, in logical pixels. The y puts
+/// them at the vertical middle of the 36px top row (`--top-row-height`); the x pairs with the CSS
+/// `--traffic-lights-width`.
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_X: f64 = 14.0;
+#[cfg(target_os = "macos")]
+const TRAFFIC_LIGHTS_Y: f64 = 11.0;
+
+/// The script that runs before the page's own: what the page needs to know at its first paint.
+fn window_start_script(label: &str, mac_titlebar: bool, sidebar_collapsed: bool) -> String {
+    let start = serde_json::json!({
+        "label": label,
+        "macTitlebar": mac_titlebar,
+        "sidebarCollapsed": sidebar_collapsed,
+    });
+    format!("window.__TOTE_WINDOW_START__ = {start};")
+}
 
 /// Debug builds started with `TOTE_BACKGROUND=1` — smoke checks run by agents — open windows
 /// without taking focus, so a check never pulls the person's screen away.
@@ -145,7 +162,7 @@ pub fn switch(app: &AppHandle, label: &str, to: &Path) -> Result<Switched, Comma
 pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<String, CommandError> {
     let core = app.state::<AppCore>();
     let path = std::fs::canonicalize(path)?;
-    let (label, fresh, frame, undo) = match plan {
+    let (label, fresh, frame, collapsed, undo) = match plan {
         WindowPlan::Restore(k) => {
             // Another request is opening a window on this folder right now: that window is the
             // answer. Opening one here as well could run `Workspace::open` twice for one folder.
@@ -172,10 +189,12 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
                     format!("{} is not open as a workspace", path.display()),
                 ));
             }
-            let frame = core.saved_layout(&path, k).as_ref().and_then(layout_frame);
-            (label, fresh, frame, Undo::Release)
+            let layout = core.saved_layout(&path, k);
+            let frame = layout.as_ref().and_then(layout_frame);
+            let collapsed = layout.as_ref().is_some_and(layout_sidebar_collapsed);
+            (label, fresh, frame, collapsed, Undo::Release)
         }
-        WindowPlan::Fresh { near } => (join(&core, &path)?, false, near, Undo::Release),
+        WindowPlan::Fresh { near } => (join(&core, &path)?, false, near, false, Undo::Release),
         WindowPlan::Tab {
             tab,
             near,
@@ -188,7 +207,7 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
                 core.release(&label);
                 return Err(err.into());
             }
-            (label, false, near, Undo::GiveBack { from, key })
+            (label, false, near, false, Undo::GiveBack { from, key })
         }
     };
     let title = title_of(&core, &path, &label);
@@ -199,7 +218,20 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         // the activation and never reaches the page. The price: that same click also acts, so it
         // can close a tab or start a tab drag.
         .accept_first_mouse(true)
+        .initialization_script(window_start_script(
+            &label,
+            cfg!(target_os = "macos"),
+            collapsed,
+        ))
         .focused(!background());
+    #[cfg(target_os = "macos")]
+    let builder = builder
+        .title_bar_style(tauri::TitleBarStyle::Overlay)
+        .hidden_title(true)
+        .traffic_light_position(tauri::LogicalPosition::new(
+            TRAFFIC_LIGHTS_X,
+            TRAFFIC_LIGHTS_Y,
+        ));
     let builder = match frame.and_then(|f| place(f, &monitor_rects(app))) {
         Some(f) => builder.position(f.x, f.y).inner_size(f.width, f.height),
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
@@ -523,6 +555,22 @@ pub fn drop_target(app: &AppHandle, from: &str, at: ScreenPoint) -> Option<(Stri
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_start_script_names_the_window_its_title_bar_and_its_sidebar() {
+        for (label, mac, collapsed) in [("ws-3", true, false), ("ws-1", false, true)] {
+            let script = window_start_script(label, mac, collapsed);
+            let json = script
+                .strip_prefix("window.__TOTE_WINDOW_START__ = ")
+                .and_then(|s| s.strip_suffix(';'))
+                .expect("assignment shape");
+            let value: Value = serde_json::from_str(json).unwrap();
+            assert_eq!(
+                value,
+                serde_json::json!({"label": label, "macTitlebar": mac, "sidebarCollapsed": collapsed})
+            );
+        }
+    }
 
     fn at(x: f64, y: f64, width: f64, height: f64) -> WindowFrame {
         WindowFrame {
