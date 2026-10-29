@@ -25,5 +25,6 @@
 | tote-notes 틈 메우기·단축키 후속 계획을 실행할 때                                                            | `docs/superpowers/plans/2026-10-21-tote-notes-gaps-and-shortcuts.md`                |
 | tote-notes macOS 배포 계획을 실행할 때                                                                       | `docs/superpowers/plans/2026-10-25-tote-notes-mac-distribution.md`                  |
 | tote-notes 워크스페이스 순서·숨김·설정 「워크스페이스」 구역·고르개 단축키 안내를 고치거나 그 설계를 바꿀 때 | `docs/superpowers/specs/2026-10-29-tote-notes-workspace-order-and-hiding-design.md` |
+| tote-notes 워크스페이스 순서·숨김 계획을 실행할 때                                                           | `docs/superpowers/plans/2026-10-29-tote-notes-workspace-order-and-hiding.md`        |
 | macOS 앱을 릴리스하거나 릴리스 워크플로·업데이트 키·서명 비밀을 다룰 때                                      | `docs/guides/release-macos.md`                                                      |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                          | `docs/guides/development.md`                                                        |
