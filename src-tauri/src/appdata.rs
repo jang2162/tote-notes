@@ -168,7 +168,7 @@ pub struct Settings {
 
 /// A field whose value has the wrong shape (a hand-edit typo) falls back to its default instead of
 /// failing the whole file, which `read_json` would set aside — taking `workspaceRoot` with it.
-fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
+pub(crate) fn lenient<'de, D, T>(deserializer: D) -> Result<T, D::Error>
 where
     D: serde::Deserializer<'de>,
     T: serde::de::DeserializeOwned + Default,

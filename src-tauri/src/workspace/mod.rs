@@ -6,6 +6,7 @@ pub mod index;
 pub mod memo;
 pub mod names;
 mod ops;
+pub mod order;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -142,6 +143,15 @@ impl Workspace {
             last_written: BTreeMap::new(),
             inodes,
         })
+    }
+
+    /// The ID of the workspace at `path` without opening it. Unlike `open`, an unreadable
+    /// `workspace.json` is left where it is and gives `None`: listing must not change anything.
+    pub fn read_id(path: &Path) -> Option<String> {
+        let bytes = fs::read(path.join(TOTE_DIR).join("workspace.json")).ok()?;
+        serde_json::from_slice::<WorkspaceFile>(&bytes)
+            .ok()
+            .map(|meta| meta.id)
     }
 
     pub fn is_workspace(path: &Path) -> bool {
