@@ -17,6 +17,9 @@ pub struct Command {
     pub menu: &'static str,
     /// Its shortcut when nothing is saved, as a Tauri accelerator.
     pub default: Option<&'static str>,
+    /// Whether its default gives way to a key saved for another command (see `resolve`), instead
+    /// of beating it. For a command added after people had saved keys of their own.
+    pub yields: bool,
 }
 
 const fn command(
@@ -30,6 +33,20 @@ const fn command(
         label,
         menu,
         default,
+        yields: false,
+    }
+}
+
+/// A command whose default gives way to a key saved for another command.
+const fn yielding(
+    id: &'static str,
+    label: &'static str,
+    menu: &'static str,
+    default: Option<&'static str>,
+) -> Command {
+    Command {
+        yields: true,
+        ..command(id, label, menu, default)
     }
 }
 
@@ -58,6 +75,12 @@ pub const COMMANDS: &[Command] = &[
         "새 워크스페이스…",
         "파일",
         Some("CmdOrCtrl+Shift+N"),
+    ),
+    yielding(
+        "toggle-sidebar",
+        "사이드바 접기/펼치기",
+        "보기",
+        Some("CmdOrCtrl+B"),
     ),
     command(
         "search-workspace",
@@ -327,6 +350,15 @@ fn resolve(kept: &BTreeMap<String, Option<String>>) -> Vec<(&'static Command, Op
         .map(|command| {
             let keys = match kept.get(command.id) {
                 Some(keys) => keys.clone(),
+                // A yielding default starts with no key where a saved one already has it, so the
+                // saved key is not dropped for a command that came after it.
+                None if command.yields
+                    && command.default.is_some_and(|default| {
+                        kept.values().flatten().any(|keys| same(keys, default))
+                    }) =>
+                {
+                    None
+                }
                 None => command.default.map(str::to_string),
             };
             (command, keys)
@@ -358,6 +390,9 @@ pub struct CommandRow {
     pub menu: &'static str,
     pub default: Option<&'static str>,
     pub current: Option<String>,
+    /// Set for a command whose default gives way (`Command::yields`); left out otherwise.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub yields: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -378,6 +413,7 @@ pub fn table(saved: &BTreeMap<String, Option<String>>) -> ShortcutTable {
                 menu: command.menu,
                 default: command.default,
                 current,
+                yields: command.yields,
             })
             .collect(),
         fixed: FIXED
@@ -676,6 +712,7 @@ mod tests {
             ("close-window", Some("CmdOrCtrl+Shift+W")),
             ("open-workspace", Some("CmdOrCtrl+Shift+O")),
             ("new-workspace", Some("CmdOrCtrl+Shift+N")),
+            ("toggle-sidebar", Some("CmdOrCtrl+B")),
             ("search-workspace", Some("CmdOrCtrl+Shift+F")),
             ("split-pane", Some("CmdOrCtrl+\\")),
             ("split-pane-down", Some("CmdOrCtrl+Shift+\\")),
@@ -697,6 +734,48 @@ mod tests {
             .map(|(id, keys)| (*id, keys.map(str::to_string)))
             .collect();
         assert_eq!(actual, expected);
+    }
+
+    #[test]
+    fn the_sidebar_toggle_is_cmd_b_in_the_view_menu() {
+        let toggle = COMMANDS.iter().find(|c| c.id == "toggle-sidebar").unwrap();
+        assert_eq!(toggle.label, "사이드바 접기/펼치기");
+        assert_eq!(toggle.menu, "보기");
+        assert_eq!(toggle.default, Some("CmdOrCtrl+B"));
+        assert!(toggle.yields);
+        assert_eq!(
+            shortcut_of(&BTreeMap::new(), "toggle-sidebar"),
+            Some("CmdOrCtrl+B".into())
+        );
+    }
+
+    #[test]
+    fn a_saved_cmd_b_keeps_its_command_and_the_sidebar_toggle_starts_with_none() {
+        for id in ["rename", "new-memo"] {
+            let saved = overrides(&[(id, Some("CmdOrCtrl+B"))]);
+            assert_eq!(sanitize(&saved), saved, "{id}");
+            assert_eq!(shortcut_of(&saved, id), Some("CmdOrCtrl+B".into()), "{id}");
+            assert_eq!(shortcut_of(&saved, "toggle-sidebar"), None, "{id}");
+            assert_eq!(validate(&saved), Ok(()), "{id}");
+        }
+    }
+
+    #[test]
+    fn only_the_sidebar_toggle_gives_its_default_way() {
+        let yielding: Vec<&str> = COMMANDS.iter().filter(|c| c.yields).map(|c| c.id).collect();
+        assert_eq!(yielding, ["toggle-sidebar"]);
+    }
+
+    #[test]
+    fn the_table_marks_only_the_yielding_default() {
+        let json = serde_json::to_value(table(&BTreeMap::new())).unwrap();
+        let marked: Vec<(&str, &serde_json::Value)> = json["commands"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|row| Some((row["id"].as_str()?, row.get("yields")?)))
+            .collect();
+        assert_eq!(marked, [("toggle-sidebar", &serde_json::Value::Bool(true))]);
     }
 
     /// `src/backend/fake-shortcuts.test.ts` holds the fake backend's table against this file.

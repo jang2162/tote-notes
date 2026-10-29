@@ -135,6 +135,25 @@ test("resetting a key another command took on the way offers 바꾸기 like reco
   await expect(keys(panel, "rename")).toHaveText("없음");
 });
 
+test("a saved ⌘B keeps its command, and resetting the sidebar toggle asks before taking it", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page, {
+    settings: { ...defaultFakeData().settings, shortcuts: { rename: "CmdOrCtrl+B" } },
+  });
+  await expect(keys(panel, "rename")).toHaveText("⌘B");
+  await expect(keys(panel, "toggle-sidebar")).toHaveText("없음");
+  await row(panel, "toggle-sidebar").getByRole("button", { name: "되돌리기", exact: true }).click();
+  await expect(row(panel, "toggle-sidebar").locator(".shortcut-note")).toHaveText(
+    /이름 바꾸기… 에 이미 쓰고 있습니다/,
+  );
+  expect(await patches(page)).toEqual([]);
+  await row(panel, "toggle-sidebar").getByRole("button", { name: "바꾸기", exact: true }).click();
+  await expect.poll(() => savedMap(page)).toEqual({});
+  await expect(keys(panel, "toggle-sidebar")).toHaveText("⌘B");
+  await expect(keys(panel, "rename")).toHaveText("없음");
+});
+
 test("swapping back a default leaves it out of the map", async ({ page }) => {
   const panel = await startShortcuts(page, {
     settings: {
@@ -378,7 +397,7 @@ test("the search filters by name and by shortcut", async ({ page }) => {
   await search.fill("⌘N");
   await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
   await search.fill("");
-  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(25);
+  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(26);
 });
 
 test("the update check command takes a shortcut", async ({ page }) => {

@@ -19,6 +19,13 @@ export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
   { id: "open-workspace", label: "워크스페이스 열기…", menu: "파일", default: "CmdOrCtrl+Shift+O" },
   { id: "new-workspace", label: "새 워크스페이스…", menu: "파일", default: "CmdOrCtrl+Shift+N" },
   {
+    id: "toggle-sidebar",
+    label: "사이드바 접기/펼치기",
+    menu: "보기",
+    default: "CmdOrCtrl+B",
+    yields: true,
+  },
+  {
     id: "search-workspace",
     label: "워크스페이스 검색",
     menu: "보기",
@@ -87,9 +94,18 @@ export function sanitizeShortcuts(saved: Overrides): Overrides {
 
 /** Every command with the shortcut it has under `kept`. */
 export function resolveShortcuts(kept: Overrides): (string | null)[] {
-  return FAKE_SHORTCUT_COMMANDS.map((command) =>
-    Object.hasOwn(kept, command.id) ? kept[command.id] : command.default,
-  );
+  return FAKE_SHORTCUT_COMMANDS.map((command) => {
+    if (Object.hasOwn(kept, command.id)) return kept[command.id];
+    // A yielding default starts with no key where a saved one already has it.
+    const { default: keys } = command;
+    if (command.yields && keys !== null) {
+      const taken = Object.values(kept).some(
+        (saved) => saved !== null && sameAccelerator(saved, keys),
+      );
+      if (taken) return null;
+    }
+    return keys;
+  });
 }
 
 /** The first override in `kept` (in table order) that another command's shortcut takes

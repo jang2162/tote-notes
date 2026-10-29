@@ -99,6 +99,14 @@
       "current": "CmdOrCtrl+Shift+N"
     },
     {
+      "id": "toggle-sidebar",
+      "label": "사이드바 접기/펼치기",
+      "menu": "보기",
+      "default": "CmdOrCtrl+B",
+      "current": "CmdOrCtrl+B",
+      "yields": true
+    },
+    {
       "id": "search-workspace",
       "label": "워크스페이스 검색",
       "menu": "보기",

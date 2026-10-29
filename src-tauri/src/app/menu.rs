@@ -164,6 +164,8 @@ const MENUS: &[(&str, &[Slot])] = &[
     (
         "보기",
         &[
+            Slot::Command("toggle-sidebar"),
+            Slot::Separator,
             Slot::Command("search-workspace"),
             Slot::Separator,
             Slot::Command("split-pane"),
@@ -907,6 +909,19 @@ mod tests {
         assert!(menu.all().iter().all(Option::is_none));
         menu.shortcuts.resume_if("ws-2");
         assert_eq!(menu.all(), before);
+    }
+
+    #[test]
+    fn the_view_menu_starts_with_the_sidebar_toggle() {
+        let (_, slots) = MENUS.iter().find(|(title, _)| *title == "보기").unwrap();
+        assert_eq!(
+            slots[..3],
+            [
+                Slot::Command("toggle-sidebar"),
+                Slot::Separator,
+                Slot::Command("search-workspace")
+            ]
+        );
     }
 
     #[test]

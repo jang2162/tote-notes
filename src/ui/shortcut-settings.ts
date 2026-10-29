@@ -185,11 +185,20 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     }
   }
 
+  /** Whether `command` has no key only because its default gives way to a key saved for another
+   * command: that is not an entry of the saved map, and saving must not make it one. */
+  const yielded = (command: ShortcutCommand): boolean =>
+    command.yields === true &&
+    command.current === null &&
+    command.default !== null &&
+    (table?.commands ?? []).some((other) => same(other.current, command.default));
+
   /** The map as saved, which is the table's shortcuts that differ from their default. */
   const savedMap = (): Shortcuts => {
     const map: Shortcuts = {};
     for (const command of table?.commands ?? [])
-      if (!same(command.current, command.default)) map[command.id] = command.current;
+      if (!same(command.current, command.default) && !yielded(command))
+        map[command.id] = command.current;
     return map;
   };
 
@@ -212,7 +221,9 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     if (!table) return;
     const map: Shortcuts = {};
     for (const command of table.commands) {
-      const keys = Object.hasOwn(changes, command.id) ? changes[command.id] : command.current;
+      const changed = Object.hasOwn(changes, command.id);
+      if (!changed && yielded(command)) continue;
+      const keys = changed ? changes[command.id] : command.current;
       if (!same(keys, command.default)) map[command.id] = keys;
     }
     try {

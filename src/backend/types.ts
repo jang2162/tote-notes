@@ -277,6 +277,8 @@ export interface ShortcutCommand {
   /** The submenu it is in. */
   menu: string;
   default: string | null;
+  /** Set when its default gives way to a key saved for another command, instead of beating it. */
+  yields?: true;
   /** The shortcut it has now: a saved one, else the default. */
   current: string | null;
 }
