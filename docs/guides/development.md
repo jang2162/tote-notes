@@ -47,7 +47,7 @@
 
 ## 업데이트 흐름은 로컬 서버로 시험한다
 
-앱 안 업데이트(실행 때 확인 → 질문 → 받기·설치 → 저장하고 다시 시작)는 `bash scripts/update-local-test.sh <빈 임시 폴더>` 로 시험한다. 스크립트가 만드는 것:
+앱 안 업데이트(실행 때 확인 → 사이드바 맨 아래 버튼 → 눌러서 질문 → 받기·설치 → 저장하고 다시 시작)는 `bash scripts/update-local-test.sh <빈 임시 폴더>` 로 시험한다. 스크립트가 만드는 것:
 
 - 별도 식별자(`com.develma.totenotes.updatetest`)의 `perf` 번들 두 벌 — 0.1.0 의 이름 짓기를 따른 낮은 버전 `0.0.1`(`tote-updatetest.app`, 폴더의 `Applications/` 에 복사)과 지금 이름 짓기의 루트 `package.json` 버전(`Tote Notes Updatetest.app` 의 업데이트 묶음, 릴리스처럼 공백 없는 이름 `Tote-Notes-Updatetest_<버전>.app.tar.gz` 으로 낸다). 두 벌 모두 임시 서명(`signingIdentity: "-"`)이라 hardened runtime 이 켜진다(`codesign -dv` 의 `flags=…(adhoc,runtime)`). 설치·다시 시작이 배포와 같은 런타임 조건에서 돈다.
 - 임시 업데이트 키(`key`, `key.pub`)와 그 공개 키를 넣은 시험 설정(`update-test.conf.json`, 업데이트 주소 `http://127.0.0.1:$PORT/latest.json`, 기본 포트 18765).
