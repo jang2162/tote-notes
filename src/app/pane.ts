@@ -101,13 +101,11 @@ export class Pane {
     menu: (id) => void this.host.tabMenu(id),
     newTab: () => void this.host.newMemoIn(this, "end"),
   });
+  /** The pane's top row: the tab bar, and in front of it the lead while this is the top left pane
+   * of a window whose sidebar is collapsed (`attachLead`). */
+  readonly head: HTMLElement = h("div", { class: "pane-head" }, this.tabBar.el);
   /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
-  readonly el: HTMLElement = h(
-    "div",
-    { class: "pane", tabIndex: -1 },
-    this.tabBar.el,
-    this.surface.el,
-  );
+  readonly el: HTMLElement = h("div", { class: "pane", tabIndex: -1 }, this.head, this.surface.el);
   /** A search result's line in a memo the large text viewer shows, for the viewer to go to once
    * it is open: it opens on its own time, after the click is handled. */
   pendingLine: { memoId: string; line: number } | null = null;
@@ -125,6 +123,11 @@ export class Pane {
     this.view.scrollDOM.addEventListener("scroll", () => this.host.saveSessionSoon(), {
       passive: true,
     });
+  }
+
+  /** Puts `lead` in front of the tab bar, taking it from the pane that had it. */
+  attachLead(lead: HTMLElement): void {
+    if (lead.parentElement !== this.head) this.head.prepend(lead);
   }
 
   /** The large text viewer on show (public: the UI tests call `goToLine`). */

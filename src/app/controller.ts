@@ -11,6 +11,7 @@ import type {
   Settings,
   ShortcutTable,
   TabRef,
+  WindowStart,
 } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
@@ -64,6 +65,7 @@ import { SettingsButton } from "../ui/settings-button";
 import { UpdateButton } from "../ui/update-button";
 import { openUpdateDialog } from "../ui/update-dialog";
 import { Sidebar } from "../ui/sidebar";
+import { SidebarToggle, tabLead } from "../ui/sidebar-toggle";
 import { StatusBar } from "../ui/status-bar";
 import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
@@ -280,7 +282,20 @@ export class AppController implements DocHost, PaneHost {
   private readonly updateButton = new UpdateButton(
     () => void this.openCurrentUpdate().catch((error: unknown) => this.report(error)),
   );
+  private readonly collapseButton = new SidebarToggle("collapse", () =>
+    this.setSidebarCollapsed(true),
+  );
+  /** Pressed with the keys, it hands them to the collapse button: it is hidden once pressed. */
+  private readonly expandButton: SidebarToggle = new SidebarToggle("expand", () => {
+    const keys = document.activeElement === this.expandButton.el;
+    this.setSidebarCollapsed(false);
+    if (keys) this.collapseButton.el.focus();
+  });
+  /** In front of the top left pane's tab bar (`layoutPanes`); shown while the sidebar is
+   * collapsed. */
+  private readonly lead = tabLead(this.expandButton);
   private readonly sidebar = new Sidebar(
+    this.collapseButton,
     this.switcher,
     this.memoList,
     this.searchPanel,
@@ -307,6 +322,8 @@ export class AppController implements DocHost, PaneHost {
   private readonly coloured = new Set<string>();
   /** Marks are sent only when the app keeps them (`TOTE_PERF=1`); asked once as the window starts. */
   private perf: PerfConfig = { enabled: false, search: null };
+  /** What the native side told the page about its window before it ran. */
+  private readonly windowStart: WindowStart;
 
   constructor(
     root: HTMLElement,
@@ -314,6 +331,9 @@ export class AppController implements DocHost, PaneHost {
   ) {
     // Not a field initializer: those run before the `backend` parameter property is assigned.
     this.theme = new ThemeManager(backend, () => this.registry);
+    this.windowStart = backend.windowStart();
+    // Before the first frame, so the top row is never drawn the other way first.
+    document.documentElement.classList.toggle("mac-titlebar", this.windowStart.macTitlebar);
     this.focused = this.makePane();
     this.panes = [this.focused];
     this.layout = leaf(this.focused.id);
@@ -323,6 +343,26 @@ export class AppController implements DocHost, PaneHost {
       this.sidebar.el,
       h("main", { class: "main" }, this.panesEl, this.statusBar.el),
     );
+  }
+
+  /** Whether the sidebar is collapsed (public: the UI tests read it). */
+  get sidebarCollapsed(): boolean {
+    return document.documentElement.classList.contains("sidebar-collapsed");
+  }
+
+  /** Collapses the sidebar to nothing, or brings it back. Out of the keys' and the accessibility
+   * tree's reach while collapsed; keys that were in it go to the focused pane. The column slides
+   * from the first call on, never as the window is first drawn. */
+  setSidebarCollapsed(collapsed: boolean): void {
+    const root = document.documentElement;
+    root.classList.add("sidebar-animates");
+    root.classList.toggle("sidebar-collapsed", collapsed);
+    this.sidebar.el.inert = collapsed;
+    if (collapsed && this.sidebar.el.contains(document.activeElement)) this.focused.takeKeys();
+  }
+
+  toggleSidebar(): void {
+    this.setSidebarCollapsed(!this.sidebarCollapsed);
   }
 
   /** The focused pane's editor (the UI tests drive it). */
@@ -579,12 +619,15 @@ export class AppController implements DocHost, PaneHost {
     return this.shortcuts ? shortcutHint(this.shortcuts, id) : undefined;
   }
 
-  /** The empty panes, the status bar and the settings button name the shortcuts there are now, and
-   * the editors give the keys the menu has too to the menu. */
+  /** The empty panes, the status bar and the settings and sidebar buttons name the shortcuts there
+   * are now, and the editors give the keys the menu has too to the menu. */
   private shortcutsChanged(): void {
     this.settingsButton.setShortcut(
       this.shortcuts && fixedShortcutHint(this.shortcuts, SETTINGS_FIXED_NAME),
     );
+    const toggle = this.shortcutHint("toggle-sidebar");
+    this.collapseButton.setShortcut(toggle);
+    this.expandButton.setShortcut(toggle);
     this.menuKeys = this.shortcuts
       ? menuKeymap(this.shortcuts, (id) => void this.runMenuCommand(id))
       : [];
@@ -1021,7 +1064,8 @@ export class AppController implements DocHost, PaneHost {
     const hit = document.elementsFromPoint(x, y);
     const pane = this.panes.find((each) => hit.includes(each.el));
     if (!pane) return null;
-    if (hit.includes(pane.tabBar.el)) return { pane, index: pane.tabBar.indexAt(x) };
+    // The lead in front of the tab bar is left of its first tab: a drop there goes first.
+    if (hit.includes(pane.head)) return { pane, index: pane.tabBar.indexAt(x) };
     const zone = dropZone(pane.surface.el.getBoundingClientRect(), x, y);
     if (zone === "center") return { pane, zone };
     if (pane.tabs.list.length === 1 && pane.tabs.list[0] === doc) return null;
@@ -1085,10 +1129,10 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
-  /** Puts every pane and boundary grip where `layout` has it. In percentages of the editing area,
-   * so a window resized needs no new layout, and a pane under its minimum still shows. Panes keep
-   * their place in the DOM: one moved would lose its focus, and its viewer frame would load
-   * again. */
+  /** Puts every pane and boundary grip where `layout` has it, and the lead in the top left pane.
+   * In percentages of the editing area, so a window resized needs no new layout, and a pane under
+   * its minimum still shows. Panes keep their place in the DOM: one moved would lose its focus,
+   * and its viewer frame would load again. */
   layoutPanes(): void {
     const rects = rectsOf(this.layout);
     for (const pane of this.panes) {
@@ -1098,6 +1142,7 @@ export class AppController implements DocHost, PaneHost {
       // The line between two panes is the border of the one right of it or below it.
       pane.el.classList.toggle("after-left", rect.x > EDGE);
       pane.el.classList.toggle("after-top", rect.y > EDGE);
+      if (rect.x <= EDGE && rect.y <= EDGE) pane.attachLead(this.lead);
     }
     this.boundaries = dividersOf(this.layout);
     while (this.grips.length < this.boundaries.length) {
@@ -1556,7 +1601,11 @@ export class AppController implements DocHost, PaneHost {
           return await this.showVersions();
         case "reveal-backups":
           return await this.backend.revealBackups();
+        case "toggle-sidebar":
+          return this.toggleSidebar();
         case "search-workspace":
+          // A search needs the sidebar: it stays expanded once the search is closed.
+          this.setSidebarCollapsed(false);
           this.sidebar.show("search");
           return this.searchPanel.focus();
         case "undo":

@@ -29,6 +29,9 @@
   --editor-size: 14px;
   /* WebKit draws a focus ring 3px outside a control; a box that clips leaves this much room. */
   --focus-ring-room: 4px;
+  /* The window's top line: the sidebar's top row and the panes' tab bars, one height. */
+  --top-row-height: 36px;
+  --sidebar-width: 240px;
   font:
     13px/1.4 -apple-system,
     BlinkMacSystemFont,
@@ -74,10 +77,26 @@ body {
 
 body {
   display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
+  grid-template-columns: var(--sidebar-width) minmax(0, 1fr);
   overflow: hidden;
   background: var(--bg);
   color: var(--fg);
+}
+
+/* Collapsed, the sidebar's column is nothing, its right line too. */
+html.sidebar-collapsed body {
+  grid-template-columns: 0 minmax(0, 1fr);
+}
+
+/* Not before the sidebar is first collapsed or expanded: the window's first frame does not slide. */
+html.sidebar-animates body {
+  transition: grid-template-columns 0.16s ease;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  html.sidebar-animates body {
+    transition: none;
+  }
 }
 
 /* The workspace switcher, above the sidebar's title filter: a button with the current name and
@@ -203,8 +222,67 @@ body {
   display: flex;
   flex-direction: column;
   min-height: 0;
+  overflow: hidden;
   background: var(--sidebar-bg);
   border-right: 1px solid var(--border);
+}
+
+html.sidebar-collapsed .sidebar {
+  border-right-width: 0;
+}
+
+/* As wide as the expanded column, less its right line, however narrow it is on its way: the column
+ * cuts its content as it slides rather than laying it out again at every frame. */
+.sidebar > * {
+  box-sizing: border-box;
+  width: calc(var(--sidebar-width) - 1px);
+}
+
+/* The window's top line: the sidebar's top row and the panes' tab bars, one row across. */
+.sidebar-head,
+.pane-head {
+  display: flex;
+  flex: none;
+  align-items: center;
+  box-sizing: border-box;
+  height: var(--top-row-height);
+  border-bottom: 1px solid var(--border);
+  background: var(--sidebar-bg);
+}
+
+/* The 8px is room for the collapse button's focus ring, which the sidebar cuts. */
+.sidebar-head {
+  padding: 0 8px;
+}
+
+/* A grid item is at least as wide as its content: without this, many tabs widen the pane past the
+ * window instead of scrolling the tab bar in it. */
+.pane-head {
+  min-width: 0;
+}
+
+.sidebar-head .sidebar-toggle {
+  margin-left: auto;
+}
+
+/* Not on macOS the window has its title bar: no traffic lights to leave room for, and the title
+ * names the app. */
+html:not(.mac-titlebar) .app-name,
+html:not(.mac-titlebar) .traffic-lights-room {
+  display: none;
+}
+
+/* In front of the top left pane's tab bar, only while the sidebar is collapsed. */
+.tab-lead {
+  display: flex;
+  flex: none;
+  align-items: center;
+  align-self: stretch;
+  padding: 0 4px 0 8px;
+}
+
+html:not(.sidebar-collapsed) .tab-lead {
+  display: none;
 }
 
 .memo-pane,
@@ -470,11 +548,14 @@ body {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
+/* Fills the pane's top row (`.pane-head`), whose line it sits on, and scrolls sideways. */
 .tabbar {
   display: flex;
+  flex: 1;
+  align-self: stretch;
+  min-width: 0;
   overflow-x: auto;
   background: var(--sidebar-bg);
-  border-bottom: 1px solid var(--border);
   user-select: none;
 }
 
@@ -515,10 +596,11 @@ body {
   cursor: default;
 }
 
-/* The label takes the box's left and vertical padding, so pressing anywhere but the close button
- * is on the tab. */
+/* The label takes the box's left and vertical padding, and the row's height, so pressing anywhere
+ * but the close button is on the tab. */
 .tab-label {
   display: flex;
+  align-self: stretch;
   align-items: center;
   padding: 6px 0 6px 12px;
 }
@@ -828,7 +910,8 @@ button {
   height: 28px;
 }
 
-.settings-button {
+.settings-button,
+.sidebar-toggle {
   display: grid;
   flex: none;
   place-items: center;
@@ -840,9 +923,18 @@ button {
   cursor: default;
 }
 
-.settings-button:hover {
+.settings-button:hover,
+.sidebar-toggle:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
   color: var(--fg);
+}
+
+/* Smaller than the foot's buttons, so the top row less its line leaves more than
+ * --focus-ring-room above and below: the sidebar and the pane cut what sticks out. */
+.sidebar-toggle {
+  box-sizing: border-box;
+  width: 26px;
+  height: 26px;
 }
 
 .update-button {
