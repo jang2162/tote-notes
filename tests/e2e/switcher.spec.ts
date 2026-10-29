@@ -155,6 +155,20 @@ test("hiding this window's workspace keeps its name on the button", async ({ pag
   await switchedTo(page, "개인");
 });
 
+test("a list without this window's workspace keeps its name on the button", async ({ page }) => {
+  await open(page);
+  await expect(button(page)).toContainText("업무");
+  // As after the root changes: the list names the new root's workspaces, not this window's.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    backend.data.workspaces = backend.data.workspaces.filter((each) => each.name !== "업무");
+    backend.workspacesChanged();
+  });
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-item .ws-switcher-label")).toHaveText(["개인", "가계부"]);
+  await expect(button(page)).toContainText("업무");
+});
+
 test("another window's new order reaches this switcher", async ({ context }) => {
   const first = await startWindows(
     context,

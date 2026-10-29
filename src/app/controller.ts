@@ -290,6 +290,9 @@ export class AppController implements DocHost, PaneHost {
   private switcherList: SwitcherItem[] = [];
   /** The folder of the workspace the window shows. */
   private workspacePath = "";
+  /** Its name as the window opened it: the button keeps it when the list leaves the workspace out
+   * (a new root lists only its own). */
+  private workspaceName = "";
   private readonly statusBar = new StatusBar();
   /** Numbers the panes of this window, for their ids. */
   private paneCount = 0;
@@ -411,6 +414,7 @@ export class AppController implements DocHost, PaneHost {
     this.perf = perf;
     this.deviceId = info.deviceId;
     this.workspacePath = info.path;
+    this.workspaceName = info.name;
     document.title = info.title;
     void this.refreshSwitcher();
     this.backend.onWorkspacesChanged(() => {
@@ -1657,7 +1661,10 @@ export class AppController implements DocHost, PaneHost {
       this.switcherList = switcherItems(list, this.workspacePath);
       // Hidden or not, this window's workspace names the button.
       const current = list.find((item) => item.path === this.workspacePath);
-      this.switcher.render(this.switcherList, current?.name.normalize("NFC") ?? "");
+      this.switcher.render(
+        this.switcherList,
+        (current?.name ?? this.workspaceName).normalize("NFC"),
+      );
     } catch (error) {
       console.warn(error);
     }
