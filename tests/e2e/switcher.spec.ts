@@ -1,7 +1,7 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
-import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
+import type { WorkspaceInfo } from "../../src/backend/types";
 import { parseSessionFile, sessionPanes } from "../../src/core/session";
 import { hold, menu, nextWindow, quietErrors, ready, start, startWindows } from "./helpers";
 
@@ -16,12 +16,13 @@ const info = (name: string): WorkspaceInfo => ({
   deviceId: "device-1",
 });
 
-const listed = (name: string, windows = 0): WorkspaceListItem => ({
+const listed = (name: string, windows = 0, hidden = false): FakeData["workspaces"][number] => ({
   name,
   path: `/fake/${name}`,
   open: windows > 0,
   windows,
   missing: false,
+  hidden,
 });
 
 const oneTab = (memoId: string) =>
@@ -80,7 +81,9 @@ async function switchedTo(page: Page, name: string): Promise<void> {
   await ready(page);
 }
 
-test("the switcher lists the workspaces by name with the current one marked", async ({ page }) => {
+test("the switcher lists the workspaces in the set order with the current one marked", async ({
+  page,
+}) => {
   await open(page);
   await expect(button(page)).toContainText("업무");
   await expect(button(page)).toHaveAttribute("aria-haspopup", "listbox");
@@ -89,7 +92,13 @@ test("the switcher lists the workspaces by name with the current one marked", as
   await button(page).click();
   await expect(button(page)).toHaveAttribute("aria-expanded", "true");
   const items = page.locator(".ws-switcher-item .ws-switcher-label");
-  await expect(items).toHaveText(["가계부", "개인", "업무"]);
+  await expect(items).toHaveText(["업무", "개인", "가계부"]);
+  await expect(page.locator(".ws-switcher-item .ws-switcher-key")).toHaveText(["⌃1", "⌃2", "⌃3"]);
+  await expect(page.locator(".ws-switcher-item").first()).toHaveAttribute(
+    "aria-keyshortcuts",
+    "Control+1",
+  );
+  await expect(page.locator(".ws-switcher-command .ws-switcher-key")).toHaveCount(0);
   await expect(page.locator(".ws-switcher-item.current")).toHaveCount(1);
   await expect(page.locator(".ws-switcher-item.current")).toContainText("업무");
   await expect(page.locator(".ws-switcher-item.current")).toHaveAttribute("aria-selected", "true");
@@ -97,6 +106,78 @@ test("the switcher lists the workspaces by name with the current one marked", as
   await expect(page.locator(".ws-switcher-command")).toHaveText([
     "새 워크스페이스…",
     "워크스페이스 열기…",
+  ]);
+});
+
+test("the shortcut hint sits after the dot at the far right", async ({ page }) => {
+  await open(page, { workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)] });
+  await button(page).click();
+  const row = option(page, "가계부");
+  await expect(row.locator(".ws-switcher-dot + .ws-switcher-key")).toHaveText("⌃3");
+  expect(await row.evaluate((each) => each.lastElementChild?.className)).toBe("ws-switcher-key");
+  const dot = (await row.locator(".ws-switcher-dot").boundingBox())!;
+  const key = (await row.locator(".ws-switcher-key").boundingBox())!;
+  expect(key.x).toBeGreaterThanOrEqual(dot.x + dot.width);
+});
+
+test("ten workspaces show hints on the first nine only", async ({ page }) => {
+  const names = ["업무", "둘", "셋", "넷", "다섯", "여섯", "일곱", "여덟", "아홉", "열"];
+  await open(page, { workspaces: names.map((name, index) => listed(name, index === 0 ? 1 : 0)) });
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-item .ws-switcher-label")).toHaveText(names);
+  await expect(page.locator(".ws-switcher-item .ws-switcher-key")).toHaveText(
+    names.slice(0, 9).map((_, index) => `⌃${index + 1}`),
+  );
+  await expect(option(page, "열").locator(".ws-switcher-key")).toHaveCount(0);
+  await expect(option(page, "열")).not.toHaveAttribute("aria-keyshortcuts");
+});
+
+test("hidden workspaces leave the list and give up their number", async ({ page }) => {
+  await open(page, { workspaces: [listed("업무", 1), listed("개인", 0, true), listed("가계부")] });
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-item .ws-switcher-label")).toHaveText(["업무", "가계부"]);
+  await expect(page.locator(".ws-switcher-item .ws-switcher-key")).toHaveText(["⌃1", "⌃2"]);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Digit2");
+  await switchedTo(page, "가계부");
+});
+
+test("hiding this window's workspace keeps its name on the button", async ({ page }) => {
+  await open(page, { workspaces: [listed("업무", 1, true), listed("개인"), listed("가계부")] });
+  await expect(button(page)).toContainText("업무");
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-item .ws-switcher-label")).toHaveText(["개인", "가계부"]);
+  await expect(page.locator(".ws-switcher-item.current")).toHaveCount(0);
+  await expect(page.locator(".ws-switcher-list .highlight")).toHaveText(/개인/);
+  await expect(page.locator(".ws-switcher-item").first()).toHaveClass(/highlight/);
+  await page.keyboard.press("Escape");
+  await page.keyboard.press("Control+Digit1");
+  await switchedTo(page, "개인");
+});
+
+test("another window's new order reaches this switcher", async ({ context }) => {
+  const first = await startWindows(
+    context,
+    seed({ workspaces: [listed("업무", 2), listed("개인"), listed("가계부")] }),
+  );
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  // Open already: only the notice can bring the new order, not a read as the list opens.
+  await button(first).click();
+  const labels = first.locator(".ws-switcher-item .ws-switcher-label");
+  await expect(labels).toHaveText(["업무", "개인", "가계부"]);
+  await second.evaluate(() =>
+    window.__tote.backend.setWorkspaceOrder(
+      ["/fake/가계부", "/fake/업무", "/fake/개인"],
+      ["/fake/개인"],
+    ),
+  );
+  await expect(labels).toHaveText(["가계부", "업무"]);
+  await expect(first.locator(".ws-switcher-item .ws-switcher-key")).toHaveText(["⌃1", "⌃2"]);
+  // The window that saved it follows too.
+  await button(second).click();
+  await expect(second.locator(".ws-switcher-item .ws-switcher-label")).toHaveText([
+    "가계부",
+    "업무",
   ]);
 });
 
@@ -148,9 +229,9 @@ test("arrow keys and Enter switch, Esc closes without switching", async ({ page 
   await page.locator(".status-message").click({ force: true });
   await expect(page.locator(".ws-switcher-list")).toBeHidden();
   expect(await switches()).toEqual([]);
-  // 업무 is the third; one up is 개인.
+  // 업무 is the first; one down is 개인.
   await button(page).click();
-  await page.keyboard.press("ArrowUp");
+  await page.keyboard.press("ArrowDown");
   await expect(page.locator(".ws-switcher-list .highlight")).toContainText("개인");
   await page.keyboard.press("Enter");
   await switchedTo(page, "개인");
@@ -802,12 +883,12 @@ const composed = (page: Page) =>
         .composed,
   );
 
-test("⌃1 on a workspace another window shows settles a composition first", async ({ page }) => {
-  // ⌃1 takes no focus, and no flush round runs to end the composition.
+test("⌃3 on a workspace another window shows settles a composition first", async ({ page }) => {
+  // ⌃3 takes no focus, and no flush round runs to end the composition.
   await composeUntilBlur(page, {
     workspaces: [listed("업무", 1), listed("개인"), listed("가계부", 1)],
   });
-  await page.keyboard.press("Control+Digit1");
+  await page.keyboard.press("Control+Digit3");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.focusedWorkspace))
     .toBe("/fake/가계부");

@@ -148,6 +148,9 @@ export class TauriBackend implements Backend {
   listWorkspaces() {
     return call<WorkspaceListItem[]>("list_workspaces");
   }
+  setWorkspaceOrder(order: string[], hidden: string[]) {
+    return call<void>("set_workspace_order", { order, hidden });
+  }
   createWorkspace(name: string) {
     return call<string>("create_workspace", { name });
   }

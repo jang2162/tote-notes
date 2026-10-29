@@ -68,7 +68,18 @@ test("the workspace picker shows why a name was refused", async ({ page }) => {
   await page.evaluate(
     () =>
       void window.workspacePicker(
-        [{ name: "메모", path: "/w/메모", open: true, windows: 1, missing: false }],
+        [
+          {
+            name: "메모",
+            path: "/w/메모",
+            open: true,
+            windows: 1,
+            missing: false,
+            order: 0,
+            hidden: false,
+            orderable: true,
+          },
+        ],
         {
           open: () => {},
           relocate: async () => null,
@@ -157,6 +168,18 @@ test("a missing workspace offers to relocate", async ({ page }) => {
   expect(await relocations()).toEqual([{ from: "/gone/옛", to: "/new/옛" }]);
 });
 
+test("the picker still lists a hidden workspace", async ({ page }) => {
+  // Recently used first, as the backend lists them; hiding is for the switcher only.
+  await start(page, {
+    workspaces: [
+      { name: "메모", path: "/fake/메모", open: true, windows: 1, missing: false },
+      { name: "숨김", path: "/fake/숨김", open: false, windows: 0, missing: false, hidden: true },
+    ],
+  });
+  await menu(page, "open-workspace");
+  await expect(page.locator(".picker-list li")).toHaveText(["메모 (열림)", "숨김"]);
+});
+
 test("cancelling the folder dialog keeps the picker open with nothing relocated", async ({
   page,
 }) => {
@@ -164,7 +187,18 @@ test("cancelling the folder dialog keeps the picker open with nothing relocated"
   await page.evaluate(
     () =>
       void window.workspacePicker(
-        [{ name: "옛", path: "/gone/옛", open: false, windows: 0, missing: true }],
+        [
+          {
+            name: "옛",
+            path: "/gone/옛",
+            open: false,
+            windows: 0,
+            missing: true,
+            order: null,
+            hidden: false,
+            orderable: false,
+          },
+        ],
         {
           open: () => {},
           create: async () => null,

@@ -294,6 +294,12 @@ export interface WorkspaceListItem {
   windows: number;
   /** In the recent list, but its folder or `.tote/workspace.json` is gone. */
   missing: boolean;
+  /** Its place in the switcher, from 0. `null` when `missing`. */
+  order: number | null;
+  /** Left out of the switcher; 「워크스페이스 열기…」 still lists it. */
+  hidden: boolean;
+  /** Its ID can be read, so the order file can name it. */
+  orderable: boolean;
 }
 
 /** A memo's copy in a backup snapshot (`Version` in src-tauri/src/backup/versions.rs).
@@ -421,7 +427,12 @@ export interface Backend {
   watchExternal(path: string): Promise<void>;
   unwatchExternal(path: string): Promise<void>;
 
+  /** The workspaces under the workspace root, most recently used first, then the recent ones that
+   * are gone. The switcher sorts them by `order`. */
   listWorkspaces(): Promise<WorkspaceListItem[]>;
+  /** Saves the switcher's order — every workspace under the root, by path — and the ones it hides;
+   * every window's switcher follows (`onWorkspacesChanged`). */
+  setWorkspaceOrder(order: string[], hidden: string[]): Promise<void>;
   /** Makes a workspace under the workspace root and returns its folder. No window opens on it:
    * the window that asked switches to it (`switchWorkspace`). */
   createWorkspace(name: string): Promise<string>;
@@ -548,7 +559,7 @@ export interface Backend {
    * tab's place is this window's already. Resolves once the handler listens: the native side sends
    * the tab from the moment the page has started (`workspaceInfo`), and does not keep it. */
   onAdopt(handler: (tab: string, x: number, y: number) => void): Promise<void>;
-  /** A workspace was made, or a window came to show another workspace: the switcher lists
-   * them again. */
+  /** A workspace was made, a window came to show another workspace, or the order or the hidden
+   * ones changed: the switcher lists them again. */
   onWorkspacesChanged(handler: () => void): void;
 }

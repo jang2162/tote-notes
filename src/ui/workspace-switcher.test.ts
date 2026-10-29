@@ -1,29 +1,61 @@
 import { describe, expect, it } from "vitest";
 
 import type { WorkspaceListItem } from "../backend/types";
-import { switcherItems, switcherShortcut } from "./workspace-switcher";
+import { shortcutHint, switcherItems, switcherShortcut } from "./workspace-switcher";
 
-const item = (name: string, path: string, windows = 0, missing = false): WorkspaceListItem => ({
+const item = (
+  name: string,
+  path: string,
+  windows = 0,
+  missing = false,
+  place: { order?: number | null; hidden?: boolean } = {},
+): WorkspaceListItem => ({
   name,
   path,
   open: windows > 0,
   windows,
   missing,
+  order: missing ? null : 0,
+  hidden: false,
+  orderable: !missing,
+  ...place,
 });
 
 describe("switcherItems", () => {
-  it("items are sorted by name, NFD names included, missing ones left out", () => {
+  it("items follow the set order, not the name", () => {
     const items = switcherItems(
       [
-        item("업무", "/w/업무"),
-        item("개인".normalize("NFD"), "/w/개인"),
-        item("가계부", "/w/가계부"),
+        item("가계부", "/w/가계부", 0, false, { order: 2 }),
+        item("업무", "/w/업무", 0, false, { order: 0 }),
+        item("개인".normalize("NFD"), "/w/개인", 0, false, { order: 1 }),
+      ],
+      "/w/업무",
+    );
+    expect(items.map((each) => each.name)).toEqual(["업무", "개인", "가계부"]);
+    expect(items.map((each) => each.path)).toEqual(["/w/업무", "/w/개인", "/w/가계부"]);
+  });
+
+  it("hidden and missing items are left out", () => {
+    const items = switcherItems(
+      [
+        item("업무", "/w/업무", 1, false, { order: 0, hidden: true }),
+        item("개인", "/w/개인", 0, false, { order: 1 }),
+        item("가계부", "/w/가계부", 0, false, { order: 2 }),
         item("옛", "/gone/옛", 0, true),
       ],
       "/w/업무",
     );
-    expect(items.map((each) => each.name)).toEqual(["가계부", "개인", "업무"]);
-    expect(items.map((each) => each.path)).toEqual(["/w/가계부", "/w/개인", "/w/업무"]);
+    expect(items.map((each) => each.name)).toEqual(["개인", "가계부"]);
+    // The numbers move up: ⌃1 picks what the first row shows.
+    expect(items.map((_, index) => shortcutHint(index))).toEqual(["⌃1", "⌃2"]);
+    const picked = switcherShortcut({
+      ctrlKey: true,
+      metaKey: false,
+      altKey: false,
+      shiftKey: false,
+      code: "Digit1",
+    });
+    expect(items[picked!].name).toBe("개인");
   });
 
   it("an item is the name, the path and the two marks, nothing more", () => {
@@ -40,6 +72,16 @@ describe("switcherItems", () => {
     expect(mark(2, "/w/가")).toEqual({ current: true, dot: true });
     expect(mark(1, "/w/나")).toEqual({ current: false, dot: true });
     expect(mark(0, "/w/나")).toEqual({ current: false, dot: false });
+  });
+});
+
+describe("shortcutHint", () => {
+  it("shortcutHint names ⌃1 to ⌃9 and nothing past them", () => {
+    expect(shortcutHint(0)).toBe("⌃1");
+    expect(shortcutHint(4)).toBe("⌃5");
+    expect(shortcutHint(8)).toBe("⌃9");
+    expect(shortcutHint(9)).toBeNull();
+    expect(shortcutHint(-1)).toBeNull();
   });
 });
 

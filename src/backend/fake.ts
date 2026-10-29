@@ -68,6 +68,11 @@ export interface FakeMemo {
   modifiedMs: number;
 }
 
+/** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
+ * and `orderable`; `listWorkspaces` fills them in. */
+export type FakeWorkspace = Omit<WorkspaceListItem, "order" | "hidden" | "orderable"> &
+  Partial<Pick<WorkspaceListItem, "order" | "hidden" | "orderable">>;
+
 /** A window on the screen: its label, its frame in screen points, and the path of the workspace it
  * shows when that is not this one's. */
 export interface FakeDropTarget {
@@ -88,7 +93,7 @@ export interface FakeData {
   files: Record<string, string>;
   drafts: Record<string, { base: string | null; data: string }>;
   pending: PendingOpen[];
-  workspaces: WorkspaceListItem[];
+  workspaces: FakeWorkspace[];
   /** What the next 「파일 열기」 dialog returns. */
   picks: string[];
   /** `workspaceRoots()`. */
@@ -151,6 +156,8 @@ export interface FakeData {
   listMemosCalls?: number;
   /** How many `writeMemo` calls from now fail with `io`, as on a full disk. Absent in old seeds. */
   failWrites?: number;
+  /** How many `setWorkspaceOrder` calls from now fail with `io`. Absent in old seeds. */
+  failWorkspaceOrder?: number;
   /** Memo ID → its copies in the backups, in any order. `listVersions` lists them newest first and
    * folds a run of equal texts into one version. Absent in old seeds. */
   backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
@@ -941,8 +948,33 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
-  async listWorkspaces() {
-    return this.data.workspaces;
+  /** The seed's workspaces as they are listed; one with no `order` keeps its place in the seed. */
+  async listWorkspaces(): Promise<WorkspaceListItem[]> {
+    return this.data.workspaces.map((each, place) => ({
+      ...each,
+      order: each.order === undefined ? (each.missing ? null : place) : each.order,
+      hidden: each.hidden ?? false,
+      orderable: each.orderable ?? !each.missing,
+    }));
+  }
+
+  /** The native side's `set_workspace_order`: every window's switcher follows, this one's too. A
+   * workspace `order` leaves out goes after the ones it names. */
+  async setWorkspaceOrder(order: string[], hidden: string[]) {
+    if (this.data.failWorkspaceOrder) {
+      this.data.failWorkspaceOrder -= 1;
+      this.commit();
+      throw new BackendError("io", "the workspace order could not be written");
+    }
+    const listed = this.data.workspaces.filter((each) => !each.missing);
+    listed.forEach((each, place) => {
+      const at = order.indexOf(each.path);
+      each.order = at < 0 ? order.length + place : at;
+      each.hidden = hidden.includes(each.path);
+    });
+    this.commit();
+    this.workspacesChanged();
+    this.hub?.send(this.hub.siblings(this.data), { type: "workspaces" });
   }
 
   async createWorkspace(name: string) {
@@ -993,7 +1025,7 @@ export class FakeBackend implements Backend {
   /** `switchWorkspace` once the target is known to be another workspace shown nowhere. */
   private async switchTo(
     path: string,
-    target: WorkspaceListItem,
+    target: FakeWorkspace,
     other: NonNullable<FakeData["otherWorkspaces"]>[string],
   ): Promise<"switching"> {
     // A tab that could not be written: the native side asks, and the fake takes 「취소」.

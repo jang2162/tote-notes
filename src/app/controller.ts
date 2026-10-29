@@ -1647,8 +1647,11 @@ export class AppController implements DocHost, PaneHost {
 
   private async refreshSwitcher(): Promise<void> {
     try {
-      this.switcherList = switcherItems(await this.backend.listWorkspaces(), this.workspacePath);
-      this.switcher.render(this.switcherList);
+      const list = await this.backend.listWorkspaces();
+      this.switcherList = switcherItems(list, this.workspacePath);
+      // Hidden or not, this window's workspace names the button.
+      const current = list.find((item) => item.path === this.workspacePath);
+      this.switcher.render(this.switcherList, current?.name.normalize("NFC") ?? "");
     } catch (error) {
       console.warn(error);
     }

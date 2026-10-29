@@ -11,11 +11,13 @@ export interface SwitcherItem {
   dot: boolean;
 }
 
-/** The switcher's items: the workspaces there are, by name — compared composed, so a name typed in
- * Finder (decomposed) sorts with the others — the current one marked. */
+/** The switcher's items: the workspaces there are and not hidden, in their set order, the current
+ * one marked. A name typed in Finder (decomposed) is shown composed. The current workspace is left
+ * out too when it is hidden. */
 export function switcherItems(list: WorkspaceListItem[], currentPath: string): SwitcherItem[] {
   return list
-    .filter((item) => !item.missing)
+    .filter((item) => !item.missing && !item.hidden)
+    .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity))
     .map((item) => {
       const current = item.path === currentPath;
       return {
@@ -24,8 +26,13 @@ export function switcherItems(list: WorkspaceListItem[], currentPath: string): S
         current,
         dot: item.windows > (current ? 1 : 0),
       };
-    })
-    .sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    });
+}
+
+/** What the switcher item at `index` shows for the ⌃ key that picks it (`switcherShortcut`):
+ * 「⌃1」 – 「⌃9」, `null` past the ninth. */
+export function shortcutHint(index: number): string | null {
+  return Number.isInteger(index) && index >= 0 && index < 9 ? `⌃${index + 1}` : null;
 }
 
 /** The switcher item ⌃1 – ⌃9 pick, from 0; `null` for any other key. */
@@ -38,8 +45,8 @@ export function switcherShortcut(
 }
 
 /** The combo box at the top of the sidebar (spec 「워크스페이스 고르개」): a button with the
- * current workspace's name, and the list it opens — the workspaces, then 「새 워크스페이스…」
- * and 「워크스페이스 열기…」. */
+ * current workspace's name, and the list it opens — the workspaces, each with the ⌃ key that picks
+ * it, then 「새 워크스페이스…」 and 「워크스페이스 열기…」. */
 export class WorkspaceSwitcher {
   readonly el = h("div", { class: "ws-switcher" });
   private readonly button = h("button", {
@@ -81,25 +88,28 @@ export class WorkspaceSwitcher {
     return !this.list.hidden;
   }
 
-  render(items: SwitcherItem[]): void {
+  /** `currentName` goes on the button: the current workspace may be hidden, and so not in `items`. */
+  render(items: SwitcherItem[], currentName: string): void {
     this.items = items;
-    const current = items.find((item) => item.current);
     this.button.replaceChildren(
-      h("span", { class: "ws-switcher-name" }, current?.name ?? ""),
+      h("span", { class: "ws-switcher-name" }, currentName),
       h("span", { class: "ws-switcher-caret" }, "▾"),
     );
-    this.button.title = current?.name ?? "";
-    const options = items.map((item) => {
+    this.button.title = currentName;
+    const options = items.map((item, index) => {
+      const hint = shortcutHint(index);
       const option = h(
         "div",
         {
           class: item.current ? "ws-switcher-item current" : "ws-switcher-item",
           role: "option",
           ariaSelected: item.current ? "true" : "false",
+          ...(hint && { ariaKeyShortcuts: `Control+${index + 1}` }),
         },
         h("span", { class: "ws-switcher-check" }, item.current ? "✓" : ""),
         h("span", { class: "ws-switcher-label" }, item.name),
         item.dot && h("span", { class: "ws-switcher-dot" }),
+        hint && h("span", { class: "ws-switcher-key" }, hint),
       );
       option.addEventListener("click", () => this.choose(() => this.actions.pick(item)));
       return option;
