@@ -539,21 +539,26 @@ export class FakeBackend implements Backend {
   /** A newer release found by the check at launch: the button only, as `AppCore::announce_update`
    * puts it up in every window. */
   announceUpdate(offer: Omit<UpdateOffer, "status">): void {
-    this.foundUpdate = offer;
-    this.data.pending.push({ kind: "updateFound", version: offer.version });
+    const kept = this.keepUpdate(offer);
+    this.data.pending.push({ kind: "updateFound", version: kept.version });
     this.commit();
     this.poke();
   }
   /** A newer release found by the menu's check in this window: the button, and the question
    * (`AppCore::offer_update`) with the status `Updates::found` gives it. */
   offerUpdate(offer: Omit<UpdateOffer, "status">): void {
-    this.foundUpdate = offer;
+    const kept = this.keepUpdate(offer);
     this.data.pending.push(
-      { kind: "updateFound", version: offer.version },
-      { kind: "update", ...offer, status: this.updateStatus() },
+      { kind: "updateFound", version: kept.version },
+      { kind: "update", ...kept, status: this.updateStatus() },
     );
     this.commit();
     this.poke();
+  }
+  /** As `Updates::found`: one being installed, or installed, stays over a newer find. */
+  private keepUpdate(offer: Omit<UpdateOffer, "status">): Omit<UpdateOffer, "status"> {
+    if (!this.foundUpdate || this.updateStatus() === "available") this.foundUpdate = offer;
+    return this.foundUpdate;
   }
   private updateStatus(): UpdateOffer["status"] {
     return this.installing || this.installingElsewhere

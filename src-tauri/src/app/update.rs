@@ -150,15 +150,20 @@ impl<U> State<U> {
 }
 
 impl<U: Clone> Updates<U> {
-    /// Keeps `update` for `install_update`, and says how to offer it. Not while one is being
-    /// installed: that one goes on. Once one is installed in this run, a newer find too is only a
-    /// restart away — the restarted version finds it again.
-    pub fn found(&self, update: U) -> OfferStatus {
+    /// Keeps `update` for `install_update`, and says what to offer: the update kept and how far
+    /// it is. Once one is being installed, or installed in this run, that one stays — a newer
+    /// find is the restarted version's to find again — so the button and the dialog name the
+    /// version this run downloads, not the newer one.
+    pub fn found(&self, update: U) -> (U, OfferStatus) {
         let mut state = lock(&self.state);
-        if !state.installing {
-            state.found = Some(update);
-        }
-        state.status()
+        let kept = match &state.found {
+            Some(kept) if state.installing || state.installed => kept.clone(),
+            _ => {
+                state.found = Some(update.clone());
+                update
+            }
+        };
+        (kept, state.status())
     }
 
     /// The update kept, and how far it is now — for the button pressed in a window, which may be
@@ -266,10 +271,10 @@ pub enum Found<'a> {
 /// Keeps `update` and hands it to the windows (`AppCore::found_update`). `false` when no window is
 /// open: it waits for the next one.
 fn offer(app: &AppHandle, update: Update, found: Found<'_>) -> bool {
-    let status = app.state::<Updates>().found(update.clone());
+    let (kept, status) = app.state::<Updates>().found(update);
     let tell = app
         .state::<AppCore>()
-        .found_update(UpdateOffer::of(&update, status), found);
+        .found_update(UpdateOffer::of(&kept, status), found);
     for label in &tell {
         let _ = app.emit_to(EventTarget::webview_window(label), "tote://pending", ());
     }
@@ -494,11 +499,11 @@ mod tests {
     fn an_install_runs_once_and_a_failed_one_can_be_retried() {
         let updates = Updates::<u32>::default();
         assert_eq!(updates.begin_install(), Err("no-update"));
-        assert_eq!(updates.found(7), OfferStatus::Available);
+        assert_eq!(updates.found(7), (7, OfferStatus::Available));
         assert_eq!(updates.begin_install(), Ok(Some(7)));
         assert_eq!(updates.begin_install(), Err("installing"));
         // A newer find does not replace the one being installed, and is offered as downloading.
-        assert_eq!(updates.found(8), OfferStatus::Installing);
+        assert_eq!(updates.found(8), (7, OfferStatus::Installing));
         updates.end_install(false);
         assert!(!updates.installed());
         assert_eq!(updates.begin_install(), Ok(Some(7)));
@@ -514,9 +519,29 @@ mod tests {
         updates.end_install(true);
         // The menu's check finds it again (the running version is still the old one): it asks
         // only for the restart, and an install asked for anyway downloads nothing.
-        assert_eq!(updates.found(7), OfferStatus::Installed);
+        assert_eq!(updates.found(7), (7, OfferStatus::Installed));
         assert_eq!(updates.begin_install(), Ok(None));
         assert!(updates.installed());
+    }
+
+    #[test]
+    fn a_newer_find_names_the_version_this_run_downloads() {
+        // The menu's check finds 8 while 7 downloads in another window, then after 7 is in: the
+        // button and the dialog both name 7, which the restart starts.
+        let updates = Updates::<u32>::default();
+        updates.found(7);
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
+        assert_eq!(updates.found(8), (7, OfferStatus::Installing));
+        assert_eq!(updates.current(), Some((7, OfferStatus::Installing)));
+        updates.end_install(true);
+        assert_eq!(updates.found(8), (7, OfferStatus::Installed));
+        assert_eq!(updates.current(), Some((7, OfferStatus::Installed)));
+        // A failed install keeps nothing in: the newer find replaces it.
+        let updates = Updates::<u32>::default();
+        updates.found(7);
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
+        updates.end_install(false);
+        assert_eq!(updates.found(8), (8, OfferStatus::Available));
     }
 
     #[test]
