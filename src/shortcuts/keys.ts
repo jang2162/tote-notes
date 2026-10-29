@@ -427,3 +427,10 @@ export function shortcutHint(table: ShortcutTable, id: string): string | null {
   const current = table.commands.find((c) => c.id === id)?.current;
   return current ? formatAccelerator(current) : null;
 }
+
+/** The fixed shortcut named `name` — the menu item's name, as Rust's `FIXED` gives it; fixed ones
+ * have no id — as the screen writes it; null when there is none. */
+export function fixedShortcutHint(table: ShortcutTable, name: string): string | null {
+  const fixed = table.fixed.find((f) => f.name === name);
+  return fixed ? formatAccelerator(fixed.accelerator) : null;
+}

@@ -47,7 +47,7 @@ import {
   workerHighlighting,
   type WorkerHighlighting,
 } from "../highlight/extension";
-import { menuKeymap, shortcutHint } from "../shortcuts/keys";
+import { fixedShortcutHint, menuKeymap, shortcutHint } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
@@ -55,6 +55,7 @@ import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
+import { SettingsButton } from "../ui/settings-button";
 import { UpdateButton } from "../ui/update-button";
 import { openUpdateDialog } from "../ui/update-dialog";
 import { Sidebar } from "../ui/sidebar";
@@ -265,6 +266,8 @@ export class AppController implements DocHost, PaneHost {
     create: () => void this.newWorkspace(),
     open: () => void this.showPicker().catch((error: unknown) => this.report(error)),
   });
+  /** Goes by the menu item's id, so `showSettings`'s one-screen guard holds for it too. */
+  private readonly settingsButton = new SettingsButton(() => void this.onMenu("settings"));
   private readonly updateButton = new UpdateButton(
     () => void this.openCurrentUpdate().catch((error: unknown) => this.report(error)),
   );
@@ -272,6 +275,7 @@ export class AppController implements DocHost, PaneHost {
     this.switcher,
     this.memoList,
     this.searchPanel,
+    this.settingsButton,
     this.updateButton,
   );
   /** What the switcher lists, for ⌃1 – ⌃9. */
@@ -559,9 +563,10 @@ export class AppController implements DocHost, PaneHost {
     return this.shortcuts ? shortcutHint(this.shortcuts, id) : undefined;
   }
 
-  /** The empty panes and the status bar name the shortcuts there are now, and the editors give the
-   * keys the menu has too to the menu. */
+  /** The empty panes, the status bar and the settings button name the shortcuts there are now, and
+   * the editors give the keys the menu has too to the menu. */
   private shortcutsChanged(): void {
+    this.settingsButton.setShortcut(this.shortcuts && fixedShortcutHint(this.shortcuts, "설정…"));
     this.menuKeys = this.shortcuts
       ? menuKeymap(this.shortcuts, (id) => void this.runMenuCommand(id))
       : [];

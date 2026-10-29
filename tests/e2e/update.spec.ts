@@ -29,10 +29,13 @@ test("an update found at launch puts up a button at the bottom left and asks not
   await expect(updateButton(page)).toHaveText("업데이트 0.2.0");
   await pendingTaken(page);
   await expect(dialog(page)).toHaveCount(0);
-  // The foot of the sidebar: the window's bottom left.
+  // The foot of the sidebar, the window's bottom left: beside the settings button, in its row
+  // (sidebar-footer.spec.ts has the row).
   const box = (await updateButton(page).boundingBox())!;
+  const settings = (await page.locator(".settings-button").boundingBox())!;
   const sidebar = (await page.locator(".sidebar").boundingBox())!;
   const viewport = page.viewportSize()!;
+  expect(box.x).toBeGreaterThanOrEqual(settings.x + settings.width);
   expect(box.x + box.width).toBeLessThanOrEqual(sidebar.x + sidebar.width);
   expect(viewport.height - (box.y + box.height)).toBeLessThan(20);
 

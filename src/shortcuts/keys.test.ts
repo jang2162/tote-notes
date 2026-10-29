@@ -9,6 +9,7 @@ import {
   bindingsOf,
   conflict,
   editorBindings,
+  fixedShortcutHint,
   formatAccelerator,
   menuKeymap,
   recordableAccelerator,
@@ -316,6 +317,14 @@ describe("shortcutHint", () => {
     expect(shortcutHint(table({ "new-memo": null }), "new-memo")).toBeNull();
     expect(shortcutHint(table(), "rename")).toBeNull();
     expect(shortcutHint(table(), "nope")).toBeNull();
+  });
+});
+
+describe("fixedShortcutHint", () => {
+  it("writes the fixed shortcut of the name Rust gives it, or nothing", () => {
+    // Rust's own table: the sidebar's settings button looks 설정… up by this name.
+    expect(fixedShortcutHint(fixture as ShortcutTable, "설정…")).toBe("⌘,");
+    expect(fixedShortcutHint(fixture as ShortcutTable, "설정")).toBeNull();
   });
 });
 

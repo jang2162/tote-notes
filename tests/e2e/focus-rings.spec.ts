@@ -111,7 +111,8 @@ test("no focus ring is cut in the dialogs, the find bar or the window around the
   report.update = await clippedRings(page.locator(".modal.update"));
   await page.keyboard.press("Escape");
   await expect(page.locator(".modal")).toHaveCount(0);
-  // The offer put up the update button at the foot of the sidebar, against the window's edge.
+  // The offer put up the update button beside the settings button at the foot of the sidebar,
+  // against the window's edge.
   await expect(page.locator(".update-button")).toBeVisible();
   report.sidebar = await clippedRings(page.locator(".sidebar"));
   expect(report).toEqual({
