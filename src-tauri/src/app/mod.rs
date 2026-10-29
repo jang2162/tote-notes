@@ -39,7 +39,7 @@ use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
 use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
-use crate::workspace::{Change, Workspace, WorkspaceError};
+use crate::workspace::{order, Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
 use update::{Found, UpdateOffer};
@@ -1418,15 +1418,23 @@ impl AppCore {
     }
 
     /// The workspace to show when nothing says which: the most recently used one that still
-    /// exists, else the first under the workspace root.
+    /// exists, else the first under the workspace root in switcher order that is not hidden, else
+    /// the first in that order.
     pub fn fallback_workspace(&self) -> Option<PathBuf> {
         let recent = self.recent();
         recent
             .into_iter()
             .find(|path| Workspace::is_workspace(path))
             .or_else(|| {
-                let first = Workspace::list(&self.workspace_root()).into_iter().next()?;
-                Some(fs::canonicalize(&first.path).unwrap_or(first.path))
+                let arranged = order::arranged(&self.workspace_root());
+                let first = arranged
+                    .iter()
+                    .find(|a| !a.hidden)
+                    .or(arranged.first())?
+                    .summary
+                    .path
+                    .clone();
+                Some(fs::canonicalize(&first).unwrap_or(first))
             })
     }
 
@@ -2397,6 +2405,36 @@ mod tests {
         std::fs::rename(&a_path, dir.path().join("옮김")).unwrap();
         let other = Workspace::create(&core.workspace_root(), "다른").unwrap();
         assert_eq!(core.fallback_workspace(), Some(other.root().to_path_buf()));
+    }
+
+    #[test]
+    fn the_first_launch_opens_the_first_workspace_not_hidden() {
+        use crate::workspace::order::{save, Entry, WorkspaceOrder};
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let root = core.workspace_root();
+        for name in ["가", "나"] {
+            Workspace::create(&root, name).unwrap();
+        }
+        let entry = |name: &str| Entry {
+            id: Workspace::read_id(&root.join(name)).unwrap(),
+            name: name.into(),
+        };
+        let first = |hidden: Vec<Entry>| {
+            save(
+                &root,
+                &WorkspaceOrder {
+                    order: vec![entry("나"), entry("가")],
+                    hidden,
+                },
+            )
+            .unwrap();
+            core.fallback_workspace()
+        };
+        let canonical = |name: &str| fs::canonicalize(root.join(name)).unwrap();
+        assert!(core.recent().is_empty());
+        assert_eq!(first(vec![entry("나")]), Some(canonical("가")));
+        assert_eq!(first(vec![entry("가"), entry("나")]), Some(canonical("나")));
     }
 
     #[test]

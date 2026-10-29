@@ -115,6 +115,7 @@ pub fn run() {
             commands::watch_external,
             commands::unwatch_external,
             commands::list_workspaces,
+            commands::set_workspace_order,
             commands::create_workspace,
             commands::switch_workspace,
             commands::relocate_workspace,

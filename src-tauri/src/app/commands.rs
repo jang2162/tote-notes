@@ -25,6 +25,7 @@ use crate::perf::{self, PerfConfig};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
 use crate::shortcuts::{self, ShortcutTable};
+use crate::workspace::order::{self, Arranged, Entry, WorkspaceOrder};
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
 
 /// What a rejected command returns. `code` is what the frontend branches on (`BackendError`).
@@ -585,30 +586,42 @@ pub struct WorkspaceListItem {
     windows: usize,
     /// In the recent list, but its folder or `.tote/workspace.json` is gone.
     missing: bool,
+    /// Its place in the switcher, from 0. `None` when `missing`.
+    order: Option<usize>,
+    hidden: bool,
+    /// Its ID can be read, so the order file can name it.
+    orderable: bool,
 }
 
-/// The workspaces under `root`, most recently used first, then the recent ones that vanished.
-/// `windows` counts the windows showing a workspace.
+/// The workspaces under `root` (`arranged`, in their places), most recently used first, then the
+/// recent ones that vanished. Recent order is what 「워크스페이스 열기…」 shows; the switcher
+/// sorts by `order`. `windows` counts the windows showing a workspace.
 fn workspace_items(
-    root: &Path,
+    arranged: Vec<Arranged>,
     recent: &[PathBuf],
     windows: impl Fn(&Path) -> usize,
 ) -> Vec<WorkspaceListItem> {
-    let mut list: Vec<WorkspaceListItem> = Workspace::list(root)
+    let mut list: Vec<WorkspaceListItem> = arranged
         .into_iter()
-        .map(|summary| {
-            let path = std::fs::canonicalize(&summary.path).unwrap_or(summary.path);
+        .enumerate()
+        .map(|(place, a)| {
+            let path = std::fs::canonicalize(&a.summary.path).unwrap_or(a.summary.path);
             let windows = windows(&path);
             WorkspaceListItem {
                 open: windows > 0,
                 windows,
-                name: summary.name,
+                name: a.summary.name,
                 path,
                 missing: false,
+                order: Some(place),
+                hidden: a.hidden,
+                orderable: a.id.is_some(),
             }
         })
         .collect();
-    // Most recently used first; the rest keep their name order (the sort is stable).
+    // `arranged` comes in switcher order; this list keeps its own: most recently used first, the
+    // rest by name (both sorts are stable).
+    list.sort_by(|a, b| a.name.cmp(&b.name));
     list.sort_by_key(|item| {
         recent
             .iter()
@@ -627,6 +640,9 @@ fn workspace_items(
             open: false,
             windows: 0,
             missing: true,
+            order: None,
+            hidden: false,
+            orderable: false,
         })
         .collect::<Vec<_>>();
     list.extend(gone);
@@ -636,10 +652,44 @@ fn workspace_items(
 #[tauri::command]
 pub async fn list_workspaces(core: State<'_, AppCore>) -> CmdResult<Vec<WorkspaceListItem>> {
     Ok(workspace_items(
-        &core.workspace_root(),
+        order::arranged(&core.workspace_root()),
         &core.recent(),
         |path| core.windows_of(path).len(),
     ))
+}
+
+/// What the order file says of each of `paths`: its ID with its folder name. A path whose ID cannot
+/// be read (not a workspace, or its `workspace.json` is unreadable) is left out.
+fn entries(paths: &[PathBuf]) -> Vec<Entry> {
+    paths
+        .iter()
+        .filter_map(|path| {
+            Some(Entry {
+                id: Workspace::read_id(path)?,
+                name: path.file_name()?.to_str()?.to_owned(),
+            })
+        })
+        .collect()
+}
+
+/// Saves where each workspace under the root sits in the switcher and which are hidden; every
+/// window's switcher follows.
+#[tauri::command]
+pub async fn set_workspace_order(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    order: Vec<PathBuf>,
+    hidden: Vec<PathBuf>,
+) -> CmdResult<()> {
+    order::save(
+        &core.workspace_root(),
+        &WorkspaceOrder {
+            order: entries(&order),
+            hidden: entries(&hidden),
+        },
+    )?;
+    let _ = app.emit("tote://workspaces", ());
+    Ok(())
 }
 
 /// The workspace that was at `from` is now at `to`: the recent list and the windows to reopen
@@ -896,11 +946,16 @@ pub async fn patch_settings(
     patch: SettingsPatch,
 ) -> CmdResult<()> {
     let shortcuts_changed = patch.shortcuts.is_some();
+    let root_changed = patch.workspace_root.is_some();
     core.patch_settings(patch)?;
     if shortcuts_changed {
         menu::follow_settings(&app);
     }
     broadcast_config(&app);
+    if root_changed {
+        // Each root has its own order file: the switchers list the new root's workspaces.
+        let _ = app.emit("tote://workspaces", ());
+    }
     Ok(())
 }
 
@@ -1105,6 +1160,8 @@ pub fn perf_config() -> PerfConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::workspace::order::{arranged, save};
+    use crate::workspace::TOTE_DIR;
     use serde_json::json;
 
     #[test]
@@ -1174,17 +1231,19 @@ mod tests {
             kept_path.clone(),
             hollow.clone(),
         ];
-        let items = workspace_items(root.path(), &recent, |p| usize::from(p == kept_path));
+        let items = workspace_items(arranged(root.path()), &recent, |p| {
+            usize::from(p == kept_path)
+        });
         let view: Vec<_> = items
             .iter()
-            .map(|i| (i.name.as_str(), i.open, i.missing))
+            .map(|i| (i.name.as_str(), i.open, i.missing, i.order, i.hidden))
             .collect();
         assert_eq!(
             view,
             vec![
-                ("있는 곳", true, false),
-                ("옛", false, true),
-                ("텅 빈", false, true)
+                ("있는 곳", true, false, Some(0), false),
+                ("옛", false, true, None, false),
+                ("텅 빈", false, true, None, false)
             ]
         );
         assert_eq!(items[1].path, PathBuf::from("/gone/옛"));
@@ -1208,14 +1267,114 @@ mod tests {
         let a_path = std::fs::canonicalize(a.root()).unwrap();
         Workspace::create(root.path(), "나").unwrap();
         let recent = vec![PathBuf::from("/gone/옛")];
-        let items = workspace_items(root.path(), &recent, |p| if p == a_path { 2 } else { 0 });
+        let items = workspace_items(arranged(root.path()), &recent, |p| {
+            if p == a_path {
+                2
+            } else {
+                0
+            }
+        });
         let view: Vec<_> = items
             .iter()
-            .map(|i| (i.name.as_str(), i.windows, i.open))
+            .map(|i| (i.name.as_str(), i.windows, i.open, i.order, i.hidden))
             .collect();
         assert_eq!(
             view,
-            vec![("가", 2, true), ("나", 0, false), ("옛", 0, false)]
+            vec![
+                ("가", 2, true, Some(0), false),
+                ("나", 0, false, Some(1), false),
+                ("옛", 0, false, None, false)
+            ]
         );
+    }
+
+    fn entry(root: &Path, name: &str) -> Entry {
+        Entry {
+            id: Workspace::read_id(&root.join(name)).unwrap(),
+            name: name.into(),
+        }
+    }
+
+    #[test]
+    fn items_carry_their_place_and_flag_but_keep_recent_order() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        for name in ["가", "나", "다"] {
+            Workspace::create(r, name).unwrap();
+        }
+        save(
+            r,
+            &WorkspaceOrder {
+                order: vec![entry(r, "다"), entry(r, "나"), entry(r, "가")],
+                hidden: vec![entry(r, "나")],
+            },
+        )
+        .unwrap();
+        let recent = vec![std::fs::canonicalize(r.join("나")).unwrap()];
+        let items = workspace_items(arranged(r), &recent, |_| 0);
+        let view: Vec<_> = items
+            .iter()
+            .map(|i| (i.name.as_str(), i.order, i.hidden, i.orderable))
+            .collect();
+        assert_eq!(
+            view,
+            vec![
+                ("나", Some(1), true, true),
+                ("가", Some(2), false, true),
+                ("다", Some(0), false, true)
+            ]
+        );
+        let json = serde_json::to_value(&items[0]).unwrap();
+        assert_eq!(json["order"], 1);
+        assert_eq!(json["hidden"], true);
+        assert_eq!(json["orderable"], true);
+    }
+
+    #[test]
+    fn a_missing_recent_workspace_has_no_place() {
+        let root = tempfile::tempdir().unwrap();
+        Workspace::create(root.path(), "가").unwrap();
+        let recent = vec![PathBuf::from("/gone/옛")];
+        let items = workspace_items(arranged(root.path()), &recent, |_| 0);
+        assert_eq!(items.len(), 2);
+        let gone = &items[1];
+        assert!(gone.missing);
+        assert_eq!(gone.order, None);
+        assert!(!gone.hidden);
+        assert!(!gone.orderable);
+        let json = serde_json::to_value(gone).unwrap();
+        assert_eq!(json["order"], serde_json::Value::Null);
+    }
+
+    #[test]
+    fn a_workspace_without_a_readable_id_is_not_orderable() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        Workspace::create(r, "가").unwrap();
+        Workspace::create(r, "나").unwrap();
+        std::fs::write(r.join("가").join(TOTE_DIR).join("workspace.json"), "nope").unwrap();
+        let items = workspace_items(arranged(r), &[], |_| 0);
+        let view: Vec<_> = items
+            .iter()
+            .map(|i| (i.name.as_str(), i.order, i.orderable))
+            .collect();
+        assert_eq!(view, vec![("가", Some(1), false), ("나", Some(0), true)]);
+    }
+
+    #[test]
+    fn paths_without_an_id_are_left_out() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        Workspace::create(r, "가").unwrap();
+        Workspace::create(r, "나").unwrap();
+        std::fs::write(r.join("나").join(TOTE_DIR).join("workspace.json"), "nope").unwrap();
+        std::fs::create_dir(r.join("그냥 폴더")).unwrap();
+        let paths = vec![
+            r.join("나"),
+            r.join("그냥 폴더"),
+            r.join("없음"),
+            r.join("가"),
+        ];
+        assert_eq!(entries(&paths), vec![entry(r, "가")]);
     }
 }
