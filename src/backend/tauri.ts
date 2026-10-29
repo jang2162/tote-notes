@@ -21,6 +21,7 @@ import {
   type SearchEvent,
   type SearchQuery,
   type Settings,
+  type WindowStart,
   type WorkspaceRoots,
   type SettingsPatch,
   type ShortcutTable,
@@ -61,8 +62,36 @@ const bytesOf = (buffer: ArrayBuffer) => new Uint8Array(buffer);
 // Header values must be ASCII; names and paths are Korean as often as not.
 const enc = encodeURIComponent;
 
+declare global {
+  interface Window {
+    __TOTE_WINDOW_START__?: unknown;
+  }
+}
+
 export class TauriBackend implements Backend {
   private readonly window = getCurrentWebviewWindow();
+  private readonly start = this.readStart();
+
+  // Each field is checked on its own: anything but the right type is the plain default.
+  private readStart(): WindowStart {
+    const raw = globalThis.window?.__TOTE_WINDOW_START__;
+    const given = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+    return {
+      label: typeof given.label === "string" ? given.label : this.window.label,
+      macTitlebar: given.macTitlebar === true,
+      sidebarCollapsed: given.sidebarCollapsed === true,
+    };
+  }
+
+  windowStart() {
+    return this.start;
+  }
+  startWindowDrag() {
+    return this.window.startDragging();
+  }
+  toggleWindowZoom() {
+    return this.window.toggleMaximize();
+  }
 
   workspaceInfo() {
     return call<WorkspaceInfo>("workspace_info");

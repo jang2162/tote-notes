@@ -28,6 +28,7 @@ import {
   type FlushGoal,
   type MemoInfo,
   type OutsideChange,
+  type WindowStart,
   type PendingOpen,
   type TabRef,
   type SearchEvent,
@@ -207,6 +208,11 @@ export interface FakeData {
   suspendShortcutCalls?: boolean[];
   /** The app commands `runMenuCommand` ran, in order. Absent until it is first called. */
   menuCommandRuns?: string[];
+  /** The window's title bar is overlaid, as on macOS. Absent in old seeds. */
+  macTitlebar?: boolean;
+  /** `startWindowDrag` and `toggleWindowZoom` calls. Absent in old seeds. */
+  windowDrags?: number;
+  windowZooms?: number;
   /** Timing marks are kept, as with `TOTE_PERF=1`; they go into `marks`. Absent in old seeds. */
   perf?: boolean;
   marks?: string[];
@@ -787,6 +793,35 @@ export class FakeBackend implements Backend {
     const data = this.data.files[path];
     if (data === undefined) throw new BackendError("not-found", path);
     return this.importMemo(basename(path), fromBase64(data));
+  }
+
+  windowStart(): WindowStart {
+    return {
+      label: this.label,
+      macTitlebar: this.data.macTitlebar === true,
+      sidebarCollapsed: this.savedLayout()?.sidebarCollapsed === true,
+    };
+  }
+
+  async startWindowDrag() {
+    this.data.windowDrags = (this.data.windowDrags ?? 0) + 1;
+    this.commit();
+  }
+
+  async toggleWindowZoom() {
+    this.data.windowZooms = (this.data.windowZooms ?? 0) + 1;
+    this.commit();
+  }
+
+  // The layout as saved, field for field: the session parser keeps only the fields it knows.
+  private savedLayout(): { sidebarCollapsed?: unknown } | null {
+    if (this.hub) return this.hub.layout(this.data) as { sidebarCollapsed?: unknown } | null;
+    try {
+      const [window] = JSON.parse(this.data.session ?? "null")?.windows ?? [];
+      return typeof window === "object" ? window : null;
+    } catch {
+      return null;
+    }
   }
 
   async readWindowLayout() {

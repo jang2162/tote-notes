@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TauriBackend } from "./tauri";
 import { BackendError } from "./types";
@@ -13,7 +13,11 @@ const { invoke, Channel } = vi.hoisted(() => ({
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel }));
 vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({}) }));
-vi.mock("@tauri-apps/api/webviewWindow", () => ({ getCurrentWebviewWindow: () => ({}) }));
+const startDragging = vi.fn();
+const toggleMaximize = vi.fn();
+vi.mock("@tauri-apps/api/webviewWindow", () => ({
+  getCurrentWebviewWindow: () => ({ label: "ws-9", startDragging, toggleMaximize }),
+}));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
 // The command table of src-tauri/src/app/commands.rs. A renamed command or argument key fails
@@ -231,5 +235,38 @@ describe("TauriBackend", () => {
     expect(backend.viewerUrl("tote.markdown-preview", "viewer.html")).toBe(
       "tote-ext://localhost/tote.markdown-preview/viewer.html",
     );
+  });
+});
+
+describe("TauriBackend window start", () => {
+  // The tests run in node, which has no `window`; the page's global is stubbed in.
+  const page = (start?: unknown) => vi.stubGlobal("window", { __TOTE_WINDOW_START__: start });
+  afterEach(() => vi.unstubAllGlobals());
+
+  it("reads the values the native side put on the page", () => {
+    page({ label: "ws-2", macTitlebar: true, sidebarCollapsed: true });
+    expect(new TauriBackend().windowStart()).toEqual({
+      label: "ws-2",
+      macTitlebar: true,
+      sidebarCollapsed: true,
+    });
+  });
+
+  it("reads anything else as an expanded window that is not macOS, named by its label", () => {
+    const plain = { label: "ws-9", macTitlebar: false, sidebarCollapsed: false };
+    page();
+    expect(new TauriBackend().windowStart()).toEqual(plain);
+    page({ macTitlebar: "yes", sidebarCollapsed: 1, label: 5 });
+    expect(new TauriBackend().windowStart()).toEqual(plain);
+  });
+
+  it("drags and zooms through the window", async () => {
+    startDragging.mockClear();
+    toggleMaximize.mockClear();
+    const backend = new TauriBackend();
+    await backend.startWindowDrag();
+    await backend.toggleWindowZoom();
+    expect(startDragging).toHaveBeenCalledTimes(1);
+    expect(toggleMaximize).toHaveBeenCalledTimes(1);
   });
 });

@@ -386,7 +386,22 @@ export function errorCode(err: unknown): BackendErrorCode | null {
   return err instanceof BackendError ? err.code : null;
 }
 
+/** What the native side tells a page about its window before the page runs. */
+export interface WindowStart {
+  label: string;
+  /** The window's title bar is overlaid (macOS): the tab row sits on the traffic-light line. */
+  macTitlebar: boolean;
+  /** The sidebar was collapsed in the window's saved layout. */
+  sidebarCollapsed: boolean;
+}
+
 export interface Backend {
+  /** The same value every call; read once as the window starts. */
+  windowStart(): WindowStart;
+  /** Hands the pointer press that is going on to the system, which drags the window. */
+  startWindowDrag(): Promise<void>;
+  /** Zooms the window, or restores it from zoomed (the title bar's double click). */
+  toggleWindowZoom(): Promise<void>;
   workspaceInfo(): Promise<WorkspaceInfo>;
   listMemos(): Promise<MemoInfo[]>;
   createMemo(): Promise<MemoInfo>;

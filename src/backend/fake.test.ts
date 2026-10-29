@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { defaultFakeData, FakeBackend, fakeMemo, memoryStorage } from "./fake";
+import { defaultFakeData, FAKE_LABEL, FakeBackend, fakeMemo, memoryStorage } from "./fake";
 import type { BackendError, TabRef } from "./types";
 
 describe("FakeBackend settings", () => {
@@ -276,5 +276,38 @@ describe("FakeBackend shortcuts", () => {
     await backend.suspendShortcuts(false);
     expect(backend.data.shortcutsSuspended).toBe(false);
     expect(backend.data.suspendShortcutCalls).toEqual([true, false]);
+  });
+});
+
+describe("FakeBackend window start", () => {
+  const sessionWith = (sidebarCollapsed: unknown) =>
+    JSON.stringify({ version: 2, windows: [{ panes: [], focusedPane: 0, sidebarCollapsed }] });
+
+  it("is not macOS and expanded by default", () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    expect(backend.windowStart()).toEqual({
+      label: FAKE_LABEL,
+      macTitlebar: false,
+      sidebarCollapsed: false,
+    });
+  });
+
+  it("takes macOS from the seed and the sidebar from the window's saved layout", () => {
+    const data = { ...defaultFakeData(), macTitlebar: true, session: sessionWith(true) };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    expect(backend.windowStart()).toMatchObject({ macTitlebar: true, sidebarCollapsed: true });
+    const text = { ...data, session: sessionWith("true") };
+    const other = new FakeBackend(memoryStorage(JSON.stringify(text)));
+    expect(other.windowStart().sidebarCollapsed).toBe(false);
+  });
+
+  it("counts drags and zooms", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    await backend.startWindowDrag();
+    await backend.startWindowDrag();
+    await backend.toggleWindowZoom();
+    await backend.toggleWindowZoom();
+    expect(backend.data.windowDrags).toBe(2);
+    expect(backend.data.windowZooms).toBe(2);
   });
 });
