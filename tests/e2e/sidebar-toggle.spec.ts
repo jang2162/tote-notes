@@ -119,6 +119,28 @@ test("expanding with the keys on the lead's button puts them on the sidebar's to
   await expect(toggle(page, COLLAPSE)).toBeFocused();
 });
 
+test("expanding by the menu with the keys on the lead's button puts them on the sidebar's toggle", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
+  await open(page, "장보기");
+  await menu(page, "toggle-sidebar");
+  await expectCollapsed(page);
+  await leadButton(page).focus();
+  await menu(page, "toggle-sidebar");
+  await expectExpanded(page);
+  await expect(toggle(page, COLLAPSE)).toBeFocused();
+
+  // Anywhere else, expanding leaves the keys where they are.
+  await page.locator(".cm-content").focus();
+  await menu(page, "toggle-sidebar");
+  await expectCollapsed(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await menu(page, "toggle-sidebar");
+  await expectExpanded(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
+});
+
 test("the toggles name the shortcut they have", async ({ page, context }) => {
   await start(page);
   await expect(toggle(page, COLLAPSE)).toHaveAttribute("title", "사이드바 접기 (⌘B)");

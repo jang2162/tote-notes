@@ -78,6 +78,8 @@ declare global {
     lastScreenPoint?: { x: number; y: number };
     /** `quietErrors` in tests/e2e/helpers.ts: the words of the errors it keeps out of the output. */
     __quietErrors?: string[];
+    /** `firstFrames` in sidebar-session.spec.ts: the sidebar's width at every frame drawn. */
+    __sidebarWidths?: number[];
     /** save-failure.spec.ts: while true the patched `keepExternalDraft` rejects. */
     __toteBroken: boolean;
   }

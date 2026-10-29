@@ -37,6 +37,7 @@ export interface SessionLayout {
   readonly panes: ReadonlyMap<string, { readonly tabs: Tabs }>;
   /** Index of the focused pane among the leaves, depth first. */
   readonly focusedPane: number;
+  readonly sidebarCollapsed: boolean;
 }
 
 /** What `restore` brings back for the window to lay out. */
@@ -47,6 +48,8 @@ export interface RestoredLayout {
    * one to activate — the pane's active tab, else its last one, else null. */
   panes: { tabs: Doc[]; active: Doc | null }[];
   focusedPane: number;
+  /** What the session says; false when it says nothing. */
+  sidebarCollapsed: boolean;
 }
 
 /** Reads the window's session into tabs for its panes and builds the session from the panes. */
@@ -89,7 +92,12 @@ export class SessionSync {
       if (index === sessionPaneList[pane].activeTab) panes[pane].active = doc;
     }
     for (const pane of panes) pane.active ??= pane.tabs.at(-1) ?? null;
-    return { layout: window.layout, panes, focusedPane: window.focusedPane };
+    return {
+      layout: window.layout,
+      panes,
+      focusedPane: window.focusedPane,
+      sidebarCollapsed: window.sidebarCollapsed === true,
+    };
   }
 
   /** The tab for `tab` — another window's, handed to this one — as a restore would make it, its
@@ -102,7 +110,7 @@ export class SessionSync {
 
   async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
-    const { layout, panes, focusedPane } = this.layout();
+    const { layout, panes, focusedPane, sidebarCollapsed } = this.layout();
     const nodeOf = (node: LayoutNode): SessionNode => {
       if (node.kind === "split") {
         return { axis: node.axis, children: node.children.map(nodeOf), shares: [...node.shares] };
@@ -118,6 +126,7 @@ export class SessionSync {
     const window: WindowSession = { layout: nodeOf(layout), focusedPane };
     const frame = await this.backend.windowFrame();
     if (frame) window.frame = frame;
+    if (sidebarCollapsed) window.sidebarCollapsed = true;
     return window;
   }
 

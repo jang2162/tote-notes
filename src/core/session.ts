@@ -18,6 +18,8 @@ export interface WindowSession {
   layout: SessionNode;
   /** Index of the focused pane among the panes read depth first. */
   focusedPane: number;
+  /** Written only while collapsed, so an expanded window's session reads as before. */
+  sidebarCollapsed?: true;
 }
 
 export interface PaneSession {
@@ -110,6 +112,8 @@ export function parseWindowSession(value: unknown): WindowSession {
   };
   const frame = parseFrame(raw.frame);
   if (frame) window.frame = frame;
+  // Only `true`, as the native side reads it (`layout_sidebar_collapsed`).
+  if (raw.sidebarCollapsed === true) window.sidebarCollapsed = true;
   return window;
 }
 

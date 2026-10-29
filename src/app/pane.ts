@@ -101,8 +101,8 @@ export class Pane {
     menu: (id) => void this.host.tabMenu(id),
     newTab: () => void this.host.newMemoIn(this, "end"),
   });
-  /** The pane's top row: the tab bar, and in front of it the lead while this is the top left pane
-   * of a window whose sidebar is collapsed (`attachLead`). */
+  /** The pane's top row: the tab bar, and in front of it the lead when this is the top left pane
+   * (`attachLead`), whatever the sidebar's state; the lead shows only while it is collapsed. */
   readonly head: HTMLElement = h("div", { class: "pane-head" }, this.tabBar.el);
   /** Focusable, to take the keys while it shows no editor (`takeKeys`). */
   readonly el: HTMLElement = h("div", { class: "pane", tabIndex: -1 }, this.head, this.surface.el);

@@ -10,7 +10,11 @@ import { leaf } from "./layout";
 import { SessionSync, sessionTab } from "./session-sync";
 import { Tabs } from "./tabs";
 
-function setup(session: object | null, memos: Record<string, ReturnType<typeof fakeMemo>> = {}) {
+function setup(
+  session: object | null,
+  memos: Record<string, ReturnType<typeof fakeMemo>> = {},
+  sidebarCollapsed = false,
+) {
   const backend = new FakeBackend(
     memoryStorage(
       JSON.stringify({
@@ -47,7 +51,12 @@ function setup(session: object | null, memos: Record<string, ReturnType<typeof f
   const tabs = new Tabs();
   const sync = new SessionSync(
     backend,
-    () => ({ layout: leaf("p"), panes: new Map([["p", { tabs }]]), focusedPane: 0 }),
+    () => ({
+      layout: leaf("p"),
+      panes: new Map([["p", { tabs }]]),
+      focusedPane: 0,
+      sidebarCollapsed,
+    }),
     "device-1",
     (id) => infos.get(id),
     (info) => new MemoDoc(host, info),
@@ -168,6 +177,15 @@ describe("SessionSync.restore", () => {
     } finally {
       logged.mockRestore();
     }
+  });
+
+  it("brings back the sidebar as the session left it, expanded when it says nothing", async () => {
+    const window = { layout: { tabs: [], activeTab: -1 }, focusedPane: 0 };
+    const collapsed = setup({ version: 2, windows: [{ ...window, sidebarCollapsed: true }] });
+    expect((await collapsed.sync.restore()).sidebarCollapsed).toBe(true);
+    const expanded = setup({ version: 2, windows: [window] });
+    expect((await expanded.sync.restore()).sidebarCollapsed).toBe(false);
+    expect((await setup(null).sync.restore()).sidebarCollapsed).toBe(false);
   });
 });
 
@@ -318,6 +336,17 @@ describe("SessionSync.build and sessionTab", () => {
     expect((await sync.build(() => {})).frame).toEqual(frame);
   });
 
+  it("writes the sidebar as collapsed only while it is", async () => {
+    const collapsed = setup(null, {}, true);
+    expect(await collapsed.sync.build(() => {})).toEqual({
+      layout: { tabs: [], activeTab: -1 },
+      focusedPane: 0,
+      sidebarCollapsed: true,
+    });
+    const expanded = await setup(null, {}, false).sync.build(() => {});
+    expect(expanded).not.toHaveProperty("sidebarCollapsed");
+  });
+
   it("writes a leaf without a pane as an empty pane rather than failing", async () => {
     const { backend, host, tabs } = setup(null, { a: fakeMemo("가.md", "") });
     tabs.active = tabs.insertAfterActive(new MemoDoc(host, host.memoInfo("a")!));
@@ -332,6 +361,7 @@ describe("SessionSync.build and sessionTab", () => {
         },
         panes: new Map([["a", { tabs }]]),
         focusedPane: 0,
+        sidebarCollapsed: false,
       }),
       "device-1",
       (id) => host.memoInfo(id),
@@ -384,6 +414,7 @@ describe("SessionSync.build and sessionTab", () => {
           ["c", { tabs: c }],
         ]),
         focusedPane: 2,
+        sidebarCollapsed: false,
       }),
       "device-1",
       (id) => host.memoInfo(id),

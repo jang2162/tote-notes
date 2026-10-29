@@ -82,6 +82,14 @@ describe("parseWindowSession", () => {
     expect(widths(undefined)).toEqual([1]);
   });
 
+  it("reads the sidebar as collapsed only for true", () => {
+    expect(parseWindowSession({ sidebarCollapsed: true }).sidebarCollapsed).toBe(true);
+    for (const sidebarCollapsed of ["true", 1, null, false, undefined]) {
+      expect(parseWindowSession({ sidebarCollapsed })).not.toHaveProperty("sidebarCollapsed");
+    }
+    expect(parseWindowSession({})).not.toHaveProperty("sidebarCollapsed");
+  });
+
   it("focusedPane out of range is 0", () => {
     const panes = [{ tabs: [] }, { tabs: [] }];
     expect(parseWindowSession({ panes, focusedPane: 1 }).focusedPane).toBe(1);

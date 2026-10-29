@@ -108,6 +108,7 @@ import {
 } from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { claimPlaces, parseJson, sessionTab, SessionSync } from "./session-sync";
+import { startsCollapsed, storeCollapsed, storedCollapsed } from "./sidebar-state";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
@@ -285,12 +286,9 @@ export class AppController implements DocHost, PaneHost {
   private readonly collapseButton = new SidebarToggle("collapse", () =>
     this.setSidebarCollapsed(true),
   );
-  /** Pressed with the keys, it hands them to the collapse button: it is hidden once pressed. */
-  private readonly expandButton: SidebarToggle = new SidebarToggle("expand", () => {
-    const keys = document.activeElement === this.expandButton.el;
-    this.setSidebarCollapsed(false);
-    if (keys) this.collapseButton.el.focus();
-  });
+  private readonly expandButton = new SidebarToggle("expand", () =>
+    this.setSidebarCollapsed(false),
+  );
   /** In front of the top left pane's tab bar (`layoutPanes`); shown while the sidebar is
    * collapsed. */
   private readonly lead = tabLead(this.expandButton);
@@ -334,6 +332,16 @@ export class AppController implements DocHost, PaneHost {
     this.windowStart = backend.windowStart();
     // Before the first frame, so the top row is never drawn the other way first.
     document.documentElement.classList.toggle("mac-titlebar", this.windowStart.macTitlebar);
+    // Likewise, and without the slide. Kept at once, so a page this window loads next — a switch
+    // reloads it — starts from the state it has now rather than from its start value.
+    const { label } = this.windowStart;
+    const collapsed = startsCollapsed(
+      this.windowStart,
+      storedCollapsed(() => sessionStorage, label),
+    );
+    document.documentElement.classList.toggle("sidebar-collapsed", collapsed);
+    this.sidebar.el.inert = collapsed;
+    storeCollapsed(() => sessionStorage, label, collapsed);
     this.focused = this.makePane();
     this.panes = [this.focused];
     this.layout = leaf(this.focused.id);
@@ -351,14 +359,19 @@ export class AppController implements DocHost, PaneHost {
   }
 
   /** Collapses the sidebar to nothing, or brings it back. Out of the keys' and the accessibility
-   * tree's reach while collapsed; keys that were in it go to the focused pane. The column slides
-   * from the first call on, never as the window is first drawn. */
+   * tree's reach while collapsed; keys that were in it go to the focused pane, and keys on the
+   * lead, hidden once expanded, go to the collapse button. The column slides from the first call
+   * on, never as the window is first drawn. The window keeps the state, in its session too. */
   setSidebarCollapsed(collapsed: boolean): void {
     const root = document.documentElement;
+    const keysOnLead = !collapsed && this.lead.contains(document.activeElement);
     root.classList.add("sidebar-animates");
     root.classList.toggle("sidebar-collapsed", collapsed);
     this.sidebar.el.inert = collapsed;
     if (collapsed && this.sidebar.el.contains(document.activeElement)) this.focused.takeKeys();
+    if (keysOnLead) this.collapseButton.el.focus();
+    storeCollapsed(() => sessionStorage, this.windowStart.label, collapsed);
+    this.saveSessionSoon();
   }
 
   toggleSidebar(): void {
@@ -493,6 +506,7 @@ export class AppController implements DocHost, PaneHost {
         layout: this.layout,
         panes: new Map(this.panes.map((pane) => [pane.id, pane])),
         focusedPane: this.panes.indexOf(this.focused),
+        sidebarCollapsed: this.sidebarCollapsed,
       }),
       this.deviceId,
       (id) => this.memoList.get(id),
@@ -574,6 +588,9 @@ export class AppController implements DocHost, PaneHost {
       }),
     );
     this.restoring = false;
+    // The window keeps the state it started with (`sidebar-state.ts`); a session saying otherwise
+    // — the one of the workspace a switch came to — is written again.
+    if (restored.sidebarCollapsed !== this.sidebarCollapsed) this.saveSessionSoon();
     this.markNextFrame("restore-done");
     // Counted among the tabs being adopted from the moment the restore is done, in the same step:
     // a round answered while they are still being placed waits for them (`onFlush`).
@@ -1605,7 +1622,7 @@ export class AppController implements DocHost, PaneHost {
           return this.toggleSidebar();
         case "search-workspace":
           // A search needs the sidebar: it stays expanded once the search is closed.
-          this.setSidebarCollapsed(false);
+          if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
           this.sidebar.show("search");
           return this.searchPanel.focus();
         case "undo":
