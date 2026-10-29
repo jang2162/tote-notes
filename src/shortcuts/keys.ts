@@ -428,6 +428,10 @@ export function shortcutHint(table: ShortcutTable, id: string): string | null {
   return current ? formatAccelerator(current) : null;
 }
 
+/** The name the shortcut table gives 설정…'s fixed shortcut (`FIXED` in src-tauri/src/shortcuts.rs);
+ * keys.test.ts holds it against the table Rust writes out. */
+export const SETTINGS_FIXED_NAME = "설정…";
+
 /** The fixed shortcut named `name` — the menu item's name, as Rust's `FIXED` gives it; fixed ones
  * have no id — as the screen writes it; null when there is none. */
 export function fixedShortcutHint(table: ShortcutTable, name: string): string | null {

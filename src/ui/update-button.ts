@@ -13,6 +13,8 @@ export class UpdateButton {
 
   show(version: string): void {
     this.el.textContent = `업데이트 ${version}`;
+    // The row's width cuts a long version short; the whole of it is here.
+    this.el.title = this.el.textContent;
     this.el.hidden = false;
   }
 

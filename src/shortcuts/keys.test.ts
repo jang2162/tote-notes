@@ -10,6 +10,7 @@ import {
   conflict,
   editorBindings,
   fixedShortcutHint,
+  SETTINGS_FIXED_NAME,
   formatAccelerator,
   menuKeymap,
   recordableAccelerator,
@@ -323,7 +324,7 @@ describe("shortcutHint", () => {
 describe("fixedShortcutHint", () => {
   it("writes the fixed shortcut of the name Rust gives it, or nothing", () => {
     // Rust's own table: the sidebar's settings button looks 설정… up by this name.
-    expect(fixedShortcutHint(fixture as ShortcutTable, "설정…")).toBe("⌘,");
+    expect(fixedShortcutHint(fixture as ShortcutTable, SETTINGS_FIXED_NAME)).toBe("⌘,");
     expect(fixedShortcutHint(fixture as ShortcutTable, "설정")).toBeNull();
   });
 });

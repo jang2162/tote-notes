@@ -797,8 +797,9 @@ button {
 }
 
 /* The sidebar's foot: the settings button, and the update button filling the rest of the row when
- * there is one. The height is set, not taken from the buttons, so the memo list above does not move
- * as the update button comes and goes. */
+ * there is one. The set height leaves 8px above and below the buttons so their focus ring is not cut
+ * at the window's bottom edge (the body clips); being set, it also keeps the row, and the memo list
+ * above it, where they are as the update button comes and goes. */
 .sidebar-footer {
   display: flex;
   flex: none;
@@ -810,6 +811,8 @@ button {
   border-top: 1px solid var(--border);
 }
 
+/* One height, so the two sit level as one row. It alone would keep the row's height too: the row
+ * moves only when both this and the set height above are gone. */
 .settings-button,
 .update-button {
   box-sizing: border-box;

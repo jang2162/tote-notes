@@ -27,6 +27,7 @@ test("an update found at launch puts up a button at the bottom left and asks not
   await expect(updateButton(page)).toBeHidden();
   await announce(page);
   await expect(updateButton(page)).toHaveText("업데이트 0.2.0");
+  await expect(updateButton(page)).toHaveAttribute("title", "업데이트 0.2.0");
   await pendingTaken(page);
   await expect(dialog(page)).toHaveCount(0);
   // The foot of the sidebar, the window's bottom left: beside the settings button, in its row

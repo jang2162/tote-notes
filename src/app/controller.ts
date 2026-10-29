@@ -47,7 +47,12 @@ import {
   workerHighlighting,
   type WorkerHighlighting,
 } from "../highlight/extension";
-import { fixedShortcutHint, menuKeymap, shortcutHint } from "../shortcuts/keys";
+import {
+  fixedShortcutHint,
+  menuKeymap,
+  SETTINGS_FIXED_NAME,
+  shortcutHint,
+} from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
@@ -566,7 +571,9 @@ export class AppController implements DocHost, PaneHost {
   /** The empty panes, the status bar and the settings button name the shortcuts there are now, and
    * the editors give the keys the menu has too to the menu. */
   private shortcutsChanged(): void {
-    this.settingsButton.setShortcut(this.shortcuts && fixedShortcutHint(this.shortcuts, "설정…"));
+    this.settingsButton.setShortcut(
+      this.shortcuts && fixedShortcutHint(this.shortcuts, SETTINGS_FIXED_NAME),
+    );
     this.menuKeys = this.shortcuts
       ? menuKeymap(this.shortcuts, (id) => void this.runMenuCommand(id))
       : [];

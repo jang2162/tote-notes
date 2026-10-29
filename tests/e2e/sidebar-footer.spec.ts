@@ -10,9 +10,10 @@ const settingsButton = (page: Page) => page.getByRole("button", { name: "설정"
 const updateButton = (page: Page) => page.locator(".update-button");
 const settingsScreen = (page: Page) => page.locator(".modal.settings");
 const box = async (page: Page, selector: string) => (await page.locator(selector).boundingBox())!;
-const announce = (page: Page) =>
-  page.evaluate(() =>
-    window.__tote.backend.announceUpdate({ version: "0.2.0", current: "0.1.0", notes: "" }),
+const announce = (page: Page, version = "0.2.0") =>
+  page.evaluate(
+    (version) => window.__tote.backend.announceUpdate({ version, current: "0.1.0", notes: "" }),
+    version,
   );
 
 test("the settings button sits at the window's bottom left with no update, and opens the settings", async ({
@@ -69,6 +70,9 @@ test("an update puts its button beside the settings button, and the foot keeps i
   await announce(page);
   await expect(updateButton(page)).toHaveText("업데이트 0.2.0");
 
+  // The row's set height keeps these, and so does the buttons' one height: either alone does, so
+  // this fails only when both are gone. The set height's room for the focus ring is
+  // focus-rings.spec.ts's.
   expect(await box(page, ".sidebar-footer")).toEqual(before);
   expect(await box(page, ".memo-pane")).toEqual(listBefore);
   const settings = (await settingsButton(page).boundingBox())!;
@@ -94,4 +98,18 @@ test("the foot stays as it is with the search panel in the memo list's place", a
   await expect(updateButton(page)).toBeVisible();
   await settingsButton(page).click();
   await expect(settingsScreen(page)).toBeVisible();
+});
+
+test("a version too long for the row is cut short on the button and whole in its title", async ({
+  page,
+}) => {
+  const version = "0.2.0-beta.1+build.20261029.abcdef1234567";
+  await start(page);
+  const before = await box(page, ".sidebar-footer");
+  await announce(page, version);
+  await expect(updateButton(page)).toHaveText(`업데이트 ${version}`);
+  await expect(updateButton(page)).toHaveAttribute("title", `업데이트 ${version}`);
+  // Cut, not wrapped: the row stays one line high.
+  expect(await updateButton(page).evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await box(page, ".sidebar-footer")).toEqual(before);
 });
