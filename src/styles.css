@@ -31,6 +31,8 @@
   --focus-ring-room: 4px;
   /* The window's top line: the sidebar's top row and the panes' tab bars, one height. */
   --top-row-height: 36px;
+  /* The traffic lights' room in the top line (macOS): their 14px start and three buttons, and a gap. */
+  --traffic-lights-width: 80px;
   --sidebar-width: 240px;
   font:
     13px/1.4 -apple-system,
@@ -250,9 +252,11 @@ html.sidebar-collapsed .sidebar {
   background: var(--sidebar-bg);
 }
 
-/* The 8px is room for the collapse button's focus ring, which the sidebar cuts. */
+/* The 8px is room for the collapse button's focus ring, which the sidebar cuts. On macOS the row
+ * drags the window: a double click there zooms it rather than selecting the app's name. */
 .sidebar-head {
   padding: 0 8px;
+  user-select: none;
 }
 
 /* A grid item is at least as wide as its content: without this, many tabs widen the pane past the
@@ -261,8 +265,21 @@ html.sidebar-collapsed .sidebar {
   min-width: 0;
 }
 
+/* The space between the app's name and the button is the row's own: free, it drags the window. */
 .sidebar-head .sidebar-toggle {
   margin-left: auto;
+}
+
+.app-name {
+  font-weight: 600;
+}
+
+/* The row's full height, so a press anywhere in front of the name or the button drags the window. */
+html.mac-titlebar .sidebar-head .traffic-lights-room,
+html.mac-titlebar .tab-lead .traffic-lights-room {
+  flex: none;
+  align-self: stretch;
+  width: var(--traffic-lights-width);
 }
 
 /* Not on macOS the window has its title bar: no traffic lights to leave room for, and the title
@@ -279,6 +296,7 @@ html:not(.mac-titlebar) .traffic-lights-room {
   align-items: center;
   align-self: stretch;
   padding: 0 4px 0 8px;
+  user-select: none;
 }
 
 html:not(.sidebar-collapsed) .tab-lead {

@@ -7,6 +7,7 @@ import type { ThemeManager } from "../theme/manager";
 import { h } from "../ui/dom";
 import type { StatusBar } from "../ui/status-bar";
 import { TabBar, type TabDrag } from "../ui/tab-bar";
+import { dragsWindow } from "../ui/window-drag";
 import { ViewerHost } from "../viewer/host";
 import { LargeTextViewer } from "../viewer/large-text";
 import { MemoDoc, type Doc, type ExternalDoc, type Problem } from "./docs";
@@ -82,6 +83,11 @@ export interface PaneHost {
   tabMenu(tabId: string): Promise<void>;
   /** A new memo in `pane`, which takes the focus: after its active tab, or as its last tab. */
   newMemoIn(pane: Pane, at: "after-active" | "end"): Promise<void>;
+  /** Whether a press on `pane`'s tab bar may drag the window: laid out for macOS, and the pane on
+   * the window's top line. */
+  canDragWindow(pane: Pane): boolean;
+  /** Hands the press going on to the system, which drags the window. */
+  dragWindow(): void;
   saveSessionSoon(): void;
   report(error: unknown): void;
   mark(name: string): void;
@@ -122,6 +128,12 @@ export class Pane {
   ) {
     this.view.scrollDOM.addEventListener("scroll", () => this.host.saveSessionSoon(), {
       passive: true,
+    });
+    // The bar's own free space, as its `dblclick` reads it; the tabs drag themselves.
+    dragsWindow(this.tabBar.el, {
+      isFree: (target) => target === this.tabBar.el,
+      canDrag: () => this.host.canDragWindow(this),
+      start: () => this.host.dragWindow(),
     });
   }
 

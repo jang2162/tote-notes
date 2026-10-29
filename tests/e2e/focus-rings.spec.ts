@@ -15,7 +15,8 @@ async function clippedRings(root: Locator): Promise<string[]> {
     for (const control of controls) {
       if (control.getClientRects().length === 0 || control.matches(":disabled")) continue;
       // As Tab brings a control into view: to the nearest edge, where a ring is most often cut.
-      control.focus({ preventScroll: true });
+      // With its ring drawn as Tab draws it: WebKit draws none on a button a script focuses.
+      control.focus({ preventScroll: true, focusVisible: true });
       control.scrollIntoView({ block: "nearest", inline: "nearest" });
       const style = getComputedStyle(control);
       const ring =
@@ -126,3 +127,22 @@ test("no focus ring is cut in the dialogs, the find bar or the window around the
     sidebar: [],
   });
 });
+
+// The lead's expand button shows only while the sidebar is collapsed, against the window's left
+// edge; on macOS the traffic lights' room comes before it.
+for (const [layout, seed] of [
+  ["not on macOS", {}],
+  ["macOS", { macTitlebar: true }],
+] as const) {
+  test(`no focus ring is cut in the lead of the collapsed sidebar (${layout})`, async ({
+    page,
+  }) => {
+    await start(page, seed);
+    await page.getByRole("button", { name: "사이드바 접기", exact: true }).click();
+    await expect
+      .poll(() => page.locator(".sidebar").evaluate((el) => el.getBoundingClientRect().width))
+      .toBe(0);
+    await expect(page.locator(".tab-lead button")).toBeVisible();
+    expect(await clippedRings(page.locator(".tab-lead"))).toEqual([]);
+  });
+}

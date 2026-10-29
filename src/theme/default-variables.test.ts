@@ -39,6 +39,7 @@ const NOT_THEMED: Record<string, { light: string; dark: string }> = {
   "--editor-size": SAME("14px"),
   "--focus-ring-room": SAME("4px"),
   "--top-row-height": SAME("36px"),
+  "--traffic-lights-width": SAME("80px"),
   "--sidebar-width": SAME("240px"),
 };
 

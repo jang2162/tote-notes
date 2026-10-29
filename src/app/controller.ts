@@ -66,6 +66,7 @@ import { UpdateButton } from "../ui/update-button";
 import { openUpdateDialog } from "../ui/update-dialog";
 import { Sidebar } from "../ui/sidebar";
 import { SidebarToggle, tabLead } from "../ui/sidebar-toggle";
+import { dragsWindow } from "../ui/window-drag";
 import { StatusBar } from "../ui/status-bar";
 import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
@@ -333,6 +334,17 @@ export class AppController implements DocHost, PaneHost {
     this.windowStart = backend.windowStart();
     // Before the first frame, so the top row is never drawn the other way first.
     document.documentElement.classList.toggle("mac-titlebar", this.windowStart.macTitlebar);
+    // The rest of the top line drags the window: the panes' tab bars do so themselves (`Pane`).
+    const offButtons = (target: Element) => !target.closest("button");
+    const onMac = () => this.windowStart.macTitlebar;
+    dragsWindow(this.sidebar.head, {
+      isFree: offButtons,
+      canDrag: onMac,
+      start: () => this.dragWindow(),
+      onDouble: () =>
+        void this.backend.toggleWindowZoom().catch((error: unknown) => this.report(error)),
+    });
+    dragsWindow(this.lead, { isFree: offButtons, canDrag: onMac, start: () => this.dragWindow() });
     // Likewise, and without the slide. Kept at once, so a page this window loads next — a switch
     // reloads it — starts from the state it has now rather than from its start value.
     const { label } = this.windowStart;
@@ -872,6 +884,15 @@ export class AppController implements DocHost, PaneHost {
     const doc = this.insertClaimed(new MemoDoc(this, info), at);
     doc.startEmpty();
     await this.showTab(doc);
+  }
+
+  canDragWindow(pane: Pane): boolean {
+    const rect = rectsOf(this.layout).get(pane.id);
+    return this.windowStart.macTitlebar && rect !== undefined && rect.y <= EDGE;
+  }
+
+  dragWindow(): void {
+    void this.backend.startWindowDrag().catch((error: unknown) => this.report(error));
   }
 
   async closeTab(tabId: string): Promise<void> {
