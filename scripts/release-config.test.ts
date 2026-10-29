@@ -117,10 +117,13 @@ describe("the release config", () => {
   });
 
   it("gives the page no updater or process permission", () => {
-    // The check, the download and the restart are Rust's (src-tauri/src/app/update.rs).
+    // The check, the download and the restart are Rust's (src-tauri/src/app/update.rs). The page
+    // gets the dialog and, for the title bar tabs, window drag and zoom, and nothing of the two.
     expect(json("src-tauri/capabilities/default.json").permissions).toEqual([
       "core:default",
       "dialog:allow-open",
+      "core:window:allow-start-dragging",
+      "core:window:allow-toggle-maximize",
     ]);
   });
 

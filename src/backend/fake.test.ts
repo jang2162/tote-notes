@@ -1,6 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 
-import { defaultFakeData, FAKE_LABEL, FakeBackend, fakeMemo, memoryStorage } from "./fake";
+import {
+  defaultFakeData,
+  FAKE_LABEL,
+  FAKE_STORAGE_KEY,
+  FakeBackend,
+  fakeMemo,
+  memoryStorage,
+} from "./fake";
 import type { BackendError, TabRef } from "./types";
 
 describe("FakeBackend settings", () => {
@@ -299,6 +306,28 @@ describe("FakeBackend window start", () => {
     const text = { ...data, session: sessionWith("true") };
     const other = new FakeBackend(memoryStorage(JSON.stringify(text)));
     expect(other.windowStart().sidebarCollapsed).toBe(false);
+  });
+
+  it("reads the sidebar from the layout the hub holds for its window", () => {
+    // The hub's layout alone: the session file is empty, so only the hub branch can know it.
+    const layout = { panes: [], focusedPane: 0, sidebarCollapsed: true };
+    const data = {
+      ...defaultFakeData(),
+      hub: { windows: [{ label: "ws-1", layout }], labels: 1, focused: null },
+    };
+    const store = new Map([[FAKE_STORAGE_KEY, JSON.stringify(data)]]);
+    vi.stubGlobal("localStorage", {
+      getItem: (key: string) => store.get(key) ?? null,
+      setItem: (key: string, value: string) => void store.set(key, value),
+    });
+    try {
+      expect(FakeBackend.fromHub("ws-1").windowStart()).toMatchObject({
+        label: "ws-1",
+        sidebarCollapsed: true,
+      });
+    } finally {
+      vi.unstubAllGlobals();
+    }
   });
 
   it("counts drags and zooms", async () => {
