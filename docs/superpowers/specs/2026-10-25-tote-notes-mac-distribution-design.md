@@ -66,7 +66,7 @@ tote 는 지금 개발자의 맥에서 디버그 번들로만 돈다. 서명·�
 - 번들 리소스: `src-tauri/resources/tote`(셸 스크립트 — Mach-O 가 아니다)와 `src-tauri/resources/extensions/`(번들 확장). 둘이 서명된 번들 안에서도 그대로 동작해야 한다. 스크립트가 심볼릭 링크로 설치된 뒤 업데이트로 앱이 바뀌어도 링크가 계속 맞는지 본다.
 - 업데이트 확인 요청은 Rust 쪽(`tauri-plugin-updater`)에서 나간다. WebView 의 CSP(`connect-src` 는 ipc·`tote-file:` 만)를 github.com 에 열지 않는다.
 - `bundle.macOS.minimumSystemVersion` 은 `13.0` 으로 정해져 있다(바꾸지 않는다).
-- 창은 여럿일 수 있다(`app.windows` 가 비어 있고 코드가 만든다). 업데이트 버튼은 사이드바 맨 아래 줄, 늘 있는 설정 버튼의 오른쪽에 그 줄의 남은 폭을 채워 모든 창이 띄운다(설정 버튼은 `docs/superpowers/specs/2026-10-20-tote-notes-settings-and-shortcuts-design.md` 「3. 설정 화면」) — 찾은 뒤에 연 창도, 워크스페이스를 바꿔 페이지가 다시 뜬 창도. 대화상자가 저절로 뜨는 것은 메뉴의 확인으로 찾았을 때뿐이고, 그 확인을 고른 창 하나에만 뜬다(`AppCore::found_update`).
+- 창은 여럿일 수 있다(`app.windows` 가 비어 있고 코드가 만든다). 업데이트 버튼은 사이드바 맨 아래 줄, 늘 있는 설정 버튼의 오른쪽에 그 줄의 남은 폭을 채워 모든 창이 띄운다(설정 버튼은 `docs/superpowers/specs/2026-10-20-tote-notes-settings-and-shortcuts-design.md` 「설정 화면」) — 찾은 뒤에 연 창도, 워크스페이스를 바꿔 페이지가 다시 뜬 창도. 대화상자가 저절로 뜨는 것은 메뉴의 확인으로 찾았을 때뿐이고, 그 확인을 고른 창 하나에만 뜬다(`AppCore::found_update`).
 - 버튼은 누를 때의 상태(받을 수 있음 / 다른 창에서 받는 중 / 이번 실행에서 설치됨)로 대화상자를 연다(`current_update`). 버튼이 뜰 때의 상태로 열면 다른 창이 받는 중인 업데이트를 또 받으려 하고, 설치된 것을 다시 묻는다. 「나중에」 를 눌러도 버튼은 남는다 — 대화상자를 다시 여는 길이다.
 - 화면 글·메뉴 이름은 이 앱의 기존 관례(한국어, 설정 화면 구역 구조 — `docs/superpowers/specs/2026-10-20-tote-notes-settings-and-shortcuts-design.md`)를 따른다. 새 메뉴 항목이 생기면 단축키 설정 목록과의 관계(바꿀 수 있는가, 고정인가)도 그 설계에 맞춘다.
 - 저장소에 `.github/` 가 없다. GitHub 저장소는 공개이고 릴리스·태그는 0개다. 로컬 `main` 은 `origin/main` 보다 앞서 있다 — 워크플로 병합 뒤 푸시한다(「정한 것」).
