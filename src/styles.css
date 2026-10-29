@@ -1243,8 +1243,24 @@ button.danger {
   border-bottom: 0;
 }
 
-.ws-order-row.dragging {
-  opacity: 0.5;
+/* While a row is dragged the others step aside: a short slide, none for reduced motion. */
+.ws-order-list.sorting .ws-order-row {
+  transition: transform 150ms ease;
+}
+
+/* The dragged row follows the pointer as it is, over the rows it passes. */
+.ws-order-list.sorting .ws-order-row.dragging {
+  position: relative;
+  z-index: 1;
+  background: var(--bg);
+  box-shadow: 0 2px 8px rgb(0 0 0 / 20%);
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ws-order-list.sorting .ws-order-row {
+    transition: none;
+  }
 }
 
 .ws-order-row.fixed {
@@ -1284,16 +1300,6 @@ button.danger {
 .ws-order-row input[type="checkbox"] {
   width: auto;
   margin: 0;
-}
-
-.ws-order-drop {
-  position: absolute;
-  right: 0;
-  left: 0;
-  height: 2px;
-  margin-top: -1px;
-  background: var(--accent);
-  pointer-events: none;
 }
 
 .shortcut-settings {

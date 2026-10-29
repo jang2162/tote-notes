@@ -22,12 +22,30 @@ export function moveItem<T>(list: readonly T[], from: number, to: number): T[] {
   return moved;
 }
 
-/** Where a row let go at `y` goes among `rows` (their client boxes, top to bottom): before the
- * first row whose middle is below `y`, else after the last. */
-function slotAt(rows: { top: number; height: number }[], y: number): number {
-  const index = rows.findIndex((row) => y < row.top + row.height / 2);
-  return index < 0 ? rows.length : index;
+/** Where row `from` of `rows` (their boxes as laid out, top to bottom) lands once moved by `dy`:
+ * past every other row whose middle its own middle has gone by. Only the first `movable` rows are
+ * places to land. */
+export function landing(
+  rows: readonly { top: number; height: number }[],
+  from: number,
+  movable: number,
+  dy: number,
+): number {
+  const middle = (row: { top: number; height: number }) => row.top + row.height / 2;
+  const at = middle(rows[from]) + dy;
+  let to = 0;
+  for (let index = 0; index < movable; index++) {
+    if (index !== from && middle(rows[index]) < at) to++;
+  }
+  return to;
 }
+
+/** The ⌃ key of each workspace in `list`: only the shown ones count, so hiding one moves the keys
+ * below it up. */
+const keysOf = (list: readonly WorkspaceListItem[]) => {
+  let shown = 0;
+  return list.map((item) => (item.hidden ? null : shortcutHint(shown++)));
+};
 
 /** The workspaces as the section lists them: the ones there are, in their set order. Those with no
  * ID come last from the backend already. */
@@ -59,9 +77,8 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
   let disposed = false;
 
   const list = h("ol", { class: "ws-order-list" });
-  const drop = h("div", { class: "ws-order-drop", hidden: true });
   // Hidden until the first read: a read that fails leaves no empty box under its reason.
-  const frame = h("div", { class: "ws-order-frame", hidden: true }, list, drop);
+  const frame = h("div", { class: "ws-order-frame", hidden: true }, list);
   const empty = h("p", {
     class: "settings-note ws-order-empty",
     textContent: "워크스페이스 루트에 워크스페이스가 없습니다.",
@@ -87,11 +104,9 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     const focusedPath = list.contains(focused)
       ? focused?.closest<HTMLElement>(".ws-order-row")?.dataset.path
       : undefined;
-    // Only the shown ones count: hiding one moves the keys below it up.
-    let shown = 0;
+    const keys = keysOf(items);
     list.replaceChildren(
       ...items.map((item, index) => {
-        const key = item.hidden ? null : shortcutHint(shown++);
         const name = item.name.normalize("NFC");
         const box = h("input", {
           type: "checkbox",
@@ -113,7 +128,7 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
           { class: classes.join(" "), data: { path: item.path } },
           h("span", { class: "ws-order-grip", textContent: "⋮⋮", ariaHidden: "true" }),
           h("span", { class: "ws-order-name", textContent: name }),
-          h("span", { class: "ws-order-key", textContent: key ?? "" }),
+          h("span", { class: "ws-order-key", textContent: keys[index] ?? "" }),
           h("label", {}, box, "숨김"),
         );
         row.addEventListener("pointerdown", (event) => press(index, event));
@@ -168,20 +183,10 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     await save();
   };
 
-  /** Shows the bar before row `slot`, or after the last row. */
-  const showDrop = (slot: number) => {
-    const rows = rowEls();
-    const top = frame.getBoundingClientRect().top;
-    const at =
-      slot < rows.length
-        ? rows[slot].getBoundingClientRect().top
-        : rows[rows.length - 1].getBoundingClientRect().bottom;
-    drop.style.top = `${at - top}px`;
-    drop.hidden = false;
-  };
-
   /** Follows a press on row `from` until it is let go, as the tab bar follows a tab (`TabBar`):
-   * pointer events, the listeners the window's. A press on the 「숨김」 box or its label is the box's. */
+   * pointer events, the listeners the window's. A press on the 「숨김」 box or its label is the box's.
+   * Dragged, the row follows the pointer and the others step aside into the order it would leave,
+   * their ⌃ keys with them; let go, that order is the one saved. */
   const press = (from: number, down: PointerEvent) => {
     if (down.button !== 0) return;
     if ((down.target as Element).closest("label, input")) return;
@@ -192,65 +197,90 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     const listening = new AbortController();
     // The rows with no ID come last: a row dragged lands before them.
     const fixedAt = items.findIndex((item) => !item.orderable);
-    const lastSlot = fixedAt < 0 ? items.length : fixedAt;
-    let slot = from;
+    const movable = fixedAt < 0 ? items.length : fixedAt;
+    const rows = rowEls();
+    // As laid out: the transforms that move the rows leave these be.
+    const boxes = rows.map((row) => ({ top: row.offsetTop, height: row.offsetHeight }));
+    // The dragged row stays over the rows it can land among.
+    const lowest = boxes[0].top - boxes[from].top;
+    const highest =
+      boxes[movable - 1].top + boxes[movable - 1].height - (boxes[from].top + boxes[from].height);
+    /** The rows by their index in `items`, in the order shown now. */
+    let order = items.map((_, index) => index);
     const ours = (event: PointerEvent) => event.pointerId === down.pointerId;
-    const finish = (to: number | null) => {
+
+    /** Shows the rows in `order`, the dragged one `dy` from its place. */
+    const draw = (dy: number) => {
+      const keys = keysOf(order.map((index) => items[index]));
+      let top = boxes[0].top;
+      order.forEach((index, place) => {
+        const row = rows[index];
+        const shift = index === from ? dy : top - boxes[index].top;
+        row.style.transform = shift ? `translateY(${shift}px)` : "";
+        const key = row.querySelector(".ws-order-key");
+        if (key) key.textContent = keys[place] ?? "";
+        top += boxes[index].height;
+      });
+    };
+    /** Puts the dragged row where the pointer is. Off the list's sides it goes back to its place,
+     * and so would the drop. */
+    const follow = (event: PointerEvent) => {
+      const box = list.getBoundingClientRect();
+      const inside = event.clientX >= box.left && event.clientX <= box.right;
+      const dy = event.clientY - down.clientY;
+      order = items.map((_, index) => index);
+      if (inside) order = moveItem(order, from, landing(boxes, from, movable, dy));
+      draw(inside ? Math.min(highest, Math.max(lowest, dy)) : 0);
+    };
+    const finish = (drop: boolean) => {
       listening.abort();
       release = null;
       const dragged = dragging;
       dragging = false;
-      drop.hidden = true;
-      rowEls()[from]?.classList.remove("dragging");
-      if (dragged && to !== null && to !== from) {
-        items = moveItem(items, from, to);
+      list.classList.remove("sorting");
+      rows[from].classList.remove("dragging");
+      if (drop && dragged && order.some((index, place) => index !== place)) {
+        items = order.map((index) => items[index]);
         render();
         // A save hears back as any change does: the list is read again then.
         stale = false;
         void save();
         return;
       }
+      if (dragged) {
+        order = items.map((_, index) => index);
+        draw(0);
+      }
       if (stale) {
         stale = false;
         void load();
       }
     };
-    const cancel = () => finish(null);
+    const cancel = () => finish(false);
+    const up = (event: PointerEvent) => {
+      if (!ours(event)) return;
+      if (dragging) follow(event);
+      finish(true);
+    };
     const move = (event: PointerEvent) => {
       if (!ours(event)) return;
-      // A release out of the window may never arrive: a move with no button down is the end.
-      if (event.buttons === 0) return cancel();
+      // A move with no button down comes when the release did not, or before it: it lets go there,
+      // which, for one let go out of the window, is where the pointer came back.
+      if (event.buttons === 0) return dragging ? up(event) : cancel();
       if (!dragging) {
         const dx = event.clientX - down.clientX;
         const dy = event.clientY - down.clientY;
         if (Math.hypot(dx, dy) <= DRAG_START_PX) return;
         dragging = true;
-        rowEls()[from]?.classList.add("dragging");
+        list.classList.add("sorting");
+        rows[from].classList.add("dragging");
         try {
           list.setPointerCapture(event.pointerId);
         } catch {
           // The pointer is gone already (InvalidStateError): its pointerup ends the drag.
         }
       }
-      slot = Math.min(
-        lastSlot,
-        slotAt(
-          rowEls().map((row) => row.getBoundingClientRect()),
-          event.clientY,
-        ),
-      );
-      showDrop(slot);
-    };
-    const up = (event: PointerEvent) => {
-      if (!ours(event)) return;
-      const box = list.getBoundingClientRect();
-      const inside =
-        event.clientX >= box.left &&
-        event.clientX <= box.right &&
-        event.clientY >= box.top &&
-        event.clientY <= box.bottom;
-      // A slot below the row's own is one place less once the row is out of the list.
-      finish(inside ? (slot > from ? slot - 1 : slot) : null);
+      follow(event);
     };
     // Before the settings screen's own Escape (the modal's, on the document): it stays open.
     const key = (event: KeyboardEvent) => {
