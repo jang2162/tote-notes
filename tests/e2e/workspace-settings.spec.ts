@@ -344,39 +344,64 @@ test("a row let go just over the list lands first", async ({ page }) => {
   await expect.poll(() => savedOrder(page)).toEqual([1, 2, 0]);
 });
 
+/** Sends pointer `type` as the mouse would, at (`x`, `y`) with `buttons` down: a press goes to
+ * the row named `on`, the rest to the window. */
+const firePointer = (
+  page: Page,
+  type: string,
+  at: { x: number; y: number; buttons: number; on?: string },
+) =>
+  page.evaluate(
+    ({ type, at }) => {
+      const event = new PointerEvent(type, {
+        pointerId: 7,
+        pointerType: "mouse",
+        isPrimary: true,
+        button: type === "pointermove" ? -1 : 0,
+        buttons: at.buttons,
+        clientX: at.x,
+        clientY: at.y,
+        bubbles: true,
+      });
+      const target = at.on
+        ? [...document.querySelectorAll(".ws-order-row .ws-order-name")].find(
+            (each) => each.textContent === at.on,
+          )!
+        : window;
+      target.dispatchEvent(event);
+    },
+    { type, at },
+  );
+
 // A move with no button down came before the release (not seen from Playwright's input, so the
 // events are made by hand): it called the drag off where the release would have dropped the row.
+// It lets go there now, so a release that follows off the list changes nothing.
 test("a move with no button down lets the row go where it is shown", async ({ page }) => {
   await open(page);
   const panel = await openSection(page);
   const from = (await row(panel, "가계부").locator(".ws-order-name").boundingBox())!;
   const to = (await row(panel, "업무").boundingBox())!;
-  await page.evaluate(
-    ({ x, fromY, toY }) => {
-      const target = [...document.querySelectorAll(".ws-order-row .ws-order-name")].find(
-        (each) => each.textContent === "가계부",
-      )!;
-      const at = (type: string, y: number, buttons: number) =>
-        new PointerEvent(type, {
-          pointerId: 7,
-          pointerType: "mouse",
-          isPrimary: true,
-          button: type === "pointermove" ? -1 : 0,
-          buttons,
-          clientX: x,
-          clientY: y,
-          bubbles: true,
-        });
-      target.dispatchEvent(at("pointerdown", fromY, 1));
-      for (let y = fromY; y > toY; y -= 8) window.dispatchEvent(at("pointermove", y, 1));
-      window.dispatchEvent(at("pointermove", toY, 1));
-      window.dispatchEvent(at("pointermove", toY, 0));
-      window.dispatchEvent(at("pointerup", toY, 0));
-    },
-    { x: from.x + from.width / 2, fromY: from.y + from.height / 2, toY: to.y + 2 },
-  );
-  await expect(names(panel)).toHaveText(["가계부", "업무", "개인"]);
+  const list = (await panel.locator(".ws-order-list").boundingBox())!;
+  const x = from.x + from.width / 2;
+  await firePointer(page, "pointerdown", {
+    x,
+    y: from.y + from.height / 2,
+    buttons: 1,
+    on: "가계부",
+  });
+  for (let y = from.y + from.height / 2; y > to.y + 2; y -= 8) {
+    await firePointer(page, "pointermove", { x, y, buttons: 1 });
+  }
+  await firePointer(page, "pointermove", { x, y: to.y + 2, buttons: 1 });
+  await expect.poll(() => seen(panel)).toEqual(["가계부 ⌃1", "업무 ⌃2", "개인 ⌃3"]);
+  const shown = (await seen(panel)).map((each) => each.split(" ")[0]);
+  await firePointer(page, "pointermove", { x, y: to.y + 2, buttons: 0 });
+  await firePointer(page, "pointerup", { x: list.x - 30, y: to.y + 2, buttons: 0 });
+  await expect(names(panel)).toHaveText(shown);
   await expect.poll(() => savedOrder(page)).toEqual([1, 2, 0]);
+  await panel.getByRole("button", { name: "닫기" }).click();
+  await page.locator(".ws-switcher-button").click();
+  await expect(switcherLabels(page)).toHaveText(shown);
 });
 
 test("the hidden box keeps the focus as it is toggled from the keyboard", async ({ page }) => {
@@ -419,6 +444,36 @@ test("a failed save says why and shows the saved order", async ({ page }) => {
   await dragBefore(page, row(panel, "가계부"), row(panel, "업무"));
   await expect(names(panel)).toHaveText(["가계부", "업무", "개인"]);
   await expect(panel.locator(".modal-error")).toHaveText("");
+});
+
+test("a row dragged over the list stays at its top", async ({ page }) => {
+  await open(page);
+  const panel = await openSection(page);
+  const start = (await row(panel, "가계부").locator(".ws-order-name").boundingBox())!;
+  const list = (await panel.locator(".ws-order-list").boundingBox())!;
+  await page.mouse.move(start.x + start.width / 2, start.y + start.height / 2);
+  await page.mouse.down();
+  await page.mouse.move(start.x + start.width / 2, list.y - 40, { steps: 8 });
+  await expect.poll(() => seen(panel)).toEqual(["가계부 ⌃1", "업무 ⌃2", "개인 ⌃3"]);
+  const dragged = (await row(panel, "가계부").boundingBox())!;
+  expect(dragged.y).toBeGreaterThanOrEqual(list.y);
+  await page.mouse.up();
+  await expect(names(panel)).toHaveText(["가계부", "업무", "개인"]);
+});
+
+test("a failed save puts the rows and their keys back", async ({ page }) => {
+  await open(page, {
+    failWorkspaceOrder: 1,
+    workspaces: [listed("업무", 1), listed("개인", 0, { hidden: true }), listed("가계부")],
+  });
+  const panel = await openSection(page);
+  await pressAndMove(page, row(panel, "가계부"), row(panel, "업무"));
+  await expect.poll(() => seen(panel)).toEqual(["가계부 ⌃1", "업무 ⌃2", "개인 "]);
+  await page.mouse.up();
+  await expect(panel.locator(".modal-error")).not.toHaveText("");
+  await expect(names(panel)).toHaveText(["업무", "개인", "가계부"]);
+  await expect(keys(panel)).toHaveText(["⌃1", "", "⌃2"]);
+  await expect.poll(() => seen(panel)).toEqual(["업무 ⌃1", "개인 ", "가계부 ⌃2"]);
 });
 
 test("another window's settings section follows a new order", async ({ context }) => {

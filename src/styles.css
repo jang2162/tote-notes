@@ -1214,11 +1214,7 @@ button.danger {
   font-size: 12px;
 }
 
-/* The 워크스페이스 section: rows dragged into the switcher's order, a bar where the dragged one lands. */
-.ws-order-frame {
-  position: relative;
-}
-
+/* The 워크스페이스 section: rows dragged into the switcher's order, the others stepping aside. */
 .ws-order-list {
   margin: 8px 0;
   padding: 0;
