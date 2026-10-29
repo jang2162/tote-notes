@@ -1275,15 +1275,19 @@ export class AppController implements DocHost, PaneHost {
 
   /** Closes `pane`, which has no tabs; the window's only pane stays. Its room goes as `removeLeaf`
    * gives it — to the pane before it in its branch, the one after when it is first — and the focus,
-   * when it had it, to the first pane of what took the room. */
+   * when it had it, to the first pane of what took the room. Keys on the lead stay on it as it goes
+   * to the new top left pane. */
   closePane(pane: Pane): void {
     if (!this.panes.includes(pane) || this.panes.length < 2 || pane.tabs.list.length) return;
     const heir = this.panes.find((each) => each.id === heirOf(this.layout, pane.id));
+    // Read before the lead leaves the page with the pane, which drops its focus.
+    const keysOnLead = this.lead.contains(document.activeElement);
     pane.el.remove();
     pane.closePanel();
     pane.view.destroy();
     this.arrange(removeLeaf(this.layout, pane.id));
     if (this.focused === pane) this.setFocused(heir ?? this.panes[0]);
+    if (keysOnLead) this.expandButton.el.focus();
     this.saveSessionSoon();
   }
 

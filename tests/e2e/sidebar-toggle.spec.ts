@@ -202,6 +202,23 @@ test("the lead stays in the top left pane as the panes change", async ({ page })
   expect(await leadPlace(page)).toEqual({ leads: 1, x: 0, y: 0 });
 });
 
+test("keys on the lead's button stay on it when its empty pane closes", async ({ page }) => {
+  await start(page);
+  await menu(page, "toggle-sidebar");
+  await expectCollapsed(page);
+  // Two empty panes: the right one goes to the top left once the left one closes.
+  await menu(page, "split-pane");
+  await expect(page.locator(".pane")).toHaveCount(2);
+  await menu(page, "focus-pane-left");
+  await leadButton(page).focus();
+  await expect(leadButton(page)).toBeFocused();
+
+  await menu(page, "close-tab");
+  await expect(page.locator(".pane")).toHaveCount(1);
+  await expect.poll(() => leadPlace(page)).toEqual({ leads: 1, x: 0, y: 0 });
+  await expect(leadButton(page)).toBeFocused();
+});
+
 test("a tab dropped on the lead goes before the first tab", async ({ page }) => {
   await start(page, { memos });
   await open(page, "가");
