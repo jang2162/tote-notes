@@ -74,6 +74,11 @@ describe("TauriBackend", () => {
       [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],
       [() => backend.discardExternalDraft("/a.sh"), "discard_external_draft", { path: "/a.sh" }],
       [() => backend.listWorkspaces(), "list_workspaces", undefined],
+      [
+        () => backend.setWorkspaceOrder(["/w/업무", "/w/개인"], ["/w/개인"]),
+        "set_workspace_order",
+        { order: ["/w/업무", "/w/개인"], hidden: ["/w/개인"] },
+      ],
       [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
       [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
       [() => backend.switchWorkspace("/w/업무"), "switch_workspace", { path: "/w/업무" }],

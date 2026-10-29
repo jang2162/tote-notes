@@ -586,7 +586,8 @@ pub struct WorkspaceListItem {
     windows: usize,
     /// In the recent list, but its folder or `.tote/workspace.json` is gone.
     missing: bool,
-    /// Its place in the switcher, from 0. `None` when `missing`.
+    /// Its place in the set order, from 0, the hidden ones counted too, so not its ⌃ number.
+    /// `None` when `missing`.
     order: Option<usize>,
     hidden: bool,
     /// Its ID can be read, so the order file can name it.

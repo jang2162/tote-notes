@@ -122,7 +122,8 @@ pub fn arranged(root: &Path) -> Vec<Arranged> {
 /// For each workspace, the index of the entry it matches, if any (spec 「맞추는 순서」): first an
 /// entry with both the ID and the name; then, when only one folder under the root has the ID, an
 /// entry with that ID alone (the folder was renamed). Each entry and each workspace is matched at
-/// most once, so of two folders sharing an ID neither takes an entry naming some third name.
+/// most once. Of two folders sharing an ID neither takes an entry naming some third name, because
+/// the ID alone matches only when one folder has it.
 fn matches(
     summaries: &[(WorkspaceSummary, Option<String>)],
     entries: &[Entry],

@@ -294,7 +294,8 @@ export interface WorkspaceListItem {
   windows: number;
   /** In the recent list, but its folder or `.tote/workspace.json` is gone. */
   missing: boolean;
-  /** Its place in the switcher, from 0. `null` when `missing`. */
+  /** Its place in the set order, from 0, the hidden ones counted too, so not its ⌃ number.
+   * `null` when `missing`. */
   order: number | null;
   /** Left out of the switcher; 「워크스페이스 열기…」 still lists it. */
   hidden: boolean;

@@ -231,6 +231,36 @@ test("a row let go outside the list goes back and saves nothing", async ({ page 
   expect(await savedOrder(page)).toEqual([undefined, undefined, undefined]);
 });
 
+test("the hidden box keeps the focus as it is toggled from the keyboard", async ({ page }) => {
+  await open(page);
+  const panel = await openSection(page);
+  // Each box is named for its workspace, not 「숨김」 alone.
+  await expect(panel.getByRole("checkbox", { name: "가계부 숨김", exact: true })).toHaveCount(1);
+  const box = panel.getByRole("checkbox", { name: "개인 숨김", exact: true });
+  // Counts the times the rows are drawn anew.
+  await panel.locator(".ws-order-list").evaluate((list) => {
+    const seen = window as unknown as { drawn: number };
+    seen.drawn = 0;
+    new MutationObserver((records) => (seen.drawn += records.length)).observe(list, {
+      childList: true,
+    });
+  });
+  const drawn = () => page.evaluate(() => (window as unknown as { drawn: number }).drawn);
+  await box.focus();
+  await page.keyboard.press("Space");
+  await expect(box).toBeChecked();
+  // Once as it is toggled, once more as the save is heard back: the focus stays through both.
+  await expect.poll(drawn).toBe(2);
+  await expect(box).toBeFocused();
+  await page.keyboard.press("Space");
+  await expect(box).not.toBeChecked();
+  await expect
+    .poll(() =>
+      page.evaluate(() => window.__tote.backend.data.workspaces.map((each) => each.hidden)),
+    )
+    .toEqual([false, false, false]);
+});
+
 test("a failed save says why and shows the saved order", async ({ page }) => {
   await open(page, { failWorkspaceOrder: 1 });
   const panel = await openSection(page);

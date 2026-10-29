@@ -60,7 +60,8 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
 
   const list = h("ol", { class: "ws-order-list" });
   const drop = h("div", { class: "ws-order-drop", hidden: true });
-  const frame = h("div", { class: "ws-order-frame" }, list, drop);
+  // Hidden until the first read: a read that fails leaves no empty box under its reason.
+  const frame = h("div", { class: "ws-order-frame", hidden: true }, list, drop);
   const empty = h("p", {
     class: "settings-note ws-order-empty",
     textContent: "워크스페이스 루트에 워크스페이스가 없습니다.",
@@ -81,14 +82,22 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
   const rowEls = () => [...list.querySelectorAll<HTMLElement>(".ws-order-row")];
 
   const render = () => {
+    // The rows are drawn anew: a 「숨김」 box toggled from the keyboard keeps the focus.
+    const focused = document.activeElement;
+    const focusedPath = list.contains(focused)
+      ? focused?.closest<HTMLElement>(".ws-order-row")?.dataset.path
+      : undefined;
     // Only the shown ones count: hiding one moves the keys below it up.
     let shown = 0;
     list.replaceChildren(
       ...items.map((item, index) => {
         const key = item.hidden ? null : shortcutHint(shown++);
+        const name = item.name.normalize("NFC");
         const box = h("input", {
           type: "checkbox",
           name: "workspaceHidden",
+          // Every box's label is 「숨김」: the name tells a screen reader whose it is.
+          ariaLabel: `${name} 숨김`,
           checked: item.hidden,
           // With no ID the order file cannot name it (spec 「저장」).
           disabled: !item.orderable,
@@ -103,7 +112,7 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
           "li",
           { class: classes.join(" "), data: { path: item.path } },
           h("span", { class: "ws-order-grip", textContent: "⋮⋮", ariaHidden: "true" }),
-          h("span", { class: "ws-order-name", textContent: item.name.normalize("NFC") }),
+          h("span", { class: "ws-order-name", textContent: name }),
           h("span", { class: "ws-order-key", textContent: key ?? "" }),
           h("label", {}, box, "숨김"),
         );
@@ -113,6 +122,10 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     );
     frame.hidden = items.length === 0;
     empty.hidden = !loaded || items.length > 0;
+    if (focusedPath !== undefined) {
+      const row = rowEls().find((each) => each.dataset.path === focusedPath);
+      row?.querySelector<HTMLInputElement>("input")?.focus();
+    }
   };
 
   const load = async () => {

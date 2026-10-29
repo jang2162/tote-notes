@@ -624,7 +624,8 @@ export class FakeBackend implements Backend {
   adopt(tab: string, x: number, y: number): void {
     for (const handler of this.handlers.adopt) handler(tab, x, y);
   }
-  /** A workspace was made, or a window came to show another one. */
+  /** A workspace was made, a window came to show another one, or the order or the hidden ones
+   * changed (`onWorkspacesChanged`). */
   workspacesChanged(): void {
     for (const handler of this.handlers.workspaces) handler();
   }
