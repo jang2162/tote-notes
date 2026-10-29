@@ -272,7 +272,8 @@ export class AppController implements DocHost, PaneHost {
   private readonly switcher = new WorkspaceSwitcher({
     pick: (item) => void this.switchTo(item.path),
     create: () => void this.newWorkspace(),
-    open: () => void this.showPicker().catch((error: unknown) => this.report(error)),
+    manage: () =>
+      void this.showSettings("workspaces").catch((error: unknown) => this.report(error)),
   });
   /** Goes by the menu item's id, so `showSettings`'s one-screen guard holds for it too. */
   private readonly settingsButton = new SettingsButton(() => void this.onMenu("settings"));
@@ -1734,7 +1735,8 @@ export class AppController implements DocHost, PaneHost {
     if (this.focused.tabs.active) this.focused.view.focus();
   }
 
-  private async showSettings(): Promise<void> {
+  /** Opens the settings screen at `section`, or at the one seen last. */
+  private async showSettings(section?: SettingsSection): Promise<void> {
     // The native menu works under a modal: a second ⌘, must not pile a second screen on the first.
     if (this.settingsOpen) return;
     this.settingsOpen = true;
@@ -1749,7 +1751,7 @@ export class AppController implements DocHost, PaneHost {
         this.workspaceListeners.add(handler);
         return () => this.workspaceListeners.delete(handler);
       },
-      section: this.settingsSection,
+      section: section ?? this.settingsSection,
       onSection: (section) => (this.settingsSection = section),
     });
     this.settingsOpen = false;

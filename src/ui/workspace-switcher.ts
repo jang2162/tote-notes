@@ -46,7 +46,8 @@ export function switcherShortcut(
 
 /** The combo box at the top of the sidebar (spec 「워크스페이스 고르개」): a button with the
  * current workspace's name, and the list it opens — the workspaces, each with the ⌃ key that picks
- * it, then 「새 워크스페이스…」 and 「워크스페이스 열기…」. */
+ * it, then 「새 워크스페이스…」 and 「워크스페이스 관리…」, which opens the settings at their
+ * 워크스페이스 section. 「워크스페이스 열기…」 is the 파일 menu's alone. */
 export class WorkspaceSwitcher {
   readonly el = h("div", { class: "ws-switcher" });
   private readonly button = h("button", {
@@ -68,7 +69,7 @@ export class WorkspaceSwitcher {
   private restoreTo: HTMLElement | null = null;
 
   constructor(
-    private readonly actions: { pick(item: SwitcherItem): void; create(): void; open(): void },
+    private readonly actions: { pick(item: SwitcherItem): void; create(): void; manage(): void },
   ) {
     this.list.hidden = true;
     this.el.append(this.button, this.list);
@@ -125,7 +126,7 @@ export class WorkspaceSwitcher {
     };
     const commands = [
       command("새 워크스페이스…", () => this.actions.create()),
-      command("워크스페이스 열기…", () => this.actions.open()),
+      command("워크스페이스 관리…", () => this.actions.manage()),
     ];
     this.entries = [...options, ...commands];
     this.entries.forEach((entry, index) => (entry.id = `ws-switcher-entry-${index}`));

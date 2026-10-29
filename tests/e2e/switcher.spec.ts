@@ -105,7 +105,7 @@ test("the switcher lists the workspaces in the set order with the current one ma
   await expect(page.locator(".ws-switcher-dot")).toHaveCount(0);
   await expect(page.locator(".ws-switcher-command")).toHaveText([
     "새 워크스페이스…",
-    "워크스페이스 열기…",
+    "워크스페이스 관리…",
   ]);
 });
 
@@ -261,7 +261,7 @@ test("typed keys go nowhere, ArrowDown stops at the end, Enter runs a command", 
   await expect(page.locator(".cm-content")).toHaveText("안건");
   for (let i = 0; i < 6; i++) await page.keyboard.press("ArrowDown");
   const highlight = page.locator(".ws-switcher-list .highlight");
-  await expect(highlight).toHaveText("워크스페이스 열기…");
+  await expect(highlight).toHaveText("워크스페이스 관리…");
   await expect(page.locator(".ws-switcher-list")).toHaveAttribute(
     "aria-activedescendant",
     (await highlight.getAttribute("id"))!,
@@ -341,11 +341,34 @@ test("a list left with the app closes on the window's blur alone and gives the k
   await expect(page.locator(".cm-content")).toContainText("돌아옴");
 });
 
-test("「워크스페이스 열기…」 opens the picker", async ({ page }) => {
+test("워크스페이스 관리… opens the settings at the 워크스페이스 section", async ({ page }) => {
   await open(page);
-  await pickCommand(page, "워크스페이스 열기…");
-  await expect(page.locator(".modal.picker")).toBeVisible();
+  await pickCommand(page, "워크스페이스 관리…");
+  const panel = page.locator(".modal.settings");
+  await expect(panel.getByRole("tab", { name: "워크스페이스", exact: true })).toHaveAttribute(
+    "aria-selected",
+    "true",
+  );
+  await expect(panel.locator(".ws-order-list")).toBeVisible();
   await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  // The section seen last is the one the next opening shows, as for any section.
+  await panel.getByRole("button", { name: "닫기" }).click();
+  await menu(page, "settings");
+  await expect(
+    page.locator(".modal.settings").getByRole("tab", { name: "워크스페이스", exact: true }),
+  ).toHaveAttribute("aria-selected", "true");
+});
+
+test("the switcher no longer offers 워크스페이스 열기…", async ({ page }) => {
+  await open(page);
+  await button(page).click();
+  await expect(page.locator(".ws-switcher-command", { hasText: "워크스페이스 열기…" })).toHaveCount(
+    0,
+  );
+  await page.keyboard.press("Escape");
+  // The 파일 menu still opens it.
+  await menu(page, "open-workspace");
+  await expect(page.locator(".modal.picker")).toBeVisible();
 });
 
 test("clicking a workspace switches this window to it and restores its session", async ({
