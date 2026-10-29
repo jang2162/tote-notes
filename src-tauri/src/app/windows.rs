@@ -195,6 +195,10 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
     let builder = WebviewWindowBuilder::new(app, &label, WebviewUrl::App("index.html".into()))
         .title(title)
         .min_inner_size(480.0, 320.0)
+        // On macOS the click that brings an inactive window forward is otherwise swallowed by
+        // the activation and never reaches the page. The price: that same click also acts, so it
+        // can close a tab or start a tab drag.
+        .accept_first_mouse(true)
         .focused(!background());
     let builder = match frame.and_then(|f| place(f, &monitor_rects(app))) {
         Some(f) => builder.position(f.x, f.y).inner_size(f.width, f.height),
