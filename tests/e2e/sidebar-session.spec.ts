@@ -1,7 +1,7 @@
 import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
-import type { WorkspaceInfo, WorkspaceListItem } from "../../src/backend/types";
+import type { WorkspaceInfo } from "../../src/backend/types";
 import {
   menu,
   nextWindow,
@@ -121,7 +121,7 @@ const info = (name: string): WorkspaceInfo => ({
   deviceId: "device-1",
 });
 
-const listed = (name: string, windows = 0): WorkspaceListItem => ({
+const listed = (name: string, windows = 0): FakeData["workspaces"][number] => ({
   name,
   path: `/fake/${name}`,
   open: windows > 0,
