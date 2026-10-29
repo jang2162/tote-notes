@@ -24,7 +24,14 @@ test("the settings screen shows the root, the themes and the extensions, and sav
   await start(page);
   await menu(page, "settings");
   const panel = page.locator(".modal.settings");
-  await expect(panel.getByRole("tab")).toHaveText(["일반", "편집기", "모양", "단축키", "확장"]);
+  await expect(panel.getByRole("tab")).toHaveText([
+    "일반",
+    "워크스페이스",
+    "편집기",
+    "모양",
+    "단축키",
+    "확장",
+  ]);
   await expect(panel.locator("input[name=workspaceRoot]")).toHaveValue("");
   await panel.locator("input[name=workspaceRoot]").fill("~/노트");
   await panel.getByRole("button", { name: "적용", exact: true }).click();
@@ -721,6 +728,8 @@ test("the settings dialog is a labelled modal and its sections are tabs", async 
   // The selected section's tab takes the focus as the screen opens.
   await shows("일반");
   const height = (await panel.boundingBox())!.height;
+  await page.keyboard.press("ArrowDown");
+  await shows("워크스페이스");
   await page.keyboard.press("ArrowDown");
   await shows("편집기");
   await page.keyboard.press("End");

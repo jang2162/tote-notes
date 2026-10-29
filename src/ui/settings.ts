@@ -5,11 +5,19 @@ import { Registry } from "../extensions/registry";
 import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
 import { shortcutsSection } from "./shortcut-settings";
+import { workspacesSection } from "./workspace-settings";
 
-export type SettingsSection = "general" | "editor" | "appearance" | "shortcuts" | "extensions";
+export type SettingsSection =
+  | "general"
+  | "workspaces"
+  | "editor"
+  | "appearance"
+  | "shortcuts"
+  | "extensions";
 
 const SECTIONS: [SettingsSection, string][] = [
   ["general", "일반"],
+  ["workspaces", "워크스페이스"],
   ["editor", "편집기"],
   ["appearance", "모양"],
   ["shortcuts", "단축키"],
@@ -21,6 +29,9 @@ export interface SettingsOptions {
   registry: () => Registry;
   /** Subscribes to config changes; returns the unsubscribe. */
   onConfigChanged: (handler: () => void) => () => void;
+  /** Subscribes to the workspace list changing (`Backend.onWorkspacesChanged`); returns the
+   * unsubscribe. */
+  onWorkspacesChanged: (handler: () => void) => () => void;
   /** The section shown first; 「일반」 without one. */
   section?: SettingsSection;
   /** Hears each section picked, for the next opening to start there. */
@@ -39,6 +50,7 @@ const themeRef = (value: string): ThemeRef | null => {
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
 export function openSettings(options: SettingsOptions): Promise<void> {
   let disposeShortcuts = () => {};
+  let disposeWorkspaces = () => {};
   /** The screen's config subscriptions: they end with it, whichever way it closes. */
   const subscriptions: (() => void)[] = [];
   const onConfigChanged = (handler: () => void) => {
@@ -351,8 +363,16 @@ export function openSettings(options: SettingsOptions): Promise<void> {
 
     const shortcuts = shortcutsSection({ backend, onConfigChanged });
     disposeShortcuts = shortcuts.dispose;
+    const workspaces = workspacesSection({
+      backend,
+      onWorkspacesChanged: options.onWorkspacesChanged,
+      fail,
+      saved: () => (status.textContent = ""),
+    });
+    disposeWorkspaces = workspaces.dispose;
     const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
+      workspaces: workspaces.el,
       editor: editorSection,
       appearance: appearanceSection,
       shortcuts: shortcuts.el,
@@ -424,6 +444,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     return panel;
   }).then(() => {
     disposeShortcuts();
+    disposeWorkspaces();
     for (const unsubscribe of subscriptions) unsubscribe();
   });
 }

@@ -232,6 +232,9 @@ export class AppController implements DocHost, PaneHost {
   /** The editors' bindings for the app shortcuts that are editor keys too (`menuKeymap`). */
   private menuKeys: KeyBinding[] = [];
   private readonly configListeners = new Set<() => void>();
+  /** The settings screen's 워크스페이스 section, while it is open: it hears the list change as the
+   * switcher does. */
+  private readonly workspaceListeners = new Set<() => void>();
   /** The language-configuration reads by file, settled once a failure has been warned about
    * (public: the UI tests wait for them). */
   readonly languageConfigs = new Map<string, Promise<LanguageData>>();
@@ -410,7 +413,10 @@ export class AppController implements DocHost, PaneHost {
     this.workspacePath = info.path;
     document.title = info.title;
     void this.refreshSwitcher();
-    this.backend.onWorkspacesChanged(() => void this.refreshSwitcher());
+    this.backend.onWorkspacesChanged(() => {
+      void this.refreshSwitcher();
+      for (const listener of this.workspaceListeners) listener();
+    });
     // In the capture phase: the editor and the dialogs see the keys after this.
     document.addEventListener(
       "keydown",
@@ -1731,6 +1737,10 @@ export class AppController implements DocHost, PaneHost {
       onConfigChanged: (handler) => {
         this.configListeners.add(handler);
         return () => this.configListeners.delete(handler);
+      },
+      onWorkspacesChanged: (handler) => {
+        this.workspaceListeners.add(handler);
+        return () => this.workspaceListeners.delete(handler);
       },
       section: this.settingsSection,
       onSection: (section) => (this.settingsSection = section),

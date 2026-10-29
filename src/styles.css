@@ -1214,6 +1214,88 @@ button.danger {
   font-size: 12px;
 }
 
+/* The 워크스페이스 section: rows dragged into the switcher's order, a bar where the dragged one lands. */
+.ws-order-frame {
+  position: relative;
+}
+
+.ws-order-list {
+  margin: 8px 0;
+  padding: 0;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  list-style: none;
+}
+
+/* A drag moves the pointer over the names: no text is selected on the way. */
+.ws-order-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  cursor: grab;
+  user-select: none;
+  -webkit-user-select: none;
+}
+
+.ws-order-row:last-child {
+  border-bottom: 0;
+}
+
+.ws-order-row.dragging {
+  opacity: 0.5;
+}
+
+.ws-order-row.fixed {
+  cursor: default;
+}
+
+.ws-order-grip {
+  color: var(--muted);
+}
+
+.ws-order-name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ws-order-row.hidden .ws-order-name {
+  color: var(--muted);
+}
+
+.ws-order-key {
+  min-width: 2em;
+  color: var(--muted);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.ws-order-row label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  cursor: default;
+}
+
+.ws-order-row input[type="checkbox"] {
+  width: auto;
+  margin: 0;
+}
+
+.ws-order-drop {
+  position: absolute;
+  right: 0;
+  left: 0;
+  height: 2px;
+  margin-top: -1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
 .shortcut-settings {
   display: flex;
   flex-direction: column;
