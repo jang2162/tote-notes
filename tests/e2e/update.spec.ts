@@ -3,15 +3,91 @@ import { expect, test, type Page } from "@playwright/test";
 import { fakeMemo } from "../../src/backend/fake";
 import { menu, quietErrors, start } from "./helpers";
 
-// Which window is asked, and that it is asked once however many are open, is Rust's
-// (`an_update_offer_goes_to_one_window` in src-tauri/src/app/mod.rs); so is the restart writing
-// every window (`a_restart_waits_on_the_windows_a_quit_would`). These check the page's side.
+// That the button goes up in every window, later ones too, and that only the menu's check asks
+// — in one window — is Rust's (`a_found_update_puts_its_button_up_in_every_window`,
+// `the_menus_check_puts_the_button_up_and_asks_in_one_window` in src-tauri/src/app/mod.rs); so is
+// the restart writing every window (`a_restart_waits_on_the_windows_a_quit_would`). These check
+// the page's side. `offer` is the menu's check; `announce` the one at launch.
 
 const OFFER = { version: "0.2.0", current: "0.1.0", notes: "검색이 빨라졌습니다." };
 
 const offer = (page: Page) => page.evaluate((o) => window.__tote.backend.offerUpdate(o), OFFER);
+const announce = (page: Page) =>
+  page.evaluate((o) => window.__tote.backend.announceUpdate(o), OFFER);
 const updateLog = (page: Page) => page.evaluate(() => window.__tote.backend.data.update);
 const dialog = (page: Page) => page.locator(".modal.update");
+const updateButton = (page: Page) => page.locator(".update-button");
+const pendingTaken = (page: Page) =>
+  expect.poll(() => page.evaluate(() => window.__tote.backend.data.pending.length)).toBe(0);
+
+test("an update found at launch puts up a button at the bottom left and asks nothing", async ({
+  page,
+}) => {
+  await start(page);
+  await expect(updateButton(page)).toBeHidden();
+  await announce(page);
+  await expect(updateButton(page)).toHaveText("업데이트 0.2.0");
+  await pendingTaken(page);
+  await expect(dialog(page)).toHaveCount(0);
+  // The foot of the sidebar: the window's bottom left.
+  const box = (await updateButton(page).boundingBox())!;
+  const sidebar = (await page.locator(".sidebar").boundingBox())!;
+  const viewport = page.viewportSize()!;
+  expect(box.x + box.width).toBeLessThanOrEqual(sidebar.x + sidebar.width);
+  expect(viewport.height - (box.y + box.height)).toBeLessThan(20);
+
+  await updateButton(page).click();
+  await expect(dialog(page)).toContainText(
+    "새 버전 Tote Notes 0.2.0 이 있습니다. 지금 버전은 0.1.0 입니다.",
+  );
+  await expect(page.getByRole("button", { name: "업데이트하고 다시 시작" })).toBeFocused();
+  await page.getByRole("button", { name: "나중에", exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+  // 「나중에」 keeps the button: the way back to the dialog.
+  await expect(updateButton(page)).toBeVisible();
+  await updateButton(page).click();
+  await expect(dialog(page)).toBeVisible();
+  expect((await updateLog(page))?.installCalls ?? 0).toBe(0);
+});
+
+test("the menu's check asks at once and puts up the button too", async ({ page }) => {
+  await start(page);
+  await offer(page);
+  await expect(dialog(page)).toBeVisible();
+  await expect(updateButton(page)).toHaveText("업데이트 0.2.0");
+});
+
+test("the button asks as the update stands when pressed", async ({ page }) => {
+  await start(page);
+  await announce(page);
+  await expect(updateButton(page)).toBeVisible();
+  // Another window began downloading it after the button went up.
+  await page.evaluate(() => window.__tote.backend.installElsewhere());
+  await updateButton(page).click();
+  await expect(dialog(page)).toHaveText(
+    "새 버전 Tote Notes 0.2.0 을 다른 창에서 받는 중입니다.닫기",
+  );
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  expect((await updateLog(page))?.installCalls ?? 0).toBe(0);
+});
+
+test("the button after an install in this run asks only for the restart", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => window.__tote.backend.refuseNextRestart());
+  await announce(page);
+  await updateButton(page).click();
+  await page.getByRole("button", { name: "업데이트하고 다시 시작" }).click();
+  await expect(dialog(page)).toContainText("업데이트는 설치됐습니다.");
+  await page.getByRole("button", { name: "닫기", exact: true }).click();
+  await expect(dialog(page)).toHaveCount(0);
+
+  await updateButton(page).click();
+  await expect(dialog(page)).toContainText(
+    "업데이트는 설치됐습니다. 다음에 Tote Notes 를 열면 새 버전으로 시작합니다.",
+  );
+  await expect(page.getByRole("button", { name: "업데이트하고 다시 시작" })).toHaveCount(0);
+  expect((await updateLog(page))?.installCalls).toBe(1);
+});
 
 test("an update offer asks once and installs nothing until accepted", async ({ page }) => {
   await start(page);

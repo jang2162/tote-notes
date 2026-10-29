@@ -33,12 +33,14 @@ export interface ExternalInfo {
 }
 
 /** What a `tote` request left for this window: something to open, or why it failed — or a new
- * version to ask about (`AppCore::offer_update` in src-tauri/src/app/mod.rs). */
+ * version to ask about now (the menu's check: `AppCore::offer_update` in src-tauri/src/app/mod.rs)
+ * or to put the update button up for (`AppCore::announce_update`). */
 export type PendingOpen =
   | { kind: "memo"; id: string }
   | { kind: "external"; path: string }
   | { kind: "notice"; message: string }
-  | ({ kind: "update" } & UpdateOffer);
+  | ({ kind: "update" } & UpdateOffer)
+  | { kind: "updateFound"; version: string };
 
 /** A release newer than this one (`UpdateOffer` in src-tauri/src/app/update.rs). */
 export interface UpdateOffer {
@@ -500,6 +502,9 @@ export interface Backend {
   ): Promise<void>;
   /** Stops this window's running workspace search, as a newer one would. */
   cancelWorkspaceSearch(): Promise<void>;
+  /** The update found in this run as it stands now (`current_update`), for the update button;
+   * `null` before one is found. */
+  currentUpdate(): Promise<UpdateOffer | null>;
   /** Downloads and installs the update this window was offered, telling `onProgress` how far it
    * is. Only ever after the person said so. The running app stays as it is until
    * `restartForUpdate`. `update-failed` says why it did not install; it can be tried again. */

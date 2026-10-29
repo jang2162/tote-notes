@@ -421,6 +421,8 @@ export class FakeBackend implements Backend {
   private installGate: { promise: Promise<void>; release: () => void } | null = null;
   /** An update was installed in this page's run, as `Updates::installed` keeps it. */
   private updateInstalled = false;
+  /** The update found last, as `Updates` keeps it for `currentUpdate`. */
+  private foundUpdate: Omit<UpdateOffer, "status"> | null = null;
   /** An install is running — this window's, or another's (`installElsewhere`). */
   private installing = false;
   private installingElsewhere = false;
@@ -534,18 +536,31 @@ export class FakeBackend implements Backend {
   poke(): void {
     for (const handler of this.handlers.pending) handler();
   }
-  /** A newer release, as the native side offers it to this window (`AppCore::offer_update`),
-   * with the status `Updates::found` gives it. */
-  offerUpdate(offer: Omit<UpdateOffer, "status">): void {
-    const status =
-      this.installing || this.installingElsewhere
-        ? "installing"
-        : this.updateInstalled
-          ? "installed"
-          : "available";
-    this.data.pending.push({ kind: "update", ...offer, status });
+  /** A newer release found by the check at launch: the button only, as `AppCore::announce_update`
+   * puts it up in every window. */
+  announceUpdate(offer: Omit<UpdateOffer, "status">): void {
+    this.foundUpdate = offer;
+    this.data.pending.push({ kind: "updateFound", version: offer.version });
     this.commit();
     this.poke();
+  }
+  /** A newer release found by the menu's check in this window: the button, and the question
+   * (`AppCore::offer_update`) with the status `Updates::found` gives it. */
+  offerUpdate(offer: Omit<UpdateOffer, "status">): void {
+    this.foundUpdate = offer;
+    this.data.pending.push(
+      { kind: "updateFound", version: offer.version },
+      { kind: "update", ...offer, status: this.updateStatus() },
+    );
+    this.commit();
+    this.poke();
+  }
+  private updateStatus(): UpdateOffer["status"] {
+    return this.installing || this.installingElsewhere
+      ? "installing"
+      : this.updateInstalled
+        ? "installed"
+        : "available";
   }
   /** Another window is downloading the update: offers say so, and an install here is refused. */
   installElsewhere(): void {
@@ -1103,6 +1118,11 @@ export class FakeBackend implements Backend {
       restarted: false,
       memosAtRestart: null,
     });
+  }
+
+  /** As `Updates::current`: the update found, with how far it is now. */
+  async currentUpdate() {
+    return this.foundUpdate && { ...this.foundUpdate, status: this.updateStatus() };
   }
 
   /** As `Updates::begin_install`: refused while one runs, and nothing downloaded (no call

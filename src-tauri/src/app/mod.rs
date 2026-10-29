@@ -42,7 +42,7 @@ use crate::watch::{Batch, WatchTarget, Watcher};
 use crate::workspace::{Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
-use update::UpdateOffer;
+use update::{Found, UpdateOffer};
 
 /// A poisoned lock only means another command panicked; the data is still the best there is.
 pub fn lock<T>(mutex: &Mutex<T>) -> MutexGuard<'_, T> {
@@ -66,8 +66,13 @@ pub enum PendingOpen {
     Notice {
         message: String,
     },
-    /// A new version to ask about (`AppCore::offer_update`).
+    /// A new version to ask about now: the menu's check (`AppCore::offer_update`).
     Update(UpdateOffer),
+    /// A new version to put the sidebar's button up for (`AppCore::announce_update`). Only the
+    /// version: the button asks how far the update is when pressed (`current_update`).
+    UpdateFound {
+        version: String,
+    },
 }
 
 /// What a window asked to switch to calls for (`AppCore::switch_target`).
@@ -159,8 +164,12 @@ struct Inner {
     /// Window label → the CLI requests `hold_request` kept for its switch. Not on the window: a
     /// window that goes mid-switch (`closed`, `release`) must not take them with it.
     held: HashMap<String, Vec<CliRequest>>,
-    /// An update found while no window was open: the next window registered asks about it.
+    /// An update the menu's check found while no window was open: the next window registered
+    /// asks about it.
     waiting_offer: Option<UpdateOffer>,
+    /// The version of the update found last: every window shows its button, the ones registered
+    /// later and the page a switch reloads too.
+    update_found: Option<String>,
 }
 
 struct OpenWorkspace {
@@ -302,16 +311,20 @@ impl Inner {
         })
     }
 
+    fn update_button(&self) -> Option<PendingOpen> {
+        let version = self.update_found.clone()?;
+        Some(PendingOpen::UpdateFound { version })
+    }
+
     /// Adds the window `label` on the workspace open at `path`, the newest in opening order.
     fn add_window(&mut self, label: &str, path: &Path, layout: Option<Value>) {
         self.serials += 1;
         let serial = self.serials;
-        // Its page takes this with its first `take_pending_opens`.
+        // Its page takes these with its first `take_pending_opens`.
         let pending = self
-            .waiting_offer
-            .take()
-            .map(PendingOpen::Update)
+            .update_button()
             .into_iter()
+            .chain(self.waiting_offer.take().map(PendingOpen::Update))
             .collect();
         self.windows.insert(
             label.to_string(),
@@ -422,6 +435,7 @@ impl AppCore {
                 quitting: false,
                 held: HashMap::new(),
                 waiting_offer: None,
+                update_found: None,
             }),
         }
     }
@@ -868,10 +882,13 @@ impl AppCore {
             }
             let layout = inner.workspaces[to].saved.first().cloned();
             inner.places.release_window(label);
+            // The new page starts with no button: it is put up again there.
+            let button = inner.update_button();
             if let Some(window) = inner.windows.get_mut(label) {
                 window.path = to.to_path_buf();
                 window.layout = layout;
                 window.pending.clear();
+                window.pending.extend(button);
                 window.switching = true;
                 window.page_ready = false;
             }
@@ -1212,12 +1229,41 @@ impl AppCore {
         lock(&self.inner).focus.first().cloned()
     }
 
-    /// Puts a found update to one window — so however many are open, the person is asked once
-    /// (spec 2026-10-25 「제약」): `prefer` when it is open (the window the menu's check was picked
+    /// Hands a found update to the windows (spec 2026-10-25 「제약」): its button goes up in every
+    /// window, and in every one registered from now on (`announce_update`); only the menu's check,
+    /// which the person asked for, also asks — in one window (`offer_update`). The check at launch
+    /// asks nothing by itself. Returns the windows to tell (`tote://pending`); none when no window
+    /// is open.
+    pub fn found_update(&self, offer: UpdateOffer, found: Found<'_>) -> Vec<String> {
+        let mut tell = self.announce_update(&offer.version);
+        if let Found::Asked { window } = found {
+            let asked = self.offer_update(offer, window);
+            if let Some(label) = asked.filter(|label| !tell.contains(label)) {
+                tell.push(label);
+            }
+        }
+        tell
+    }
+
+    fn announce_update(&self, version: &str) -> Vec<String> {
+        let mut inner = lock(&self.inner);
+        inner.update_found = Some(version.to_string());
+        let mut labels = Vec::new();
+        for (label, window) in &mut inner.windows {
+            window.pending.push(PendingOpen::UpdateFound {
+                version: version.to_string(),
+            });
+            labels.push(label.clone());
+        }
+        labels
+    }
+
+    /// Asks about an update the menu's check found in one window — so however many are open, the
+    /// person is asked once: `prefer` when it is open (the window the menu's check was picked
     /// in), else the one focused last, else the first registered — one not up yet, which `opened`
     /// has not put in `focus`: the only window, opening as the check ends. With no window at all
     /// it waits for the next one registered. Returns the window to tell (`tote://pending`).
-    pub fn offer_update(&self, offer: UpdateOffer, prefer: Option<&str>) -> Option<String> {
+    fn offer_update(&self, offer: UpdateOffer, prefer: Option<&str>) -> Option<String> {
         let mut inner = lock(&self.inner);
         let label = prefer
             .filter(|label| inner.windows.contains_key(*label))
@@ -2605,8 +2651,102 @@ mod tests {
             .count()
     }
 
+    fn button(version: &str) -> PendingOpen {
+        PendingOpen::UpdateFound {
+            version: version.into(),
+        }
+    }
+
     #[test]
-    fn an_update_offer_goes_to_one_window() {
+    fn a_found_update_puts_its_button_up_in_every_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        core.focused(&a);
+        let mut told = core.found_update(offer(), Found::AtLaunch);
+        told.sort();
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        assert_eq!(told, both);
+        // The button only: the check at launch asks in no window.
+        assert_eq!(core.take_pending(&a), vec![button("0.2.0")]);
+        assert_eq!(core.take_pending(&b), vec![button("0.2.0")]);
+        // A window opened later shows it too, and a newer find replaces it there.
+        let c = open(&core, "다");
+        assert_eq!(core.take_pending(&c), vec![button("0.2.0")]);
+        let newer = UpdateOffer {
+            version: "0.3.0".into(),
+            ..offer()
+        };
+        core.found_update(newer, Found::AtLaunch);
+        let d = open(&core, "라");
+        assert_eq!(core.take_pending(&d), vec![button("0.3.0")]);
+    }
+
+    #[test]
+    fn a_found_update_with_no_window_shows_in_the_first_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        assert!(core.found_update(offer(), Found::AtLaunch).is_empty());
+        let a = open(&core, "가");
+        assert_eq!(core.take_pending(&a), vec![button("0.2.0")]);
+    }
+
+    #[test]
+    fn the_menus_check_puts_the_button_up_and_asks_in_one_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let b = open(&core, "나");
+        core.focused(&a);
+        let mut told = core.found_update(offer(), Found::Asked { window: Some(&b) });
+        told.sort();
+        let mut both = vec![a.clone(), b.clone()];
+        both.sort();
+        assert_eq!(told, both);
+        assert_eq!(core.take_pending(&a), vec![button("0.2.0")]);
+        assert_eq!(
+            core.take_pending(&b),
+            vec![button("0.2.0"), PendingOpen::Update(offer())]
+        );
+        // Asked once: a window opened later shows the button, and is not asked.
+        let c = open(&core, "다");
+        assert_eq!(core.take_pending(&c), vec![button("0.2.0")]);
+    }
+
+    #[test]
+    fn the_window_opened_for_the_menus_check_shows_the_button_and_asks() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        assert!(core
+            .found_update(offer(), Found::Asked { window: None })
+            .is_empty());
+        let a = open(&core, "가");
+        assert_eq!(
+            core.take_pending(&a),
+            vec![button("0.2.0"), PendingOpen::Update(offer())]
+        );
+    }
+
+    #[test]
+    fn a_window_that_switches_workspaces_shows_the_button_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        core.found_update(offer(), Found::AtLaunch);
+        assert_eq!(core.take_pending(&a), vec![button("0.2.0")]);
+        // The switch reloads the page, which starts with no button.
+        let na = closed_workspace(&core, "나", &[]);
+        let opened = core.prepare_switch(&a, &na).unwrap();
+        core.switch_window(&a, &na, opened).unwrap();
+        core.finish_switch(&a);
+        core.page_started(&a);
+        assert_eq!(core.take_pending(&a), vec![button("0.2.0")]);
+    }
+
+    #[test]
+    fn the_menus_offer_asks_in_one_window() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
         let a = open(&core, "가");
@@ -2615,7 +2755,7 @@ mod tests {
         assert_eq!(core.offer_update(offer(), None), Some(a.clone()));
         assert_eq!(offers(&core, &a), 1);
         assert_eq!(offers(&core, &b), 0);
-        // Handed over once: a window that registers later gets nothing.
+        // Asked once: a window that registers later is not asked.
         let c = open(&core, "다");
         assert_eq!(offers(&core, &c), 0);
         // The menu's check asks in the window it was picked in.
@@ -2662,6 +2802,10 @@ mod tests {
                 "notes": null,
                 "status": "available"
             })
+        );
+        assert_eq!(
+            serde_json::to_value(button("0.2.0")).unwrap(),
+            json!({ "kind": "updateFound", "version": "0.2.0" })
         );
     }
 

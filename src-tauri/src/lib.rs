@@ -120,6 +120,7 @@ pub fn run() {
             commands::relocate_workspace,
             commands::open_workspace,
             commands::flush_done,
+            commands::current_update,
             commands::install_update,
             commands::restart_for_update,
             commands::close_window,

@@ -751,6 +751,14 @@ pub async fn install_update(app: AppHandle, on_progress: Channel<UpdateProgress>
     installed.map_err(|err| CommandError::new("update-failed", err.to_string()))
 }
 
+/// The update found and how far it is now, for the sidebar's button as it is pressed: another
+/// window may have begun downloading it, or installed it, since the button went up. `None`
+/// before one is found.
+#[tauri::command]
+pub fn current_update(app: AppHandle) -> Option<update::UpdateOffer> {
+    update::current_offer(&app)
+}
+
 /// Writes every window, then starts the installed version (`lifecycle::begin_restart`).
 #[tauri::command]
 pub fn restart_for_update(app: AppHandle) -> CmdResult<()> {

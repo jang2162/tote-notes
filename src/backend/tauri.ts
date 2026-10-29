@@ -27,6 +27,7 @@ import {
   type TextQuery,
   type TextScan,
   type TextSearch,
+  type UpdateOffer,
   type UpdateProgress,
   type Version,
   type WindowFrame,
@@ -251,6 +252,9 @@ export class TauriBackend implements Backend {
   }
   cancelWorkspaceSearch() {
     return call<void>("cancel_workspace_search");
+  }
+  currentUpdate() {
+    return call<UpdateOffer | null>("current_update");
   }
   installUpdate(onProgress: (progress: UpdateProgress) => void) {
     return call<void>("install_update", { onProgress: new Channel<UpdateProgress>(onProgress) });

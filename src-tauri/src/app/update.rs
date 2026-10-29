@@ -1,9 +1,9 @@
 //! Updates from the GitHub releases (spec 2026-10-25 「앱 안 업데이트」). Rust holds the whole of
 //! it: the check, the download and the install go through `tauri-plugin-updater` here, so the
-//! page needs no updater permission and its CSP stays shut to github.com. A found update is
-//! offered to one window (`AppCore::offer_update`); nothing is downloaded until the person says
-//! so there (`install_update`), and the restart writes every window first
-//! (`lifecycle::begin_restart`).
+//! page needs no updater permission and its CSP stays shut to github.com. A found update shows as
+//! a button in every window (`AppCore::announce_update`); the menu's check also asks in one window
+//! (`AppCore::offer_update`). Nothing is downloaded until the person says so in the dialog
+//! (`install_update`), and the restart writes every window first (`lifecycle::begin_restart`).
 
 use std::future::Future;
 use std::path::Path;
@@ -137,21 +137,35 @@ impl<U> Default for Updates<U> {
     }
 }
 
+impl<U> State<U> {
+    fn status(&self) -> OfferStatus {
+        if self.installing {
+            OfferStatus::Installing
+        } else if self.installed {
+            OfferStatus::Installed
+        } else {
+            OfferStatus::Available
+        }
+    }
+}
+
 impl<U: Clone> Updates<U> {
     /// Keeps `update` for `install_update`, and says how to offer it. Not while one is being
     /// installed: that one goes on. Once one is installed in this run, a newer find too is only a
     /// restart away — the restarted version finds it again.
     pub fn found(&self, update: U) -> OfferStatus {
         let mut state = lock(&self.state);
-        if state.installing {
-            return OfferStatus::Installing;
+        if !state.installing {
+            state.found = Some(update);
         }
-        state.found = Some(update);
-        if state.installed {
-            OfferStatus::Installed
-        } else {
-            OfferStatus::Available
-        }
+        state.status()
+    }
+
+    /// The update kept, and how far it is now — for the button pressed in a window, which may be
+    /// pressed after another window began downloading it or installed it.
+    pub fn current(&self) -> Option<(U, OfferStatus)> {
+        let state = lock(&self.state);
+        state.found.clone().map(|update| (update, state.status()))
     }
 
     /// The update to install now; `None` when one is installed in this run already, so nothing is
@@ -241,22 +255,37 @@ async fn check(app: &AppHandle) -> Result<Option<Update>, String> {
     updater.check().await.map_err(|err| err.to_string())
 }
 
-/// Keeps `update` and offers it to `prefer`, or to the window a found update goes to. `false` when
-/// no window is open: the offer waits for the next one.
-fn offer(app: &AppHandle, update: Update, prefer: Option<&str>) -> bool {
+/// Who found an update (`AppCore::found_update`): the check at launch only puts up the button;
+/// the menu's check was asked for, so it also asks — in the window it was picked in, if any.
+#[derive(Clone, Copy, Debug)]
+pub enum Found<'a> {
+    AtLaunch,
+    Asked { window: Option<&'a str> },
+}
+
+/// Keeps `update` and hands it to the windows (`AppCore::found_update`). `false` when no window is
+/// open: it waits for the next one.
+fn offer(app: &AppHandle, update: Update, found: Found<'_>) -> bool {
     let status = app.state::<Updates>().found(update.clone());
-    let offer = UpdateOffer::of(&update, status);
-    match app.state::<AppCore>().offer_update(offer, prefer) {
-        Some(label) => {
-            let _ = app.emit_to(EventTarget::webview_window(&label), "tote://pending", ());
-            true
-        }
-        None => false,
+    let tell = app
+        .state::<AppCore>()
+        .found_update(UpdateOffer::of(&update, status), found);
+    for label in &tell {
+        let _ = app.emit_to(EventTarget::webview_window(label), "tote://pending", ());
     }
+    !tell.is_empty()
+}
+
+/// The update kept and how far it is now (`current_update`); `None` before one is found.
+pub fn current_offer(app: &AppHandle) -> Option<UpdateOffer> {
+    app.state::<Updates>()
+        .current()
+        .map(|(update, status)| UpdateOffer::of(&update, status))
 }
 
 /// The check at launch, unless this build does not check (`checks_allowed`) or the person turned
-/// it off. Call once, from `setup`.
+/// it off. A found update only puts up the button: nobody asked, so no dialog opens. Call once,
+/// from `setup`.
 pub fn start(app: &AppHandle) {
     if !allowed() {
         return;
@@ -270,7 +299,7 @@ pub fn start(app: &AppHandle) {
         ));
         match found {
             StartupCheck::Found(update) => {
-                offer(&app, update, None);
+                offer(&app, update, Found::AtLaunch);
             }
             StartupCheck::Failed(err) => eprintln!("tote: could not check for updates: {err}"),
             StartupCheck::Off | StartupCheck::None => {}
@@ -291,7 +320,8 @@ pub fn check_now(app: &AppHandle, window: Option<String>) {
         match check(&app).await {
             Ok(Some(update)) => {
                 // The window opened takes the waiting offer as it registers.
-                if !offer(&app, update, window.as_deref()) {
+                let window = window.as_deref();
+                if !offer(&app, update, Found::Asked { window }) {
                     windows::open_latest(&app);
                 }
             }
@@ -487,5 +517,18 @@ mod tests {
         assert_eq!(updates.found(7), OfferStatus::Installed);
         assert_eq!(updates.begin_install(), Ok(None));
         assert!(updates.installed());
+    }
+
+    #[test]
+    fn the_button_reads_how_far_the_update_is_when_pressed() {
+        let updates = Updates::<u32>::default();
+        assert_eq!(updates.current(), None);
+        updates.found(7);
+        assert_eq!(updates.current(), Some((7, OfferStatus::Available)));
+        // Another window began downloading it after the button went up.
+        assert_eq!(updates.begin_install(), Ok(Some(7)));
+        assert_eq!(updates.current(), Some((7, OfferStatus::Installing)));
+        updates.end_install(true);
+        assert_eq!(updates.current(), Some((7, OfferStatus::Installed)));
     }
 }

@@ -55,6 +55,7 @@ import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
+import { UpdateButton } from "../ui/update-button";
 import { openUpdateDialog } from "../ui/update-dialog";
 import { Sidebar } from "../ui/sidebar";
 import { StatusBar } from "../ui/status-bar";
@@ -264,7 +265,15 @@ export class AppController implements DocHost, PaneHost {
     create: () => void this.newWorkspace(),
     open: () => void this.showPicker().catch((error: unknown) => this.report(error)),
   });
-  private readonly sidebar = new Sidebar(this.switcher, this.memoList, this.searchPanel);
+  private readonly updateButton = new UpdateButton(
+    () => void this.openCurrentUpdate().catch((error: unknown) => this.report(error)),
+  );
+  private readonly sidebar = new Sidebar(
+    this.switcher,
+    this.memoList,
+    this.searchPanel,
+    this.updateButton,
+  );
   /** What the switcher lists, for ⌃1 – ⌃9. */
   private switcherList: SwitcherItem[] = [];
   /** The folder of the workspace the window shows. */
@@ -1456,6 +1465,8 @@ export class AppController implements DocHost, PaneHost {
       } else if (open.kind === "update") {
         // Not awaited: the dialog stays up while the rest of the opens go on.
         void openUpdateDialog(this.backend, open);
+      } else if (open.kind === "updateFound") {
+        this.updateButton.show(open.version);
       } else {
         notices.push(open.message);
       }
@@ -1463,6 +1474,14 @@ export class AppController implements DocHost, PaneHost {
     // After the opens: showing a tab sets the status bar, which would wipe a failure of the same
     // request (`tote -i 없는.txt 있는.txt`) before anyone saw it.
     if (notices.length) this.statusBar.setMessage(notices.join(" · "), "error");
+  }
+
+  /** The update button: asks as the update stands now, not as it stood when the button went up —
+   * another window may have begun downloading it, or installed it, since. */
+  private async openCurrentUpdate(): Promise<void> {
+    const offer = await this.backend.currentUpdate();
+    if (offer) await openUpdateDialog(this.backend, offer);
+    else this.updateButton.hide();
   }
 
   private async onMenu(id: string): Promise<void> {
