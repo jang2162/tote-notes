@@ -937,6 +937,22 @@ button {
   height: 26px;
 }
 
+/* The dot: an update waits in the sidebar's foot, which is out of sight. */
+.sidebar-toggle {
+  position: relative;
+}
+
+.sidebar-toggle.has-update::after {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  content: "";
+}
+
 .update-button {
   flex: 1;
   min-width: 0;

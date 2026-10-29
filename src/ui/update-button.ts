@@ -6,7 +6,10 @@ import { h } from "./dom";
 export class UpdateButton {
   readonly el: HTMLButtonElement;
 
-  constructor(onPress: () => void) {
+  constructor(
+    onPress: () => void,
+    private readonly onShown: (shown: boolean) => void,
+  ) {
     this.el = h("button", { class: "update-button", hidden: true });
     this.el.addEventListener("click", onPress);
   }
@@ -16,9 +19,11 @@ export class UpdateButton {
     // The row's width cuts a long version short; the whole of it is here.
     this.el.title = this.el.textContent;
     this.el.hidden = false;
+    this.onShown(true);
   }
 
   hide(): void {
     this.el.hidden = true;
+    this.onShown(false);
   }
 }

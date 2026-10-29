@@ -10,6 +10,8 @@ const NAMES = { collapse: "사이드바 접기", expand: "사이드바 펼치기
 export class SidebarToggle {
   readonly el: HTMLButtonElement;
   private readonly name: string;
+  private shortcut: string | null | undefined;
+  private update = false;
 
   constructor(role: "collapse" | "expand", onPress: () => void) {
     this.name = NAMES[role];
@@ -29,7 +31,23 @@ export class SidebarToggle {
 
   /** `shortcut` as the screen writes it; null or undefined (the table not read yet) for none. */
   setShortcut(shortcut: string | null | undefined): void {
-    this.el.title = shortcut ? `${this.name} (${shortcut})` : this.name;
+    this.shortcut = shortcut;
+    this.label();
+  }
+
+  /** An update waits behind the collapsed sidebar: the expand button carries a mark and says so.
+   * The collapse button has none to carry: with the sidebar open the update button is in view. */
+  setUpdate(waiting: boolean): void {
+    if (this.el.getAttribute("aria-expanded") === "true") return;
+    this.update = waiting;
+    this.el.classList.toggle("has-update", waiting);
+    this.label();
+  }
+
+  private label(): void {
+    const suffix = this.update ? " · 업데이트 있음" : "";
+    this.el.setAttribute("aria-label", this.name + suffix);
+    this.el.title = (this.shortcut ? `${this.name} (${this.shortcut})` : this.name) + suffix;
   }
 }
 

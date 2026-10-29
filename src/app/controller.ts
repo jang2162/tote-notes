@@ -282,6 +282,7 @@ export class AppController implements DocHost, PaneHost {
   private readonly settingsButton = new SettingsButton(() => void this.onMenu("settings"));
   private readonly updateButton = new UpdateButton(
     () => void this.openCurrentUpdate().catch((error: unknown) => this.report(error)),
+    (shown) => this.expandButton.setUpdate(shown),
   );
   private readonly collapseButton = new SidebarToggle("collapse", () =>
     this.setSidebarCollapsed(true),

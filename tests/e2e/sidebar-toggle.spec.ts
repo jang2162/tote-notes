@@ -309,3 +309,61 @@ test("two toggles in a row end in the last state", async ({ page }) => {
   });
   await expectExpanded(page);
 });
+
+// The update button lives in the sidebar's foot, so while the sidebar is collapsed the expand
+// button carries a mark for it.
+
+const MARKED = "사이드바 펼치기 · 업데이트 있음";
+const announce = (page: Page) =>
+  page.evaluate(() =>
+    window.__tote.backend.announceUpdate({ version: "0.2.0", current: "0.1.0", notes: "" }),
+  );
+
+async function expectMarked(page: Page): Promise<void> {
+  await expect(leadButton(page)).toHaveClass(/\bhas-update\b/);
+  await expect(leadButton(page)).toHaveAttribute("aria-label", MARKED);
+  await expect(leadButton(page)).toHaveAttribute("title", `${MARKED.replace(" · ", " (⌘B) · ")}`);
+}
+
+test("an update found while collapsed marks the lead's button, and expanding shows the update button", async ({
+  page,
+}) => {
+  await start(page);
+  await toggle(page, COLLAPSE).click();
+  await expectCollapsed(page);
+  await announce(page);
+  await expectMarked(page);
+  await leadButton(page).click();
+  await expectExpanded(page);
+  await expect(page.locator(".update-button")).toHaveText("업데이트 0.2.0");
+  await expect(page.locator(".update-button")).toBeVisible();
+});
+
+test("an update found before collapsing marks the button as it collapses", async ({ page }) => {
+  await start(page);
+  await announce(page);
+  await expect(page.locator(".update-button")).toBeVisible();
+  await toggle(page, COLLAPSE).click();
+  // Not expectCollapsed: it looks the button up by its plain name.
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await expectMarked(page);
+});
+
+test("the mark goes with the update button", async ({ page }) => {
+  await start(page);
+  await toggle(page, COLLAPSE).click();
+  await announce(page);
+  await expectMarked(page);
+  await leadButton(page).click();
+  await expectExpanded(page);
+  // Another window installed it: the question comes back empty and the button goes down.
+  await page.evaluate(() => {
+    window.__tote.backend.currentUpdate = async () => null;
+  });
+  await page.locator(".update-button").click();
+  await expect(page.locator(".update-button")).toBeHidden();
+  await toggle(page, COLLAPSE).click();
+  await expectCollapsed(page);
+  await expect(leadButton(page)).not.toHaveClass(/\bhas-update\b/);
+  await expect(leadButton(page)).toHaveAttribute("aria-label", EXPAND);
+});
