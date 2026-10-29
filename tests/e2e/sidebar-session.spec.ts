@@ -131,8 +131,8 @@ const listed = (name: string, windows = 0): FakeData["workspaces"][number] => ({
 
 /** 업무 shown here with 회의 open; 개인 with no tab open last time, its window as `personal`
  * says: a tab shown there would write the session once its language data is in (`changed`), which
- * would hide whether the switch itself writes it. The switcher lists them by name: ⌃1 goes to
- * 개인. */
+ * would hide whether the switch itself writes it. The switcher lists them in the set order, here
+ * the seed's: ⌃1 goes to 개인. */
 function seed(personal: object = {}): Partial<FakeData> {
   return {
     workspace: info("업무"),
@@ -141,7 +141,7 @@ function seed(personal: object = {}): Partial<FakeData> {
       layout: { tabs: [{ kind: "memo", memoId: "m" }], activeTab: 0 },
       focusedPane: 0,
     }),
-    workspaces: [listed("업무", 1), listed("개인")],
+    workspaces: [listed("개인"), listed("업무", 1)],
     otherWorkspaces: {
       "/fake/개인": {
         workspace: info("개인"),
