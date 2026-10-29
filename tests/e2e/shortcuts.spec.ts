@@ -154,6 +154,42 @@ test("a saved ⌘B keeps its command, and resetting the sidebar toggle asks befo
   await expect(keys(panel, "rename")).toHaveText("없음");
 });
 
+test("a saved ⌘B on one command does not put the sidebar toggle in the map when another row is edited", async ({
+  page,
+}) => {
+  const panel = await startShortcuts(page, {
+    settings: { ...defaultFakeData().settings, shortcuts: { rename: "CmdOrCtrl+B" } },
+  });
+  await record(panel, "versions");
+  await page.keyboard.press("Meta+K");
+  await expect(keys(panel, "versions")).toHaveText("⌘K");
+  await expect
+    .poll(() => savedMap(page))
+    .toEqual({ rename: "CmdOrCtrl+B", versions: "CmdOrCtrl+K" });
+});
+
+for (const toggle of [null, "CmdOrCtrl+Shift+B"]) {
+  test(`a toggle-sidebar entry of ${toggle ?? "none"} stays in the map when another row is edited`, async ({
+    page,
+  }) => {
+    const panel = await startShortcuts(page, {
+      settings: {
+        ...defaultFakeData().settings,
+        shortcuts: { "toggle-sidebar": toggle, rename: "CmdOrCtrl+B" },
+      },
+    });
+    await expect(keys(panel, "toggle-sidebar")).toHaveText(toggle === null ? "없음" : "⇧⌘B");
+    await record(panel, "versions");
+    await page.keyboard.press("Meta+K");
+    await expect(keys(panel, "versions")).toHaveText("⌘K");
+    // Not refused as stale, and the entry is kept.
+    await expect
+      .poll(() => savedMap(page))
+      .toEqual({ "toggle-sidebar": toggle, rename: "CmdOrCtrl+B", versions: "CmdOrCtrl+K" });
+    await expect(panel.locator(".shortcut-note.error")).toHaveCount(0);
+  });
+}
+
 test("swapping back a default leaves it out of the map", async ({ page }) => {
   const panel = await startShortcuts(page, {
     settings: {

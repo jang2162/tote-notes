@@ -279,6 +279,9 @@ export interface ShortcutCommand {
   default: string | null;
   /** Set when its default gives way to a key saved for another command, instead of beating it. */
   yields?: true;
+  /** Set when its default is not in force because a saved key has it: `current` is empty without
+   * an entry in the saved map, unlike an entry of the person's. */
+  yielded?: true;
   /** The shortcut it has now: a saved one, else the default. */
   current: string | null;
 }

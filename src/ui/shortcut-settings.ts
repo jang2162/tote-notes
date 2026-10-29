@@ -185,13 +185,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     }
   }
 
-  /** Whether `command` has no key only because its default gives way to a key saved for another
-   * command: that is not an entry of the saved map, and saving must not make it one. */
-  const yielded = (command: ShortcutCommand): boolean =>
-    command.yields === true &&
-    command.current === null &&
-    command.default !== null &&
-    (table?.commands ?? []).some((other) => same(other.current, command.default));
+  /** Whether `command` has no key only because its default gave way to a key saved for another
+   * command: the table says so, and that is not an entry of the saved map. Saving must not make
+   * it one. An entry of the person's, empty or not, is not this. */
+  const yielded = (command: ShortcutCommand): boolean => command.yielded === true;
 
   /** The map as saved, which is the table's shortcuts that differ from their default. */
   const savedMap = (): Shortcuts => {

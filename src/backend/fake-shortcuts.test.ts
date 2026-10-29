@@ -4,6 +4,7 @@ import table from "../../src-tauri/tests/fixtures/shortcut-table.json";
 import {
   FAKE_FIXED_SHORTCUTS,
   FAKE_SHORTCUT_COMMANDS,
+  gaveWay,
   refusedShortcut,
   resolveShortcuts,
   sanitizeShortcuts,
@@ -38,5 +39,17 @@ describe("sanitizeShortcuts", () => {
     expect(shortcuts[at("toggle-sidebar")]).toBeNull();
     expect(shortcuts[at("rename")]).toBe("CmdOrCtrl+B");
     expect(refusedShortcut(saved)).toBeNull();
+  });
+
+  it("says the sidebar toggle gave way only when it has no entry of its own", () => {
+    const toggle = FAKE_SHORTCUT_COMMANDS.find((c) => c.id === "toggle-sidebar")!;
+    expect(gaveWay(toggle, {})).toBe(false);
+    expect(gaveWay(toggle, { rename: "CmdOrCtrl+B" })).toBe(true);
+    expect(gaveWay(toggle, { rename: "Cmd+B" })).toBe(true);
+    expect(gaveWay(toggle, { rename: "CmdOrCtrl+Shift+B" })).toBe(false);
+    expect(gaveWay(toggle, { "toggle-sidebar": null, rename: "CmdOrCtrl+B" })).toBe(false);
+    expect(gaveWay(toggle, { "toggle-sidebar": "CmdOrCtrl+K", rename: "CmdOrCtrl+B" })).toBe(false);
+    const rename = FAKE_SHORTCUT_COMMANDS.find((c) => c.id === "rename")!;
+    expect(gaveWay(rename, { save: "CmdOrCtrl+B" })).toBe(false);
   });
 });

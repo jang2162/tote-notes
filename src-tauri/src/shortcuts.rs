@@ -344,21 +344,24 @@ fn clashing(kept: &BTreeMap<String, Option<String>>) -> Option<&'static str> {
     })
 }
 
+/// Whether `command`'s default gives way to a key saved for another command: it yields, has no
+/// entry of its own in `kept` (an entry, empty or not, is the person's), and its default is a key
+/// `kept` already has. A saved key is not dropped for a command that came after it.
+fn gave_way(command: &Command, kept: &BTreeMap<String, Option<String>>) -> bool {
+    command.yields
+        && !kept.contains_key(command.id)
+        && command
+            .default
+            .is_some_and(|default| kept.values().flatten().any(|keys| same(keys, default)))
+}
+
 fn resolve(kept: &BTreeMap<String, Option<String>>) -> Vec<(&'static Command, Option<String>)> {
     COMMANDS
         .iter()
         .map(|command| {
             let keys = match kept.get(command.id) {
                 Some(keys) => keys.clone(),
-                // A yielding default starts with no key where a saved one already has it, so the
-                // saved key is not dropped for a command that came after it.
-                None if command.yields
-                    && command.default.is_some_and(|default| {
-                        kept.values().flatten().any(|keys| same(keys, default))
-                    }) =>
-                {
-                    None
-                }
+                None if gave_way(command, kept) => None,
                 None => command.default.map(str::to_string),
             };
             (command, keys)
@@ -393,6 +396,11 @@ pub struct CommandRow {
     /// Set for a command whose default gives way (`Command::yields`); left out otherwise.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub yields: bool,
+    /// Set when this command's default is not in force because a saved key has it (`gave_way`):
+    /// its `current` is empty without an entry in the saved map, which the page cannot tell from
+    /// an entry of the person's. Left out otherwise.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub yielded: bool,
 }
 
 #[derive(Debug, PartialEq, Serialize)]
@@ -404,8 +412,9 @@ pub struct FixedRow {
 
 /// The table for the overrides `saved`.
 pub fn table(saved: &BTreeMap<String, Option<String>>) -> ShortcutTable {
+    let kept = sanitize(saved);
     ShortcutTable {
-        commands: effective(saved)
+        commands: resolve(&kept)
             .into_iter()
             .map(|(command, current)| CommandRow {
                 id: command.id,
@@ -414,6 +423,7 @@ pub fn table(saved: &BTreeMap<String, Option<String>>) -> ShortcutTable {
                 default: command.default,
                 current,
                 yields: command.yields,
+                yielded: gave_way(command, &kept),
             })
             .collect(),
         fixed: FIXED
@@ -757,6 +767,60 @@ mod tests {
             assert_eq!(shortcut_of(&saved, id), Some("CmdOrCtrl+B".into()), "{id}");
             assert_eq!(shortcut_of(&saved, "toggle-sidebar"), None, "{id}");
             assert_eq!(validate(&saved), Ok(()), "{id}");
+        }
+    }
+
+    #[test]
+    fn a_saved_entry_of_the_sidebar_toggle_is_kept_beside_a_saved_cmd_b() {
+        // No key of its own, or one: the entry is the person's and the default has nothing to give.
+        for toggle in [None, Some("CmdOrCtrl+Shift+B")] {
+            let saved = overrides(&[("toggle-sidebar", toggle), ("rename", Some("CmdOrCtrl+B"))]);
+            assert_eq!(sanitize(&saved), saved, "{toggle:?}");
+            assert_eq!(shortcut_of(&saved, "rename"), Some("CmdOrCtrl+B".into()));
+            assert_eq!(
+                shortcut_of(&saved, "toggle-sidebar"),
+                toggle.map(str::to_string)
+            );
+            assert_eq!(validate(&saved), Ok(()));
+        }
+    }
+
+    #[test]
+    fn the_yield_reads_a_saved_key_by_its_keys_not_its_spelling() {
+        for spelling in ["Cmd+B", "Super+B", "cmdorctrl+b"] {
+            let saved = overrides(&[("rename", Some(spelling))]);
+            assert_eq!(shortcut_of(&saved, "toggle-sidebar"), None, "{spelling}");
+            assert_eq!(shortcut_of(&saved, "rename"), Some(spelling.into()));
+        }
+        // Another key is no reason to give way.
+        let saved = overrides(&[("rename", Some("CmdOrCtrl+Shift+B"))]);
+        assert_eq!(
+            shortcut_of(&saved, "toggle-sidebar"),
+            Some("CmdOrCtrl+B".into())
+        );
+    }
+
+    #[test]
+    fn the_table_says_which_command_gave_way_and_only_that_one() {
+        let yielded = |saved: &BTreeMap<String, Option<String>>| -> Vec<String> {
+            let json = serde_json::to_value(table(saved)).unwrap();
+            json["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row.get("yielded").is_some())
+                .map(|row| row["id"].as_str().unwrap().to_string())
+                .collect()
+        };
+        assert!(yielded(&BTreeMap::new()).is_empty());
+        assert_eq!(
+            yielded(&overrides(&[("rename", Some("CmdOrCtrl+B"))])),
+            ["toggle-sidebar"]
+        );
+        // An entry of its own, empty or not, is not giving way.
+        for toggle in [None, Some("CmdOrCtrl+Shift+B")] {
+            let saved = overrides(&[("toggle-sidebar", toggle), ("rename", Some("CmdOrCtrl+B"))]);
+            assert!(yielded(&saved).is_empty(), "{toggle:?}");
         }
     }
 

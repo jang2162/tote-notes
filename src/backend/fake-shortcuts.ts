@@ -92,19 +92,23 @@ export function sanitizeShortcuts(saved: Overrides): Overrides {
   return kept;
 }
 
+/** `gave_way` in src-tauri/src/shortcuts.rs: whether `command`'s default gives way to a key saved
+ * for another command. An entry of its own in `kept`, empty or not, is the person's. */
+export function gaveWay(command: Omit<ShortcutCommand, "current">, kept: Overrides): boolean {
+  const { default: keys } = command;
+  return (
+    command.yields === true &&
+    keys !== null &&
+    !Object.hasOwn(kept, command.id) &&
+    Object.values(kept).some((saved) => saved !== null && sameAccelerator(saved, keys))
+  );
+}
+
 /** Every command with the shortcut it has under `kept`. */
 export function resolveShortcuts(kept: Overrides): (string | null)[] {
   return FAKE_SHORTCUT_COMMANDS.map((command) => {
     if (Object.hasOwn(kept, command.id)) return kept[command.id];
-    // A yielding default starts with no key where a saved one already has it.
-    const { default: keys } = command;
-    if (command.yields && keys !== null) {
-      const taken = Object.values(kept).some(
-        (saved) => saved !== null && sameAccelerator(saved, keys),
-      );
-      if (taken) return null;
-    }
-    return keys;
+    return gaveWay(command, kept) ? null : command.default;
   });
 }
 

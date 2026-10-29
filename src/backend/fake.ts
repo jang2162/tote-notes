@@ -7,6 +7,7 @@ import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
   FAKE_FIXED_SHORTCUTS,
   FAKE_SHORTCUT_COMMANDS,
+  gaveWay,
   refusedShortcut,
   resolveShortcuts,
   sameShortcutMaps,
@@ -1355,9 +1356,14 @@ export class FakeBackend implements Backend {
   }
 
   async shortcutTable(): Promise<ShortcutTable> {
-    const current = resolveShortcuts(sanitizeShortcuts(this.data.settings.shortcuts ?? {}));
+    const kept = sanitizeShortcuts(this.data.settings.shortcuts ?? {});
+    const current = resolveShortcuts(kept);
     return {
-      commands: FAKE_SHORTCUT_COMMANDS.map((command, at) => ({ ...command, current: current[at] })),
+      commands: FAKE_SHORTCUT_COMMANDS.map((command, at) => ({
+        ...command,
+        current: current[at],
+        ...(gaveWay(command, kept) ? { yielded: true as const } : {}),
+      })),
       fixed: structuredClone(FAKE_FIXED_SHORTCUTS),
     };
   }
