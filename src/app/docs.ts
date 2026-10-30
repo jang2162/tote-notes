@@ -823,7 +823,8 @@ export class MemoDoc extends Doc {
   }
 
   /** What the memo list says of this memo now, from a listing asked for when `setInfo` had run
-   * `changes` times: another window's rename or pin. A listing that set out before this tab's own
+   * `changes` times: another window's rename or pin, taken when the name, its title, its language
+   * or its pin differ. A listing that set out before this tab's own
    * change of name answered is older than what the tab knows, and is not followed. */
   follow(listed: MemoInfo, changes: number): void {
     if (changes !== this.infoChanges) return;
@@ -835,7 +836,9 @@ export class MemoDoc extends Doc {
       pinned === this.info.pinned
     )
       return;
-    this.setInfo({ ...this.info, file, autoTitle, language, pinned });
+    // Whole: the tab's own time, size and preview may be older than the listing's (another app's
+    // edit is reread without new info). A viewed time the list has is kept there (`upsert`).
+    this.setInfo(listed);
   }
 
   /** How many times `setInfo` has run, for `follow`. */

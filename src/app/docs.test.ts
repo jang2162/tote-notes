@@ -356,6 +356,21 @@ describe("MemoDoc", () => {
     expect(doc.info).toMatchObject({ file: "notes.md", autoTitle: false });
   });
 
+  it("takes the whole listed info when it follows another window's rename", async () => {
+    const { backend, host } = setup({
+      memos: { a: fakeMemo("x.md", "t\nold", { modifiedMs: 1 }) },
+    });
+    const doc = new MemoDoc(host, (await backend.listMemos())[0]);
+    await doc.ensureLoaded();
+    const asked = doc.infoChanges;
+    // Another app changed it (the tab rereads, its info stays), then another window renamed it.
+    Object.assign(backend.data.memos.a, { file: "y.md", autoTitle: false, modifiedMs: 9 });
+    backend.data.memos.a.data = fakeFile("t\nnew");
+    const listed = (await backend.listMemos())[0];
+    doc.follow(listed, asked);
+    expect(doc.info).toEqual(listed);
+  });
+
   it("is not undone by a listing that set out before its language change", async () => {
     const { backend, host } = setup({ memos: { a: fakeMemo("x.md", "print(1)") } });
     const doc = new MemoDoc(host, (await backend.listMemos())[0]);
