@@ -624,7 +624,9 @@ html:not(.sidebar-collapsed) .tab-lead {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
 
-/* The box around a tab and its close button, which sits beside the role=tab label, not in it. */
+/* The box around a tab and its close button, which sits beside the role=tab label, not in it.
+ * Tabs move aside for a tab dragged over their bar, and back: a short slide, none for reduced
+ * motion (the 워크스페이스 section's rows do the same). */
 .tab {
   position: relative;
   display: flex;
@@ -635,6 +637,7 @@ html:not(.sidebar-collapsed) .tab-lead {
   color: var(--muted);
   white-space: nowrap;
   cursor: default;
+  transition: transform 150ms ease;
 }
 
 /* The label takes the box's left and vertical padding, and the row's height, so pressing anywhere
@@ -649,12 +652,6 @@ html:not(.sidebar-collapsed) .tab-lead {
 .tab.active {
   background: var(--bg);
   color: var(--fg);
-}
-
-/* Tabs move aside for a tab dragged over their bar, and back: a short slide, none for reduced
- * motion (the 워크스페이스 section's rows do the same). */
-.tab {
-  transition: transform 150ms ease;
 }
 
 /* The dragged tab follows the pointer as it is, over the tabs it passes. */

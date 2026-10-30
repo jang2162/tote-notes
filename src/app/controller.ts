@@ -149,9 +149,12 @@ const SPLIT_TAB_ITEMS: { id: string; text: string; side: Side }[] = [
 ];
 const NEW_WORKSPACE_NAME = "새 워크스페이스 이름";
 
-/** Where a dragged tab would go (`AppController.dropTarget`): a place in a pane's tab bar, or a
- * zone of a pane's body — the whole pane, or a side split off for it. */
+/** Where a dragged tab would go: a place in a pane's tab bar, or a zone of a pane's body — the
+ * whole pane, or a side split off for it. */
 type DropTarget = { pane: Pane; index: number } | { pane: Pane; zone: Zone } | null;
+/** What a dragged tab is over (`AppController.dropTarget`): a pane's tab bar, whose preview says
+ * the place in it, or a zone of a pane's body. */
+type DropOver = { pane: Pane; bar: true } | { pane: Pane; zone: Zone } | null;
 
 /** The leaf a drop mask stands for while it asks the layout where a split would put a new pane. */
 const MASK_ID = "drop-mask";
@@ -1190,26 +1193,28 @@ export class AppController implements DocHost, PaneHost {
       dimmed = pane;
       dimmed?.tabBar.markOut(tabId);
     };
-    // A place in a tab bar is shown there, the tabs moved for it; a zone of a pane's body by the
-    // mask; never both.
-    const show = (x: number, home: Pane | null) => {
-      const bar = target && "index" in target ? target.pane : null;
+    // A place in a tab bar is shown there, the tabs moved for it, and the drop goes to the place
+    // shown; a zone of a pane's body by the mask; never both.
+    const show = (x: number, home: Pane | null, place: DropOver) => {
+      const bar = place && "bar" in place ? place.pane : null;
       if (previewed !== bar) previewed?.tabBar.preview(null);
       previewed = bar;
-      bar?.tabBar.preview({ id: tabId, width: home?.tabBar.widthOf(tabId) ?? 0, x });
+      const width = home?.tabBar.widthOf(tabId) ?? 0;
+      target =
+        place && "bar" in place
+          ? { pane: place.pane, index: place.pane.tabBar.preview({ id: tabId, width, x }) }
+          : place;
       this.showDropMask(target && "zone" in target ? target : null);
     };
     const over = (x: number, y: number) => {
       const doc = dragged();
       const home = doc ? this.paneOf(doc) : null;
       const away = outside(x, y);
-      target = away ? null : this.dropTarget(x, y, doc);
-      show(x, home);
+      show(x, home, away ? null : this.dropTarget(x, y, doc));
       dim(away || (previewed && previewed !== home) ? home : null);
     };
     const end = () => {
-      target = null;
-      show(0, null);
+      show(0, null, null);
       dim(null);
     };
     return {
@@ -1238,15 +1243,15 @@ export class AppController implements DocHost, PaneHost {
     };
   }
 
-  /** Where `doc`, dropped at (`x`, `y`), would go: a place in a pane's tab bar, or a zone of a
-   * pane's body (`dropZone`) — a side the pane is too small to split toward is its center. Nothing
-   * for a side of `doc`'s own pane when it is that pane's only tab: there is nothing to split. */
-  private dropTarget(x: number, y: number, doc: Doc | undefined): DropTarget {
+  /** What `doc`, dropped at (`x`, `y`), would go to: a pane's tab bar, or a zone of a pane's body
+   * (`dropZone`) — a side the pane is too small to split toward is its center. Nothing for a side
+   * of `doc`'s own pane when it is that pane's only tab: there is nothing to split. */
+  private dropTarget(x: number, y: number, doc: Doc | undefined): DropOver {
     const hit = document.elementsFromPoint(x, y);
     const pane = this.panes.find((each) => hit.includes(each.el));
     if (!pane) return null;
     // The lead in front of the tab bar is left of its first tab: a drop there goes first.
-    if (hit.includes(pane.head)) return { pane, index: pane.tabBar.indexAt(x, doc?.tabId) };
+    if (hit.includes(pane.head)) return { pane, bar: true };
     const zone = dropZone(pane.surface.el.getBoundingClientRect(), x, y);
     if (zone === "center") return { pane, zone };
     if (pane.tabs.list.length === 1 && pane.tabs.list[0] === doc) return null;

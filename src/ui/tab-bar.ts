@@ -119,19 +119,15 @@ export class TabBar {
     if (this.shown) this.show();
   }
 
-  /** Where tab `id`, let go with the pointer at `x`, goes in this bar: the index `Tabs.place` takes.
-   * The place `preview` shows for the same `x`. */
-  indexAt(x: number, id?: string): number {
-    const { from, to } = this.arrangement({ id: id ?? "", width: 0, x });
-    return from !== null && to >= from ? to + 1 : to;
-  }
-
   /** Shows the tabs as they would be with `drag` let go over this bar (`arrange`): only how they
    * look — their order, as the tabs and a screen reader know it, is the same until a drop moves
-   * the tab. A bar with no tabs is marked as a whole. Null puts every tab back. */
-  preview(drag: TabPreview | null): void {
+   * the tab. A bar with no tabs is marked as a whole. Null puts every tab back. Returns where the
+   * tab goes, the index `Tabs.place` takes: a drop there lands it in the place shown. */
+  preview(drag: TabPreview): number;
+  preview(drag: null): void;
+  preview(drag: TabPreview | null): number {
     this.shown = drag;
-    this.show();
+    return this.show();
   }
 
   /** Dims tab `id`, dragged away from this bar — over another one, or out of the window; null takes
@@ -169,16 +165,18 @@ export class TabBar {
     return { from, ...arrange(tabs, { from, left: at - grab }) };
   }
 
-  private show(): void {
+  private show(): number {
     const els = this.tabEls();
     this.el.classList.toggle("drop-into", this.shown !== null && els.length === 0);
-    const { from, shifts } = this.shown
+    const { from, to, shifts } = this.shown
       ? this.arrangement(this.shown)
-      : { from: null, shifts: els.map(() => 0) };
+      : { from: null, to: 0, shifts: els.map(() => 0) };
     els.forEach((el, index) => {
       el.style.transform = shifts[index] ? `translateX(${shifts[index]}px)` : "";
       el.classList.toggle("dragging", index === from);
     });
+    // `Tabs.place` counts the tab's own place, which it still holds: past it, one more.
+    return from !== null && to >= from ? to + 1 : to;
   }
 
   private tab(tab: TabView): HTMLElement {
