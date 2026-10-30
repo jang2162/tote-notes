@@ -767,8 +767,17 @@ html:not(.sidebar-collapsed) .tab-lead {
   font-style: italic;
 }
 
-.tab.dirty .tab-title::after {
-  content: " ●";
+/* A drawn dot, not a ● glyph: the glyph is as big as the title's letters. `:not(.failed)` keeps
+ * these sizes off the ⚠ below. */
+.tab.dirty:not(.failed) .tab-title::after {
+  content: "";
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  margin-left: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  vertical-align: middle;
 }
 
 .tab.failed .tab-title::after {
