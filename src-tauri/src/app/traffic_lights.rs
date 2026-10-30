@@ -13,8 +13,9 @@
 //! the title and places the buttons after it, and `on_resized` places them once the window is out
 //! of full screen. Main thread only, as AppKit wants.
 
+use objc2::MainThreadMarker;
 use objc2_app_kit::{NSButton, NSWindow, NSWindowButton, NSWindowStyleMask};
-use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
+use objc2_foundation::{NSPoint, NSString};
 use tauri::{WebviewWindow, Window};
 
 /// The window's top row in logical pixels: the CSS `--top-row-height`.
