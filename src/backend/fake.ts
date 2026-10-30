@@ -1,6 +1,7 @@
 import { BINARY_PROBE_BYTES } from "../core/codec";
 import { basename, splitName } from "../core/names";
 import { parseSessionFile, type SessionTab } from "../core/session";
+import { parseSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
 import { scanBytes } from "../viewer/large-text";
 import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
@@ -809,6 +810,7 @@ export class FakeBackend implements Backend {
       label: this.label,
       macTitlebar: this.data.macTitlebar === true,
       sidebarCollapsed: this.savedLayout()?.sidebarCollapsed === true,
+      sidebarWidth: parseSidebarWidth(this.savedLayout()?.sidebarWidth) ?? SIDEBAR_WIDTH.default,
     };
   }
 
@@ -823,7 +825,7 @@ export class FakeBackend implements Backend {
   }
 
   // The layout as saved, field for field: the session parser keeps only the fields it knows.
-  private savedLayout(): { sidebarCollapsed?: unknown } | null {
+  private savedLayout(): { sidebarCollapsed?: unknown; sidebarWidth?: unknown } | null {
     if (this.hub) return this.hub.layout(this.data) as { sidebarCollapsed?: unknown } | null;
     try {
       const [window] = JSON.parse(this.data.session ?? "null")?.windows ?? [];

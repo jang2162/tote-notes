@@ -14,6 +14,7 @@ function setup(
   session: object | null,
   memos: Record<string, ReturnType<typeof fakeMemo>> = {},
   sidebarCollapsed = false,
+  sidebarWidth = 240,
 ) {
   const backend = new FakeBackend(
     memoryStorage(
@@ -56,6 +57,7 @@ function setup(
       panes: new Map([["p", { tabs }]]),
       focusedPane: 0,
       sidebarCollapsed,
+      sidebarWidth,
     }),
     "device-1",
     (id) => infos.get(id),
@@ -186,6 +188,16 @@ describe("SessionSync.restore", () => {
     const expanded = setup({ version: 2, windows: [window] });
     expect((await expanded.sync.restore()).sidebarCollapsed).toBe(false);
     expect((await setup(null).sync.restore()).sidebarCollapsed).toBe(false);
+  });
+
+  it("brings back the sidebar's width, 240 when the session says nothing it can read", async () => {
+    const window = { layout: { tabs: [], activeTab: -1 }, focusedPane: 0 };
+    const wide = setup({ version: 2, windows: [{ ...window, sidebarWidth: 320 }] });
+    expect((await wide.sync.restore()).sidebarWidth).toBe(320);
+    const odd = setup({ version: 2, windows: [{ ...window, sidebarWidth: 600 }] });
+    expect((await odd.sync.restore()).sidebarWidth).toBe(240);
+    expect((await setup({ version: 2, windows: [window] }).sync.restore()).sidebarWidth).toBe(240);
+    expect((await setup(null).sync.restore()).sidebarWidth).toBe(240);
   });
 });
 
@@ -347,6 +359,19 @@ describe("SessionSync.build and sessionTab", () => {
     expect(expanded).not.toHaveProperty("sidebarCollapsed");
   });
 
+  it("writes the sidebar's width only when it is not the default", async () => {
+    const wide = await setup(null, {}, false, 320).sync.build(() => {});
+    expect(wide).toEqual({
+      layout: { tabs: [], activeTab: -1 },
+      focusedPane: 0,
+      sidebarWidth: 320,
+    });
+    const plain = await setup(null, {}, false, 240).sync.build(() => {});
+    expect(plain).not.toHaveProperty("sidebarWidth");
+    const folded = await setup(null, {}, true, 320).sync.build(() => {});
+    expect(folded).toMatchObject({ sidebarCollapsed: true, sidebarWidth: 320 });
+  });
+
   it("writes a leaf without a pane as an empty pane rather than failing", async () => {
     const { backend, host, tabs } = setup(null, { a: fakeMemo("가.md", "") });
     tabs.active = tabs.insertAfterActive(new MemoDoc(host, host.memoInfo("a")!));
@@ -362,6 +387,7 @@ describe("SessionSync.build and sessionTab", () => {
         panes: new Map([["a", { tabs }]]),
         focusedPane: 0,
         sidebarCollapsed: false,
+        sidebarWidth: 240,
       }),
       "device-1",
       (id) => host.memoInfo(id),
@@ -415,6 +441,7 @@ describe("SessionSync.build and sessionTab", () => {
         ]),
         focusedPane: 2,
         sidebarCollapsed: false,
+        sidebarWidth: 240,
       }),
       "device-1",
       (id) => host.memoInfo(id),

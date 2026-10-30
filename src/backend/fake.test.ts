@@ -287,8 +287,11 @@ describe("FakeBackend shortcuts", () => {
 });
 
 describe("FakeBackend window start", () => {
-  const sessionWith = (sidebarCollapsed: unknown) =>
-    JSON.stringify({ version: 2, windows: [{ panes: [], focusedPane: 0, sidebarCollapsed }] });
+  const sessionWith = (sidebarCollapsed: unknown, sidebarWidth?: unknown) =>
+    JSON.stringify({
+      version: 2,
+      windows: [{ panes: [], focusedPane: 0, sidebarCollapsed, sidebarWidth }],
+    });
 
   it("is not macOS and expanded by default", () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
@@ -296,7 +299,18 @@ describe("FakeBackend window start", () => {
       label: FAKE_LABEL,
       macTitlebar: false,
       sidebarCollapsed: false,
+      sidebarWidth: 240,
     });
+  });
+
+  it("takes the sidebar's width from the window's saved layout, 240 for one out of range", () => {
+    const backendWith = (width: unknown) =>
+      new FakeBackend(
+        memoryStorage(JSON.stringify({ ...defaultFakeData(), session: sessionWith(false, width) })),
+      );
+    expect(backendWith(320).windowStart().sidebarWidth).toBe(320);
+    expect(backendWith(500).windowStart().sidebarWidth).toBe(240);
+    expect(backendWith("320").windowStart().sidebarWidth).toBe(240);
   });
 
   it("takes macOS from the seed and the sidebar from the window's saved layout", () => {
@@ -310,7 +324,7 @@ describe("FakeBackend window start", () => {
 
   it("reads the sidebar from the layout the hub holds for its window", () => {
     // The hub's layout alone: the session file is empty, so only the hub branch can know it.
-    const layout = { panes: [], focusedPane: 0, sidebarCollapsed: true };
+    const layout = { panes: [], focusedPane: 0, sidebarCollapsed: true, sidebarWidth: 300 };
     const data = {
       ...defaultFakeData(),
       hub: { windows: [{ label: "ws-1", layout }], labels: 1, focused: null },
@@ -324,6 +338,7 @@ describe("FakeBackend window start", () => {
       expect(FakeBackend.fromHub("ws-1").windowStart()).toMatchObject({
         label: "ws-1",
         sidebarCollapsed: true,
+        sidebarWidth: 300,
       });
     } finally {
       vi.unstubAllGlobals();

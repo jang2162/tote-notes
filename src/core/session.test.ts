@@ -90,6 +90,14 @@ describe("parseWindowSession", () => {
     expect(parseWindowSession({})).not.toHaveProperty("sidebarCollapsed");
   });
 
+  it("reads the sidebar's width only from 180 to 480 and other than 240", () => {
+    for (const sidebarWidth of [180, 300, 480])
+      expect(parseWindowSession({ sidebarWidth }).sidebarWidth).toBe(sidebarWidth);
+    for (const sidebarWidth of [240, 179, 481, "300", null, true, undefined]) {
+      expect(parseWindowSession({ sidebarWidth })).not.toHaveProperty("sidebarWidth");
+    }
+  });
+
   it("focusedPane out of range is 0", () => {
     const panes = [{ tabs: [] }, { tabs: [] }];
     expect(parseWindowSession({ panes, focusedPane: 1 }).focusedPane).toBe(1);

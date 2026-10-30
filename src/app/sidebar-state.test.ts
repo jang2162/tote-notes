@@ -1,12 +1,20 @@
 import { describe, expect, it } from "vitest";
 
 import type { WindowStart } from "../backend/types";
-import { startsCollapsed, storeCollapsed, storedCollapsed } from "./sidebar-state";
+import {
+  startsCollapsed,
+  startsWidth,
+  storeCollapsed,
+  storedCollapsed,
+  storedWidth,
+  storeWidth,
+} from "./sidebar-state";
 
-const startWith = (sidebarCollapsed: boolean): WindowStart => ({
+const startWith = (sidebarCollapsed: boolean, sidebarWidth = 240): WindowStart => ({
   label: "ws-1",
   macTitlebar: false,
   sidebarCollapsed,
+  sidebarWidth,
 });
 
 /** A storage of `items`, as `sessionStorage` would be. */
@@ -60,5 +68,43 @@ describe("the sidebar's collapsed state", () => {
     expect(() => storeCollapsed(() => ({ setItem: throws }), "ws-1", true)).not.toThrow();
     expect(() => storeCollapsed(throws, "ws-1", true)).not.toThrow();
     expect(() => storeCollapsed(() => null, "ws-1", true)).not.toThrow();
+  });
+});
+
+describe("the sidebar's width", () => {
+  it("prefers what the page kept over the start value", () => {
+    const kept = (value: string) => () => storageOf({ "tote.sidebarWidth.ws-1": value });
+    expect(startsWidth(startWith(false, 300), storedWidth(kept("200"), "ws-1"))).toBe(200);
+    expect(startsWidth(startWith(false, 300), storedWidth(kept("240"), "ws-1"))).toBe(240);
+    expect(startsWidth(startWith(false, 240), storedWidth(kept("480"), "ws-1"))).toBe(480);
+  });
+
+  it("falls back to the start value for nothing, a width out of range, garbage or a storage that throws", () => {
+    const storages: (() => Pick<Storage, "getItem"> | null)[] = [
+      () => null,
+      () => storageOf(),
+      () => storageOf({ "tote.sidebarWidth.ws-1": "100" }),
+      () => storageOf({ "tote.sidebarWidth.ws-1": "481" }),
+      () => storageOf({ "tote.sidebarWidth.ws-1": "" }),
+      () => storageOf({ "tote.sidebarWidth.ws-1": "wide" }),
+      () => ({ getItem: throws }),
+      throws,
+    ];
+    for (const storage of storages) {
+      expect(storedWidth(storage, "ws-1")).toBeNull();
+      expect(startsWidth(startWith(false, 320), storedWidth(storage, "ws-1"))).toBe(320);
+    }
+  });
+
+  it("keys by the window, and a storage that throws on write is no failure", () => {
+    const storage = storageOf();
+    storeWidth(() => storage, "ws-1", 300);
+    expect(storedWidth(() => storage, "ws-1")).toBe(300);
+    expect(storedWidth(() => storage, "ws-2")).toBeNull();
+    storeWidth(() => storage, "ws-1", 240);
+    expect(storedWidth(() => storage, "ws-1")).toBe(240);
+    expect(() => storeWidth(() => ({ setItem: throws }), "ws-1", 300)).not.toThrow();
+    expect(() => storeWidth(throws, "ws-1", 300)).not.toThrow();
+    expect(() => storeWidth(() => null, "ws-1", 300)).not.toThrow();
   });
 });

@@ -3,6 +3,8 @@ import { getCurrentWebview } from "@tauri-apps/api/webview";
 import { getCurrentWebviewWindow } from "@tauri-apps/api/webviewWindow";
 import { open } from "@tauri-apps/plugin-dialog";
 
+import { parseSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
+
 import {
   BACKEND_ERROR_CODES,
   BackendError,
@@ -80,6 +82,7 @@ export class TauriBackend implements Backend {
       label: typeof given.label === "string" ? given.label : this.window.label,
       macTitlebar: given.macTitlebar === true,
       sidebarCollapsed: given.sidebarCollapsed === true,
+      sidebarWidth: parseSidebarWidth(given.sidebarWidth) ?? SIDEBAR_WIDTH.default,
     };
   }
 

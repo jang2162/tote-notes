@@ -393,6 +393,8 @@ export interface WindowStart {
   macTitlebar: boolean;
   /** The sidebar was collapsed in the window's saved layout. */
   sidebarCollapsed: boolean;
+  /** The sidebar's width in the window's saved layout, 240 when it holds none it can use. */
+  sidebarWidth: number;
 }
 
 export interface Backend {

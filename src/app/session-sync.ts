@@ -6,6 +6,7 @@ import {
   type SessionTab,
   type WindowSession,
 } from "../core/session";
+import { SIDEBAR_WIDTH } from "../core/sidebar-width";
 import { ExternalDoc, MemoDoc, type Doc } from "./docs";
 import type { LayoutNode } from "./layout";
 import type { Tabs } from "./tabs";
@@ -38,6 +39,8 @@ export interface SessionLayout {
   /** Index of the focused pane among the leaves, depth first. */
   readonly focusedPane: number;
   readonly sidebarCollapsed: boolean;
+  /** The width kept for the sidebar, not the one a narrow window shows. */
+  readonly sidebarWidth: number;
 }
 
 /** What `restore` brings back for the window to lay out. */
@@ -50,6 +53,8 @@ export interface RestoredLayout {
   focusedPane: number;
   /** What the session says; false when it says nothing. */
   sidebarCollapsed: boolean;
+  /** What the session says; 240 when it says nothing. */
+  sidebarWidth: number;
 }
 
 /** Reads the window's session into tabs for its panes and builds the session from the panes. */
@@ -97,6 +102,7 @@ export class SessionSync {
       panes,
       focusedPane: window.focusedPane,
       sidebarCollapsed: window.sidebarCollapsed === true,
+      sidebarWidth: window.sidebarWidth ?? SIDEBAR_WIDTH.default,
     };
   }
 
@@ -110,7 +116,7 @@ export class SessionSync {
 
   async build(captureActive: () => void): Promise<WindowSession> {
     captureActive();
-    const { layout, panes, focusedPane, sidebarCollapsed } = this.layout();
+    const { layout, panes, focusedPane, sidebarCollapsed, sidebarWidth } = this.layout();
     const nodeOf = (node: LayoutNode): SessionNode => {
       if (node.kind === "split") {
         return { axis: node.axis, children: node.children.map(nodeOf), shares: [...node.shares] };
@@ -127,6 +133,7 @@ export class SessionSync {
     const frame = await this.backend.windowFrame();
     if (frame) window.frame = frame;
     if (sidebarCollapsed) window.sidebarCollapsed = true;
+    if (sidebarWidth !== SIDEBAR_WIDTH.default) window.sidebarWidth = sidebarWidth;
     return window;
   }
 

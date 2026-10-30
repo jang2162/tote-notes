@@ -18,7 +18,10 @@ use super::menu::{change_shortcuts, MenuShortcuts};
 use super::places::TabKey;
 use super::{lifecycle, requests, AppCore, DropCandidate, SwitchTarget};
 use crate::cli::CliRequest;
-use crate::session::{layout_frame, layout_sidebar_collapsed, WindowFrame};
+use crate::session::{
+    layout_frame, layout_sidebar_collapsed, layout_sidebar_width, WindowFrame,
+    DEFAULT_SIDEBAR_WIDTH,
+};
 use crate::workspace::{Workspace, DEFAULT_WORKSPACE};
 
 const DEFAULT_WIDTH: f64 = 1100.0;
@@ -27,11 +30,17 @@ const DEFAULT_HEIGHT: f64 = 760.0;
 const NEAR_OFFSET: f64 = 24.0;
 
 /// The script that runs before the page's own: what the page needs to know at its first paint.
-fn window_start_script(label: &str, mac_titlebar: bool, sidebar_collapsed: bool) -> String {
+fn window_start_script(
+    label: &str,
+    mac_titlebar: bool,
+    sidebar_collapsed: bool,
+    sidebar_width: f64,
+) -> String {
     let start = serde_json::json!({
         "label": label,
         "macTitlebar": mac_titlebar,
         "sidebarCollapsed": sidebar_collapsed,
+        "sidebarWidth": sidebar_width,
     });
     format!("window.__TOTE_WINDOW_START__ = {start};")
 }
@@ -155,7 +164,9 @@ pub fn switch(app: &AppHandle, label: &str, to: &Path) -> Result<Switched, Comma
 pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<String, CommandError> {
     let core = app.state::<AppCore>();
     let path = std::fs::canonicalize(path)?;
-    let (label, fresh, frame, collapsed, undo) = match plan {
+    // A window of its own starts with the sidebar as a window with no session does.
+    let unsaved = (false, DEFAULT_SIDEBAR_WIDTH);
+    let (label, fresh, frame, (collapsed, width), undo) = match plan {
         WindowPlan::Restore(k) => {
             // Another request is opening a window on this folder right now: that window is the
             // answer. Opening one here as well could run `Workspace::open` twice for one folder.
@@ -184,10 +195,15 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
             }
             let layout = core.saved_layout(&path, k);
             let frame = layout.as_ref().and_then(layout_frame);
-            let collapsed = layout.as_ref().is_some_and(layout_sidebar_collapsed);
-            (label, fresh, frame, collapsed, Undo::Release)
+            let sidebar = layout.as_ref().map_or(unsaved, |layout| {
+                (
+                    layout_sidebar_collapsed(layout),
+                    layout_sidebar_width(layout),
+                )
+            });
+            (label, fresh, frame, sidebar, Undo::Release)
         }
-        WindowPlan::Fresh { near } => (join(&core, &path)?, false, near, false, Undo::Release),
+        WindowPlan::Fresh { near } => (join(&core, &path)?, false, near, unsaved, Undo::Release),
         WindowPlan::Tab {
             tab,
             near,
@@ -200,7 +216,7 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
                 core.release(&label);
                 return Err(err.into());
             }
-            (label, false, near, false, Undo::GiveBack { from, key })
+            (label, false, near, unsaved, Undo::GiveBack { from, key })
         }
     };
     let title = title_of(&core, &path, &label);
@@ -215,6 +231,7 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
             &label,
             cfg!(target_os = "macos"),
             collapsed,
+            width,
         ))
         .focused(!background());
     #[cfg(target_os = "macos")]
@@ -560,8 +577,10 @@ mod tests {
 
     #[test]
     fn the_start_script_names_the_window_its_title_bar_and_its_sidebar() {
-        for (label, mac, collapsed) in [("ws-3", true, false), ("ws-1", false, true)] {
-            let script = window_start_script(label, mac, collapsed);
+        for (label, mac, collapsed, width) in
+            [("ws-3", true, false, 320.0), ("ws-1", false, true, 240.0)]
+        {
+            let script = window_start_script(label, mac, collapsed, width);
             let json = script
                 .strip_prefix("window.__TOTE_WINDOW_START__ = ")
                 .and_then(|s| s.strip_suffix(';'))
@@ -569,7 +588,12 @@ mod tests {
             let value: Value = serde_json::from_str(json).unwrap();
             assert_eq!(
                 value,
-                serde_json::json!({"label": label, "macTitlebar": mac, "sidebarCollapsed": collapsed})
+                serde_json::json!({
+                    "label": label,
+                    "macTitlebar": mac,
+                    "sidebarCollapsed": collapsed,
+                    "sidebarWidth": width,
+                })
             );
         }
     }

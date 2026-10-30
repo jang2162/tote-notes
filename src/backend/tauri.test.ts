@@ -252,19 +252,22 @@ describe("TauriBackend window start", () => {
   afterEach(() => vi.unstubAllGlobals());
 
   it("reads the values the native side put on the page", () => {
-    page({ label: "ws-2", macTitlebar: true, sidebarCollapsed: true });
+    page({ label: "ws-2", macTitlebar: true, sidebarCollapsed: true, sidebarWidth: 320 });
     expect(new TauriBackend().windowStart()).toEqual({
       label: "ws-2",
       macTitlebar: true,
       sidebarCollapsed: true,
+      sidebarWidth: 320,
     });
   });
 
   it("reads anything else as an expanded window that is not macOS, named by its label", () => {
-    const plain = { label: "ws-9", macTitlebar: false, sidebarCollapsed: false };
+    const plain = { label: "ws-9", macTitlebar: false, sidebarCollapsed: false, sidebarWidth: 240 };
     page();
     expect(new TauriBackend().windowStart()).toEqual(plain);
-    page({ macTitlebar: "yes", sidebarCollapsed: 1, label: 5 });
+    page({ macTitlebar: "yes", sidebarCollapsed: 1, label: 5, sidebarWidth: "320" });
+    expect(new TauriBackend().windowStart()).toEqual(plain);
+    page({ label: "ws-9", sidebarWidth: 100 });
     expect(new TauriBackend().windowStart()).toEqual(plain);
   });
 

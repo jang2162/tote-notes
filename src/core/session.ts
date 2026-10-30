@@ -2,6 +2,7 @@ import { EditorSelection, type Text } from "@codemirror/state";
 
 import type { Axis } from "../app/layout";
 import type { WindowFrame } from "../backend/types";
+import { parseSidebarWidth, SIDEBAR_WIDTH } from "./sidebar-width";
 
 /** The windows of one workspace on one device, `.tote/sessions/<device ID>.json` (spec 「세션」),
  * oldest-opened first. The backend gathers it from each window's layout and reads `frame` before
@@ -20,6 +21,8 @@ export interface WindowSession {
   focusedPane: number;
   /** Written only while collapsed, so an expanded window's session reads as before. */
   sidebarCollapsed?: true;
+  /** The sidebar's width, written only when it is not the default 240 (`SIDEBAR_WIDTH`). */
+  sidebarWidth?: number;
 }
 
 export interface PaneSession {
@@ -114,6 +117,9 @@ export function parseWindowSession(value: unknown): WindowSession {
   if (frame) window.frame = frame;
   // Only `true`, as the native side reads it (`layout_sidebar_collapsed`).
   if (raw.sidebarCollapsed === true) window.sidebarCollapsed = true;
+  // As the native side reads it (`layout_sidebar_width`); the default reads as none.
+  const width = parseSidebarWidth(raw.sidebarWidth);
+  if (width !== null && width !== SIDEBAR_WIDTH.default) window.sidebarWidth = width;
   return window;
 }
 

@@ -77,6 +77,20 @@ pub fn layout_sidebar_collapsed(layout: &Value) -> bool {
     layout.get("sidebarCollapsed") == Some(&Value::Bool(true))
 }
 
+/// The sidebar's width when the layout holds none it can use (`SIDEBAR_WIDTH` in
+/// src/core/sidebar-width.ts).
+pub const DEFAULT_SIDEBAR_WIDTH: f64 = 240.0;
+
+/// The sidebar's width the layout says, or the default for anything but a number from 180 to 480
+/// — as the page reads it (`parseSidebarWidth`).
+pub fn layout_sidebar_width(layout: &Value) -> f64 {
+    layout
+        .get("sidebarWidth")
+        .and_then(Value::as_f64)
+        .filter(|width| (180.0..=480.0).contains(width))
+        .unwrap_or(DEFAULT_SIDEBAR_WIDTH)
+}
+
 fn usable(frame: WindowFrame) -> Option<WindowFrame> {
     let finite = [frame.x, frame.y, frame.width, frame.height]
         .iter()
@@ -186,6 +200,33 @@ mod tests {
         ] {
             assert!(!layout_sidebar_collapsed(&layout), "{layout}");
         }
+    }
+
+    #[test]
+    fn the_sidebar_width_is_read_only_from_180_to_480() {
+        for (layout, width) in [
+            (json!({"sidebarWidth": 180}), 180.0),
+            (json!({"sidebarWidth": 320.5}), 320.5),
+            (json!({"sidebarWidth": 480}), 480.0),
+        ] {
+            assert_eq!(layout_sidebar_width(&layout), width, "{layout}");
+        }
+        for layout in [
+            json!({"sidebarWidth": 179.9}),
+            json!({"sidebarWidth": 481}),
+            json!({"sidebarWidth": -300}),
+            json!({"sidebarWidth": "300"}),
+            json!({"sidebarWidth": null}),
+            json!({"sidebarWidth": true}),
+            json!({"panes": []}),
+        ] {
+            assert_eq!(
+                layout_sidebar_width(&layout),
+                DEFAULT_SIDEBAR_WIDTH,
+                "{layout}"
+            );
+        }
+        assert_eq!(DEFAULT_SIDEBAR_WIDTH, 240.0);
     }
 
     #[test]

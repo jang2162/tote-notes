@@ -104,6 +104,37 @@ html.sidebar-animates body {
   }
 }
 
+/* While the sidebar's grip is dragged nothing slides, a collapse below 120px neither, and the
+ * pointer keeps the grip's cursor wherever it goes. */
+html.sidebar-resizing body {
+  transition: none;
+}
+
+html.sidebar-resizing,
+html.sidebar-resizing * {
+  cursor: col-resize;
+  user-select: none;
+}
+
+/* The grip on the sidebar's right edge: a pane divider's (`.pane-divider`), straddling the line,
+ * from the window's top — the top row too — to its bottom. Fixed to the window, out of the grid,
+ * and not in the sidebar, which goes inert as a drag collapses it. Gone while collapsed, except
+ * under the drag that collapsed it, which may bring the sidebar back. */
+.sidebar-divider {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--sidebar-width) - 3px);
+  z-index: 3;
+  width: 6px;
+  cursor: col-resize;
+  touch-action: none;
+}
+
+html.sidebar-collapsed:not(.sidebar-resizing) .sidebar-divider {
+  display: none;
+}
+
 /* The workspace switcher, above the sidebar's title filter: a button with the current name and
  * the list it opens. */
 .ws-switcher {

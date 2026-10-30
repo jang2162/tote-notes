@@ -109,7 +109,15 @@ import {
 } from "./layout";
 import { Pane, type PaneHost } from "./pane";
 import { claimPlaces, parseJson, sessionTab, SessionSync } from "./session-sync";
-import { startsCollapsed, storeCollapsed, storedCollapsed } from "./sidebar-state";
+import { draggedSidebar, shownSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
+import {
+  startsCollapsed,
+  startsWidth,
+  storeCollapsed,
+  storedCollapsed,
+  storedWidth,
+  storeWidth,
+} from "./sidebar-state";
 
 export { describeError, ERROR_TEXT } from "./errors";
 
@@ -324,6 +332,9 @@ export class AppController implements DocHost, PaneHost {
   private perf: PerfConfig = { enabled: false, search: null };
   /** What the native side told the page about its window before it ran. */
   private readonly windowStart: WindowStart;
+  /** The sidebar's width as the window keeps it (session, `sidebar-state.ts`); a window too narrow
+   * for it shows less (`showSidebarWidth`). */
+  private sidebarWidth: number = SIDEBAR_WIDTH.default;
 
   constructor(
     root: HTMLElement,
@@ -358,6 +369,17 @@ export class AppController implements DocHost, PaneHost {
     document.documentElement.classList.toggle("sidebar-collapsed", collapsed);
     this.sidebar.el.inert = collapsed;
     storeCollapsed(() => sessionStorage, label, collapsed);
+    this.sidebarWidth = startsWidth(
+      this.windowStart,
+      storedWidth(() => sessionStorage, label),
+    );
+    storeWidth(() => sessionStorage, label, this.sidebarWidth);
+    this.showSidebarWidth(this.sidebarWidth);
+    // A drag sets the width itself, and keeps it as the pointer leaves it.
+    window.addEventListener("resize", () => {
+      if (!document.documentElement.classList.contains("sidebar-resizing"))
+        this.showSidebarWidth(this.sidebarWidth);
+    });
     this.focused = this.makePane();
     this.panes = [this.focused];
     this.layout = leaf(this.focused.id);
@@ -366,6 +388,7 @@ export class AppController implements DocHost, PaneHost {
     root.replaceChildren(
       this.sidebar.el,
       h("main", { class: "main" }, this.panesEl, this.statusBar.el),
+      this.sidebarGrip(),
     );
   }
 
@@ -392,6 +415,65 @@ export class AppController implements DocHost, PaneHost {
 
   toggleSidebar(): void {
     this.setSidebarCollapsed(!this.sidebarCollapsed);
+  }
+
+  /** Lays the sidebar out `width` wide, or as wide as the window allows. */
+  private showSidebarWidth(width: number): void {
+    const shown = shownSidebarWidth(width, window.innerWidth);
+    document.documentElement.style.setProperty("--sidebar-width", `${shown}px`);
+  }
+
+  /** Keeps `width` as the sidebar's, in the window's session too, and lays it out. */
+  private keepSidebarWidth(width: number): void {
+    this.showSidebarWidth(width);
+    if (width === this.sidebarWidth) return;
+    this.sidebarWidth = width;
+    storeWidth(() => sessionStorage, this.windowStart.label, width);
+    this.saveSessionSoon();
+  }
+
+  /** The grip on the sidebar's right edge (spec 「사이드바 너비 조절」). Dragged, the sidebar is as
+   * wide as the pointer says, at once; below 120px it collapses as the toggle collapses it, and
+   * comes back while the pointer does. Let go, the width is kept — collapsed, the one from before
+   * the drag stays for the next expand. A double click goes back to 240px. */
+  private sidebarGrip(): HTMLElement {
+    const el = h("div", { class: "sidebar-divider" });
+    el.addEventListener("pointerdown", (down) => {
+      if (down.button !== 0 || this.sidebarCollapsed) return;
+      down.preventDefault();
+      el.setPointerCapture(down.pointerId);
+      const root = document.documentElement;
+      const before = this.sidebarWidth;
+      const from = shownSidebarWidth(before, window.innerWidth);
+      let width = from;
+      root.classList.add("sidebar-resizing");
+      const move = (event: PointerEvent) => {
+        const dragged = draggedSidebar(from + event.clientX - down.clientX, window.innerWidth);
+        if (dragged.collapsed) {
+          if (this.sidebarCollapsed) return;
+          this.setSidebarCollapsed(true);
+          width = from;
+          this.showSidebarWidth(before);
+          return;
+        }
+        if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
+        width = dragged.width;
+        root.style.setProperty("--sidebar-width", `${width}px`);
+      };
+      const end = () => {
+        el.removeEventListener("pointermove", move);
+        el.removeEventListener("pointerup", end);
+        el.removeEventListener("pointercancel", end);
+        root.classList.remove("sidebar-resizing");
+        // A press that moved nothing keeps a width the window is too narrow to show.
+        if (width !== from) this.keepSidebarWidth(width);
+      };
+      el.addEventListener("pointermove", move);
+      el.addEventListener("pointerup", end);
+      el.addEventListener("pointercancel", end);
+    });
+    el.addEventListener("dblclick", () => this.keepSidebarWidth(SIDEBAR_WIDTH.default));
+    return el;
   }
 
   /** The focused pane's editor (the UI tests drive it). */
@@ -523,6 +605,7 @@ export class AppController implements DocHost, PaneHost {
         panes: new Map(this.panes.map((pane) => [pane.id, pane])),
         focusedPane: this.panes.indexOf(this.focused),
         sidebarCollapsed: this.sidebarCollapsed,
+        sidebarWidth: this.sidebarWidth,
       }),
       this.deviceId,
       (id) => this.memoList.get(id),
@@ -606,7 +689,11 @@ export class AppController implements DocHost, PaneHost {
     this.restoring = false;
     // The window keeps the state it started with (`sidebar-state.ts`); a session saying otherwise
     // — the one of the workspace a switch came to — is written again.
-    if (restored.sidebarCollapsed !== this.sidebarCollapsed) this.saveSessionSoon();
+    if (
+      restored.sidebarCollapsed !== this.sidebarCollapsed ||
+      restored.sidebarWidth !== this.sidebarWidth
+    )
+      this.saveSessionSoon();
     this.markNextFrame("restore-done");
     // Counted among the tabs being adopted from the moment the restore is done, in the same step:
     // a round answered while they are still being placed waits for them (`onFlush`).

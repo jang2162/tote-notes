@@ -240,6 +240,27 @@ export async function dragOut(
   return at;
 }
 
+/** Presses the grip on the sidebar's right edge — at its middle, or at height `y` — and moves to
+ * `x` in steps; lets go there unless `release` is false. The press is on the edge itself, so the
+ * sidebar is `x` wide where the pointer stops. */
+export async function dragSidebarTo(
+  page: Page,
+  x: number,
+  options: { y?: number; release?: boolean } = {},
+): Promise<void> {
+  const grip = await boxOf(page.locator(".sidebar-divider"));
+  const from = { x: grip.x + grip.width / 2, y: options.y ?? grip.y + grip.height / 2 };
+  await page.mouse.move(from.x, from.y);
+  await page.mouse.down();
+  await page.mouse.move(x, from.y, { steps: 4 });
+  if (options.release !== false) await page.mouse.up();
+}
+
+/** The sidebar's width as drawn. */
+export function sidebarWidth(page: Page): Promise<number> {
+  return page.locator(".sidebar").evaluate((el) => el.getBoundingClientRect().width);
+}
+
 /** What the native menu would send. */
 export function menu(page: Page, id: string): Promise<void> {
   return page.evaluate((menuId) => window.__tote.backend.menu(menuId), id);

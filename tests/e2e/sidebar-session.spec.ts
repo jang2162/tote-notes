@@ -3,6 +3,7 @@ import { expect, test, type BrowserContext, type Page } from "@playwright/test";
 import { fakeMemo, type FakeData } from "../../src/backend/fake";
 import type { WorkspaceInfo } from "../../src/backend/types";
 import {
+  dragSidebarTo,
   menu,
   nextWindow,
   openWindow,
@@ -49,6 +50,27 @@ const saved = (page: Page, n = 0) =>
   );
 
 const collapsed = (page: Page) => page.locator("html.sidebar-collapsed");
+
+/** Every frame the page drew had the sidebar `width` wide. */
+async function wideFromTheFirstFrame(page: Page, width: number): Promise<void> {
+  await expect
+    .poll(() => page.locator(".sidebar").evaluate((el) => el.getBoundingClientRect().width))
+    .toBe(width);
+  const drawn = await widths(page);
+  expect(drawn.length).toBeGreaterThan(0);
+  expect(drawn.filter((each) => each !== width)).toEqual([]);
+}
+
+/** The sidebar's width in window `n` of the fake's session file, as written. */
+const savedWidth = (page: Page, n = 0) =>
+  page.evaluate(
+    (index) =>
+      JSON.parse(window.__tote.backend.data.session ?? "null")?.windows?.[index]?.sidebarWidth,
+    n,
+  );
+
+const sidebarWide = (page: Page) =>
+  page.locator(".sidebar").evaluate((el) => el.getBoundingClientRect().width);
 
 const emptyWindow = { layout: { tabs: [], activeTab: -1 }, focusedPane: 0 };
 const oneWindow = (window: object) => JSON.stringify({ version: 2, windows: [window] });
@@ -205,4 +227,69 @@ test("searching an expanded window writes no session for the sidebar", async ({ 
   await menu(page, "search-workspace");
   await writesSettled(page);
   expect(await writes()).toBe(before);
+});
+
+test("a window saved wider opens at its width from its first frame, and so after a reload", async ({
+  page,
+}) => {
+  await firstFrames(page);
+  await start(page, { session: oneWindow({ ...emptyWindow, sidebarWidth: 320 }) });
+  await wideFromTheFirstFrame(page, 320);
+  await page.reload();
+  await ready(page);
+  await wideFromTheFirstFrame(page, 320);
+});
+
+test("a width out of range opens at 240", async ({ page }) => {
+  await start(page, { session: oneWindow({ ...emptyWindow, sidebarWidth: 600 }) });
+  await expect.poll(() => sidebarWide(page)).toBe(240);
+});
+
+test("a width dragged to is written in the session and comes back at the next launch", async ({
+  context,
+}) => {
+  const first = await startWindows(context);
+  await dragSidebarTo(first, 360);
+  await expect.poll(() => savedWidth(first)).toBe(360);
+  await first.evaluate(() => window.__tote.backend.quit());
+  await first.close();
+
+  await firstFrames(context);
+  const again = await openWindow(context, "ws-1");
+  await wideFromTheFirstFrame(again, 360);
+});
+
+test("switching the workspace keeps the window's width, and the workspace it goes to saves it", async ({
+  page,
+  context,
+}) => {
+  await firstFrames(page);
+  await openSeeded(page);
+  await dragSidebarTo(page, 320);
+  await expect.poll(() => savedWidth(page)).toBe(320);
+  await switchToPersonal(page);
+  await wideFromTheFirstFrame(page, 320);
+  await expect.poll(() => savedWidth(page)).toBe(320);
+
+  // A window never resized goes to a workspace whose window was saved wider.
+  const other = await context.newPage();
+  await openSeeded(other, { sidebarWidth: 400 });
+  await switchToPersonal(other);
+  await expect.poll(() => sidebarWide(other)).toBe(240);
+  await expect.poll(() => savedWidth(other)).toBeUndefined();
+});
+
+test("a new window and a torn-off tab's window open at 240", async ({ context }) => {
+  const first = await startWindows(context, { memos });
+  await openMemo(first, "가");
+  await openMemo(first, "나");
+  await dragSidebarTo(first, 320);
+  await expect.poll(() => sidebarWide(first)).toBe(320);
+
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  await expect.poll(() => sidebarWide(second)).toBe(240);
+  const [third] = await Promise.all([nextWindow(first), menu(first, "move-tab-to-new-window")]);
+  await expect(third.locator(".tab.active .tab-title")).toHaveText("나");
+  await expect.poll(() => sidebarWide(third)).toBe(240);
+  expect(await sidebarWide(first)).toBe(320);
 });
