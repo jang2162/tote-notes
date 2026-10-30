@@ -1,6 +1,6 @@
 # tote-notes 탭 끌기 미리 보기 — 실기기 확인 목록
 
-설계는 `docs/superpowers/specs/2026-10-19-tote-notes-free-splits-and-tab-drag-design.md` 「탭 끌기와 마스크」 의 「창 안에서 — 탭 바 위」. 이 목록은 e2e(Playwright WebKit)가 못 보는 것, 곧 WKWebView·실제 창·트랙패드로만 갈리는 것을 사람이 화면으로 확인하는 표다. 자동 검사는 모두 통과했다(vitest 478, e2e 560). Rust 는 바뀌지 않아 cargo 는 돌리지 않았다.
+설계는 `docs/superpowers/specs/2026-10-19-tote-notes-free-splits-and-tab-drag-design.md` 「탭 끌기와 마스크」 의 「창 안에서 — 탭 바 위」. 이 목록은 e2e(Playwright WebKit)가 못 보는 것, 곧 WKWebView·실제 창·트랙패드로만 갈리는 것을 사람이 화면으로 확인하는 표다. 자동 검사(vitest·e2e 전체)는 이 브랜치의 마지막 커밋에서 통과했다. Rust 는 바뀌지 않아 cargo 는 돌리지 않았다.
 
 ## 준비
 
