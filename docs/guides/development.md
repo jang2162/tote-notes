@@ -78,6 +78,13 @@
 - **Why:** zsh 는 따옴표 없는 `$VAR` 를 공백으로 쪼개지 않는다. 문자열 하나로 담으면 엉뚱한 경로 하나가 넘어가고, oxfmt 는 「1 files」, oxlint 는 「No files found」 라고 하면서 둘 다 exit 0 으로 끝난다. 실패가 없어서 포맷·린트가 돈 것으로 읽힌다.
 - **How to apply:** 출력의 파일 개수가 넘긴 개수와 같은지 본다.
 
+## 소스를 grep 할 때는 `-a` 를 준다
+
+`src-tauri/src/persist/mod.rs` 처럼 시험 바이트 문자열에 NUL 바이트를 담은 소스는 BSD `grep` 이 바이너리 파일로 본다.
+
+- **Why:** 바이너리로 본 파일에서는 `grep -n`·`grep -c` 가 맞는 줄이 있어도 아무것도 내지 않고 끝난다. 정의가 없는 것으로 읽혀 엉뚱한 곳을 찾게 된다.
+- **How to apply:** 결과가 0건이면 `grep -a` 로 다시 센다.
+
 ## NFD 를 뜻하는 한글 리터럴은 `.normalize("NFD")` 로 쓴다
 
 Finder 이름처럼 분해형(NFD)이어야 하는 테스트 입력은 `"한글 메모.md".normalize("NFD")` 로 쓴다.
