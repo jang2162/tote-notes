@@ -102,7 +102,7 @@ export async function askUnsaved(name: string): Promise<UnsavedChoice> {
       h(
         "div",
         { class: "modal-buttons" },
-        button("버리기", () => close("discard"), "danger"),
+        button("저장하지 않음", () => close("discard"), "danger"),
         button("취소", () => close("cancel")),
         button("저장", () => close("save"), "primary"),
       ),

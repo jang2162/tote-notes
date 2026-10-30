@@ -47,7 +47,8 @@ test("closing an edited external file asks first", async ({ page }) => {
   await page.getByRole("button", { name: "취소" }).click();
   await expect(page.locator(".tab")).toHaveCount(1);
   await menu(page, "close-tab");
-  await page.getByRole("button", { name: "버리기" }).click();
+  await expect(page.getByRole("button", { name: "버리기" })).toHaveCount(0);
+  await page.getByRole("button", { name: "저장하지 않음" }).click();
   await expect(page.locator(".tab")).toHaveCount(0);
   expect(await page.evaluate(() => window.__tote.backend.fileText("/x/a.sh"))).toBe("old");
   expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});

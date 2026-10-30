@@ -1049,7 +1049,7 @@ export class ExternalDoc extends Doc {
     return true;
   }
 
-  /** 「버리기」: the file stays as it is on disk and the draft goes. */
+  /** 「저장하지 않음」: the file stays as it is on disk and the draft goes. */
   async discard(): Promise<void> {
     await this.settleDraft();
     this.modified = false;
