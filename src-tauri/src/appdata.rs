@@ -157,6 +157,8 @@ pub struct Settings {
     pub editor: EditorSettings,
     #[serde(default, deserialize_with = "lenient")]
     pub updates: UpdateSettings,
+    #[serde(default, deserialize_with = "lenient")]
+    pub sidebar: SidebarSettings,
     /// Command id → the shortcut it has instead of its default, `None` for none (src/shortcuts.rs).
     #[serde(
         default,
@@ -251,6 +253,27 @@ impl Default for UpdateSettings {
     }
 }
 
+/// The sidebar's memo list (spec 2026-10-30): one order for every window and workspace.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct SidebarSettings {
+    #[serde(deserialize_with = "lenient")]
+    pub sort: SortOrder,
+}
+
+/// The memo list's order (`MemoSort` in src/backend/types.ts).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum SortOrder {
+    #[default]
+    ModifiedDesc,
+    ModifiedAsc,
+    ViewedDesc,
+    ViewedAsc,
+    NameAsc,
+    NameDesc,
+}
+
 const DEFAULT_FONT_SIZE: u8 = 14;
 const FONT_SIZES: std::ops::RangeInclusive<u8> = 11..=24;
 
@@ -327,6 +350,8 @@ pub struct SettingsPatch {
     pub editor_font_family: Option<String>,
     #[serde(default)]
     pub updates_auto_check: Option<bool>,
+    #[serde(default)]
+    pub sidebar_sort: Option<SortOrder>,
     /// The whole map: what is not in it goes back to its default.
     #[serde(default)]
     pub shortcuts: Option<BTreeMap<String, Option<String>>>,
@@ -387,6 +412,9 @@ impl SettingsPatch {
         }
         if let Some(on) = self.updates_auto_check {
             settings.updates.auto_check = on;
+        }
+        if let Some(sort) = self.sidebar_sort {
+            settings.sidebar.sort = sort;
         }
         if let Some(overrides) = &self.shortcuts {
             settings.shortcuts = overrides.clone();
@@ -961,6 +989,7 @@ mod tests {
                 font_family: "D2Coding".into(),
             },
             updates: UpdateSettings { auto_check: false },
+            sidebar: SidebarSettings::default(),
             shortcuts: BTreeMap::from([
                 ("rename".into(), Some("CmdOrCtrl+K".into())),
                 ("new-memo".into(), None),
@@ -1046,6 +1075,38 @@ mod tests {
         }
         let patch = serde_json::from_str::<SettingsPatch>(r#"{"editorFontSize": 300}"#).unwrap();
         assert_eq!(patch.editor_font_size, Some(24));
+    }
+
+    #[test]
+    fn sidebar_sort_defaults_and_survives_a_bad_value() {
+        let read = |text: &str| serde_json::from_str::<Settings>(text).unwrap();
+        assert_eq!(read("{}").sidebar.sort, SortOrder::ModifiedDesc);
+        assert_eq!(
+            read(r#"{"sidebar": {"sort": "viewed-asc"}}"#).sidebar.sort,
+            SortOrder::ViewedAsc
+        );
+        assert_eq!(
+            read(r#"{"sidebar": {"sort": "name-desc"}}"#).sidebar.sort,
+            SortOrder::NameDesc
+        );
+        let bad = read(r#"{"workspaceRoot": "/x", "sidebar": {"sort": "x"}}"#);
+        assert_eq!(bad.sidebar.sort, SortOrder::ModifiedDesc);
+        assert_eq!(bad.workspace_root, Some(PathBuf::from("/x")));
+        let bad = read(r#"{"workspaceRoot": "/x", "sidebar": 3}"#);
+        assert_eq!(bad.sidebar.sort, SortOrder::ModifiedDesc);
+        assert_eq!(bad.workspace_root, Some(PathBuf::from("/x")));
+
+        let mut settings = Settings::default();
+        serde_json::from_str::<SettingsPatch>(r#"{"sidebarSort": "modified-asc"}"#)
+            .unwrap()
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.sidebar.sort, SortOrder::ModifiedAsc);
+        let text = serde_json::to_string(&settings).unwrap();
+        assert!(
+            text.contains(r#""sidebar":{"sort":"modified-asc"}"#),
+            "{text}"
+        );
     }
 
     #[test]
@@ -1245,6 +1306,7 @@ mod tests {
                 font_family: "D2Coding".into(),
             },
             updates: UpdateSettings { auto_check: false },
+            sidebar: SidebarSettings::default(),
             shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
         };
         SettingsPatch {

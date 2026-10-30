@@ -41,6 +41,7 @@ use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
 use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
+use crate::workspace::viewed::ViewedTimes;
 use crate::workspace::{order, Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
@@ -612,7 +613,7 @@ impl AppCore {
                     inner.workspaces.insert(
                         path.to_path_buf(),
                         OpenWorkspace {
-                            workspace: Arc::new(Mutex::new(workspace)),
+                            workspace: Arc::new(Mutex::new(self.with_viewed(workspace))),
                             saved,
                             key: AppCore::workspace_key(path),
                         },
@@ -876,7 +877,7 @@ impl AppCore {
                 inner.workspaces.insert(
                     to.to_path_buf(),
                     OpenWorkspace {
-                        workspace: Arc::new(Mutex::new(opened)),
+                        workspace: Arc::new(Mutex::new(self.with_viewed(opened))),
                         saved,
                         key: AppCore::workspace_key(to),
                     },
@@ -1062,6 +1063,13 @@ impl AppCore {
         }
     }
 
+    /// `workspace` with its memos' viewed times on this device (`workspace::viewed`).
+    fn with_viewed(&self, mut workspace: Workspace) -> Workspace {
+        let file = ViewedTimes::file(&self.paths.data_dir, workspace.id());
+        workspace.attach_viewed(ViewedTimes::load(file));
+        workspace
+    }
+
     pub fn workspace(&self, label: &str) -> Option<Arc<Mutex<Workspace>>> {
         let inner = lock(&self.inner);
         let path = &inner.windows.get(label)?.path;
@@ -1131,6 +1139,12 @@ impl AppCore {
     /// A window is gone; its workspace closes with its last window. Returns the flush rounds it
     /// was the last one to wait for, by id.
     pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
+        // The viewed times are written at once when a window closes (`workspace::viewed`).
+        if let Some(workspace) = self.workspace(label) {
+            if let Err(err) = lock(&workspace).save_viewed_now() {
+                eprintln!("tote: could not save the viewed times: {err}");
+            }
+        }
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);

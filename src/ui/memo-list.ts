@@ -1,7 +1,7 @@
-import type { MemoInfo } from "../backend/types";
+import type { MemoInfo, MemoSort } from "../backend/types";
 import { splitName } from "../core/names";
 import { h } from "./dom";
-import { splitPinned } from "./memo-order";
+import { sortMemos, splitPinned } from "./memo-order";
 
 export const ROW_HEIGHT = 28;
 const OVERSCAN_ROWS = 8;
@@ -12,11 +12,6 @@ const fold = (text: string) => text.normalize("NFC").toLocaleLowerCase();
 export function filterMemos(memos: readonly MemoInfo[], query: string): MemoInfo[] {
   const wanted = fold(query.trim());
   return wanted ? memos.filter((memo) => fold(memo.file).includes(wanted)) : [...memos];
-}
-
-/** Most recently modified first, ties by name — the order the backend lists in. */
-export function byRecent(a: MemoInfo, b: MemoInfo): number {
-  return b.modifiedMs - a.modifiedMs || (a.file < b.file ? -1 : a.file > b.file ? 1 : 0);
 }
 
 /** Rows [start, end) worth rendering for a viewport, with some to spare on both sides. A
@@ -32,6 +27,8 @@ export interface MemoListHost {
   open(id: string): void;
   /** A row's context menu (right click, ⌃click). */
   menu(id: string): void;
+  /** The sort button: the order menu. */
+  sort(): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -50,6 +47,24 @@ function pinMark(): SVGElement {
     "M10 1.5 14.5 6l-2 .8-2.6 2.6.6 3.1-1.1 1.1L6.6 10.8 3 14.5 1.5 13l3.7-3.6-2.8-2.8 1.1-1.1 3.1.6L9.2 3.5z",
   );
   path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+
+/** The sort button's mark: arrows up and down. */
+function sortMark(): SVGElement {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "14");
+  svg.setAttribute("height", "14");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute("d", "M5 2v10.5M2 9.5l3 3 3-3M11 14V3.5M8 6.5l3-3 3 3");
+  path.setAttribute("fill", "none");
+  path.setAttribute("stroke", "currentColor");
+  path.setAttribute("stroke-width", "1.4");
+  path.setAttribute("stroke-linecap", "round");
+  path.setAttribute("stroke-linejoin", "round");
   svg.append(path);
   return svg;
 }
@@ -86,22 +101,27 @@ export class MemoList {
     placeholder: "제목 필터",
     class: "memo-filter",
   });
+  private readonly sortButton = h("button", { class: "memo-sort", type: "button" }, sortMark());
   private readonly pinned = new RowSection("memo-pinned", (memo, i) => this.row(memo, i));
   private readonly divider = h("div", { class: "memo-pinned-divider" });
   private readonly list = new RowSection("memo-scroller", (memo, i) => this.row(memo, i));
   readonly el = h(
     "div",
     { class: "memo-pane" },
-    this.filter,
+    h("div", { class: "memo-filter-row" }, this.filter, this.sortButton),
     this.pinned.el,
     this.divider,
     this.list.el,
   );
   private memos: MemoInfo[] = [];
   private activeId: string | null = null;
+  private sort: MemoSort = "modified-desc";
 
   constructor(private readonly host: MemoListHost) {
     this.filter.spellcheck = false;
+    this.sortButton.setAttribute("aria-label", "정렬");
+    this.sortButton.title = "정렬";
+    this.sortButton.addEventListener("click", () => this.host.sort());
     this.filter.addEventListener("input", () => {
       this.list.el.scrollTop = 0;
       this.pinned.el.scrollTop = 0;
@@ -113,14 +133,28 @@ export class MemoList {
     return this.memos.find((memo) => memo.id === id);
   }
 
+  get order(): MemoSort {
+    return this.sort;
+  }
+
+  /** The order of every list; the scroll stays where it is. */
+  setSort(sort: MemoSort): void {
+    if (sort === this.sort) return;
+    this.sort = sort;
+    this.setMemos(this.memos);
+  }
+
   setMemos(memos: MemoInfo[]): void {
-    this.memos = [...memos].sort(byRecent);
+    this.memos = sortMemos(memos, this.sort);
     this.refilter();
   }
 
+  /** A viewed time only moves on: an info a tab kept from before its last view keeps the list's. */
   upsert(info: MemoInfo): void {
-    this.memos = [...this.memos.filter((memo) => memo.id !== info.id), info].sort(byRecent);
-    this.refilter();
+    const listed = this.get(info.id)?.viewedMs;
+    const viewedMs = Math.max(listed ?? -Infinity, info.viewedMs ?? -Infinity);
+    const memo = Number.isFinite(viewedMs) ? { ...info, viewedMs } : info;
+    this.setMemos([...this.memos.filter((each) => each.id !== info.id), memo]);
   }
 
   remove(id: string): void {

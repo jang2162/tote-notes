@@ -127,6 +127,9 @@ impl Workspace {
         self.inodes.remove(&file);
         self.index.remove(id);
         self.index.save()?;
+        if let Some(viewed) = self.viewed.as_mut() {
+            viewed.retain(|each| each != id);
+        }
         Ok(())
     }
 

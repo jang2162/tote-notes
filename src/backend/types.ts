@@ -14,6 +14,8 @@ export interface MemoInfo {
   kind: FileKind;
   /** At the top of the memo list (spec 2026-10-30 「고정」); left out when not. */
   pinned?: boolean;
+  /** When it was last on show on this device; left out when never (spec 2026-10-30 「정렬」). */
+  viewedMs?: number;
 }
 
 export interface WorkspaceInfo {
@@ -226,9 +228,24 @@ export interface Settings {
   editor: EditorSettings;
   /** The check for a new version at launch (src-tauri/src/app/update.rs). */
   updates: { autoCheck: boolean };
+  sidebar: SidebarSettings;
   /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
    * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
   shortcuts?: Record<string, string | null>;
+}
+
+/** The memo list's order (`SortOrder` in src-tauri/src/appdata.rs). */
+export type MemoSort =
+  | "modified-desc"
+  | "modified-asc"
+  | "viewed-desc"
+  | "viewed-asc"
+  | "name-asc"
+  | "name-desc";
+
+/** `SidebarSettings` in src-tauri/src/appdata.rs: one for every window and workspace. */
+export interface SidebarSettings {
+  sort: MemoSort;
 }
 
 /** `EditorSettings` in src-tauri/src/appdata.rs. `fontFamily` is empty for the stylesheet's own. */
@@ -262,6 +279,7 @@ export interface SettingsPatch {
   editorFontSize?: number;
   editorFontFamily?: string;
   updatesAutoCheck?: boolean;
+  sidebarSort?: MemoSort;
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
   shortcuts?: Record<string, string | null>;
@@ -420,6 +438,9 @@ export interface Backend {
   writeMemo(id: string, bytes: Uint8Array): Promise<MemoInfo>;
   retitleMemo(id: string, stem: string): Promise<MemoInfo>;
   renameMemo(id: string, file: string): Promise<MemoInfo>;
+  /** The memo came on show in a pane: its info with the viewed time now. Every window's list
+   * follows. */
+  memoViewed(id: string): Promise<MemoInfo>;
   /** Pins the memo to the top of the memo list, or lets it go; every window's list follows. */
   setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
   setMemoLanguage(id: string, language: string, ext: string): Promise<MemoInfo>;

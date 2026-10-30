@@ -71,6 +71,8 @@ export interface FakeMemo {
   data: string;
   modifiedMs: number;
   pinned?: boolean;
+  /** When it was last on show (`memoViewed`), on the fake's clock. */
+  viewedMs?: number;
 }
 
 /** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
@@ -192,6 +194,8 @@ export interface FakeData {
    * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
    * seeds. */
   unopenable?: string[];
+  /** The memo of every `memoViewed` call, in order. Absent in old seeds. */
+  memoViewedCalls?: string[];
   /** The items of every pop-up menu shown, in order. Absent in old seeds. */
   popupMenus?: PopupMenuItem[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
@@ -289,6 +293,7 @@ export function defaultFakeData(): FakeData {
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
+      sidebar: { sort: "modified-desc" },
     },
     userExtensions: [],
     packages: {},
@@ -767,6 +772,15 @@ export class FakeBackend implements Backend {
       delete memo.language;
     memo.file = file;
     memo.autoTitle = false;
+    this.commit();
+    this.memosTouched();
+    return this.info(id, memo);
+  }
+
+  async memoViewed(id: string) {
+    const memo = this.memo(id);
+    memo.viewedMs = this.tick();
+    (this.data.memoViewedCalls ??= []).push(id);
     this.commit();
     this.memosTouched();
     return this.info(id, memo);
@@ -1365,6 +1379,7 @@ export class FakeBackend implements Backend {
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     // An old seed has no `updates`; Rust reads a missing one as on.
     settings.updates ??= { autoCheck: true };
+    settings.sidebar ??= { sort: "modified-desc" };
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1393,7 +1408,9 @@ export class FakeBackend implements Backend {
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     settings.updates ??= { autoCheck: true };
+    settings.sidebar ??= { sort: "modified-desc" };
     if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
+    if (patch.sidebarSort !== undefined) settings.sidebar.sort = patch.sidebarSort;
     if (patch.editorLineNumbers !== undefined)
       settings.editor.lineNumbers = patch.editorLineNumbers;
     // Rust takes any number and clamps it, rounding a fraction.
@@ -1720,6 +1737,7 @@ export class FakeBackend implements Backend {
       kind: kindOf(memo.file),
       ...(memo.language ? { language: memo.language } : {}),
       ...(memo.pinned ? { pinned: true } : {}),
+      ...(memo.viewedMs !== undefined ? { viewedMs: memo.viewedMs } : {}),
     };
   }
 

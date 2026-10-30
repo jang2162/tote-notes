@@ -59,6 +59,7 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
+import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
 import { SettingsButton } from "../ui/settings-button";
@@ -274,6 +275,7 @@ export class AppController implements DocHost, PaneHost {
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
+    sidebar: { sort: "modified-desc" },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
@@ -312,6 +314,7 @@ export class AppController implements DocHost, PaneHost {
   private readonly memoList = new MemoList({
     open: (id) => void this.openMemo(id),
     menu: (id) => void this.memoMenu(id).catch((error: unknown) => this.report(error)),
+    sort: () => void this.sortMenu().catch((error: unknown) => this.report(error)),
   });
   private readonly searchPanel = new SearchPanel({
     search: (query, onEvent) =>
@@ -769,6 +772,7 @@ export class AppController implements DocHost, PaneHost {
   private async loadSettings(): Promise<void> {
     try {
       this.settings = await this.backend.settings();
+      this.memoList.setSort(this.settings.sidebar.sort);
     } catch (error) {
       this.report(error);
     }
@@ -1892,6 +1896,29 @@ export class AppController implements DocHost, PaneHost {
     const file = name?.trim();
     if (!file || file === doc.info.file) return;
     await doc.rename(file);
+  }
+
+  /** The memo list's sort button: one of six orders, for every window (`sidebar.sort`). */
+  private async sortMenu(): Promise<void> {
+    const current = this.memoList.order;
+    const picked = await this.backend.showPopupMenu(
+      SORT_ITEMS.map(({ id, text }) => ({ id, text, checked: id === current })),
+    );
+    if (!isMemoSort(picked) || picked === current) return;
+    this.memoList.setSort(picked);
+    await this.backend.patchSettings({ sidebarSort: picked });
+  }
+
+  /** A tab came on show in a pane. A memo's viewed time is now — but not for the tabs a restore
+   * brings back, or the order would change at every launch. */
+  viewed(doc: Doc): void {
+    if (this.restoring || !(doc instanceof MemoDoc)) return;
+    void this.backend.memoViewed(doc.info.id).then(
+      (info) => {
+        if (this.memoList.get(info.id)) this.memoList.upsert(info);
+      },
+      (error: unknown) => console.warn(error),
+    );
   }
 
   /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」). */

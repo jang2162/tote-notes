@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import type { MemoInfo } from "../backend/types";
-import { byRecent, filterMemos, visibleRows } from "./memo-list";
+import { filterMemos, visibleRows } from "./memo-list";
 
 const memo = (file: string, modifiedMs = 0): MemoInfo => ({
   id: file,
@@ -22,15 +22,6 @@ describe("filterMemos", () => {
     const list = [memo("README.md"), memo("todo.txt")];
     expect(filterMemos(list, "readme")).toEqual([list[0]]);
     expect(filterMemos(list, "  ")).toEqual(list);
-  });
-});
-
-describe("byRecent", () => {
-  it("puts the newest first and breaks ties by name", () => {
-    const files = [memo("b.md", 1), memo("c.md", 5), memo("a.md", 1)]
-      .sort(byRecent)
-      .map((m) => m.file);
-    expect(files).toEqual(["c.md", "a.md", "b.md"]);
   });
 });
 

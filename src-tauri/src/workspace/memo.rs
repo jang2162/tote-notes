@@ -50,6 +50,9 @@ pub struct MemoInfo {
     /// Left out when false, as in the index.
     #[serde(skip_serializing_if = "std::ops::Not::not")]
     pub pinned: bool,
+    /// When it was last on show on this device; left out when never (`workspace::viewed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub viewed_ms: Option<u64>,
 }
 
 impl Workspace {
@@ -101,6 +104,7 @@ impl Workspace {
             size: meta.len(),
             kind: kind_for(&entry.file),
             pinned: entry.pinned,
+            viewed_ms: self.viewed_ms(id),
         })
     }
 }
@@ -177,6 +181,7 @@ mod tests {
             size: 1,
             kind: FileKind::Text,
             pinned: false,
+            viewed_ms: None,
         };
         assert_eq!(
             serde_json::to_string(&info).unwrap(),

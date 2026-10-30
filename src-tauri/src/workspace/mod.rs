@@ -7,6 +7,7 @@ pub mod memo;
 pub mod names;
 mod ops;
 pub mod order;
+pub mod viewed;
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
@@ -18,6 +19,7 @@ use serde::{Deserialize, Serialize};
 use crate::persist::{content_hash, is_temp_file, read_json, write_json};
 use index::MemoIndex;
 use names::is_valid_file_name;
+use viewed::ViewedTimes;
 
 pub use memo::{kind_for, FileKind, MemoInfo};
 
@@ -59,6 +61,8 @@ pub struct Workspace {
     /// File name → `index::file_id`, kept through tote's own writes and renames, so a rename by
     /// another app is told apart from a removal and a new file.
     inodes: BTreeMap<String, (u64, u64)>,
+    /// When each memo was last on show (`attach_viewed`); none until the app attaches them.
+    viewed: Option<ViewedTimes>,
 }
 
 /// What `apply_fs_events` found another app did to the workspace.
@@ -142,6 +146,7 @@ impl Workspace {
             changed: true,
             last_written: BTreeMap::new(),
             inodes,
+            viewed: None,
         })
     }
 
@@ -178,6 +183,37 @@ impl Workspace {
 
     pub fn id(&self) -> &str {
         &self.id
+    }
+
+    /// The memos' viewed times, kept outside the workspace (`viewed`).
+    pub fn attach_viewed(&mut self, mut viewed: ViewedTimes) {
+        viewed.retain(|id| self.index.get(id).is_some());
+        self.viewed = Some(viewed);
+    }
+
+    /// The memo was on show at `ms`: the generation to write it at (`save_viewed_if`).
+    pub fn memo_viewed(&mut self, id: &str, ms: u64) -> Result<u64, WorkspaceError> {
+        self.entry(id)?;
+        Ok(self
+            .viewed
+            .as_mut()
+            .map_or(0, |viewed| viewed.record(id, ms)))
+    }
+
+    /// Writes the viewed times when no view came after `generation`.
+    pub fn save_viewed_if(&mut self, generation: u64) -> io::Result<bool> {
+        self.viewed
+            .as_mut()
+            .map_or(Ok(false), |viewed| viewed.save_if(generation))
+    }
+
+    /// Writes any viewed time not written yet: a window closes or the app quits.
+    pub fn save_viewed_now(&mut self) -> io::Result<()> {
+        self.viewed.as_mut().map_or(Ok(()), ViewedTimes::save_now)
+    }
+
+    pub(crate) fn viewed_ms(&self, id: &str) -> Option<u64> {
+        self.viewed.as_ref()?.get(id)
     }
 
     pub fn root(&self) -> &Path {

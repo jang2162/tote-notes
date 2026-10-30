@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { fakeMemo } from "../../src/backend/fake";
-import { openWindow, start, startWindows } from "./helpers";
+import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
+import { openWindow, paneSession, start, startWindows } from "./helpers";
 
 // The sidebar's memo list (spec 2026-10-30 「메모 목록 기능 묶음」): renaming from a row's context
 // menu, pins, the sort, previews and the filter that finds memos by their content.
@@ -175,4 +175,90 @@ test("an open memo stays pinned through its saves", async ({ page }) => {
     .poll(() => page.evaluate(() => window.__tote.backend.memoTextByFile("가.md")))
     .toContain("더");
   await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
+});
+
+const threeMemos = {
+  a: fakeMemo("가.md", "첫째", { modifiedMs: 3 }),
+  b: fakeMemo("나.md", "둘째", { modifiedMs: 2 }),
+  c: fakeMemo("다.md", "셋째", { modifiedMs: 1 }),
+};
+const viewedOrder = { ...defaultFakeData().settings, sidebar: { sort: "viewed-desc" as const } };
+
+test("the sort button picks one of six, the current one checked", async ({ page }) => {
+  await start(page, { memos: threeMemos, popupMenuPick: "modified-asc" });
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  await page.getByRole("button", { name: "정렬" }).click();
+  await expect(names(page)).toHaveText(["다", "나", "가"]);
+  expect(await lastMenu(page)).toEqual([
+    { id: "modified-desc", text: "최근 수정순", checked: true },
+    { id: "modified-asc", text: "오래된 수정순", checked: false },
+    { id: "viewed-desc", text: "최근 조회순", checked: false },
+    { id: "viewed-asc", text: "오래된 조회순", checked: false },
+    { id: "name-asc", text: "이름순", checked: false },
+    { id: "name-desc", text: "이름 역순", checked: false },
+  ]);
+  expect(await page.evaluate(() => window.__tote.backend.data.settings.sidebar.sort)).toBe(
+    "modified-asc",
+  );
+  await page.evaluate(() => (window.__tote.backend.data.popupMenuPick = "name-desc"));
+  await page.getByRole("button", { name: "정렬" }).click();
+  await expect(names(page)).toHaveText(["다", "나", "가"]);
+  expect((await lastMenu(page))?.find((item) => item.checked)?.id).toBe("modified-asc");
+});
+
+test("the viewed order follows what comes on show", async ({ page }) => {
+  await start(page, { memos: threeMemos, settings: viewedOrder });
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  await row(page, "다").click();
+  await expect(names(page)).toHaveText(["다", "가", "나"]);
+  await row(page, "나").click();
+  await expect(names(page)).toHaveText(["나", "다", "가"]);
+  // A click on a tab puts its memo first too.
+  await page.locator(".tab", { hasText: "다" }).click();
+  await expect(names(page)).toHaveText(["다", "나", "가"]);
+  expect(await page.evaluate(() => window.__tote.backend.data.memoViewedCalls)).toEqual([
+    "c",
+    "b",
+    "c",
+  ]);
+});
+
+test("opening a memo under the viewed order re-sorts and keeps the scroll", async ({ page }) => {
+  await start(page, { memos: many(200), settings: viewedOrder });
+  const scroller = page.locator(".memo-scroller");
+  await scroller.evaluate((el) => (el.scrollTop = 1400));
+  await row(page, "메모 60").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoViewedCalls))
+    .toEqual(["m60"]);
+  // Opened, it went first: the row at the top of the list is it, out of view up there.
+  await expect(names(page).first()).not.toHaveText("메모 60");
+  expect(await scroller.evaluate((el) => el.scrollTop)).toBe(1400);
+  await scroller.evaluate((el) => (el.scrollTop = 0));
+  await expect(names(page).first()).toHaveText("메모 60");
+});
+
+test("a restored active tab is not counted as viewed", async ({ page }) => {
+  await start(page, {
+    memos: threeMemos,
+    settings: viewedOrder,
+    session: paneSession([[{ kind: "memo", memoId: "c" }]]),
+  });
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  expect(await page.evaluate(() => window.__tote.backend.data.memoViewedCalls ?? [])).toEqual([]);
+});
+
+test("another window's view re-sorts this one", async ({ context }) => {
+  const first = await startWindows(context, { memos: threeMemos, settings: viewedOrder });
+  const second = await openWindow(context, "ws-2");
+  await row(second, "다").click();
+  await expect(names(first)).toHaveText(["다", "가", "나"]);
+});
+
+test("another window's pick of order applies here", async ({ context }) => {
+  const first = await startWindows(context, { memos: threeMemos, popupMenuPick: "name-desc" });
+  const second = await openWindow(context, "ws-2");
+  await second.getByRole("button", { name: "정렬" }).click();
+  await expect(names(first)).toHaveText(["다", "나", "가"]);
 });

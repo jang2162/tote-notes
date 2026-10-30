@@ -308,6 +308,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
+      sidebar: { sort: "modified-desc" },
     },
   });
   await openSection(page, "모양");
