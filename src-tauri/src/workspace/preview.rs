@@ -20,24 +20,26 @@ pub fn read_preview(path: &Path) -> io::Result<Option<String>> {
     Ok(preview_of(&head))
 }
 
-/// The preview of a memo whose first bytes are `head`. A character cut at the end of `head` is
-/// dropped; the title line is the editor's (`titleLine` in src/core/title.ts): the first line
+/// The preview of a memo whose first bytes are `head`: `None` for bytes the editor would not open
+/// as text. A character cut at the end of `head` is dropped; the title line is the editor's (`titleLine` in src/core/title.ts): the first line
 /// that is not blank, a `#!` first line skipped.
 pub fn preview_of(head: &[u8]) -> Option<String> {
     if head.contains(&0) {
         return None;
     }
+    // As the editor reads it (`decodeText`): without the BOM, and not text when it is not UTF-8.
+    let head = head.strip_prefix(b"\xef\xbb\xbf").unwrap_or(head);
     let text = match std::str::from_utf8(head) {
-        Ok(text) => text.into(),
+        Ok(text) => text,
         // Cut inside a character at the end: what comes before it.
         Err(err) if err.error_len().is_none() => {
-            String::from_utf8_lossy(&head[..err.valid_up_to()])
+            std::str::from_utf8(&head[..err.valid_up_to()]).ok()?
         }
-        Err(_) => String::from_utf8_lossy(head),
+        Err(_) => return None,
     };
-    let mut lines = text
-        .split('\n')
-        .map(|line| line.strip_suffix('\r').unwrap_or(line));
+    // CodeMirror's line breaks: CRLF, a lone CR, LF.
+    let text = text.replace("\r\n", "\n");
+    let mut lines = text.split(['\r', '\n']);
     let mut first = lines.next();
     if first.is_some_and(|line| line.starts_with("#!")) {
         first = None;
@@ -91,6 +93,21 @@ mod tests {
         assert_eq!(preview("제목\n\n본문 하나\n둘"), "본문 하나 둘");
         assert_eq!(preview("\n\n  \n제목\n본문"), "본문");
         assert_eq!(preview("제목\r\n본문\r\n"), "본문");
+    }
+
+    #[test]
+    fn the_title_line_is_the_editors_with_a_bom_or_a_lone_cr() {
+        assert_eq!(preview("\u{feff}#!/bin/sh\necho hi\nls"), "ls");
+        assert_eq!(preview("\u{feff}\n제목\n본문"), "본문");
+        assert_eq!(preview("\u{feff}제목\n본문"), "본문");
+        assert_eq!(preview("제목\r본문\r둘"), "본문 둘");
+    }
+
+    #[test]
+    fn bad_utf8_before_the_end_has_none() {
+        assert_eq!(preview_of(b"t\n\xff\xfe body"), None);
+        // Cut at the end only: what comes before.
+        assert_eq!(preview_of(b"t\nbody \xea\xb0").as_deref(), Some("body"));
     }
 
     #[test]
