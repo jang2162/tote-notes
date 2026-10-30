@@ -309,7 +309,10 @@ export class AppController implements DocHost, PaneHost {
   private memosLoaded = false;
   /** Another window's change to the memo list is waiting to be read (`MEMOS_GATHER_MS`). */
   private memosChangedSoon: number | null = null;
-  private readonly memoList = new MemoList((id) => void this.openMemo(id));
+  private readonly memoList = new MemoList({
+    open: (id) => void this.openMemo(id),
+    menu: (id) => void this.memoMenu(id).catch((error: unknown) => this.report(error)),
+  });
   private readonly searchPanel = new SearchPanel({
     search: (query, onEvent) =>
       this.backend.searchWorkspace(query, ++this.workspaceSearches, onEvent),
@@ -1143,7 +1146,7 @@ export class AppController implements DocHost, PaneHost {
   async tabMenu(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
-    const picked = await this.backend.showTabMenu([
+    const picked = await this.backend.showPopupMenu([
       ...SPLIT_TAB_ITEMS.map(({ id, text }) => ({ id, text })),
       { id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" },
     ]);
@@ -1891,6 +1894,28 @@ export class AppController implements DocHost, PaneHost {
     await doc.rename(file);
   }
 
+  /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」). */
+  private async memoMenu(id: string): Promise<void> {
+    if (!this.memoList.get(id)) return;
+    const picked = await this.backend.showPopupMenu([{ id: "rename", text: "이름 바꾸기…" }]);
+    if (picked === "rename") await this.renameMemo(id);
+  }
+
+  /** The sidebar's rename: of a memo open in this window, through its tab (saved first, as the
+   * menu's); of one that is not, here — in another window, that window's tab follows the listing
+   * (`followListing`) and its writes, which go by ID, land in the renamed file. */
+  async renameMemo(id: string): Promise<void> {
+    const info = this.memoList.get(id);
+    if (!info) return;
+    const name = await promptText("새 파일 이름", info.file);
+    if (this.focused.tabs.active) this.focused.view.focus();
+    const file = name?.trim();
+    if (!file || file === info.file) return;
+    const doc = this.memoTab(id);
+    if (doc) return doc.rename(file);
+    this.memoList.upsert(await this.backend.renameMemo(id, file));
+  }
+
   private async refreshSwitcher(): Promise<void> {
     try {
       const list = await this.backend.listWorkspaces();
@@ -2104,7 +2129,16 @@ export class AppController implements DocHost, PaneHost {
 
   private async refreshMemos(): Promise<void> {
     try {
-      this.memoList.setMemos(await this.backend.listMemos());
+      const asked = this.docs.flatMap((doc) =>
+        doc instanceof MemoDoc ? [[doc, doc.infoChanges] as const] : [],
+      );
+      const memos = await this.backend.listMemos();
+      this.memoList.setMemos(memos);
+      const listed = new Map(memos.map((memo) => [memo.id, memo]));
+      for (const [doc, changes] of asked) {
+        const memo = listed.get(doc.info.id);
+        if (memo && this.docs.includes(doc)) doc.follow(memo, changes);
+      }
     } catch (error) {
       this.report(error);
       return;

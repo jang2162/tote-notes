@@ -1030,7 +1030,7 @@ test("a tab's menu splits it into a new pane below", async ({ page }) => {
   await start(page, {
     memos,
     session: paneSession([[memoTab("a"), memoTab("b")]]),
-    tabMenuPick: "split-tab-bottom",
+    popupMenuPick: "split-tab-bottom",
   });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await pane(page, 0).locator(".tab", { hasText: "나" }).click({ button: "right" });
@@ -1047,7 +1047,7 @@ test("a tab's menu splits it into a new pane on the left", async ({ page }) => {
   await start(page, {
     memos,
     session: paneSession([[memoTab("a")], [memoTab("b"), memoTab("c")]]),
-    tabMenuPick: "split-tab-left",
+    popupMenuPick: "split-tab-left",
   });
   await expect(titles(page, 1)).toHaveText(["나", "다"]);
   await pane(page, 1).locator(".tab", { hasText: "다" }).click({ button: "right" });
@@ -1063,7 +1063,7 @@ test("a tab's menu splits a pane's only tab into an empty new pane", async ({ pa
   await start(page, {
     memos,
     session: paneSession([[memoTab("a")]]),
-    tabMenuPick: "split-tab-right",
+    popupMenuPick: "split-tab-right",
   });
   await expect(titles(page, 0)).toHaveText(["가"]);
   await pane(page, 0).locator(".tab", { hasText: "가" }).click({ button: "right" });
@@ -1080,7 +1080,7 @@ test("a tab's menu in a narrow window says so and splits nothing", async ({ page
   await start(page, {
     memos,
     session: paneSession([[memoTab("a"), memoTab("b")]]),
-    tabMenuPick: "split-tab-right",
+    popupMenuPick: "split-tab-right",
   });
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
   await pane(page, 0).locator(".tab", { hasText: "나" }).click({ button: "right" });

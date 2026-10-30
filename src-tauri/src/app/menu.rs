@@ -1,4 +1,5 @@
-//! The menu bar, and a tab's context menu. Edit uses the system items for the clipboard — in a
+//! The menu bar, and the pop-up menus the page asks for (a tab's, a memo row's, the memo list's
+//! sort). Edit uses the system items for the clipboard — in a
 //! WKWebView copy and paste only work through them — but its own for undo and redo: the system's
 //! steps through WebKit's undo stack, which never holds the editor's own changes. Tab actions go
 //! to the frontend of the focused window as `tote://menu`.
@@ -10,7 +11,9 @@ use std::sync::{mpsc, Mutex, MutexGuard};
 use std::thread::ThreadId;
 
 use serde::Deserialize;
-use tauri::menu::{Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder};
+use tauri::menu::{
+    CheckMenuItemBuilder, Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder,
+};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
 
@@ -25,9 +28,9 @@ use crate::shortcuts::{
     UNDO_ACCELERATOR,
 };
 
-/// What the ids of a tab's context menu items start with: their events answer `show_tab_menu`
+/// What the ids of a pop-up menu's items start with: their events answer `show_popup_menu`
 /// and never act as the menu bar's items of the same name.
-const TAB_MENU: &str = "tab-menu:";
+const POPUP_MENU: &str = "popup-menu:";
 
 fn item(
     app: &AppHandle,
@@ -506,22 +509,22 @@ pub(crate) fn follow_settings(app: &AppHandle) {
 /// Where a menu event goes.
 #[derive(Debug, PartialEq)]
 enum Route<'a> {
-    /// An item of a tab's context menu, by the id `show_tab_menu` was given.
-    TabMenu(&'a str),
+    /// An item of a pop-up menu, by the id `show_popup_menu` was given.
+    PopupMenu(&'a str),
     /// An item of the menu bar.
     App(&'a str),
 }
 
 fn route(id: &str) -> Route<'_> {
-    match id.strip_prefix(TAB_MENU) {
-        Some(item) => Route::TabMenu(item),
+    match id.strip_prefix(POPUP_MENU) {
+        Some(item) => Route::PopupMenu(item),
         None => Route::App(id),
     }
 }
 
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
     match route(event.id().as_ref()) {
-        Route::TabMenu(item) => app.state::<TabMenu>().record(item),
+        Route::PopupMenu(item) => app.state::<PopupMenu>().record(item),
         Route::App(id) => run(app, id, target_window(app)),
     }
 }
@@ -622,20 +625,23 @@ fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
     }
 }
 
-/// An item of a tab's context menu (`show_tab_menu`).
+/// An item of a pop-up menu (`show_popup_menu`). With `checked` it is a check item, ticked or
+/// not; without, a plain one.
 #[derive(Debug, Deserialize)]
-pub struct TabMenuItem {
+pub struct PopupMenuItem {
     pub id: String,
     pub text: String,
+    #[serde(default)]
+    pub checked: Option<bool>,
 }
 
-/// The item picked in the tab menu on show. One at a time: macOS shows one context menu at once.
+/// The item picked in the pop-up menu on show. One at a time: macOS shows one context menu at once.
 #[derive(Default)]
-pub struct TabMenu {
+pub struct PopupMenu {
     pick: Mutex<Option<String>>,
 }
 
-impl TabMenu {
+impl PopupMenu {
     /// A menu is about to show: nothing is picked in it yet, whatever an earlier one left.
     fn begin(&self) {
         *lock(&self.pick) = None;
@@ -653,21 +659,24 @@ impl TabMenu {
 /// Shows `items` as a context menu at the pointer in `window` and returns the id of the one
 /// picked, `None` when the menu closed without a pick. Blocks until the menu closes: call it off
 /// the main thread.
-pub fn show_tab_menu(
+pub fn show_popup_menu(
     app: &AppHandle,
     window: &WebviewWindow,
-    items: &[TabMenuItem],
+    items: &[PopupMenuItem],
 ) -> tauri::Result<Option<String>> {
-    let picks = app.state::<TabMenu>();
+    let picks = app.state::<PopupMenu>();
     picks.begin();
     let mut menu = MenuBuilder::new(app);
     for each in items {
-        menu = menu.item(&item(
-            app,
-            &format!("{TAB_MENU}{}", each.id),
-            &each.text,
-            None,
-        )?);
+        let id = format!("{POPUP_MENU}{}", each.id);
+        menu = match each.checked {
+            Some(checked) => menu.item(
+                &CheckMenuItemBuilder::with_id(id, &each.text)
+                    .checked(checked)
+                    .build(app)?,
+            ),
+            None => menu.item(&item(app, &id, &each.text, None)?),
+        };
     }
     // Returns once the menu has closed.
     window.popup_menu(&menu.build()?)?;
@@ -736,10 +745,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn a_tab_menu_item_does_not_reach_the_menu_bar_actions() {
+    fn a_popup_menu_item_does_not_reach_the_menu_bar_actions() {
         assert_eq!(
-            route("tab-menu:move-tab-to-new-window"),
-            Route::TabMenu("move-tab-to-new-window")
+            route("popup-menu:move-tab-to-new-window"),
+            Route::PopupMenu("move-tab-to-new-window")
         );
         assert_eq!(
             route("move-tab-to-new-window"),
@@ -756,7 +765,7 @@ mod tests {
             "settings",
             "undo",
             "redo",
-            "tab-menu:move-tab-to-new-window",
+            "popup-menu:move-tab-to-new-window",
             "",
             "nope",
         ] {
@@ -765,8 +774,18 @@ mod tests {
     }
 
     #[test]
-    fn a_tab_menu_closed_without_a_pick_answers_none() {
-        let menu = TabMenu::default();
+    fn popup_items_read_without_checked() {
+        let items: Vec<PopupMenuItem> = serde_json::from_str(
+            r#"[{"id":"a","text":"가"},{"id":"b","text":"나","checked":true}]"#,
+        )
+        .unwrap();
+        assert_eq!(items[0].checked, None);
+        assert_eq!(items[1].checked, Some(true));
+    }
+
+    #[test]
+    fn a_popup_menu_closed_without_a_pick_answers_none() {
+        let menu = PopupMenu::default();
         menu.begin();
         assert_eq!(menu.take(), None);
         menu.begin();
@@ -776,8 +795,8 @@ mod tests {
     }
 
     #[test]
-    fn a_pick_left_over_does_not_answer_the_next_tab_menu() {
-        let menu = TabMenu::default();
+    fn a_pick_left_over_does_not_answer_the_next_popup_menu() {
+        let menu = PopupMenu::default();
         // A pick that came after its menu's answer was taken.
         menu.record("move-tab-to-new-window");
         menu.begin();

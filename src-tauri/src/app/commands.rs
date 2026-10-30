@@ -499,14 +499,14 @@ pub async fn tear_off_tab(
 /// Shows a tab's context menu at the pointer: the id of the item picked, `None` when it closed
 /// without a pick.
 #[tauri::command]
-pub async fn show_tab_menu(
+pub async fn show_popup_menu(
     app: AppHandle,
     window: WebviewWindow,
-    items: Vec<menu::TabMenuItem>,
+    items: Vec<menu::PopupMenuItem>,
 ) -> CmdResult<Option<String>> {
     // The menu blocks its thread while it is open; not one of the async runtime's.
     let picked =
-        tauri::async_runtime::spawn_blocking(move || menu::show_tab_menu(&app, &window, &items))
+        tauri::async_runtime::spawn_blocking(move || menu::show_popup_menu(&app, &window, &items))
             .await
             .map_err(|err| CommandError::new("app", err.to_string()))??;
     Ok(picked)

@@ -59,6 +59,13 @@ export type UpdateProgress =
   | { kind: "progress"; done: number; total: number | null }
   | { kind: "installing" };
 
+/** An item of `showPopupMenu`; with `checked` it is a check item, ticked or not. */
+export interface PopupMenuItem {
+  id: string;
+  text: string;
+  checked?: boolean;
+}
+
 /** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
  * workspace, or an external file. */
 export type TabRef = { kind: "memo"; id: string } | { kind: "external"; path: string };
@@ -435,9 +442,9 @@ export interface Backend {
    * window opens with its top-left corner there. A new window's tab has its place and its line in
    * the session before the window is made; when it cannot be made the tab stays here. */
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }): Promise<"moved" | "window">;
-  /** A tab's context menu at the pointer: the `id` of the item picked, `null` when it closed
-   * without a pick. */
-  showTabMenu(items: { id: string; text: string }[]): Promise<string | null>;
+  /** A native pop-up menu at the pointer (a tab's, a memo row's, the sort's): the `id` of the item
+   * picked, `null` when it closed without a pick. */
+  showPopupMenu(items: PopupMenuItem[]): Promise<string | null>;
 
   openExternal(path: string): Promise<ExternalInfo>;
   readExternal(path: string): Promise<Uint8Array>;

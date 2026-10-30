@@ -821,7 +821,30 @@ export class MemoDoc extends Doc {
     return true;
   }
 
+  /** What the memo list says of this memo now, from a listing asked for when `setInfo` had run
+   * `changes` times: another window's rename or pin. A listing that set out before this tab's own
+   * change of name answered is older than what the tab knows, and is not followed. */
+  follow(listed: MemoInfo, changes: number): void {
+    if (changes !== this.infoChanges) return;
+    const { file, autoTitle, language } = listed;
+    if (
+      file === this.info.file &&
+      autoTitle === this.info.autoTitle &&
+      language === this.info.language
+    )
+      return;
+    this.setInfo({ ...this.info, file, autoTitle, language });
+  }
+
+  /** How many times `setInfo` has run, for `follow`. */
+  get infoChanges(): number {
+    return this.infoCount;
+  }
+
+  private infoCount = 0;
+
   private setInfo(info: MemoInfo): void {
+    this.infoCount++;
     const extensionChanged = splitName(info.file).ext !== splitName(this.info.file).ext;
     this.info = info;
     this.language = info.language ?? null;

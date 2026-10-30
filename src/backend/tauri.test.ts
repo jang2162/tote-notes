@@ -77,8 +77,8 @@ describe("TauriBackend", () => {
         { tab: "{}", tabRef: { kind: "memo", id: "m" }, at: { x: -1500, y: 400 } },
       ],
       [
-        () => backend.showTabMenu([{ id: "x", text: "엑스" }]),
-        "show_tab_menu",
+        () => backend.showPopupMenu([{ id: "x", text: "엑스" }]),
+        "show_popup_menu",
         { items: [{ id: "x", text: "엑스" }] },
       ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],

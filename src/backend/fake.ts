@@ -31,6 +31,7 @@ import {
   type OutsideChange,
   type WindowStart,
   type PendingOpen,
+  type PopupMenuItem,
   type TabRef,
   type SearchEvent,
   type SearchMatch,
@@ -184,14 +185,14 @@ export interface FakeData {
   /** The other windows on the screen, most recently focused first, as `tearOffTab` looks for one
    * under the point a tab is let go at. Absent in old seeds. */
   dropTargets?: FakeDropTarget[];
-  /** What a tab's context menu returns: the id of the item to pick, or null for none. */
-  tabMenuPick?: string | null;
+  /** What a pop-up menu returns: the id of the item to pick, or null for none. */
+  popupMenuPick?: string | null;
   /** Workspaces a switch fails to open once this window has written its tabs, as
    * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
    * seeds. */
   unopenable?: string[];
-  /** The items of every tab context menu shown, in order. Absent in old seeds. */
-  tabMenus?: { id: string; text: string }[][];
+  /** The items of every pop-up menu shown, in order. Absent in old seeds. */
+  popupMenus?: PopupMenuItem[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
   hub?: HubState;
   /** The workspaces other than `workspace`, by path, each as `workspace`, `memos` and `session`
@@ -930,10 +931,10 @@ export class FakeBackend implements Backend {
     return "window";
   }
 
-  async showTabMenu(items: { id: string; text: string }[]) {
-    (this.data.tabMenus ??= []).push(items);
+  async showPopupMenu(items: PopupMenuItem[]) {
+    (this.data.popupMenus ??= []).push(items);
     this.commit();
-    return this.data.tabMenuPick ?? null;
+    return this.data.popupMenuPick ?? null;
   }
 
   async openExternal(path: string): Promise<ExternalInfo> {

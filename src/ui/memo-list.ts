@@ -26,6 +26,13 @@ export function visibleRows(scrollTop: number, height: number, count: number): [
   return [start, end];
 }
 
+/** What the memo list asks of the window. */
+export interface MemoListHost {
+  open(id: string): void;
+  /** A row's context menu (right click, ⌃click). */
+  menu(id: string): void;
+}
+
 /** The sidebar's memo pane: every memo, newest first, filtered by name (spec 「메모 목록」). */
 export class MemoList {
   private readonly filter = h("input", {
@@ -40,7 +47,7 @@ export class MemoList {
   private shown: MemoInfo[] = [];
   private activeId: string | null = null;
 
-  constructor(private readonly onOpen: (id: string) => void) {
+  constructor(private readonly host: MemoListHost) {
     this.filter.spellcheck = false;
     this.filter.addEventListener("input", () => {
       this.scroller.scrollTop = 0;
@@ -102,7 +109,11 @@ export class MemoList {
       ext ? h("span", { class: "memo-ext", textContent: ext }) : null,
     );
     row.style.top = `${index * ROW_HEIGHT}px`;
-    row.addEventListener("click", () => this.onOpen(memo.id));
+    row.addEventListener("click", () => this.host.open(memo.id));
+    row.addEventListener("contextmenu", (event) => {
+      event.preventDefault();
+      this.host.menu(memo.id);
+    });
     return row;
   }
 }
