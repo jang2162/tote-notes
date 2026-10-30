@@ -1211,11 +1211,6 @@ button.danger {
   font-weight: 600;
 }
 
-.picker-create {
-  display: flex;
-  gap: 8px;
-}
-
 .panel-host {
   position: absolute;
   inset: 0;

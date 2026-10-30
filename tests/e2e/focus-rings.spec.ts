@@ -89,7 +89,6 @@ test("no focus ring is cut in the dialogs, the find bar or the window around the
   const report: Record<string, string[]> = {};
   for (const [command, selector] of [
     ["rename", ".modal"],
-    ["open-workspace", ".modal"],
     ["new-workspace", ".modal"],
     ["versions", ".modal"],
   ] as const) {
@@ -118,7 +117,6 @@ test("no focus ring is cut in the dialogs, the find bar or the window around the
   report.sidebar = await clippedRings(page.locator(".sidebar"));
   expect(report).toEqual({
     rename: [],
-    "open-workspace": [],
     "new-workspace": [],
     versions: [],
     find: [],

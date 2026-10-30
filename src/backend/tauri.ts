@@ -197,12 +197,6 @@ export class TauriBackend implements Backend {
   switchWorkspace(path: string) {
     return call<"focused" | "switching">("switch_workspace", { path });
   }
-  relocateWorkspace(from: string, to: string) {
-    return call<void>("relocate_workspace", { from, to });
-  }
-  openWorkspace(path: string) {
-    return call<void>("open_workspace", { path });
-  }
 
   listVersions(id: string) {
     return call<Version[]>("list_versions", { id });

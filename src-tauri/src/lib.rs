@@ -120,8 +120,6 @@ pub fn run() {
             commands::set_workspace_order,
             commands::create_workspace,
             commands::switch_workspace,
-            commands::relocate_workspace,
-            commands::open_workspace,
             commands::flush_done,
             commands::current_update,
             commands::install_update,
