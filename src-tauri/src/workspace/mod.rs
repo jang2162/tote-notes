@@ -7,9 +7,11 @@ pub mod memo;
 pub mod names;
 mod ops;
 pub mod order;
+pub mod preview;
 pub mod viewed;
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::cell::RefCell;
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -63,6 +65,16 @@ pub struct Workspace {
     inodes: BTreeMap<String, (u64, u64)>,
     /// When each memo was last on show (`attach_viewed`); none until the app attaches them.
     viewed: Option<ViewedTimes>,
+    /// Memo ID → its preview as of a file (name, modified time, size): read again only when one
+    /// of the three changes. Filled while listing, which only reads.
+    previews: RefCell<HashMap<String, CachedPreview>>,
+}
+
+struct CachedPreview {
+    file: String,
+    modified_ms: u64,
+    size: u64,
+    preview: Option<String>,
 }
 
 /// What `apply_fs_events` found another app did to the workspace.
@@ -147,6 +159,7 @@ impl Workspace {
             last_written: BTreeMap::new(),
             inodes,
             viewed: None,
+            previews: RefCell::default(),
         })
     }
 

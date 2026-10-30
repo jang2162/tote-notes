@@ -4,6 +4,8 @@ import { h } from "./dom";
 import { sortMemos, splitPinned } from "./memo-order";
 
 export const ROW_HEIGHT = 28;
+/** A row with its preview line under the name (spec 2026-10-30 「미리보기」). */
+export const PREVIEW_ROW_HEIGHT = 46;
 const OVERSCAN_ROWS = 8;
 
 /** For matching only: Finder may hand over decomposed (NFD) Hangul while typed text is composed. */
@@ -16,9 +18,14 @@ export function filterMemos(memos: readonly MemoInfo[], query: string): MemoInfo
 
 /** Rows [start, end) worth rendering for a viewport, with some to spare on both sides. A
  * workspace may hold 10,000 memos; only these exist in the DOM. */
-export function visibleRows(scrollTop: number, height: number, count: number): [number, number] {
-  const start = Math.max(0, Math.floor(scrollTop / ROW_HEIGHT) - OVERSCAN_ROWS);
-  const end = Math.min(count, Math.ceil((scrollTop + height) / ROW_HEIGHT) + OVERSCAN_ROWS);
+export function visibleRows(
+  scrollTop: number,
+  height: number,
+  count: number,
+  rowHeight = ROW_HEIGHT,
+): [number, number] {
+  const start = Math.max(0, Math.floor(scrollTop / rowHeight) - OVERSCAN_ROWS);
+  const end = Math.min(count, Math.ceil((scrollTop + height) / rowHeight) + OVERSCAN_ROWS);
   return [start, end];
 }
 
@@ -78,6 +85,7 @@ class RowSection {
   constructor(
     className: string,
     private readonly draw: (memo: MemoInfo, index: number) => HTMLElement,
+    private readonly rowHeight: () => number,
   ) {
     this.el = h("div", { class: className }, this.rows);
     this.el.addEventListener("scroll", () => this.render(), { passive: true });
@@ -85,8 +93,14 @@ class RowSection {
   }
 
   render(): void {
-    this.rows.style.height = `${this.items.length * ROW_HEIGHT}px`;
-    const [start, end] = visibleRows(this.el.scrollTop, this.el.clientHeight, this.items.length);
+    const rowHeight = this.rowHeight();
+    this.rows.style.height = `${this.items.length * rowHeight}px`;
+    const [start, end] = visibleRows(
+      this.el.scrollTop,
+      this.el.clientHeight,
+      this.items.length,
+      rowHeight,
+    );
     this.rows.replaceChildren(
       ...this.items.slice(start, end).map((memo, i) => this.draw(memo, start + i)),
     );
@@ -102,12 +116,20 @@ export class MemoList {
     class: "memo-filter",
   });
   private readonly sortButton = h("button", { class: "memo-sort", type: "button" }, sortMark());
-  private readonly pinned = new RowSection("memo-pinned", (memo, i) => this.row(memo, i));
+  private readonly pinned = new RowSection(
+    "memo-pinned",
+    (memo, i) => this.row(memo, i),
+    () => this.rowHeight,
+  );
   private readonly divider = h("div", { class: "memo-pinned-divider" });
-  private readonly list = new RowSection("memo-scroller", (memo, i) => this.row(memo, i));
+  private readonly list = new RowSection(
+    "memo-scroller",
+    (memo, i) => this.row(memo, i),
+    () => this.rowHeight,
+  );
   readonly el = h(
     "div",
-    { class: "memo-pane" },
+    { class: "memo-pane with-preview" },
     h("div", { class: "memo-filter-row" }, this.filter, this.sortButton),
     this.pinned.el,
     this.divider,
@@ -116,6 +138,7 @@ export class MemoList {
   private memos: MemoInfo[] = [];
   private activeId: string | null = null;
   private sort: MemoSort = "modified-desc";
+  private preview = true;
 
   constructor(private readonly host: MemoListHost) {
     this.filter.spellcheck = false;
@@ -135,6 +158,18 @@ export class MemoList {
 
   get order(): MemoSort {
     return this.sort;
+  }
+
+  private get rowHeight(): number {
+    return this.preview ? PREVIEW_ROW_HEIGHT : ROW_HEIGHT;
+  }
+
+  /** Each row's second line with the start of its text, on or off. */
+  setPreview(on: boolean): void {
+    if (on === this.preview) return;
+    this.preview = on;
+    this.el.classList.toggle("with-preview", on);
+    this.refilter();
   }
 
   /** The order of every list; the scroll stays where it is. */
@@ -174,7 +209,7 @@ export class MemoList {
     this.pinned.el.hidden = pinned.length === 0;
     this.divider.hidden = pinned.length === 0;
     // As tall as its rows, up to the stylesheet's share of the pane; past it, it scrolls.
-    this.pinned.el.style.height = `${pinned.length * ROW_HEIGHT}px`;
+    this.pinned.el.style.height = `${pinned.length * this.rowHeight}px`;
     this.render();
   }
 
@@ -190,11 +225,20 @@ export class MemoList {
       "div",
       { class: `memo-row kind-${memo.kind}${active}`, title: memo.file },
       h("span", { class: "memo-icon" }),
-      h("span", { class: "memo-name", textContent: stem }),
-      ext ? h("span", { class: "memo-ext", textContent: ext }) : null,
+      h(
+        "span",
+        { class: "memo-text" },
+        h(
+          "span",
+          { class: "memo-title" },
+          h("span", { class: "memo-name", textContent: stem }),
+          ext ? h("span", { class: "memo-ext", textContent: ext }) : null,
+        ),
+        this.preview ? h("span", { class: "memo-preview", textContent: memo.preview ?? "" }) : null,
+      ),
       memo.pinned ? pinMark() : null,
     );
-    row.style.top = `${index * ROW_HEIGHT}px`;
+    row.style.top = `${index * this.rowHeight}px`;
     row.addEventListener("click", () => this.host.open(memo.id));
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();

@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
-import { openWindow, paneSession, start, startWindows } from "./helpers";
+import { menu, openWindow, paneSession, start, startWindows } from "./helpers";
 
 // The sidebar's memo list (spec 2026-10-30 「메모 목록 기능 묶음」): renaming from a row's context
 // menu, pins, the sort, previews and the filter that finds memos by their content.
@@ -182,7 +182,10 @@ const threeMemos = {
   b: fakeMemo("나.md", "둘째", { modifiedMs: 2 }),
   c: fakeMemo("다.md", "셋째", { modifiedMs: 1 }),
 };
-const viewedOrder = { ...defaultFakeData().settings, sidebar: { sort: "viewed-desc" as const } };
+const viewedOrder = {
+  ...defaultFakeData().settings,
+  sidebar: { preview: true, sort: "viewed-desc" as const },
+};
 
 test("the sort button picks one of six, the current one checked", async ({ page }) => {
   await start(page, { memos: threeMemos, popupMenuPick: "modified-asc" });
@@ -226,14 +229,14 @@ test("the viewed order follows what comes on show", async ({ page }) => {
 test("opening a memo under the viewed order re-sorts and keeps the scroll", async ({ page }) => {
   await start(page, { memos: many(200), settings: viewedOrder });
   const scroller = page.locator(".memo-scroller");
-  await scroller.evaluate((el) => (el.scrollTop = 1400));
+  await scroller.evaluate((el) => (el.scrollTop = 2500));
   await row(page, "메모 60").click();
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.memoViewedCalls))
     .toEqual(["m60"]);
   // Opened, it went first: the row at the top of the list is it, out of view up there.
   await expect(names(page).first()).not.toHaveText("메모 60");
-  expect(await scroller.evaluate((el) => el.scrollTop)).toBe(1400);
+  expect(await scroller.evaluate((el) => el.scrollTop)).toBe(2500);
   await scroller.evaluate((el) => (el.scrollTop = 0));
   await expect(names(page).first()).toHaveText("메모 60");
 });
@@ -261,4 +264,40 @@ test("another window's pick of order applies here", async ({ context }) => {
   const second = await openWindow(context, "ws-2");
   await second.getByRole("button", { name: "정렬" }).click();
   await expect(names(first)).toHaveText(["다", "나", "가"]);
+});
+
+test("a memo row shows its preview under the name, 46px tall", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: { ...fakeMemo("가.md", "제목\n본문 첫 줄"), preview: "본문 첫 줄" },
+      b: fakeMemo("사진.png", ""),
+    },
+  });
+  await expect(row(page, "가").locator(".memo-preview")).toHaveText("본문 첫 줄");
+  await expect(row(page, "사진").locator(".memo-preview")).toHaveText("");
+  expect((await row(page, "가").boundingBox())?.height).toBe(46);
+  expect((await row(page, "사진").boundingBox())?.height).toBe(46);
+});
+
+test("turning the preview off in settings applies to every window at once", async ({ context }) => {
+  const first = await startWindows(context, {
+    memos: { a: { ...fakeMemo("가.md", "제목\n본문"), preview: "본문" } },
+  });
+  const second = await openWindow(context, "ws-2");
+  await expect(row(second, "가").locator(".memo-preview")).toHaveText("본문");
+  await menu(first, "settings");
+  await first
+    .locator(".modal.settings")
+    .getByRole("tab", { name: "사이드바", exact: true })
+    .click();
+  const box = first.getByRole("checkbox", { name: "메모 목록에 내용 미리보기" });
+  await expect(box).toBeChecked();
+  await box.uncheck();
+  for (const page of [first, second]) {
+    await expect(row(page, "가").locator(".memo-preview")).toHaveCount(0);
+    expect((await row(page, "가").boundingBox())?.height).toBe(28);
+  }
+  expect(await first.evaluate(() => window.__tote.backend.data.settings.sidebar.preview)).toBe(
+    false,
+  );
 });

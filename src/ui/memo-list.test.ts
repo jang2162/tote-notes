@@ -31,4 +31,10 @@ describe("visibleRows", () => {
     expect(visibleRows(2800, 280, 10_000)).toEqual([92, 118]);
     expect(visibleRows(0, 280, 5)).toEqual([0, 5]);
   });
+
+  it("counts rows of the preview's height", () => {
+    // 460 / 46 = row 10 at the top, 8 spare above; 460 + 276 = 736 / 46 = 16, 8 spare below.
+    expect(visibleRows(460, 276, 10_000, 46)).toEqual([2, 24]);
+    expect(visibleRows(460, 276, 10_000, 28)).toEqual([8, 35]);
+  });
 });

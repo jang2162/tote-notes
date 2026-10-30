@@ -16,6 +16,8 @@ export interface MemoInfo {
   pinned?: boolean;
   /** When it was last on show on this device; left out when never (spec 2026-10-30 「정렬」). */
   viewedMs?: number;
+  /** The start of a text memo's text for the memo list (`workspace::preview` in Rust). */
+  preview?: string;
 }
 
 export interface WorkspaceInfo {
@@ -245,6 +247,8 @@ export type MemoSort =
 
 /** `SidebarSettings` in src-tauri/src/appdata.rs: one for every window and workspace. */
 export interface SidebarSettings {
+  /** A second line under each memo's name with the start of its text. */
+  preview: boolean;
   sort: MemoSort;
 }
 
@@ -279,6 +283,7 @@ export interface SettingsPatch {
   editorFontSize?: number;
   editorFontFamily?: string;
   updatesAutoCheck?: boolean;
+  sidebarPreview?: boolean;
   sidebarSort?: MemoSort;
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */

@@ -254,11 +254,23 @@ impl Default for UpdateSettings {
 }
 
 /// The sidebar's memo list (spec 2026-10-30): one order for every window and workspace.
-#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 pub struct SidebarSettings {
+    /// A second line under each memo's name with the start of its text.
+    #[serde(deserialize_with = "lenient_on")]
+    pub preview: bool,
     #[serde(deserialize_with = "lenient")]
     pub sort: SortOrder,
+}
+
+impl Default for SidebarSettings {
+    fn default() -> Self {
+        SidebarSettings {
+            preview: true,
+            sort: SortOrder::default(),
+        }
+    }
 }
 
 /// The memo list's order (`MemoSort` in src/backend/types.ts).
@@ -351,6 +363,8 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub updates_auto_check: Option<bool>,
     #[serde(default)]
+    pub sidebar_preview: Option<bool>,
+    #[serde(default)]
     pub sidebar_sort: Option<SortOrder>,
     /// The whole map: what is not in it goes back to its default.
     #[serde(default)]
@@ -412,6 +426,9 @@ impl SettingsPatch {
         }
         if let Some(on) = self.updates_auto_check {
             settings.updates.auto_check = on;
+        }
+        if let Some(on) = self.sidebar_preview {
+            settings.sidebar.preview = on;
         }
         if let Some(sort) = self.sidebar_sort {
             settings.sidebar.sort = sort;
@@ -1104,9 +1121,28 @@ mod tests {
         assert_eq!(settings.sidebar.sort, SortOrder::ModifiedAsc);
         let text = serde_json::to_string(&settings).unwrap();
         assert!(
-            text.contains(r#""sidebar":{"sort":"modified-asc"}"#),
+            text.contains(r#""sidebar":{"preview":true,"sort":"modified-asc"}"#),
             "{text}"
         );
+    }
+
+    #[test]
+    fn sidebar_preview_is_on_by_default_and_survives_a_bad_value() {
+        let read = |text: &str| serde_json::from_str::<Settings>(text).unwrap();
+        assert!(read("{}").sidebar.preview);
+        assert!(read(r#"{"sidebar": {}}"#).sidebar.preview);
+        assert!(!read(r#"{"sidebar": {"preview": false}}"#).sidebar.preview);
+        let bad = read(r#"{"sidebar": {"preview": "no", "sort": "name-asc"}}"#);
+        assert!(bad.sidebar.preview);
+        assert_eq!(bad.sidebar.sort, SortOrder::NameAsc);
+
+        let mut settings = Settings::default();
+        serde_json::from_str::<SettingsPatch>(r#"{"sidebarPreview": false}"#)
+            .unwrap()
+            .apply(&mut settings)
+            .unwrap();
+        assert!(!settings.sidebar.preview);
+        assert_eq!(settings.sidebar.sort, SortOrder::ModifiedDesc);
     }
 
     #[test]

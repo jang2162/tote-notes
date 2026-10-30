@@ -275,7 +275,7 @@ export class AppController implements DocHost, PaneHost {
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
-    sidebar: { sort: "modified-desc" },
+    sidebar: { preview: true, sort: "modified-desc" },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
@@ -773,6 +773,7 @@ export class AppController implements DocHost, PaneHost {
     try {
       this.settings = await this.backend.settings();
       this.memoList.setSort(this.settings.sidebar.sort);
+      this.memoList.setPreview(this.settings.sidebar.preview);
     } catch (error) {
       this.report(error);
     }

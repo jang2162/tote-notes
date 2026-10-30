@@ -10,6 +10,7 @@ import { workspacesSection } from "./workspace-settings";
 export type SettingsSection =
   | "general"
   | "workspaces"
+  | "sidebar"
   | "editor"
   | "appearance"
   | "shortcuts"
@@ -18,6 +19,7 @@ export type SettingsSection =
 const SECTIONS: [SettingsSection, string][] = [
   ["general", "일반"],
   ["workspaces", "워크스페이스"],
+  ["sidebar", "사이드바"],
   ["editor", "편집기"],
   ["appearance", "모양"],
   ["shortcuts", "단축키"],
@@ -147,6 +149,14 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         }),
       );
     };
+
+    const preview = h("input", { type: "checkbox", name: "sidebarPreview" });
+    preview.addEventListener("change", () => void save({ sidebarPreview: preview.checked }));
+    const sidebarSection = h(
+      "div",
+      { class: "settings-form" },
+      ...field("메모 목록에 내용 미리보기", preview),
+    );
 
     const lineNumbers = h("input", { type: "checkbox", name: "editorLineNumbers" });
     lineNumbers.addEventListener(
@@ -344,6 +354,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         sync(rootInput, current.workspaceRoot ?? "");
         rootInput.placeholder = roots.defaultShown;
         lineNumbers.checked = current.editor.lineNumbers;
+        preview.checked = current.sidebar.preview;
         autoCheck.checked = current.updates.autoCheck;
         sync(fontSize, String(current.editor.fontSize));
         sync(fontFamily, current.editor.fontFamily);
@@ -373,6 +384,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
       workspaces: workspaces.el,
+      sidebar: sidebarSection,
       editor: editorSection,
       appearance: appearanceSection,
       shortcuts: shortcuts.el,

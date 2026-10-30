@@ -73,6 +73,9 @@ export interface FakeMemo {
   pinned?: boolean;
   /** When it was last on show (`memoViewed`), on the fake's clock. */
   viewedMs?: number;
+  /** What `listMemos` gives as its preview; without it the fake makes a rough one (the lines
+   * after the first, run together) — the rule itself is Rust's (`workspace::preview`). */
+  preview?: string;
 }
 
 /** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
@@ -293,7 +296,7 @@ export function defaultFakeData(): FakeData {
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
-      sidebar: { sort: "modified-desc" },
+      sidebar: { preview: true, sort: "modified-desc" },
     },
     userExtensions: [],
     packages: {},
@@ -326,6 +329,12 @@ export function fromBase64(data: string): Uint8Array {
 /** Seed helpers for tests. */
 export function fakeFile(contents: string | Uint8Array): string {
   return toBase64(typeof contents === "string" ? new TextEncoder().encode(contents) : contents);
+}
+
+/** A stand-in for Rust's preview rule: the text after the first line, its spaces folded. */
+function roughPreview(data: string): string {
+  const text = new TextDecoder().decode(fromBase64(data));
+  return text.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim().slice(0, 100);
 }
 
 export function fakeMemo(
@@ -1379,7 +1388,7 @@ export class FakeBackend implements Backend {
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     // An old seed has no `updates`; Rust reads a missing one as on.
     settings.updates ??= { autoCheck: true };
-    settings.sidebar ??= { sort: "modified-desc" };
+    settings.sidebar ??= { preview: true, sort: "modified-desc" };
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1408,9 +1417,10 @@ export class FakeBackend implements Backend {
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     settings.updates ??= { autoCheck: true };
-    settings.sidebar ??= { sort: "modified-desc" };
+    settings.sidebar ??= { preview: true, sort: "modified-desc" };
     if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
     if (patch.sidebarSort !== undefined) settings.sidebar.sort = patch.sidebarSort;
+    if (patch.sidebarPreview !== undefined) settings.sidebar.preview = patch.sidebarPreview;
     if (patch.editorLineNumbers !== undefined)
       settings.editor.lineNumbers = patch.editorLineNumbers;
     // Rust takes any number and clamps it, rounding a fraction.
@@ -1738,6 +1748,7 @@ export class FakeBackend implements Backend {
       ...(memo.language ? { language: memo.language } : {}),
       ...(memo.pinned ? { pinned: true } : {}),
       ...(memo.viewedMs !== undefined ? { viewedMs: memo.viewedMs } : {}),
+      ...(kindOf(memo.file) === "text" ? { preview: memo.preview ?? roughPreview(memo.data) } : {}),
     };
   }
 

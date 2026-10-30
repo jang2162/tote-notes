@@ -439,6 +439,31 @@ html:not(.sidebar-collapsed) .tab-lead {
   background: var(--active-bg);
 }
 
+.memo-pane.with-preview .memo-row {
+  height: 46px;
+}
+
+.memo-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.memo-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.memo-preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
 .memo-name {
   overflow: hidden;
   text-overflow: ellipsis;
