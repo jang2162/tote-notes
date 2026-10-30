@@ -382,8 +382,6 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
     let label = window.label();
     match event {
         WindowEvent::Focused(true) => core.focused(label),
-        #[cfg(target_os = "macos")]
-        WindowEvent::Resized(_) => super::traffic_lights::on_resized(window),
         // Closing writes first: the frontend gets `tote://flush`, and the window goes once it
         // answers or the timeout runs out.
         WindowEvent::CloseRequested { api, .. } if !core.is_quitting() => {

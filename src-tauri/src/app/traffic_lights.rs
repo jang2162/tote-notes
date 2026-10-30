@@ -9,14 +9,27 @@
 //! tauri, so a new title (a workspace switch, a window renumbered) left the buttons where AppKit
 //! puts them.
 //!
-//! AppKit lays the title bar out again after `setTitle:` and around full screen: `set_title` sets
-//! the title and places the buttons after it, and `on_resized` places them once the window is out
-//! of full screen. Main thread only, as AppKit wants.
+//! AppKit lays the title bar out again after `setTitle:`, on every resize and around full screen,
+//! and puts the buttons back at its own place (x 9pt, middle 16pt from the top on macOS 27):
+//! `set_title` sets the title and places the buttons after it, and `follow` places them on
+//! `NSWindowDidResizeNotification` and `NSWindowDidExitFullScreenNotification`. Those come inside
+//! `setFrame:`, after AppKit's layout and before the frame is drawn. Not on tao's
+//! `WindowEvent::Resized`: tao queues it for its run loop observer, which runs after Core
+//! Animation's commit, so while a window edge was dragged the frames showed the buttons at
+//! AppKit's place and ours by turns, and they shook (tests/traffic_lights_resize.rs). Main thread
+//! only, as AppKit wants.
 
-use objc2::MainThreadMarker;
-use objc2_app_kit::{NSButton, NSWindow, NSWindowButton, NSWindowStyleMask};
-use objc2_foundation::{NSPoint, NSString};
-use tauri::{WebviewWindow, Window};
+use std::cell::OnceCell;
+
+use objc2::rc::Retained;
+use objc2::runtime::NSObject;
+use objc2::{define_class, msg_send, sel, MainThreadMarker, MainThreadOnly};
+use objc2_app_kit::{
+    NSButton, NSWindow, NSWindowButton, NSWindowDidExitFullScreenNotification,
+    NSWindowDidResizeNotification, NSWindowStyleMask, NSWindowWillCloseNotification,
+};
+use objc2_foundation::{NSNotification, NSNotificationCenter, NSPoint, NSString};
+use tauri::WebviewWindow;
 
 /// The window's top row in logical pixels: the CSS `--top-row-height`.
 const TOP_ROW_HEIGHT: f64 = 36.0;
@@ -72,6 +85,77 @@ fn place_now(ns_window: &NSWindow) {
     }
 }
 
+define_class!(
+    // SAFETY: NSObject has no subclassing requirements, and `Follower` does not implement `Drop`.
+    #[unsafe(super(NSObject))]
+    #[thread_kind = MainThreadOnly]
+    #[name = "ToteTrafficLightsFollower"]
+    struct Follower;
+
+    impl Follower {
+        #[unsafe(method(windowChanged:))]
+        fn window_changed(&self, note: &NSNotification) {
+            if let Some(window) = note.object().and_then(|o| o.downcast::<NSWindow>().ok()) {
+                place_now(&window);
+            }
+        }
+
+        #[unsafe(method(windowWillClose:))]
+        fn window_will_close(&self, note: &NSNotification) {
+            // SAFETY: takes this observer off the closing window, for every name.
+            unsafe {
+                NSNotificationCenter::defaultCenter().removeObserver_name_object(
+                    self,
+                    None,
+                    note.object().as_deref(),
+                );
+            }
+        }
+    }
+);
+
+thread_local! {
+    /// One for every window, for the app's life: the notification center does not keep its
+    /// observers alive.
+    static FOLLOWER: OnceCell<Retained<Follower>> = const { OnceCell::new() };
+}
+
+/// Puts the buttons in place and keeps them there through resizes and full screen until the
+/// window closes. Once per window.
+pub fn follow(ns_window: &NSWindow) {
+    let mtm = MainThreadMarker::from(ns_window);
+    FOLLOWER.with(|cell| {
+        let follower = cell.get_or_init(|| {
+            let this = Follower::alloc(mtm).set_ivars(());
+            // SAFETY: NSObject's `init` on an object just allocated.
+            unsafe { msg_send![super(this), init] }
+        });
+        let center = NSNotificationCenter::defaultCenter();
+        // SAFETY: the selectors are `Follower`'s, each taking the notification, and `FOLLOWER`
+        // keeps the observer alive.
+        unsafe {
+            for name in [
+                NSWindowDidResizeNotification,
+                NSWindowDidExitFullScreenNotification,
+            ] {
+                center.addObserver_selector_name_object(
+                    follower,
+                    sel!(windowChanged:),
+                    Some(name),
+                    Some(ns_window),
+                );
+            }
+            center.addObserver_selector_name_object(
+                follower,
+                sel!(windowWillClose:),
+                Some(NSWindowWillCloseNotification),
+                Some(ns_window),
+            );
+        }
+    });
+    place_now(ns_window);
+}
+
 fn on_main(window: &WebviewWindow, run: impl FnOnce(&NSWindow) + Send + 'static) {
     let target = window.clone();
     let _ = window.run_on_main_thread(move || {
@@ -82,9 +166,9 @@ fn on_main(window: &WebviewWindow, run: impl FnOnce(&NSWindow) + Send + 'static)
     });
 }
 
-/// Puts the buttons of a window just made in place.
+/// Puts the buttons of a window just made in place and keeps them there.
 pub fn place(window: &WebviewWindow) {
-    on_main(window, place_now);
+    on_main(window, follow);
 }
 
 /// Titles the window and puts the buttons back where the new title's layout took them from.
@@ -95,18 +179,6 @@ pub fn set_title(window: &WebviewWindow, title: &str) {
         ns_window.setTitle(&NSString::from_str(&title));
         place_now(ns_window);
     });
-}
-
-/// A window resized, as it is when it leaves full screen, where AppKit put the buttons back.
-/// Window events come on the main thread.
-pub fn on_resized(window: &Window) {
-    if MainThreadMarker::new().is_none() {
-        return;
-    }
-    if let Ok(ptr) = window.ns_window() {
-        // SAFETY: as in `on_main`.
-        place_now(unsafe { &*ptr.cast::<NSWindow>() });
-    }
 }
 
 #[cfg(test)]

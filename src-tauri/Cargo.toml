@@ -65,6 +65,7 @@ objc2-foundation = { version = "0.3", default-features = false, features = [
   "std",
   "NSString",
   "NSGeometry",
+  "NSNotification",
 ] }
 
 [dev-dependencies]
@@ -87,6 +88,11 @@ harness = false
 # The same, and presses keys on it.
 [[test]]
 name = "menu_keypad"
+harness = false
+
+# Resizes a real AppKit window: the main thread again.
+[[test]]
+name = "traffic_lights_resize"
 harness = false
 
 # No `panic = "abort"`: with unwinding a panicking command fails alone, while abort would take the

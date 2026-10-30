@@ -7,6 +7,7 @@
 - 관찰(사용자): 디버그 앱을 처음 실행하면 신호등이 맨 윗줄(36px)의 세로 가운데가 아니라 창 위쪽에 붙는다. 누르기는 정상이다. **워크스페이스를 전환하면(페이지를 다시 읽으면) 제자리로 돌아온다.**
 - 요구: 첫 표시, 크기 바꾸기, 전체 화면에서 돌아오기, 밝은/어두운 모양 바꾸기, 워크스페이스 전환 뒤 모두 신호등의 세로 가운데가 맨 윗줄의 세로 가운데에 있다(±1pt).
 - 원인은 아직 모른다. 고치기 전에 Tauri/tao 가 inset 을 언제 적용하고 무엇이 그것을 되돌리는지 찾는다. 의존성 패치는 다른 길이 없을 때만이고, 그때는 사람에게 먼저 묻는다.
+- 크기 바꾸기 중 흔들림: AppKit 은 `setFrame:` 안(`-[NSThemeFrame _updateButtonPositions]`)에서 신호등을 기본 자리(x 9pt, 가운데 16pt)로 되돌리고, tao 의 `WindowEvent::Resized` 는 큐에 쌓였다가 Core Animation 커밋 뒤에야 온다. 그래서 끄는 동안 프레임마다 두 자리가 번갈아 그려졌다. 신호등은 `NSWindowDidResizeNotification`(`setFrame:` 안, 커밋 전)에서 다시 놓는다 — `src-tauri/src/app/traffic_lights.rs` 의 `follow`, 시험은 `src-tauri/tests/traffic_lights_resize.rs`.
 
 ## 2. 전체 화면에서 맨 윗줄 (사용자 요청: 「최대화 할 때 신호등 있던 공간이 비어. Title 당겨줘」)
 
