@@ -70,6 +70,8 @@ export interface PaneHost {
   showing(pane: Pane, doc: Doc | null): void;
   /** Tells the highlight worker which documents are on screen: every pane's active tab. */
   syncHighlightVisibility(): void;
+  /** The tab came on show in a pane: a memo's viewed time is now (spec 2026-10-30 「정렬」). */
+  viewed(doc: Doc): void;
   /** The shortcut app command `id` has now, as written (`shortcutHint` in src/shortcuts/keys.ts);
    * null when it has none, undefined while the table is not read. */
   shortcutHint(id: string): string | null | undefined;
@@ -161,6 +163,7 @@ export class Pane {
       void previous.leave();
     }
     this.tabs.active = doc;
+    this.host.viewed(doc);
     this.host.syncHighlightVisibility();
     this.renderTabs();
     // The switch lets go of the tab left at once, whatever the new tab shows and however long it

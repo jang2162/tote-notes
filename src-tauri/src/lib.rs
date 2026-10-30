@@ -65,7 +65,7 @@ pub fn run() {
             let registry = ctx.app_handle().state::<AppCore>().registry();
             extensions::serve::respond(&registry, request.uri().path())
         })
-        .manage(menu::TabMenu::default())
+        .manage(menu::PopupMenu::default())
         .menu(menu::build)
         .on_menu_event(menu::on_event)
         .on_window_event(windows::on_event)
@@ -95,6 +95,8 @@ pub fn run() {
             commands::write_memo,
             commands::retitle_memo,
             commands::rename_memo,
+            commands::set_memo_pinned,
+            commands::memo_viewed,
             commands::set_memo_language,
             commands::delete_memo,
             commands::import_memo,
@@ -104,7 +106,7 @@ pub fn run() {
             commands::claim_tabs,
             commands::release_tab,
             commands::tear_off_tab,
-            commands::show_tab_menu,
+            commands::show_popup_menu,
             commands::take_pending_opens,
             commands::open_external,
             commands::read_external,
@@ -144,6 +146,8 @@ pub fn run() {
             commands::cancel_text_search,
             commands::search_workspace,
             commands::cancel_workspace_search,
+            commands::find_in_memos,
+            commands::cancel_memo_filter,
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,

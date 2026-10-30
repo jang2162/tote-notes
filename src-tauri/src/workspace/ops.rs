@@ -70,14 +70,19 @@ impl Workspace {
 
     /// The language chosen in the status bar (spec 「편집기」): the file takes the language's
     /// extension and the index remembers the id. Automatic titles go on as before — a language
-    /// is not a name the person typed.
+    /// is not a name the person typed. A language the editor `detected` leaves a memo the person
+    /// named as it is: a tab may detect before it hears of a rename another window made.
     pub fn set_language(
         &mut self,
         id: &str,
         language: &str,
         ext: &str,
+        detected: bool,
     ) -> Result<MemoInfo, WorkspaceError> {
         let entry = self.entry(id)?.clone();
+        if detected && !entry.auto_title {
+            return self.memo_info(id);
+        }
         let (stem, current) = split_name(&entry.file);
         let file = if current.eq_ignore_ascii_case(ext) {
             entry.file.clone()
@@ -100,6 +105,21 @@ impl Workspace {
         self.memo_info(id)
     }
 
+    /// Pins the memo to the top of the memo list, or lets it go (spec 2026-10-30 「고정」). The
+    /// index keeps it, so it follows the memo through renames and into backups.
+    pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<MemoInfo, WorkspaceError> {
+        let entry = self
+            .index
+            .get_mut(id)
+            .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
+        if entry.pinned != pinned {
+            entry.pinned = pinned;
+            self.mark_changed();
+            self.index.save()?;
+        }
+        self.memo_info(id)
+    }
+
     pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let file = self.entry(id)?.file.clone();
         self.mark_changed();
@@ -112,6 +132,9 @@ impl Workspace {
         self.inodes.remove(&file);
         self.index.remove(id);
         self.index.save()?;
+        if let Some(viewed) = self.viewed.as_mut() {
+            viewed.retain(|each| each != id);
+        }
         Ok(())
     }
 
@@ -156,6 +179,7 @@ impl Workspace {
                 file,
                 auto_title,
                 language: None,
+                pinned: false,
             },
         );
         self.index.save()?;
@@ -279,6 +303,56 @@ mod tests {
     }
 
     #[test]
+    fn a_detected_language_leaves_a_name_the_person_chose() {
+        let (_root, mut ws) = workspace();
+        let named = ws.import_memo("notes.md", b"#!/bin/sh").unwrap();
+        let info = ws
+            .set_language(&named.id, "shellscript", "sh", true)
+            .unwrap();
+        assert_eq!((info.file.as_str(), info.language), ("notes.md", None));
+        // Picked in the status bar: it changes.
+        let info = ws
+            .set_language(&named.id, "shellscript", "sh", false)
+            .unwrap();
+        assert_eq!(info.file, "notes.sh");
+        let titled = ws.create_memo("md", b"#!/bin/sh").unwrap();
+        let info = ws
+            .set_language(&titled.id, "shellscript", "sh", true)
+            .unwrap();
+        assert_eq!(info.language.as_deref(), Some("shellscript"));
+        assert!(info.file.ends_with(".sh"), "{}", info.file);
+    }
+
+    #[test]
+    fn pinned_survives_a_rename() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("가.md", b"x").unwrap();
+        assert!(!memo.pinned);
+        assert!(ws.set_pinned(&memo.id, true).unwrap().pinned);
+        ws.rename_memo(&memo.id, "나.md").unwrap();
+        assert!(ws.memo_info(&memo.id).unwrap().pinned);
+        let reopened = Workspace::open(ws.root()).unwrap();
+        assert!(reopened.memo_info(&memo.id).unwrap().pinned);
+        assert!(!ws.set_pinned(&memo.id, false).unwrap().pinned);
+        let index = fs::read_to_string(ws.root().join(".tote/index.json")).unwrap();
+        assert!(!index.contains("pinned"), "{index}");
+    }
+
+    #[test]
+    fn deleting_a_pinned_memo_drops_its_entry() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("가.md", b"x").unwrap();
+        ws.set_pinned(&memo.id, true).unwrap();
+        ws.delete_memo(&memo.id).unwrap();
+        assert!(matches!(
+            ws.set_pinned(&memo.id, true),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        let index = fs::read_to_string(ws.root().join(".tote/index.json")).unwrap();
+        assert!(!index.contains("pinned"), "{index}");
+    }
+
+    #[test]
     fn a_memo_that_is_not_text_is_refused_unread() {
         let (_root, mut ws) = workspace();
         let video = ws.import_memo("녹화.ts", b"G\0\x11\x10").unwrap();
@@ -307,7 +381,7 @@ mod tests {
         check(&mut ws, "retitle");
         ws.rename_memo(&memo.id, "이름.md").unwrap();
         check(&mut ws, "rename");
-        ws.set_language(&memo.id, "python", "py").unwrap();
+        ws.set_language(&memo.id, "python", "py", false).unwrap();
         check(&mut ws, "language");
         ws.import_memo("b.sh", b"echo").unwrap();
         check(&mut ws, "import");
@@ -331,26 +405,28 @@ mod tests {
         let (_root, mut ws) = workspace();
         let memo = ws.create_memo("md", b"#!/bin/sh\necho").unwrap();
         ws.retitle_memo(&memo.id, "deploy").unwrap();
-        let info = ws.set_language(&memo.id, "shellscript", "sh").unwrap();
+        let info = ws
+            .set_language(&memo.id, "shellscript", "sh", false)
+            .unwrap();
         assert_eq!(info.file, "deploy.sh");
         assert_eq!(info.language.as_deref(), Some("shellscript"));
         assert!(info.auto_title); // a language is not a name the person chose
         assert_eq!(listed(&ws), vec!["deploy.sh"]);
         // The same extension only records the language; a taken name gets a number.
-        let info = ws.set_language(&memo.id, "bash", "sh").unwrap();
+        let info = ws.set_language(&memo.id, "bash", "sh", false).unwrap();
         assert_eq!(
             (info.file.as_str(), info.language.as_deref()),
             ("deploy.sh", Some("bash"))
         );
         ws.import_memo("deploy.py", b"").unwrap();
-        let info = ws.set_language(&memo.id, "python", "py").unwrap();
+        let info = ws.set_language(&memo.id, "python", "py", false).unwrap();
         assert_eq!(info.file, "deploy 2.py");
         assert!(matches!(
-            ws.set_language("nope", "x", "x"),
+            ws.set_language("nope", "x", "x", false),
             Err(WorkspaceError::UnknownMemo(_))
         ));
         assert!(matches!(
-            ws.set_language(&memo.id, "x", "a/b"),
+            ws.set_language(&memo.id, "x", "a/b", false),
             Err(WorkspaceError::InvalidName(_))
         ));
     }
@@ -457,7 +533,7 @@ mod tests {
     fn renaming_to_another_extension_forgets_the_language() {
         let (_root, mut ws) = workspace();
         let memo = ws.create_memo("md", b"").unwrap();
-        ws.set_language(&memo.id, "python", "py").unwrap();
+        ws.set_language(&memo.id, "python", "py", false).unwrap();
         // The same extension in another case still names the same language.
         let info = ws.rename_memo(&memo.id, "script.PY").unwrap();
         assert_eq!(info.language.as_deref(), Some("python"));

@@ -18,6 +18,8 @@ import {
   type MemoInfo,
   type OutsideChange,
   type PendingOpen,
+  type PopupMenuItem,
+  type ContentHit,
   type TabRef,
   type PerfConfig,
   type SearchEvent,
@@ -117,8 +119,14 @@ export class TauriBackend implements Backend {
   renameMemo(id: string, file: string) {
     return call<MemoInfo>("rename_memo", { id, file });
   }
-  setMemoLanguage(id: string, language: string, ext: string) {
-    return call<MemoInfo>("set_memo_language", { id, language, ext });
+  memoViewed(id: string) {
+    return call<MemoInfo>("memo_viewed", { id });
+  }
+  setMemoPinned(id: string, pinned: boolean) {
+    return call<MemoInfo>("set_memo_pinned", { id, pinned });
+  }
+  setMemoLanguage(id: string, language: string, ext: string, detected = false) {
+    return call<MemoInfo>("set_memo_language", { id, language, ext, detected });
   }
   deleteMemo(id: string) {
     return call<void>("delete_memo", { id });
@@ -148,8 +156,8 @@ export class TauriBackend implements Backend {
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }) {
     return call<"moved" | "window">("tear_off_tab", { tab, tabRef: ref, at: at ?? null });
   }
-  showTabMenu(items: { id: string; text: string }[]) {
-    return call<string | null>("show_tab_menu", { items });
+  showPopupMenu(items: PopupMenuItem[]) {
+    return call<string | null>("show_popup_menu", { items });
   }
 
   openExternal(path: string) {
@@ -287,6 +295,12 @@ export class TauriBackend implements Backend {
   }
   cancelWorkspaceSearch() {
     return call<void>("cancel_workspace_search");
+  }
+  findInMemos(queries: string[], requestId: number) {
+    return call<ContentHit[] | null>("find_in_memos", { queries, requestId });
+  }
+  cancelMemoFilter() {
+    return call<void>("cancel_memo_filter");
   }
   currentUpdate() {
     return call<UpdateOffer | null>("current_update");

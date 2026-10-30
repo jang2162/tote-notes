@@ -269,7 +269,7 @@ test("a tab never shown moves without being read", async ({ page }) => {
   await start(page, {
     memos: { a: fakeMemo("가.md", "첫째"), b: fakeMemo("나.md", "둘째") },
     session: JSON.stringify(twoTabs),
-    tabMenuPick: MOVE,
+    popupMenuPick: MOVE,
   });
   await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
   await page.locator(".tab", { hasText: "가" }).click({ button: "right" });
@@ -287,7 +287,7 @@ test("the tab's context menu offers 탭을 새 창으로 옮기기", async ({ pa
   // Closed without a pick: nothing moves.
   await page.locator(".tab", { hasText: "가" }).click({ button: "right" });
   await expect
-    .poll(async () => (await data(page)).tabMenus)
+    .poll(async () => (await data(page)).popupMenus)
     .toEqual([
       [
         { id: "split-tab-left", text: "왼쪽으로 나누기" },
@@ -299,7 +299,7 @@ test("the tab's context menu offers 탭을 새 창으로 옮기기", async ({ pa
     ]);
   await expect(page.locator(".tab")).toHaveCount(2);
   await page.evaluate((pick) => {
-    window.__tote.backend.data.tabMenuPick = pick;
+    window.__tote.backend.data.popupMenuPick = pick;
   }, MOVE);
   await page.locator(".tab", { hasText: "가" }).click({ button: "right" });
   await expect(page.locator(".tab .tab-title")).toHaveText(["나"]);

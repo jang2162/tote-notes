@@ -41,6 +41,7 @@ use crate::persist::external::{ExternalFiles, ExternalState};
 use crate::session::drafts::DraftStore;
 use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
+use crate::workspace::viewed::ViewedTimes;
 use crate::workspace::{order, Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
@@ -129,6 +130,9 @@ pub struct AppCore {
     /// Window label → the number of its latest workspace search. Apart from `searches`: the
     /// search panel and a large text viewer each run their own.
     workspace_searches: Mutex<HashMap<String, u64>>,
+    /// Window label → the number of its memo list's latest content filter; apart again, so
+    /// typing in the filter does not stop the panel's search.
+    memo_filters: Mutex<HashMap<String, u64>>,
     /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
     watcher: OnceLock<Watcher>,
     /// Wakes the backup thread with a window label (`request_backup`); unset until
@@ -352,6 +356,13 @@ impl Inner {
     }
 }
 
+/// Writes the workspace's viewed times not written yet; a failure is only told.
+fn save_viewed_now(workspace: &Mutex<Workspace>) {
+    if let Err(err) = lock(workspace).save_viewed_now() {
+        eprintln!("tote: could not save the viewed times: {err}");
+    }
+}
+
 /// `pin_legacy_root`, saved: the mark goes into `state.json` only once the settings it decided on
 /// are written, so a launch that could not write them tries again next time.
 fn keep_legacy_root(
@@ -422,6 +433,7 @@ impl AppCore {
             rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             workspace_searches: Mutex::new(HashMap::new()),
+            memo_filters: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
             backup_waker: Mutex::new(None),
             labels: AtomicU64::new(0),
@@ -612,7 +624,7 @@ impl AppCore {
                     inner.workspaces.insert(
                         path.to_path_buf(),
                         OpenWorkspace {
-                            workspace: Arc::new(Mutex::new(workspace)),
+                            workspace: Arc::new(Mutex::new(self.with_viewed(workspace))),
                             saved,
                             key: AppCore::workspace_key(path),
                         },
@@ -855,6 +867,7 @@ impl AppCore {
     /// from its page until the new page is up (`page_started`). `NotFound` for a window not
     /// registered, changing nothing.
     pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
+        let leaving = self.workspace(label);
         let (fresh, closed) = {
             let mut inner = lock(&self.inner);
             // Before the lookup: a window gone must not leave its claim on `to` behind.
@@ -876,7 +889,7 @@ impl AppCore {
                 inner.workspaces.insert(
                     to.to_path_buf(),
                     OpenWorkspace {
-                        workspace: Arc::new(Mutex::new(opened)),
+                        workspace: Arc::new(Mutex::new(self.with_viewed(opened))),
                         saved,
                         key: AppCore::workspace_key(to),
                     },
@@ -910,9 +923,15 @@ impl AppCore {
             self.save_launch(&inner.launch);
             (fresh, inner.close_if_unused(&from))
         };
+        // A workspace the switch closed writes its viewed times now: reopened within the second,
+        // it would read the file before the waiting write, and its next write would drop the view.
+        if let (Some(_), Some(workspace)) = (&closed, &leaving) {
+            save_viewed_now(workspace);
+        }
         self.files.revoke_window(label);
         lock(&self.searches).remove(label);
         lock(&self.workspace_searches).remove(label);
+        lock(&self.memo_filters).remove(label);
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
             if let Some(key) = closed {
@@ -1062,6 +1081,13 @@ impl AppCore {
         }
     }
 
+    /// `workspace` with its memos' viewed times on this device (`workspace::viewed`).
+    fn with_viewed(&self, mut workspace: Workspace) -> Workspace {
+        let file = ViewedTimes::file(&self.paths.data_dir, workspace.id());
+        workspace.attach_viewed(ViewedTimes::load(file));
+        workspace
+    }
+
     pub fn workspace(&self, label: &str) -> Option<Arc<Mutex<Workspace>>> {
         let inner = lock(&self.inner);
         let path = &inner.windows.get(label)?.path;
@@ -1124,6 +1150,14 @@ impl AppCore {
         lock(&self.workspace_searches).insert(window.to_string(), request_id);
     }
 
+    pub fn begin_memo_filter(&self, window: &str, request_id: u64) {
+        lock(&self.memo_filters).insert(window.to_string(), request_id);
+    }
+
+    pub fn memo_filter_is_live(&self, window: &str, request_id: u64) -> bool {
+        lock(&self.memo_filters).get(window) == Some(&request_id)
+    }
+
     pub fn workspace_search_is_live(&self, window: &str, request_id: u64) -> bool {
         lock(&self.workspace_searches).get(window) == Some(&request_id)
     }
@@ -1131,10 +1165,15 @@ impl AppCore {
     /// A window is gone; its workspace closes with its last window. Returns the flush rounds it
     /// was the last one to wait for, by id.
     pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
+        // The viewed times are written at once when a window closes (`workspace::viewed`).
+        if let Some(workspace) = self.workspace(label) {
+            save_viewed_now(&workspace);
+        }
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);
         lock(&self.workspace_searches).remove(label);
+        lock(&self.memo_filters).remove(label);
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
         }
@@ -1512,6 +1551,16 @@ impl AppCore {
     /// `k`th window reopened on a folder gets the `k`th layout. A workspace whose every window is
     /// being closed keeps its file: the last layout written stays.
     pub fn start_quit(&self) {
+        // At once, as a window's close does (`workspace::viewed`): the windows are not told they
+        // close when the app quits, and a write still waiting on its second dies with the app.
+        let open: Vec<Arc<Mutex<Workspace>>> = lock(&self.inner)
+            .workspaces
+            .values()
+            .map(|open| open.workspace.clone())
+            .collect();
+        for workspace in &open {
+            save_viewed_now(workspace);
+        }
         let mut inner = lock(&self.inner);
         inner.quitting = true;
         let mut loading: Vec<(&String, &OpenWindow)> = inner
@@ -2968,6 +3017,20 @@ mod tests {
     }
 
     #[test]
+    fn memo_filters_are_separate_from_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.begin_workspace_search("ws-1", 1);
+        core.begin_memo_filter("ws-1", 1);
+        core.begin_memo_filter("ws-1", 2);
+        assert!(core.workspace_search_is_live("ws-1", 1));
+        assert!(!core.memo_filter_is_live("ws-1", 1));
+        assert!(core.memo_filter_is_live("ws-1", 2));
+        core.closed("ws-1");
+        assert!(!core.memo_filter_is_live("ws-1", 2));
+    }
+
+    #[test]
     fn closing_a_window_frees_its_places() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
@@ -3425,6 +3488,38 @@ mod tests {
     fn switch(core: &AppCore, label: &str, to: &Path) {
         let opened = core.prepare_switch(label, to).unwrap();
         core.switch_window(label, to, opened).unwrap();
+    }
+
+    /// A view of a new memo in the workspace window `label` shows, not written yet; its file.
+    fn viewed_unwritten(core: &AppCore, label: &str) -> PathBuf {
+        let workspace = core.workspace(label).unwrap();
+        let mut workspace = lock(&workspace);
+        let memo = workspace.import_memo("가.md", b"x").unwrap();
+        workspace.memo_viewed(&memo.id, 7).unwrap();
+        let file = ViewedTimes::file(&core.paths.data_dir, workspace.id());
+        assert!(!file.exists());
+        file
+    }
+
+    #[test]
+    fn quitting_writes_the_viewed_times_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let file = viewed_unwritten(&core, &w1);
+        core.start_quit();
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn a_workspace_a_switch_closes_writes_its_viewed_times_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let file = viewed_unwritten(&core, &w1);
+        let na = closed_workspace(&core, "나", &[]);
+        switch(&core, &w1, &na);
+        assert!(file.exists());
     }
 
     #[test]

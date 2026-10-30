@@ -33,5 +33,7 @@
 | tote-notes 사이드바 너비 조절·전체 화면 맨 윗줄·신호등 첫 위치를 고치거나 그 설계를 바꿀 때                                        | `docs/superpowers/specs/2026-10-30-tote-notes-sidebar-resize-and-fullscreen-design.md`    |
 | tote-notes 사이드바 메모 목록의 이름 바꾸기·내용 검색·미리보기·정렬·고정, 닫기 창의 「저장하지 않음」을 고치거나 그 설계를 바꿀 때 | `docs/superpowers/specs/2026-10-30-tote-notes-memo-list-features-design.md`               |
 | tote-notes 메모 목록 기능 묶음 계획을 실행할 때                                                                                    | `docs/superpowers/plans/2026-10-30-tote-notes-memo-list-features.md`                      |
+| tote-notes 메모 목록 기능(문맥 메뉴·정렬 메뉴·고정 구역·미리보기 행)을 실기기(WKWebView)에서 확인할 때                             | `docs/superpowers/reports/2026-10-30-tote-notes-memo-list-features-smoke.md`              |
+| tote-notes 메모 목록의 미리보기·목록 첫 수신 시간을 다시 잴 때                                                                     | `docs/superpowers/reports/2026-10-30-tote-notes-memo-list-perf.md`                        |
 | macOS 앱을 릴리스하거나 릴리스 워크플로·업데이트 키·서명 비밀을 다룰 때                                                            | `docs/guides/release-macos.md`                                                            |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때                                                | `docs/guides/development.md`                                                              |

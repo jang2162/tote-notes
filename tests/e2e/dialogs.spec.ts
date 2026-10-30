@@ -10,8 +10,12 @@ test("the unsaved-changes question answers with the button pressed; Escape cance
   page,
 }) => {
   await page.evaluate(() => void window.askUnsaved("a.sh").then((r) => (window.result = r)));
-  await page.getByRole("button", { name: "저장" }).click();
+  // Exact: 「저장하지 않음」 holds 「저장」 too.
+  await page.getByRole("button", { name: "저장", exact: true }).click();
   await expect.poll(() => page.evaluate(() => window.result)).toBe("save");
+  await page.evaluate(() => void window.askUnsaved("a.sh").then((r) => (window.result = r)));
+  await page.getByRole("button", { name: "저장하지 않음" }).click();
+  await expect.poll(() => page.evaluate(() => window.result)).toBe("discard");
   await page.evaluate(() => void window.askUnsaved("a.sh").then((r) => (window.result = r)));
   await page.keyboard.press("Escape");
   await expect.poll(() => page.evaluate(() => window.result)).toBe("cancel");

@@ -59,6 +59,7 @@ import { tokenTheme } from "../theme/vscode-theme";
 import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
+import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
 import { SettingsButton } from "../ui/settings-button";
@@ -274,6 +275,7 @@ export class AppController implements DocHost, PaneHost {
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
+    sidebar: { preview: true, sort: "modified-desc" },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
@@ -309,7 +311,23 @@ export class AppController implements DocHost, PaneHost {
   private memosLoaded = false;
   /** Another window's change to the memo list is waiting to be read (`MEMOS_GATHER_MS`). */
   private memosChangedSoon: number | null = null;
-  private readonly memoList = new MemoList((id) => void this.openMemo(id));
+  /** Numbers the memo list's content filters (`findInMemos`). */
+  private memoFilters = 0;
+  private readonly memoList = new MemoList({
+    open: (id) => void this.openMemo(id),
+    menu: (id) => void this.memoMenu(id).catch((error: unknown) => this.report(error)),
+    sort: () => void this.sortMenu().catch((error: unknown) => this.report(error)),
+    openAt: (id, line, column) =>
+      void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
+    // The query in both normalization forms: a file of either holds the match (`literal_any`).
+    find: (query) =>
+      this.backend.findInMemos(
+        [...new Set([query.normalize("NFC"), query.normalize("NFD")])],
+        ++this.memoFilters,
+      ),
+    cancelFind: () =>
+      void this.backend.cancelMemoFilter().catch((error: unknown) => console.warn(error)),
+  });
   private readonly searchPanel = new SearchPanel({
     search: (query, onEvent) =>
       this.backend.searchWorkspace(query, ++this.workspaceSearches, onEvent),
@@ -766,6 +784,8 @@ export class AppController implements DocHost, PaneHost {
   private async loadSettings(): Promise<void> {
     try {
       this.settings = await this.backend.settings();
+      this.memoList.setSort(this.settings.sidebar.sort);
+      this.memoList.setPreview(this.settings.sidebar.preview);
     } catch (error) {
       this.report(error);
     }
@@ -1143,7 +1163,7 @@ export class AppController implements DocHost, PaneHost {
   async tabMenu(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
-    const picked = await this.backend.showTabMenu([
+    const picked = await this.backend.showPopupMenu([
       ...SPLIT_TAB_ITEMS.map(({ id, text }) => ({ id, text })),
       { id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" },
     ]);
@@ -1891,6 +1911,61 @@ export class AppController implements DocHost, PaneHost {
     await doc.rename(file);
   }
 
+  /** The memo list's sort button: one of six orders, for every window (`sidebar.sort`). */
+  private async sortMenu(): Promise<void> {
+    const current = this.memoList.order;
+    const picked = await this.backend.showPopupMenu(
+      SORT_ITEMS.map(({ id, text }) => ({ id, text, checked: id === current })),
+    );
+    if (!isMemoSort(picked) || picked === current) return;
+    this.memoList.setSort(picked);
+    await this.backend.patchSettings({ sidebarSort: picked });
+  }
+
+  /** A tab came on show in a pane. A memo's viewed time is now — but not for the tabs a restore
+   * brings back, or the order would change at every launch. */
+  viewed(doc: Doc): void {
+    if (this.restoring || !(doc instanceof MemoDoc)) return;
+    void this.backend.memoViewed(doc.info.id).then(
+      (info) => {
+        if (this.memoList.get(info.id)) this.memoList.upsert(info);
+      },
+      (error: unknown) => console.warn(error),
+    );
+  }
+
+  /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」). */
+  private async memoMenu(id: string): Promise<void> {
+    const info = this.memoList.get(id);
+    if (!info) return;
+    const picked = await this.backend.showPopupMenu([
+      { id: "rename", text: "이름 바꾸기…" },
+      { id: "pin", text: info.pinned ? "고정 해제" : "맨 위에 고정" },
+    ]);
+    if (picked === "rename") await this.renameMemo(id);
+    if (picked !== "pin") return;
+    const pinned = await this.backend.setMemoPinned(id, !info.pinned);
+    this.memoList.upsert(pinned);
+    // An open tab's info goes back into the list with each change of its own.
+    const doc = this.memoTab(id);
+    doc?.follow(pinned, doc.infoChanges);
+  }
+
+  /** The sidebar's rename: of a memo open in this window, through its tab (saved first, as the
+   * menu's); of one that is not, here — in another window, that window's tab follows the listing
+   * (`followListing`) and its writes, which go by ID, land in the renamed file. */
+  async renameMemo(id: string): Promise<void> {
+    const info = this.memoList.get(id);
+    if (!info) return;
+    const name = await promptText("새 파일 이름", info.file);
+    if (this.focused.tabs.active) this.focused.view.focus();
+    const file = name?.trim();
+    if (!file || file === info.file) return;
+    const doc = this.memoTab(id);
+    if (doc) return doc.rename(file);
+    this.memoList.upsert(await this.backend.renameMemo(id, file));
+  }
+
   private async refreshSwitcher(): Promise<void> {
     try {
       const list = await this.backend.listWorkspaces();
@@ -2104,7 +2179,17 @@ export class AppController implements DocHost, PaneHost {
 
   private async refreshMemos(): Promise<void> {
     try {
-      this.memoList.setMemos(await this.backend.listMemos());
+      const asked = this.docs.flatMap((doc) =>
+        doc instanceof MemoDoc ? [[doc, doc.infoChanges] as const] : [],
+      );
+      const memos = await this.backend.listMemos();
+      this.memoList.setMemos(memos);
+      if (!this.memosLoaded) this.mark("memos-listed");
+      const listed = new Map(memos.map((memo) => [memo.id, memo]));
+      for (const [doc, changes] of asked) {
+        const memo = listed.get(doc.info.id);
+        if (memo && this.docs.includes(doc)) doc.follow(memo, changes);
+      }
     } catch (error) {
       this.report(error);
       return;

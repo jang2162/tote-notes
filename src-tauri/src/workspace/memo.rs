@@ -8,11 +8,13 @@ use serde::Serialize;
 
 use super::index::MemoEntry;
 use super::names::split_name;
-use super::{Workspace, WorkspaceError};
+use super::preview::read_preview;
+use super::{CachedPreview, Workspace, WorkspaceError};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileKind {
+    #[default]
     Text,
     Image,
     Video,
@@ -35,7 +37,7 @@ pub fn kind_for(file_name: &str) -> FileKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoInfo {
     pub id: String,
@@ -46,6 +48,15 @@ pub struct MemoInfo {
     pub modified_ms: u64,
     pub size: u64,
     pub kind: FileKind,
+    /// Left out when false, as in the index.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
+    /// When it was last on show on this device; left out when never (`workspace::viewed`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub viewed_ms: Option<u64>,
+    /// The memo list's line under the name (`workspace::preview`); text memos only.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub preview: Option<String>,
 }
 
 impl Workspace {
@@ -57,6 +68,10 @@ impl Workspace {
             self.resync_files();
             self.index.save()?;
         }
+        // Memos gone from the index keep no preview.
+        self.previews
+            .borrow_mut()
+            .retain(|id, _| self.index.get(id).is_some());
         let mut list: Vec<MemoInfo> = self
             .index
             .iter()
@@ -88,6 +103,10 @@ impl Workspace {
             .ok()
             .and_then(|t| t.duration_since(UNIX_EPOCH).ok())
             .map_or(0, |d| d.as_millis() as u64);
+        let kind = kind_for(&entry.file);
+        let preview = (kind == FileKind::Text)
+            .then(|| self.preview(id, &entry.file, modified_ms, meta.len()))
+            .flatten();
         Ok(MemoInfo {
             id: id.to_string(),
             file: entry.file.clone(),
@@ -95,8 +114,33 @@ impl Workspace {
             language: entry.language.clone(),
             modified_ms,
             size: meta.len(),
-            kind: kind_for(&entry.file),
+            kind,
+            pinned: entry.pinned,
+            viewed_ms: self.viewed_ms(id),
+            preview,
         })
+    }
+
+    /// The memo's preview, read only when its file changed since it was last read. A file that
+    /// cannot be read has none.
+    fn preview(&self, id: &str, file: &str, modified_ms: u64, size: u64) -> Option<String> {
+        let mut cache = self.previews.borrow_mut();
+        if let Some(cached) = cache.get(id) {
+            if cached.file == file && cached.modified_ms == modified_ms && cached.size == size {
+                return cached.preview.clone();
+            }
+        }
+        let preview = read_preview(&self.root.join(file)).ok().flatten();
+        cache.insert(
+            id.to_string(),
+            CachedPreview {
+                file: file.to_string(),
+                modified_ms,
+                size,
+                preview: preview.clone(),
+            },
+        );
+        preview
     }
 }
 
@@ -152,6 +196,44 @@ mod tests {
     }
 
     #[test]
+    fn text_memos_have_a_preview_and_others_none() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(root.path(), "w").unwrap();
+        let text = ws.import_memo("a.md", "제목\n본문".as_bytes()).unwrap();
+        let image = ws.import_memo("b.png", b"t\nnot really").unwrap();
+        assert_eq!(text.preview.as_deref(), Some("본문"));
+        assert_eq!(image.preview, None);
+        let json = serde_json::to_string(&image).unwrap();
+        assert!(!json.contains("preview"), "{json}");
+    }
+
+    #[test]
+    fn previews_are_cached_until_the_file_changes() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(root.path(), "w").unwrap();
+        let memo = ws.import_memo("a.md", b"t\nold").unwrap();
+        let path = ws.root().join("a.md");
+        set_mtime(&path, 1_000);
+        assert_eq!(
+            ws.memo_info(&memo.id).unwrap().preview.as_deref(),
+            Some("old")
+        );
+        // Same size, same time: the file is not read again.
+        fs::write(&path, b"t\nnew").unwrap();
+        set_mtime(&path, 1_000);
+        assert_eq!(ws.list_memos().unwrap()[0].preview.as_deref(), Some("old"));
+        set_mtime(&path, 2_000);
+        assert_eq!(ws.list_memos().unwrap()[0].preview.as_deref(), Some("new"));
+        // Another size at the same time is another file too.
+        fs::write(&path, b"t\nlonger").unwrap();
+        set_mtime(&path, 2_000);
+        assert_eq!(
+            ws.list_memos().unwrap()[0].preview.as_deref(),
+            Some("longer")
+        );
+    }
+
+    #[test]
     fn memo_info_reports_unknown_ids() {
         let root = tempfile::tempdir().unwrap();
         let ws = Workspace::create(root.path(), "w").unwrap();
@@ -171,6 +253,9 @@ mod tests {
             modified_ms: 5,
             size: 1,
             kind: FileKind::Text,
+            pinned: false,
+            viewed_ms: None,
+            preview: None,
         };
         assert_eq!(
             serde_json::to_string(&info).unwrap(),

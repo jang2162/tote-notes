@@ -128,6 +128,7 @@ test("the 워크스페이스 section sits under 일반 and lists the workspaces 
   await expect(panel.getByRole("tab")).toHaveText([
     "일반",
     "워크스페이스",
+    "사이드바",
     "편집기",
     "모양",
     "단축키",

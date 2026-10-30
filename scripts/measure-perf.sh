@@ -257,6 +257,24 @@ if wanted cold-start; then
   measure cold-start cold_run
 fi
 
+# 메모 목록 첫 수신: the memos-10k workspace, no session; the first listing (with its previews)
+# reaches the page (memos-listed), and the window is ready (app-ready).
+LIST="$D/list-10k"
+list_run() {
+  sleep 10
+  no_session "$LIST" memos-10k
+  launch "$LIST"
+  wait_mark "$LIST" app-ready 60 || true
+  sleep 1
+  quit_app
+  collect "$LIST" list-10k "$1"
+}
+if wanted list-10k; then
+  fresh "$LIST" memos-10k
+  prepare "$LIST"
+  measure list-10k list_run
+fi
+
 # 파일 열기: the window is up, then `tote <file>` opens it in an external tab.
 OPEN="$D/open"
 OPEN_FILE=""

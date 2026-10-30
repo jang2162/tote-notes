@@ -18,6 +18,13 @@ pub struct MemoEntry {
     pub auto_title: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub language: Option<String>,
+    /// Kept at the top of the memo list (spec 2026-10-30 「고정」); written only when set.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub pinned: bool,
+}
+
+fn is_false(value: &bool) -> bool {
+    !value
 }
 
 #[derive(Deserialize)]
@@ -158,6 +165,7 @@ pub fn reconcile_entries(
                 file: file.clone(),
                 auto_title: false,
                 language: None,
+                pinned: false,
             },
         );
         changed = true;
@@ -175,7 +183,24 @@ mod tests {
             file: file.into(),
             auto_title,
             language: None,
+            pinned: false,
         }
+    }
+
+    #[test]
+    fn pinned_is_written_only_when_set() {
+        let plain = serde_json::to_string(&entry("a.md", true)).unwrap();
+        assert!(!plain.contains("pinned"), "{plain}");
+        let pinned = MemoEntry {
+            pinned: true,
+            ..entry("a.md", true)
+        };
+        let text = serde_json::to_string(&pinned).unwrap();
+        assert!(text.contains(r#""pinned":true"#), "{text}");
+        let old: MemoEntry = serde_json::from_str(r#"{"file":"a.md","autoTitle":true}"#).unwrap();
+        assert!(!old.pinned);
+        let read: MemoEntry = serde_json::from_str(&text).unwrap();
+        assert!(read.pinned);
     }
 
     #[test]

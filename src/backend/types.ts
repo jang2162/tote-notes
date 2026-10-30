@@ -12,6 +12,12 @@ export interface MemoInfo {
   modifiedMs: number;
   size: number;
   kind: FileKind;
+  /** At the top of the memo list (spec 2026-10-30 「고정」); left out when not. */
+  pinned?: boolean;
+  /** When it was last on show on this device; left out when never (spec 2026-10-30 「정렬」). */
+  viewedMs?: number;
+  /** The start of a text memo's text for the memo list (`workspace::preview` in Rust). */
+  preview?: string;
 }
 
 export interface WorkspaceInfo {
@@ -58,6 +64,13 @@ export interface UpdateOffer {
 export type UpdateProgress =
   | { kind: "progress"; done: number; total: number | null }
   | { kind: "installing" };
+
+/** An item of `showPopupMenu`; with `checked` it is a check item, ticked or not. */
+export interface PopupMenuItem {
+  id: string;
+  text: string;
+  checked?: boolean;
+}
 
 /** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
  * workspace, or an external file. */
@@ -121,6 +134,17 @@ export interface SearchMatch {
    * one's `after`. */
   before: string[];
   after: string[];
+}
+
+/** A memo the memo list's filter found by its content: its first match (`ContentHit`). */
+export interface ContentHit {
+  memoId: string;
+  /** 0-based. */
+  line: number;
+  /** Characters before the match in the whole line. */
+  column: number;
+  /** The line, cut like a search match's `text`. */
+  text: string;
 }
 
 /** One file's matches as soon as it is done, in no fixed order, then one `done`. */
@@ -217,9 +241,26 @@ export interface Settings {
   editor: EditorSettings;
   /** The check for a new version at launch (src-tauri/src/app/update.rs). */
   updates: { autoCheck: boolean };
+  sidebar: SidebarSettings;
   /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
    * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
   shortcuts?: Record<string, string | null>;
+}
+
+/** The memo list's order (`SortOrder` in src-tauri/src/appdata.rs). */
+export type MemoSort =
+  | "modified-desc"
+  | "modified-asc"
+  | "viewed-desc"
+  | "viewed-asc"
+  | "name-asc"
+  | "name-desc";
+
+/** `SidebarSettings` in src-tauri/src/appdata.rs: one for every window and workspace. */
+export interface SidebarSettings {
+  /** A second line under each memo's name with the start of its text. */
+  preview: boolean;
+  sort: MemoSort;
 }
 
 /** `EditorSettings` in src-tauri/src/appdata.rs. `fontFamily` is empty for the stylesheet's own. */
@@ -253,6 +294,8 @@ export interface SettingsPatch {
   editorFontSize?: number;
   editorFontFamily?: string;
   updatesAutoCheck?: boolean;
+  sidebarPreview?: boolean;
+  sidebarSort?: MemoSort;
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
   shortcuts?: Record<string, string | null>;
@@ -411,7 +454,13 @@ export interface Backend {
   writeMemo(id: string, bytes: Uint8Array): Promise<MemoInfo>;
   retitleMemo(id: string, stem: string): Promise<MemoInfo>;
   renameMemo(id: string, file: string): Promise<MemoInfo>;
-  setMemoLanguage(id: string, language: string, ext: string): Promise<MemoInfo>;
+  /** The memo came on show in a pane: its info with the viewed time now. Every window's list
+   * follows. */
+  memoViewed(id: string): Promise<MemoInfo>;
+  /** Pins the memo to the top of the memo list, or lets it go; every window's list follows. */
+  setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
+  /** `detected`: the editor's automatic pick, which leaves a memo the person named as it is. */
+  setMemoLanguage(id: string, language: string, ext: string, detected?: boolean): Promise<MemoInfo>;
   deleteMemo(id: string): Promise<void>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;
@@ -435,9 +484,9 @@ export interface Backend {
    * window opens with its top-left corner there. A new window's tab has its place and its line in
    * the session before the window is made; when it cannot be made the tab stays here. */
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }): Promise<"moved" | "window">;
-  /** A tab's context menu at the pointer: the `id` of the item picked, `null` when it closed
-   * without a pick. */
-  showTabMenu(items: { id: string; text: string }[]): Promise<string | null>;
+  /** A native pop-up menu at the pointer (a tab's, a memo row's, the sort's): the `id` of the item
+   * picked, `null` when it closed without a pick. */
+  showPopupMenu(items: PopupMenuItem[]): Promise<string | null>;
 
   openExternal(path: string): Promise<ExternalInfo>;
   readExternal(path: string): Promise<Uint8Array>;
@@ -536,6 +585,11 @@ export interface Backend {
   ): Promise<void>;
   /** Stops this window's running workspace search, as a newer one would. */
   cancelWorkspaceSearch(): Promise<void>;
+  /** The memo list's filter: the first match of each text memo holding any of `queries` (one text
+   * in each normalization form), literally, case ignored. A newer `requestId` from this window, or
+   * `cancelMemoFilter`, makes this one answer `null` — told apart from finding nothing. */
+  findInMemos(queries: string[], requestId: number): Promise<ContentHit[] | null>;
+  cancelMemoFilter(): Promise<void>;
   /** The update found in this run as it stands now (`current_update`), for the update button;
    * `null` before one is found. */
   currentUpdate(): Promise<UpdateOffer | null>;

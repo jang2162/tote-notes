@@ -350,8 +350,34 @@ html:not(.sidebar-collapsed) .tab-lead {
   min-height: 0;
 }
 
-.memo-filter {
+.memo-filter-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
   margin: 8px;
+}
+
+.memo-sort {
+  flex: none;
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  padding: 0;
+  border: none;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+}
+
+.memo-sort:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: inherit;
+}
+
+.memo-filter {
+  flex: 1;
+  min-width: 0;
   padding: 4px 8px;
   border: 1px solid var(--border);
   border-radius: 6px;
@@ -364,6 +390,28 @@ html:not(.sidebar-collapsed) .tab-lead {
   position: relative;
   flex: 1;
   overflow: auto;
+}
+
+/* The pinned memos: as tall as its rows up to 40% of the pane, then it scrolls on its own; the
+   list below scrolls without moving it. */
+.memo-pinned {
+  position: relative;
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+}
+
+.memo-pinned-divider {
+  flex: none;
+  height: 1px;
+  margin: 2px 8px;
+  background: var(--border);
+}
+
+.memo-pin {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
 }
 
 .memo-rows {
@@ -389,6 +437,44 @@ html:not(.sidebar-collapsed) .tab-lead {
 
 .memo-row.active {
   background: var(--active-bg);
+}
+
+.memo-pane.with-preview .memo-row {
+  height: 46px;
+}
+
+.memo-text {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.memo-title {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.memo-preview {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.memo-hit mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.memo-none {
+  position: absolute;
+  top: 0;
+  margin: 8px 12px;
+  color: var(--muted);
 }
 
 .memo-name {

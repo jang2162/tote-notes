@@ -698,14 +698,15 @@ export class MemoDoc extends Doc {
     this.setInfo(await this.host.backend.renameMemo(this.info.id, file));
   }
 
-  /** Spec 「편집기」: the file takes the language's first extension, the index keeps the id. */
-  async changeLanguage(lang: LanguageInfo): Promise<void> {
+  /** Spec 「편집기」: the file takes the language's first extension, the index keeps the id. A
+   * `detected` language leaves a memo the person named as it is (the backend checks: this tab may
+   * not have heard of a rename another window made). */
+  async changeLanguage(lang: LanguageInfo, detected = false): Promise<void> {
     await this.saveNow();
     const ext = lang.extensions[0] ?? splitName(this.info.file).ext;
-    this.info = await this.host.backend.setMemoLanguage(this.info.id, lang.id, ext);
-    this.language = lang.id;
-    this.host.changed(this, "info");
-    await this.refreshLanguage();
+    const info = await this.host.backend.setMemoLanguage(this.info.id, lang.id, ext, detected);
+    // Through `setInfo`: a listing that set out before this answer must not undo it (`follow`).
+    await (this.setInfo(info) ?? this.refreshLanguage());
   }
 
   /** Automatic detection (spec 「편집기」): only a `.md` memo without a language whose name tote
@@ -731,7 +732,7 @@ export class MemoDoc extends Doc {
     const found = detectLanguage(this.state.doc, this.host.languages());
     if (!found || found.id === "markdown") return;
     try {
-      await this.changeLanguage(found);
+      await this.changeLanguage(found, true);
     } catch (error) {
       this.fail(error);
     }
@@ -821,13 +822,41 @@ export class MemoDoc extends Doc {
     return true;
   }
 
-  private setInfo(info: MemoInfo): void {
+  /** What the memo list says of this memo now, from a listing asked for when `setInfo` had run
+   * `changes` times: another window's rename or pin, taken when the name, its title, its language
+   * or its pin differ. A listing that set out before this tab's own
+   * change of name answered is older than what the tab knows, and is not followed. */
+  follow(listed: MemoInfo, changes: number): void {
+    if (changes !== this.infoChanges) return;
+    const { file, autoTitle, language, pinned } = listed;
+    if (
+      file === this.info.file &&
+      autoTitle === this.info.autoTitle &&
+      language === this.info.language &&
+      pinned === this.info.pinned
+    )
+      return;
+    // Whole: the tab's own time, size and preview may be older than the listing's (another app's
+    // edit is reread without new info). A viewed time the list has is kept there (`upsert`).
+    this.setInfo(listed);
+  }
+
+  /** How many times `setInfo` has run, for `follow`. */
+  get infoChanges(): number {
+    return this.infoCount;
+  }
+
+  private infoCount = 0;
+
+  /** Returns the language's refresh when the extension changed, for a caller to wait on. */
+  private setInfo(info: MemoInfo): Promise<void> | undefined {
+    this.infoCount++;
     const extensionChanged = splitName(info.file).ext !== splitName(this.info.file).ext;
     this.info = info;
     this.language = info.language ?? null;
     this.host.changed(this, "info");
     // A new extension is a new language: its configuration is read, then the editor follows.
-    if (extensionChanged) void this.refreshLanguage();
+    return extensionChanged ? this.refreshLanguage() : undefined;
   }
 }
 
@@ -1049,7 +1078,7 @@ export class ExternalDoc extends Doc {
     return true;
   }
 
-  /** 「버리기」: the file stays as it is on disk and the draft goes. */
+  /** 「저장하지 않음」: the file stays as it is on disk and the draft goes. */
   async discard(): Promise<void> {
     await this.settleDraft();
     this.modified = false;

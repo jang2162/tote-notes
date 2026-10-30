@@ -31,6 +31,8 @@ import {
   type OutsideChange,
   type WindowStart,
   type PendingOpen,
+  type PopupMenuItem,
+  type ContentHit,
   type TabRef,
   type SearchEvent,
   type SearchMatch,
@@ -69,6 +71,12 @@ export interface FakeMemo {
   /** Contents, base64. */
   data: string;
   modifiedMs: number;
+  pinned?: boolean;
+  /** When it was last on show (`memoViewed`), on the fake's clock. */
+  viewedMs?: number;
+  /** What `listMemos` gives as its preview; without it the fake makes a rough one (the lines
+   * after the first, run together) — the rule itself is Rust's (`workspace::preview`). */
+  preview?: string;
 }
 
 /** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
@@ -184,14 +192,22 @@ export interface FakeData {
   /** The other windows on the screen, most recently focused first, as `tearOffTab` looks for one
    * under the point a tab is let go at. Absent in old seeds. */
   dropTargets?: FakeDropTarget[];
-  /** What a tab's context menu returns: the id of the item to pick, or null for none. */
-  tabMenuPick?: string | null;
+  /** What a pop-up menu returns: the id of the item to pick, or null for none. */
+  popupMenuPick?: string | null;
   /** Workspaces a switch fails to open once this window has written its tabs, as
    * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
    * seeds. */
   unopenable?: string[];
-  /** The items of every tab context menu shown, in order. Absent in old seeds. */
-  tabMenus?: { id: string; text: string }[][];
+  /** Every `findInMemos` call, in order. Absent in old seeds. */
+  memoFilterCalls?: { queries: string[]; requestId: number }[];
+  /** How many `findInMemos` calls have answered. Absent in old seeds. */
+  memoFilterAnswers?: number;
+  /** `findInMemos` answers wait for `releaseMemoFilters`. */
+  holdMemoFilter?: boolean;
+  /** The memo of every `memoViewed` call, in order. Absent in old seeds. */
+  memoViewedCalls?: string[];
+  /** The items of every pop-up menu shown, in order. Absent in old seeds. */
+  popupMenus?: PopupMenuItem[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
   hub?: HubState;
   /** The workspaces other than `workspace`, by path, each as `workspace`, `memos` and `session`
@@ -287,6 +303,7 @@ export function defaultFakeData(): FakeData {
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
+      sidebar: { preview: true, sort: "modified-desc" },
     },
     userExtensions: [],
     packages: {},
@@ -319,6 +336,12 @@ export function fromBase64(data: string): Uint8Array {
 /** Seed helpers for tests. */
 export function fakeFile(contents: string | Uint8Array): string {
   return toBase64(typeof contents === "string" ? new TextEncoder().encode(contents) : contents);
+}
+
+/** A stand-in for Rust's preview rule: the text after the first line, its spaces folded. */
+function roughPreview(data: string): string {
+  const text = new TextDecoder().decode(fromBase64(data));
+  return text.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim().slice(0, 100);
 }
 
 export function fakeMemo(
@@ -417,6 +440,8 @@ export class FakeBackend implements Backend {
   private bases: Record<string, string | null> = {};
   /** The number of the workspace search allowed to go on; 0 for none. */
   private liveWorkspaceSearch = 0;
+  private liveMemoFilter = 0;
+  private readonly heldMemoFilters: (() => void)[] = [];
   private readonly handlers = {
     menu: [] as ((id: string) => void)[],
     flush: [] as ((id: number, goal: FlushGoal) => void)[],
@@ -770,9 +795,30 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
-  async setMemoLanguage(id: string, language: string, ext: string) {
+  async memoViewed(id: string) {
+    const memo = this.memo(id);
+    memo.viewedMs = this.tick();
+    (this.data.memoViewedCalls ??= []).push(id);
+    this.commit();
+    this.memosTouched();
+    return this.info(id, memo);
+  }
+
+  async setMemoPinned(id: string, pinned: boolean) {
     this.refuseWhileSwitching();
     const memo = this.memo(id);
+    if (pinned) memo.pinned = true;
+    else delete memo.pinned;
+    this.commit();
+    this.memosTouched();
+    return this.info(id, memo);
+  }
+
+  async setMemoLanguage(id: string, language: string, ext: string, detected = false) {
+    this.refuseWhileSwitching();
+    const memo = this.memo(id);
+    // As `set_language`: a detected language leaves a name the person chose.
+    if (detected && !memo.autoTitle) return this.info(id, memo);
     const { stem, ext: current } = splitName(memo.file);
     if (current.toLowerCase() !== ext.toLowerCase()) {
       if (!validName(`${stem}.${ext}`)) throw new BackendError("invalid-name", ext);
@@ -930,10 +976,10 @@ export class FakeBackend implements Backend {
     return "window";
   }
 
-  async showTabMenu(items: { id: string; text: string }[]) {
-    (this.data.tabMenus ??= []).push(items);
+  async showPopupMenu(items: PopupMenuItem[]) {
+    (this.data.popupMenus ??= []).push(items);
     this.commit();
-    return this.data.tabMenuPick ?? null;
+    return this.data.popupMenuPick ?? null;
   }
 
   async openExternal(path: string): Promise<ExternalInfo> {
@@ -1353,6 +1399,7 @@ export class FakeBackend implements Backend {
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     // An old seed has no `updates`; Rust reads a missing one as on.
     settings.updates ??= { autoCheck: true };
+    settings.sidebar ??= { preview: true, sort: "modified-desc" };
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1381,7 +1428,10 @@ export class FakeBackend implements Backend {
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
     settings.updates ??= { autoCheck: true };
+    settings.sidebar ??= { preview: true, sort: "modified-desc" };
     if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
+    if (patch.sidebarSort !== undefined) settings.sidebar.sort = patch.sidebarSort;
+    if (patch.sidebarPreview !== undefined) settings.sidebar.preview = patch.sidebarPreview;
     if (patch.editorLineNumbers !== undefined)
       settings.editor.lineNumbers = patch.editorLineNumbers;
     // Rust takes any number and clamps it, rounding a fraction.
@@ -1585,6 +1635,51 @@ export class FakeBackend implements Backend {
     onEvent({ kind: "done", filesSearched: searched, truncated, cancelled });
   }
 
+  /** As `find_in_memos`: the first line of each text memo holding a query, case ignored, the
+   * texts compared composed (NFC) — the app gets there by sending both forms. Cancelled, `null`. With
+   * `holdMemoFilter`, each answer waits for `releaseMemoFilters`. */
+  async findInMemos(queries: string[], requestId: number): Promise<ContentHit[] | null> {
+    (this.data.memoFilterCalls ??= []).push({ queries, requestId });
+    this.commit();
+    this.liveMemoFilter = requestId;
+    if (this.data.holdMemoFilter)
+      await new Promise<void>((resolve) => this.heldMemoFilters.push(resolve));
+    const fold = (text: string) => text.normalize("NFC").toLocaleLowerCase();
+    const wanted = queries.filter(Boolean).map(fold);
+    const hits: ContentHit[] = [];
+    if (this.liveMemoFilter === requestId && wanted.length > 0) {
+      for (const [memoId, memo] of Object.entries(this.data.memos)) {
+        const bytes = fromBase64(memo.data);
+        if (kindOf(memo.file) !== "text" || bytes.length > SEARCH_MAX_FILE_BYTES) continue;
+        if (bytes.subarray(0, 8192).includes(0)) continue;
+        const lines = new TextDecoder().decode(bytes).split("\n");
+        for (let line = 0; line < lines.length; line++) {
+          const text = lines[line].replace(/\r$/, "");
+          const folded = fold(text);
+          const at = Math.min(
+            ...wanted.map((query) => folded.indexOf(query)).filter((index) => index >= 0),
+          );
+          if (!Number.isFinite(at)) continue;
+          hits.push({ memoId, line, column: at, text });
+          break;
+        }
+      }
+    }
+    this.data.memoFilterAnswers = (this.data.memoFilterAnswers ?? 0) + 1;
+    this.commit();
+    // Cancelled: `null`, apart from an answer that found nothing.
+    return this.liveMemoFilter === requestId ? hits : null;
+  }
+
+  async cancelMemoFilter() {
+    this.liveMemoFilter = 0;
+  }
+
+  /** Lets the held `findInMemos` answers go (`holdMemoFilter`), the first `count` of them or all. */
+  releaseMemoFilters(count = Infinity): void {
+    for (const resolve of this.heldMemoFilters.splice(0, count)) resolve();
+  }
+
   async cancelWorkspaceSearch() {
     // 0 is no search's number: the running one stops before its next memo and counts itself.
     this.liveWorkspaceSearch = 0;
@@ -1707,6 +1802,9 @@ export class FakeBackend implements Backend {
       size: fromBase64(memo.data).length,
       kind: kindOf(memo.file),
       ...(memo.language ? { language: memo.language } : {}),
+      ...(memo.pinned ? { pinned: true } : {}),
+      ...(memo.viewedMs !== undefined ? { viewedMs: memo.viewedMs } : {}),
+      ...(kindOf(memo.file) === "text" ? { preview: memo.preview ?? roughPreview(memo.data) } : {}),
     };
   }
 

@@ -27,6 +27,7 @@ test("the settings screen shows the root, the themes and the extensions, and sav
   await expect(panel.getByRole("tab")).toHaveText([
     "일반",
     "워크스페이스",
+    "사이드바",
     "편집기",
     "모양",
     "단축키",
@@ -308,6 +309,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
+      sidebar: { preview: true, sort: "modified-desc" },
     },
   });
   await openSection(page, "모양");
@@ -730,6 +732,8 @@ test("the settings dialog is a labelled modal and its sections are tabs", async 
   const height = (await panel.boundingBox())!.height;
   await page.keyboard.press("ArrowDown");
   await shows("워크스페이스");
+  await page.keyboard.press("ArrowDown");
+  await shows("사이드바");
   await page.keyboard.press("ArrowDown");
   await shows("편집기");
   await page.keyboard.press("End");

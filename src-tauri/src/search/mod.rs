@@ -39,6 +39,96 @@ pub const MATCH_LEAD_CHARS: usize = 40;
 /// The same shape as the large text viewer's query.
 pub type SearchQuery = TextQuery;
 
+/// How many matches a search takes, in each file and in all.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct Limits {
+    pub per_file: usize,
+    pub total: usize,
+}
+
+impl Limits {
+    /// The search panel's.
+    pub const PANEL: Limits = Limits {
+        per_file: MAX_MATCHES_PER_FILE,
+        total: MAX_MATCHES,
+    };
+    /// The memo list's filter: the first match of each memo, every memo.
+    pub const FIRST_OF_EACH: Limits = Limits {
+        per_file: 1,
+        total: usize::MAX,
+    };
+}
+
+/// One memo the memo list's filter found by its content: its first match.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ContentHit {
+    pub memo_id: String,
+    pub line: u64,
+    pub column: u64,
+    pub text: String,
+}
+
+/// A query for any of `texts`, each taken literally, case ignored: the memo list's filter sends
+/// its text in each Unicode normalization form, so a file of either form matches (spec
+/// 2026-10-30 「필터가 내용도 찾는다」).
+pub fn literal_any(texts: &[String]) -> SearchQuery {
+    let mut patterns: Vec<String> = texts
+        .iter()
+        .filter(|text| !text.is_empty())
+        .map(|text| regex::escape(text))
+        .collect();
+    patterns.dedup();
+    SearchQuery {
+        query: patterns.join("|"),
+        case_sensitive: false,
+        regex: true,
+    }
+}
+
+/// The memo list's filter: the first match of each of `files` that holds `texts`
+/// (`literal_any`), in no fixed order. `None` when cancelled, told apart from finding nothing: a
+/// cancelled ask's empty answer would stand for its query.
+pub fn first_matches(
+    root: &Path,
+    files: &[(String, String)],
+    texts: &[String],
+    cancelled: &(dyn Fn() -> bool + Sync),
+) -> Option<Vec<ContentHit>> {
+    let hits = Mutex::new(Vec::new());
+    let stopped = AtomicBool::new(false);
+    let emit = |event| match event {
+        SearchEvent::File {
+            memo_id, matches, ..
+        } => {
+            if let Some(first) = matches.into_iter().next() {
+                hits.lock()
+                    .unwrap_or_else(PoisonError::into_inner)
+                    .push(ContentHit {
+                        memo_id,
+                        line: first.line,
+                        column: first.column,
+                        text: first.text,
+                    });
+            }
+        }
+        SearchEvent::Done { cancelled, .. } => stopped.store(cancelled, Ordering::Relaxed),
+    };
+    // A literal pattern always builds.
+    let _ = search(
+        root,
+        files,
+        &literal_any(texts),
+        Limits::FIRST_OF_EACH,
+        cancelled,
+        &emit,
+    );
+    if stopped.load(Ordering::Relaxed) {
+        return None;
+    }
+    Some(hits.into_inner().unwrap_or_else(PoisonError::into_inner))
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 #[serde(
     tag = "kind",
@@ -95,10 +185,14 @@ pub fn search(
     root: &Path,
     files: &[(String, String)],
     query: &SearchQuery,
+    limits: Limits,
     cancelled: &(dyn Fn() -> bool + Sync),
     emit: &(dyn Fn(SearchEvent) + Sync),
 ) -> Result<(), SearchError> {
-    let state = State::default();
+    let state = State {
+        limits,
+        ..State::default()
+    };
     if !query.query.is_empty() {
         let matcher = matcher_for(query)?;
         let queue = Mutex::new(files.iter().collect::<VecDeque<_>>());
@@ -134,8 +228,8 @@ fn matcher_for(query: &SearchQuery) -> Result<RegexMatcher, SearchError> {
 }
 
 /// What the threads of one search share.
-#[derive(Default)]
 struct State {
+    limits: Limits,
     /// Matches taken so far, counted past `MAX_MATCHES` by the threads that found one too many.
     matches: AtomicUsize,
     searched: AtomicU32,
@@ -143,6 +237,19 @@ struct State {
     cancelled: AtomicBool,
     /// Every thread stops at its next file or match: the limit was reached or it was cancelled.
     stop: AtomicBool,
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State {
+            limits: Limits::PANEL,
+            matches: AtomicUsize::default(),
+            searched: AtomicU32::default(),
+            truncated: AtomicBool::default(),
+            cancelled: AtomicBool::default(),
+            stop: AtomicBool::default(),
+        }
+    }
 }
 
 fn work(
@@ -238,11 +345,11 @@ impl Sink for FileSink<'_> {
         if state.stop.load(Ordering::Relaxed) {
             return Ok(false);
         }
-        if self.matches.len() == MAX_MATCHES_PER_FILE {
+        if self.matches.len() == state.limits.per_file {
             state.truncated.store(true, Ordering::Relaxed);
             return Ok(false);
         }
-        if state.matches.fetch_add(1, Ordering::Relaxed) >= MAX_MATCHES {
+        if state.matches.fetch_add(1, Ordering::Relaxed) >= state.limits.total {
             state.truncated.store(true, Ordering::Relaxed);
             state.stop.store(true, Ordering::Relaxed);
             return Ok(false);
@@ -321,11 +428,8 @@ mod tests {
         MemoInfo {
             id: id.to_string(),
             file: file.to_string(),
-            auto_title: false,
-            language: None,
-            modified_ms: 0,
-            size: 0,
             kind: crate::workspace::kind_for(file),
+            ..Default::default()
         }
     }
 
@@ -369,7 +473,7 @@ mod tests {
         cancelled: &(dyn Fn() -> bool + Sync),
     ) -> (Result<(), SearchError>, Vec<SearchEvent>) {
         let events = Mutex::new(Vec::new());
-        let result = search(root, files, query, cancelled, &|event| {
+        let result = search(root, files, query, Limits::PANEL, cancelled, &|event| {
             events.lock().unwrap().push(event)
         });
         (result, events.into_inner().unwrap())
@@ -615,6 +719,94 @@ mod tests {
     }
 
     #[test]
+    fn the_filter_finds_the_first_match_of_each_memo() {
+        let (dir, files) = workspace(&[
+            ("a.md", "제목\n사과 하나\n사과 둘\n사과 셋".as_bytes()),
+            ("b.md", b"nothing here"),
+        ]);
+        let hits = first_matches(dir.path(), &files, &["사과".into()], &|| false).unwrap();
+        assert_eq!(
+            hits,
+            vec![ContentHit {
+                memo_id: "m-a.md".into(),
+                line: 1,
+                column: 0,
+                text: "사과 하나".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn the_filter_ignores_case() {
+        let (dir, files) = workspace(&[("a.md", b"x\nHello World")]);
+        let hits = first_matches(dir.path(), &files, &["wORLD".into()], &|| false).unwrap();
+        assert_eq!((hits[0].line, hits[0].column), (1, 6));
+    }
+
+    #[test]
+    fn the_filter_matches_text_literally() {
+        let (dir, files) = workspace(&[("a.md", b"axb"), ("b.md", b"a.b (c)")]);
+        let hits = first_matches(dir.path(), &files, &["a.b".into()], &|| false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memo_id, "m-b.md");
+        assert_eq!(
+            first_matches(dir.path(), &files, &["(c)".into()], &|| false)
+                .unwrap()
+                .len(),
+            1
+        );
+    }
+
+    #[test]
+    fn the_filter_matches_either_normalization() {
+        // 「한글」 decomposed (NFD), as Finder may write it; the query comes in both forms.
+        let nfd = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
+        let (dir, files) = workspace(&[("a.md", format!("x\n{nfd} 메모").as_bytes())]);
+        let only_nfc = first_matches(dir.path(), &files, &["한글".into()], &|| false).unwrap();
+        assert!(only_nfc.is_empty());
+        let both = first_matches(dir.path(), &files, &["한글".into(), nfd.into()], &|| {
+            false
+        })
+        .unwrap();
+        assert_eq!(both.len(), 1);
+    }
+
+    #[test]
+    fn the_filter_skips_binary_and_big_files() {
+        let big = format!("needle\n{}", "x".repeat(MAX_FILE_BYTES as usize));
+        let (dir, files) = workspace(&[
+            ("bin.md", b"needle\0"),
+            ("big.md", big.as_bytes()),
+            ("ok.md", b"needle"),
+        ]);
+        let hits = first_matches(dir.path(), &files, &["needle".into()], &|| false).unwrap();
+        assert_eq!(hits.len(), 1);
+        assert_eq!(hits[0].memo_id, "m-ok.md");
+    }
+
+    #[test]
+    fn a_cancelled_filter_answers_none() {
+        let (dir, files) = workspace(&[("a.md", b"needle")]);
+        assert_eq!(
+            first_matches(dir.path(), &files, &["needle".into()], &|| true),
+            None
+        );
+        // Finding nothing is an answer.
+        assert_eq!(
+            first_matches(dir.path(), &files, &["haystack".into()], &|| false),
+            Some(Vec::new())
+        );
+    }
+
+    #[test]
+    fn an_empty_filter_finds_nothing() {
+        let (dir, files) = workspace(&[("a.md", b"needle")]);
+        assert!(first_matches(dir.path(), &files, &["".into()], &|| false)
+            .unwrap()
+            .is_empty());
+    }
+
+    #[test]
     fn files_are_searched_in_parallel() {
         if thread::available_parallelism().map_or(1, |n| n.get()) < 2 {
             return;
@@ -627,6 +819,7 @@ mod tests {
             dir.path(),
             &files,
             &query("foo", false, false),
+            Limits::PANEL,
             &|| false,
             &|event| {
                 if let SearchEvent::File { .. } = event {

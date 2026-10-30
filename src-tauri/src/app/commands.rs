@@ -5,6 +5,7 @@ use std::borrow::Cow;
 use std::io;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use percent_encoding::percent_decode_str;
 use serde::Serialize;
@@ -26,6 +27,7 @@ use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
 use crate::shortcuts::{self, ShortcutTable};
 use crate::workspace::order::{self, Arranged, Entry, WorkspaceOrder};
+use crate::workspace::viewed::VIEWED_DELAY_MS;
 use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
 
 /// What a rejected command returns. `code` is what the frontend branches on (`BackendError`).
@@ -270,6 +272,53 @@ pub async fn rename_memo(
     Ok(info)
 }
 
+/// The memo came on show in a pane of the window (spec 2026-10-30 「정렬」): its viewed time is now,
+/// in the info returned.
+/// Every window's list follows; the file is written once views stop for `VIEWED_DELAY_MS`, and at
+/// once when a window closes (`AppCore::closed`).
+#[tauri::command]
+pub async fn memo_viewed(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<MemoInfo> {
+    let workspace = workspace_of(&core, &window)?;
+    let (generation, info) = {
+        let mut workspace = lock(&workspace);
+        let generation = workspace.memo_viewed(&id, now_ms())?;
+        (generation, workspace.memo_info(&id)?)
+    };
+    memos_changed(window.app_handle(), window.label());
+    // Views come one tab switch at a time: a sleeping thread each is cheap enough.
+    std::thread::spawn(move || {
+        std::thread::sleep(Duration::from_millis(VIEWED_DELAY_MS));
+        if let Err(err) = lock(&workspace).save_viewed_if(generation) {
+            eprintln!("tote: could not save the viewed times: {err}");
+        }
+    });
+    Ok(info)
+}
+
+fn now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64)
+}
+
+/// Pins the memo to the top of the memo list, or lets it go; every window's list follows.
+#[tauri::command]
+pub async fn set_memo_pinned(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+    pinned: bool,
+) -> CmdResult<MemoInfo> {
+    let workspace = workspace_to_change(&core, &window)?;
+    let info = lock(&workspace).set_pinned(&id, pinned)?;
+    memos_changed(window.app_handle(), window.label());
+    Ok(info)
+}
+
 #[tauri::command]
 pub async fn set_memo_language(
     core: State<'_, AppCore>,
@@ -277,9 +326,10 @@ pub async fn set_memo_language(
     id: String,
     language: String,
     ext: String,
+    detected: Option<bool>,
 ) -> CmdResult<MemoInfo> {
     let workspace = workspace_to_change(&core, &window)?;
-    let info = lock(&workspace).set_language(&id, &language, &ext)?;
+    let info = lock(&workspace).set_language(&id, &language, &ext, detected.unwrap_or(false))?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
@@ -499,14 +549,14 @@ pub async fn tear_off_tab(
 /// Shows a tab's context menu at the pointer: the id of the item picked, `None` when it closed
 /// without a pick.
 #[tauri::command]
-pub async fn show_tab_menu(
+pub async fn show_popup_menu(
     app: AppHandle,
     window: WebviewWindow,
-    items: Vec<menu::TabMenuItem>,
+    items: Vec<menu::PopupMenuItem>,
 ) -> CmdResult<Option<String>> {
     // The menu blocks its thread while it is open; not one of the async runtime's.
     let picked =
-        tauri::async_runtime::spawn_blocking(move || menu::show_tab_menu(&app, &window, &items))
+        tauri::async_runtime::spawn_blocking(move || menu::show_popup_menu(&app, &window, &items))
             .await
             .map_err(|err| CommandError::new("app", err.to_string()))??;
     Ok(picked)
@@ -1133,9 +1183,50 @@ pub async fn search_workspace(
         let cancelled = || !core.workspace_search_is_live(&label, request_id);
         // A send fails only once the window's page is gone; the search ends with it anyway.
         let emit = |event| drop(on_event.send(event));
-        Ok(search::search(&root, &files, &query, &cancelled, &emit)?)
+        Ok(search::search(
+            &root,
+            &files,
+            &query,
+            search::Limits::PANEL,
+            &cancelled,
+            &emit,
+        )?)
     })
     .await
+}
+
+/// The memo list's filter (spec 2026-10-30 「필터가 내용도 찾는다」): the first match of each
+/// text memo holding any of `queries` — one text in each normalization form — literally, case
+/// ignored. A newer `request_id` from the window, or `cancel_memo_filter`, stops this one at its
+/// next file, and it answers `null`.
+#[tauri::command]
+pub async fn find_in_memos(
+    core: State<'_, AppCore>,
+    app: AppHandle,
+    window: WebviewWindow,
+    queries: Vec<String>,
+    request_id: u64,
+) -> CmdResult<Option<Vec<search::ContentHit>>> {
+    let workspace = workspace_of(&core, &window)?;
+    let label = window.label().to_string();
+    core.begin_memo_filter(&label, request_id);
+    blocking(move || {
+        let core = app.state::<AppCore>();
+        let (root, files) = {
+            let mut workspace = lock(&workspace);
+            let files = search::text_candidates(workspace.list_memos()?);
+            (workspace.root().to_path_buf(), files)
+        };
+        let cancelled = || !core.memo_filter_is_live(&label, request_id);
+        Ok(search::first_matches(&root, &files, &queries, &cancelled))
+    })
+    .await
+}
+
+/// The filter was emptied: a content filter still running stops at its next file.
+#[tauri::command]
+pub fn cancel_memo_filter(core: State<'_, AppCore>, window: WebviewWindow) {
+    core.begin_memo_filter(window.label(), 0);
 }
 
 /// The search panel closed: its search, if one is running, stops at its next file. The
