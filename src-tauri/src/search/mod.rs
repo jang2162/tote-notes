@@ -87,13 +87,14 @@ pub fn literal_any(texts: &[String]) -> SearchQuery {
 }
 
 /// The memo list's filter: the first match of each of `files` that holds `texts`
-/// (`literal_any`), in no fixed order. Empty when cancelled.
+/// (`literal_any`), in no fixed order. `None` when cancelled, told apart from finding nothing: a
+/// cancelled ask's empty answer would stand for its query.
 pub fn first_matches(
     root: &Path,
     files: &[(String, String)],
     texts: &[String],
     cancelled: &(dyn Fn() -> bool + Sync),
-) -> Vec<ContentHit> {
+) -> Option<Vec<ContentHit>> {
     let hits = Mutex::new(Vec::new());
     let stopped = AtomicBool::new(false);
     let emit = |event| match event {
@@ -123,9 +124,9 @@ pub fn first_matches(
         &emit,
     );
     if stopped.load(Ordering::Relaxed) {
-        return Vec::new();
+        return None;
     }
-    hits.into_inner().unwrap_or_else(PoisonError::into_inner)
+    Some(hits.into_inner().unwrap_or_else(PoisonError::into_inner))
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -723,7 +724,7 @@ mod tests {
             ("a.md", "제목\n사과 하나\n사과 둘\n사과 셋".as_bytes()),
             ("b.md", b"nothing here"),
         ]);
-        let hits = first_matches(dir.path(), &files, &["사과".into()], &|| false);
+        let hits = first_matches(dir.path(), &files, &["사과".into()], &|| false).unwrap();
         assert_eq!(
             hits,
             vec![ContentHit {
@@ -738,18 +739,20 @@ mod tests {
     #[test]
     fn the_filter_ignores_case() {
         let (dir, files) = workspace(&[("a.md", b"x\nHello World")]);
-        let hits = first_matches(dir.path(), &files, &["wORLD".into()], &|| false);
+        let hits = first_matches(dir.path(), &files, &["wORLD".into()], &|| false).unwrap();
         assert_eq!((hits[0].line, hits[0].column), (1, 6));
     }
 
     #[test]
     fn the_filter_matches_text_literally() {
         let (dir, files) = workspace(&[("a.md", b"axb"), ("b.md", b"a.b (c)")]);
-        let hits = first_matches(dir.path(), &files, &["a.b".into()], &|| false);
+        let hits = first_matches(dir.path(), &files, &["a.b".into()], &|| false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].memo_id, "m-b.md");
         assert_eq!(
-            first_matches(dir.path(), &files, &["(c)".into()], &|| false).len(),
+            first_matches(dir.path(), &files, &["(c)".into()], &|| false)
+                .unwrap()
+                .len(),
             1
         );
     }
@@ -759,11 +762,12 @@ mod tests {
         // 「한글」 decomposed (NFD), as Finder may write it; the query comes in both forms.
         let nfd = "\u{1112}\u{1161}\u{11ab}\u{1100}\u{1173}\u{11af}";
         let (dir, files) = workspace(&[("a.md", format!("x\n{nfd} 메모").as_bytes())]);
-        let only_nfc = first_matches(dir.path(), &files, &["한글".into()], &|| false);
+        let only_nfc = first_matches(dir.path(), &files, &["한글".into()], &|| false).unwrap();
         assert!(only_nfc.is_empty());
         let both = first_matches(dir.path(), &files, &["한글".into(), nfd.into()], &|| {
             false
-        });
+        })
+        .unwrap();
         assert_eq!(both.len(), 1);
     }
 
@@ -775,21 +779,31 @@ mod tests {
             ("big.md", big.as_bytes()),
             ("ok.md", b"needle"),
         ]);
-        let hits = first_matches(dir.path(), &files, &["needle".into()], &|| false);
+        let hits = first_matches(dir.path(), &files, &["needle".into()], &|| false).unwrap();
         assert_eq!(hits.len(), 1);
         assert_eq!(hits[0].memo_id, "m-ok.md");
     }
 
     #[test]
-    fn a_cancelled_filter_finds_nothing() {
+    fn a_cancelled_filter_answers_none() {
         let (dir, files) = workspace(&[("a.md", b"needle")]);
-        assert!(first_matches(dir.path(), &files, &["needle".into()], &|| true).is_empty());
+        assert_eq!(
+            first_matches(dir.path(), &files, &["needle".into()], &|| true),
+            None
+        );
+        // Finding nothing is an answer.
+        assert_eq!(
+            first_matches(dir.path(), &files, &["haystack".into()], &|| false),
+            Some(Vec::new())
+        );
     }
 
     #[test]
     fn an_empty_filter_finds_nothing() {
         let (dir, files) = workspace(&[("a.md", b"needle")]);
-        assert!(first_matches(dir.path(), &files, &["".into()], &|| false).is_empty());
+        assert!(first_matches(dir.path(), &files, &["".into()], &|| false)
+            .unwrap()
+            .is_empty());
     }
 
     #[test]

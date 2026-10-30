@@ -32,8 +32,9 @@ export interface MemoListHost {
   /** A row found by its content (spec 2026-10-30 「필터가 내용도 찾는다」): the memo, its cursor
    * on the match. `line` is 0-based; `column` counts characters in the whole line. */
   openAt(id: string, line: number, column: number): void;
-  /** The memos holding `query` in their text, first match each. */
-  find(query: string): Promise<ContentHit[]>;
+  /** The memos holding `query` in their text, first match each; `null` when a newer ask or a
+   * cancel stopped this one. */
+  find(query: string): Promise<ContentHit[] | null>;
   /** The filter was emptied: the content filter running stops. */
   cancelFind(): void;
 }
@@ -146,8 +147,12 @@ export class MemoList {
   private hitsFor = "";
   /** The content filter waits for typing to stop (`SEARCH_DEBOUNCE_MS`), then asks. */
   private findTimer: ReturnType<typeof setTimeout> | null = null;
-  /** The query of the ask on its way, `null` when none is. */
-  private asking: string | null = null;
+  /** The trimmed query the list was last filtered for: typing that leaves it so changes nothing. */
+  private filtered = "";
+  /** Numbers the asks: only the latest one's answer is taken, whatever its query. */
+  private ask = 0;
+  /** The latest ask has not answered yet. */
+  private asking = false;
 
   constructor(private readonly host: MemoListHost) {
     this.list.el.append(this.none);
@@ -155,11 +160,7 @@ export class MemoList {
     this.sortButton.setAttribute("aria-label", "정렬");
     this.sortButton.title = "정렬";
     this.sortButton.addEventListener("click", () => this.host.sort());
-    this.filter.addEventListener("input", () => {
-      this.list.el.scrollTop = 0;
-      this.pinned.el.scrollTop = 0;
-      this.queryChanged();
-    });
+    this.filter.addEventListener("input", () => this.queryChanged());
   }
 
   get(id: string): MemoInfo | undefined {
@@ -217,35 +218,42 @@ export class MemoList {
   }
 
   /** Names match at once; the content's answer for the old query is dropped and a new one asked
-   * once typing stops. */
+   * once typing stops. A query the same once trimmed (a space typed after it, a composition
+   * committed as it was) leaves everything as it is. */
   private queryChanged(): void {
+    const query = this.query;
+    if (query === this.filtered) return;
+    this.filtered = query;
+    this.list.el.scrollTop = 0;
+    this.pinned.el.scrollTop = 0;
     if (this.findTimer !== null) clearTimeout(this.findTimer);
     this.findTimer = null;
     this.hits = new Map();
     this.hitsFor = "";
-    const query = this.query;
+    const ask = ++this.ask;
     if (!query) {
-      if (this.asking !== null) this.host.cancelFind();
-      this.asking = null;
+      if (this.asking) this.host.cancelFind();
+      this.asking = false;
     } else {
-      this.asking = query;
-      this.findTimer = setTimeout(() => void this.find(query), SEARCH_DEBOUNCE_MS);
+      this.asking = true;
+      this.findTimer = setTimeout(() => void this.find(query, ask), SEARCH_DEBOUNCE_MS);
     }
     this.refilter();
   }
 
-  private async find(query: string): Promise<void> {
+  private async find(query: string, ask: number): Promise<void> {
     this.findTimer = null;
-    let found: ContentHit[];
+    let found: ContentHit[] | null;
     try {
       found = await this.host.find(query);
     } catch (error) {
       console.warn(error);
       found = [];
     }
-    // Typed on or emptied since: this answer is for a query no longer there.
-    if (query !== this.query || this.asking !== query) return;
-    this.asking = null;
+    // Typed on or emptied since: this answer is for an ask no longer the latest — even one of
+    // the same query, which a later ask may have cancelled (it answers `null`).
+    if (ask !== this.ask || found === null) return;
+    this.asking = false;
     this.hits = new Map(found.map((hit) => [hit.memoId, hit]));
     this.hitsFor = query;
     this.refilter();
@@ -263,7 +271,7 @@ export class MemoList {
       this.hitsFor === this.query ? this.hits : undefined,
     );
     // Said only once the content's answer is in: until then a memo may still turn up.
-    this.none.hidden = shown.length > 0 || !this.query || this.asking !== null;
+    this.none.hidden = shown.length > 0 || !this.query || this.asking;
     const { pinned, rest } = splitPinned(shown);
     this.pinned.items = pinned;
     this.list.items = rest;

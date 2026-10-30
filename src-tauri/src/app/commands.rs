@@ -1197,7 +1197,7 @@ pub async fn search_workspace(
 /// The memo list's filter (spec 2026-10-30 「필터가 내용도 찾는다」): the first match of each
 /// text memo holding any of `queries` — one text in each normalization form — literally, case
 /// ignored. A newer `request_id` from the window, or `cancel_memo_filter`, stops this one at its
-/// next file, and it answers empty.
+/// next file, and it answers `null`.
 #[tauri::command]
 pub async fn find_in_memos(
     core: State<'_, AppCore>,
@@ -1205,7 +1205,7 @@ pub async fn find_in_memos(
     window: WebviewWindow,
     queries: Vec<String>,
     request_id: u64,
-) -> CmdResult<Vec<search::ContentHit>> {
+) -> CmdResult<Option<Vec<search::ContentHit>>> {
     let workspace = workspace_of(&core, &window)?;
     let label = window.label().to_string();
     core.begin_memo_filter(&label, request_id);

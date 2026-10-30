@@ -297,7 +297,7 @@ export class TauriBackend implements Backend {
     return call<void>("cancel_workspace_search");
   }
   findInMemos(queries: string[], requestId: number) {
-    return call<ContentHit[]>("find_in_memos", { queries, requestId });
+    return call<ContentHit[] | null>("find_in_memos", { queries, requestId });
   }
   cancelMemoFilter() {
     return call<void>("cancel_memo_filter");

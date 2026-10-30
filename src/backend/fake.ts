@@ -1634,9 +1634,9 @@ export class FakeBackend implements Backend {
   }
 
   /** As `find_in_memos`: the first line of each text memo holding a query, case ignored, the
-   * texts compared composed (NFC) — the app gets there by sending both forms. With
+   * texts compared composed (NFC) — the app gets there by sending both forms. Cancelled, `null`. With
    * `holdMemoFilter`, each answer waits for `releaseMemoFilters`. */
-  async findInMemos(queries: string[], requestId: number): Promise<ContentHit[]> {
+  async findInMemos(queries: string[], requestId: number): Promise<ContentHit[] | null> {
     (this.data.memoFilterCalls ??= []).push({ queries, requestId });
     this.commit();
     this.liveMemoFilter = requestId;
@@ -1665,7 +1665,8 @@ export class FakeBackend implements Backend {
     }
     this.data.memoFilterAnswers = (this.data.memoFilterAnswers ?? 0) + 1;
     this.commit();
-    return this.liveMemoFilter === requestId ? hits : [];
+    // Cancelled: `null`, apart from an answer that found nothing.
+    return this.liveMemoFilter === requestId ? hits : null;
   }
 
   async cancelMemoFilter() {

@@ -424,6 +424,46 @@ test("an earlier query's answer does not end the wait for the newer one", async 
   await expect(page.locator(".memo-none")).toBeVisible();
 });
 
+const filterCalls = (page: Page) =>
+  page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0);
+
+test("a space after the query asks nothing new and keeps the content matches", async ({ page }) => {
+  await page.clock.install();
+  await start(page, { memos: shoppingMemos, holdMemoFilter: true });
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await filter(page).fill("청소");
+  await page.clock.runFor(150);
+  await expect.poll(() => filterCalls(page)).toBe(1);
+  // The same query once trimmed: past the wait, still the one ask.
+  await filter(page).fill("청소 ");
+  await page.clock.runFor(150);
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters(1));
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters());
+  await expect(names(page)).toHaveText(["할 일"]);
+  await expect(page.locator(".memo-none")).toBeHidden();
+  expect(await filterCalls(page)).toBe(1);
+});
+
+test("an earlier ask of the same query does not stand for the latest one", async ({ page }) => {
+  await start(page, { memos: shoppingMemos, holdMemoFilter: true });
+  await filter(page).fill("청소");
+  await expect.poll(() => filterCalls(page)).toBe(1);
+  await filter(page).fill("청");
+  await expect.poll(() => filterCalls(page)).toBe(2);
+  await filter(page).fill("청소");
+  await expect.poll(() => filterCalls(page)).toBe(3);
+  // The first ask of 「청소」 was cancelled by the second: its answer is not the third's.
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters(1));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterAnswers ?? 0))
+    .toBe(1);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.locator(".memo-none")).toBeHidden();
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters());
+  await expect(names(page)).toHaveText(["할 일"]);
+  await expect(page.locator(".memo-none")).toBeHidden();
+});
+
 test("an answer that arrives after the filter is cleared is dropped", async ({ page }) => {
   await start(page, { memos: shoppingMemos, holdMemoFilter: true });
   await filter(page).fill("청소");

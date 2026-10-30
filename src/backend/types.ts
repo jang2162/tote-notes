@@ -586,8 +586,8 @@ export interface Backend {
   cancelWorkspaceSearch(): Promise<void>;
   /** The memo list's filter: the first match of each text memo holding any of `queries` (one text
    * in each normalization form), literally, case ignored. A newer `requestId` from this window, or
-   * `cancelMemoFilter`, makes this one answer empty. */
-  findInMemos(queries: string[], requestId: number): Promise<ContentHit[]>;
+   * `cancelMemoFilter`, makes this one answer `null` — told apart from finding nothing. */
+  findInMemos(queries: string[], requestId: number): Promise<ContentHit[] | null>;
   cancelMemoFilter(): Promise<void>;
   /** The update found in this run as it stands now (`current_update`), for the update button;
    * `null` before one is found. */
