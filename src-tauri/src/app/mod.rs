@@ -356,6 +356,13 @@ impl Inner {
     }
 }
 
+/// Writes the workspace's viewed times not written yet; a failure is only told.
+fn save_viewed_now(workspace: &Mutex<Workspace>) {
+    if let Err(err) = lock(workspace).save_viewed_now() {
+        eprintln!("tote: could not save the viewed times: {err}");
+    }
+}
+
 /// `pin_legacy_root`, saved: the mark goes into `state.json` only once the settings it decided on
 /// are written, so a launch that could not write them tries again next time.
 fn keep_legacy_root(
@@ -860,6 +867,7 @@ impl AppCore {
     /// from its page until the new page is up (`page_started`). `NotFound` for a window not
     /// registered, changing nothing.
     pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
+        let leaving = self.workspace(label);
         let (fresh, closed) = {
             let mut inner = lock(&self.inner);
             // Before the lookup: a window gone must not leave its claim on `to` behind.
@@ -915,6 +923,11 @@ impl AppCore {
             self.save_launch(&inner.launch);
             (fresh, inner.close_if_unused(&from))
         };
+        // A workspace the switch closed writes its viewed times now: reopened within the second,
+        // it would read the file before the waiting write, and its next write would drop the view.
+        if let (Some(_), Some(workspace)) = (&closed, &leaving) {
+            save_viewed_now(workspace);
+        }
         self.files.revoke_window(label);
         lock(&self.searches).remove(label);
         lock(&self.workspace_searches).remove(label);
@@ -1154,9 +1167,7 @@ impl AppCore {
     pub fn closed(&self, label: &str) -> Vec<(u64, Ack)> {
         // The viewed times are written at once when a window closes (`workspace::viewed`).
         if let Some(workspace) = self.workspace(label) {
-            if let Err(err) = lock(&workspace).save_viewed_now() {
-                eprintln!("tote: could not save the viewed times: {err}");
-            }
+            save_viewed_now(&workspace);
         }
         self.files.revoke_window(label);
         // A search still running for the window stops at its next check.
@@ -1540,6 +1551,16 @@ impl AppCore {
     /// `k`th window reopened on a folder gets the `k`th layout. A workspace whose every window is
     /// being closed keeps its file: the last layout written stays.
     pub fn start_quit(&self) {
+        // At once, as a window's close does (`workspace::viewed`): the windows are not told they
+        // close when the app quits, and a write still waiting on its second dies with the app.
+        let open: Vec<Arc<Mutex<Workspace>>> = lock(&self.inner)
+            .workspaces
+            .values()
+            .map(|open| open.workspace.clone())
+            .collect();
+        for workspace in &open {
+            save_viewed_now(workspace);
+        }
         let mut inner = lock(&self.inner);
         inner.quitting = true;
         let mut loading: Vec<(&String, &OpenWindow)> = inner
@@ -3467,6 +3488,38 @@ mod tests {
     fn switch(core: &AppCore, label: &str, to: &Path) {
         let opened = core.prepare_switch(label, to).unwrap();
         core.switch_window(label, to, opened).unwrap();
+    }
+
+    /// A view of a new memo in the workspace window `label` shows, not written yet; its file.
+    fn viewed_unwritten(core: &AppCore, label: &str) -> PathBuf {
+        let workspace = core.workspace(label).unwrap();
+        let mut workspace = lock(&workspace);
+        let memo = workspace.import_memo("가.md", b"x").unwrap();
+        workspace.memo_viewed(&memo.id, 7).unwrap();
+        let file = ViewedTimes::file(&core.paths.data_dir, workspace.id());
+        assert!(!file.exists());
+        file
+    }
+
+    #[test]
+    fn quitting_writes_the_viewed_times_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let file = viewed_unwritten(&core, &w1);
+        core.start_quit();
+        assert!(file.exists());
+    }
+
+    #[test]
+    fn a_workspace_a_switch_closes_writes_its_viewed_times_at_once() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let file = viewed_unwritten(&core, &w1);
+        let na = closed_workspace(&core, "나", &[]);
+        switch(&core, &w1, &na);
+        assert!(file.exists());
     }
 
     #[test]
