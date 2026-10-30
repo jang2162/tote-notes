@@ -19,6 +19,7 @@ import {
   type OutsideChange,
   type PendingOpen,
   type PopupMenuItem,
+  type ContentHit,
   type TabRef,
   type PerfConfig,
   type SearchEvent,
@@ -294,6 +295,12 @@ export class TauriBackend implements Backend {
   }
   cancelWorkspaceSearch() {
     return call<void>("cancel_workspace_search");
+  }
+  findInMemos(queries: string[], requestId: number) {
+    return call<ContentHit[]>("find_in_memos", { queries, requestId });
+  }
+  cancelMemoFilter() {
+    return call<void>("cancel_memo_filter");
   }
   currentUpdate() {
     return call<UpdateOffer | null>("current_update");

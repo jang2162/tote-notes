@@ -49,6 +49,11 @@ describe("TauriBackend", () => {
       [() => backend.setMemoPinned("m", true), "set_memo_pinned", { id: "m", pinned: true }],
       [() => backend.memoViewed("m"), "memo_viewed", { id: "m" }],
       [
+        () => backend.findInMemos(["가", "가".normalize("NFD")], 3),
+        "find_in_memos",
+        { queries: ["가", "가".normalize("NFD")], requestId: 3 },
+      ],
+      [
         () => backend.setMemoLanguage("m", "python", "py"),
         "set_memo_language",
         { id: "m", language: "python", ext: "py" },

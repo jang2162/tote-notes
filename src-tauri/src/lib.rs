@@ -146,6 +146,8 @@ pub fn run() {
             commands::cancel_text_search,
             commands::search_workspace,
             commands::cancel_workspace_search,
+            commands::find_in_memos,
+            commands::cancel_memo_filter,
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,

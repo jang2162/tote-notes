@@ -311,10 +311,22 @@ export class AppController implements DocHost, PaneHost {
   private memosLoaded = false;
   /** Another window's change to the memo list is waiting to be read (`MEMOS_GATHER_MS`). */
   private memosChangedSoon: number | null = null;
+  /** Numbers the memo list's content filters (`findInMemos`). */
+  private memoFilters = 0;
   private readonly memoList = new MemoList({
     open: (id) => void this.openMemo(id),
     menu: (id) => void this.memoMenu(id).catch((error: unknown) => this.report(error)),
     sort: () => void this.sortMenu().catch((error: unknown) => this.report(error)),
+    openAt: (id, line, column) =>
+      void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
+    // The query in both normalization forms: a file of either holds the match (`literal_any`).
+    find: (query) =>
+      this.backend.findInMemos(
+        [...new Set([query.normalize("NFC"), query.normalize("NFD")])],
+        ++this.memoFilters,
+      ),
+    cancelFind: () =>
+      void this.backend.cancelMemoFilter().catch((error: unknown) => console.warn(error)),
   });
   private readonly searchPanel = new SearchPanel({
     search: (query, onEvent) =>

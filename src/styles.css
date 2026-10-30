@@ -464,6 +464,19 @@ html:not(.sidebar-collapsed) .tab-lead {
   text-overflow: ellipsis;
 }
 
+.memo-hit mark {
+  background: color-mix(in srgb, var(--accent) 30%, transparent);
+  color: inherit;
+  border-radius: 2px;
+}
+
+.memo-none {
+  position: absolute;
+  top: 0;
+  margin: 8px 12px;
+  color: var(--muted);
+}
+
 .memo-name {
   overflow: hidden;
   text-overflow: ellipsis;

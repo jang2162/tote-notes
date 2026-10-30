@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
-import type { MemoInfo } from "../backend/types";
-import { sortMemos, splitPinned } from "./memo-order";
+import type { ContentHit, MemoInfo } from "../backend/types";
+import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
 
 const memo = (file: string, extra: Partial<MemoInfo> = {}): MemoInfo => ({
   id: file,
@@ -74,5 +74,50 @@ describe("sortMemos", () => {
     expect(files(sortMemos(named, "name-desc"))).toEqual(
       files(sortMemos(named, "name-asc")).reverse(),
     );
+  });
+});
+
+describe("filterMemos with content hits", () => {
+  const hit = (memoId: string): ContentHit => ({ memoId, line: 1, column: 0, text: "" });
+  const list = [memo("사과.md"), memo("배.md"), memo("사과 배.md"), memo("감.md")];
+
+  it("unites title and content matches, in the order given", () => {
+    const hits = new Map([
+      ["감.md", hit("감.md")],
+      ["사과.md", hit("사과.md")],
+    ]);
+    expect(files(filterMemos(list, "사과", hits))).toEqual(["사과.md", "사과 배.md", "감.md"]);
+    expect(files(filterMemos(list, "배", new Map()))).toEqual(["배.md", "사과 배.md"]);
+    expect(files(filterMemos(list, "귤", new Map([["감.md", hit("감.md")]])))).toEqual(["감.md"]);
+    expect(filterMemos(list, "귤")).toEqual([]);
+  });
+});
+
+describe("snippet", () => {
+  const at = (text: string): ContentHit => ({ memoId: "a", line: 0, column: 0, text });
+
+  it("marks the match, the case of the line kept", () => {
+    expect(snippet(at("오늘 Apple 샀다"), "apple")).toEqual({
+      before: "오늘 ",
+      match: "Apple",
+      after: " 샀다",
+    });
+  });
+
+  it("keeps 12 characters before the match, marking the cut", () => {
+    const long = "가".repeat(30) + "사과" + "끝";
+    expect(snippet(at(long), "사과")).toEqual({
+      before: "…" + "가".repeat(12),
+      match: "사과",
+      after: "끝",
+    });
+  });
+
+  it("finds a decomposed match and shows it composed", () => {
+    expect(snippet(at("새 한글 메모".normalize("NFD")), "한글")).toEqual({
+      before: "새 ",
+      match: "한글",
+      after: " 메모",
+    });
   });
 });

@@ -130,6 +130,9 @@ pub struct AppCore {
     /// Window label → the number of its latest workspace search. Apart from `searches`: the
     /// search panel and a large text viewer each run their own.
     workspace_searches: Mutex<HashMap<String, u64>>,
+    /// Window label → the number of its memo list's latest content filter; apart again, so
+    /// typing in the filter does not stop the panel's search.
+    memo_filters: Mutex<HashMap<String, u64>>,
     /// Set once at startup by `start_watching`; without it (tests) nothing is watched.
     watcher: OnceLock<Watcher>,
     /// Wakes the backup thread with a window label (`request_backup`); unset until
@@ -423,6 +426,7 @@ impl AppCore {
             rescans: AtomicU64::new(0),
             searches: Mutex::new(HashMap::new()),
             workspace_searches: Mutex::new(HashMap::new()),
+            memo_filters: Mutex::new(HashMap::new()),
             watcher: OnceLock::new(),
             backup_waker: Mutex::new(None),
             labels: AtomicU64::new(0),
@@ -914,6 +918,7 @@ impl AppCore {
         self.files.revoke_window(label);
         lock(&self.searches).remove(label);
         lock(&self.workspace_searches).remove(label);
+        lock(&self.memo_filters).remove(label);
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
             if let Some(key) = closed {
@@ -1132,6 +1137,14 @@ impl AppCore {
         lock(&self.workspace_searches).insert(window.to_string(), request_id);
     }
 
+    pub fn begin_memo_filter(&self, window: &str, request_id: u64) {
+        lock(&self.memo_filters).insert(window.to_string(), request_id);
+    }
+
+    pub fn memo_filter_is_live(&self, window: &str, request_id: u64) -> bool {
+        lock(&self.memo_filters).get(window) == Some(&request_id)
+    }
+
     pub fn workspace_search_is_live(&self, window: &str, request_id: u64) -> bool {
         lock(&self.workspace_searches).get(window) == Some(&request_id)
     }
@@ -1149,6 +1162,7 @@ impl AppCore {
         // A search still running for the window stops at its next check.
         lock(&self.searches).remove(label);
         lock(&self.workspace_searches).remove(label);
+        lock(&self.memo_filters).remove(label);
         if let Some(watcher) = self.watcher.get() {
             watcher.unwatch_window(label);
         }
@@ -2979,6 +2993,20 @@ mod tests {
         core.begin_workspace_search("ws-2", 1);
         core.closed("ws-2");
         assert!(!core.workspace_search_is_live("ws-2", 1));
+    }
+
+    #[test]
+    fn memo_filters_are_separate_from_searches() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.begin_workspace_search("ws-1", 1);
+        core.begin_memo_filter("ws-1", 1);
+        core.begin_memo_filter("ws-1", 2);
+        assert!(core.workspace_search_is_live("ws-1", 1));
+        assert!(!core.memo_filter_is_live("ws-1", 1));
+        assert!(core.memo_filter_is_live("ws-1", 2));
+        core.closed("ws-1");
+        assert!(!core.memo_filter_is_live("ws-1", 2));
     }
 
     #[test]

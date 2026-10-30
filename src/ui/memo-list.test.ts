@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 
 import type { MemoInfo } from "../backend/types";
-import { filterMemos, visibleRows } from "./memo-list";
+import { visibleRows } from "./memo-list";
+import { filterMemos } from "./memo-order";
 
 const memo = (file: string, modifiedMs = 0): MemoInfo => ({
   id: file,

@@ -1,4 +1,42 @@
-import type { MemoInfo, MemoSort } from "../backend/types";
+import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
+
+/** For matching only: Finder may hand over decomposed (NFD) Hangul while typed text is composed. */
+const fold = (text: string) => text.normalize("NFC").toLocaleLowerCase();
+
+/** The memos whose name holds `query`, and those `hits` found by their content: case ignored,
+ * composed (NFC) text against composed, in the order given. An empty query keeps every memo. */
+export function filterMemos(
+  memos: readonly MemoInfo[],
+  query: string,
+  hits: ReadonlyMap<string, ContentHit> = new Map(),
+): MemoInfo[] {
+  const wanted = fold(query.trim());
+  if (!wanted) return [...memos];
+  return memos.filter((memo) => fold(memo.file).includes(wanted) || hits.has(memo.id));
+}
+
+/** Characters of a content match's line shown before the match. */
+export const SNIPPET_LEAD = 12;
+
+/** A content match's line around the match, for its row: up to `SNIPPET_LEAD` characters before
+ * it (`…` when more were cut), the match, and what follows. Without the query in the line (it
+ * changed), the line as it is. */
+export function snippet(
+  hit: ContentHit,
+  query: string,
+): { before: string; match: string; after: string } {
+  const text = hit.text.normalize("NFC");
+  const wanted = fold(query.trim());
+  // Folding keeps the length of composed Hangul and of most text, so its index is the text's.
+  const at = wanted ? fold(text).indexOf(wanted) : -1;
+  if (at < 0 || fold(text).length !== text.length) return { before: text, match: "", after: "" };
+  const start = Math.max(0, at - SNIPPET_LEAD);
+  return {
+    before: (start > 0 ? "…" : "") + text.slice(start, at),
+    match: text.slice(at, at + wanted.length),
+    after: text.slice(at + wanted.length),
+  };
+}
 
 /** The pinned memos and the rest, each in the order given (spec 2026-10-30 「고정」): the pinned
  * ones sit in their own zone above the list and are not listed again below it. */

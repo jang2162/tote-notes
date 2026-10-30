@@ -32,6 +32,7 @@ import {
   type WindowStart,
   type PendingOpen,
   type PopupMenuItem,
+  type ContentHit,
   type TabRef,
   type SearchEvent,
   type SearchMatch,
@@ -197,6 +198,12 @@ export interface FakeData {
    * `Workspace::open` failing in `prepare_switch`: the window stays and says so. Absent in old
    * seeds. */
   unopenable?: string[];
+  /** Every `findInMemos` call, in order. Absent in old seeds. */
+  memoFilterCalls?: { queries: string[]; requestId: number }[];
+  /** How many `findInMemos` calls have answered. Absent in old seeds. */
+  memoFilterAnswers?: number;
+  /** `findInMemos` answers wait for `releaseMemoFilters`. */
+  holdMemoFilter?: boolean;
   /** The memo of every `memoViewed` call, in order. Absent in old seeds. */
   memoViewedCalls?: string[];
   /** The items of every pop-up menu shown, in order. Absent in old seeds. */
@@ -433,6 +440,8 @@ export class FakeBackend implements Backend {
   private bases: Record<string, string | null> = {};
   /** The number of the workspace search allowed to go on; 0 for none. */
   private liveWorkspaceSearch = 0;
+  private liveMemoFilter = 0;
+  private readonly heldMemoFilters: (() => void)[] = [];
   private readonly handlers = {
     menu: [] as ((id: string) => void)[],
     flush: [] as ((id: number, goal: FlushGoal) => void)[],
@@ -1622,6 +1631,50 @@ export class FakeBackend implements Backend {
       if (total === SEARCH_MAX_MATCHES && truncated) break;
     }
     onEvent({ kind: "done", filesSearched: searched, truncated, cancelled });
+  }
+
+  /** As `find_in_memos`: the first line of each text memo holding a query, case ignored, the
+   * texts compared composed (NFC) — the app gets there by sending both forms. With
+   * `holdMemoFilter`, each answer waits for `releaseMemoFilters`. */
+  async findInMemos(queries: string[], requestId: number): Promise<ContentHit[]> {
+    (this.data.memoFilterCalls ??= []).push({ queries, requestId });
+    this.commit();
+    this.liveMemoFilter = requestId;
+    if (this.data.holdMemoFilter)
+      await new Promise<void>((resolve) => this.heldMemoFilters.push(resolve));
+    const fold = (text: string) => text.normalize("NFC").toLocaleLowerCase();
+    const wanted = queries.filter(Boolean).map(fold);
+    const hits: ContentHit[] = [];
+    if (this.liveMemoFilter === requestId && wanted.length > 0) {
+      for (const [memoId, memo] of Object.entries(this.data.memos)) {
+        const bytes = fromBase64(memo.data);
+        if (kindOf(memo.file) !== "text" || bytes.length > SEARCH_MAX_FILE_BYTES) continue;
+        if (bytes.subarray(0, 8192).includes(0)) continue;
+        const lines = new TextDecoder().decode(bytes).split("\n");
+        for (let line = 0; line < lines.length; line++) {
+          const text = lines[line].replace(/\r$/, "");
+          const folded = fold(text);
+          const at = Math.min(
+            ...wanted.map((query) => folded.indexOf(query)).filter((index) => index >= 0),
+          );
+          if (!Number.isFinite(at)) continue;
+          hits.push({ memoId, line, column: at, text });
+          break;
+        }
+      }
+    }
+    this.data.memoFilterAnswers = (this.data.memoFilterAnswers ?? 0) + 1;
+    this.commit();
+    return this.liveMemoFilter === requestId ? hits : [];
+  }
+
+  async cancelMemoFilter() {
+    this.liveMemoFilter = 0;
+  }
+
+  /** Lets the held `findInMemos` answers go (`holdMemoFilter`). */
+  releaseMemoFilters(): void {
+    for (const resolve of this.heldMemoFilters.splice(0)) resolve();
   }
 
   async cancelWorkspaceSearch() {

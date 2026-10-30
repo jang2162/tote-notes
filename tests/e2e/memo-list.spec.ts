@@ -301,3 +301,123 @@ test("turning the preview off in settings applies to every window at once", asyn
     false,
   );
 });
+
+const shoppingMemos = {
+  a: fakeMemo("장보기.md", "장보기\n우유\n사과 두 개", { modifiedMs: 3 }),
+  b: fakeMemo("사과 농장.md", "농장\n주소", { modifiedMs: 2 }),
+  c: fakeMemo("할 일.md", "할 일\n청소", { modifiedMs: 1 }),
+};
+const filter = (page: Page) => page.locator(".memo-filter");
+
+test("the filter's placeholder is 제목·내용 검색", async ({ page }) => {
+  await start(page);
+  await expect(filter(page)).toHaveAttribute("placeholder", "제목·내용 검색");
+});
+
+test("title matches show at once and content matches 150ms after typing stops", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await start(page, { memos: shoppingMemos });
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await filter(page).fill("사과");
+  await expect(names(page)).toHaveText(["사과 농장"]);
+  await page.clock.runFor(149);
+  await expect(names(page)).toHaveText(["사과 농장"]);
+  expect(await page.evaluate(() => window.__tote.backend.data.memoFilterCalls ?? [])).toEqual([]);
+  await page.clock.runFor(1);
+  await expect(names(page)).toHaveText(["장보기", "사과 농장"]);
+  const calls = await page.evaluate(() => window.__tote.backend.data.memoFilterCalls ?? []);
+  expect(calls.map((call) => call.queries)).toEqual([["사과", "사과".normalize("NFD")]]);
+});
+
+test("a content match shows its line with the match marked", async ({ page }) => {
+  await start(page, { memos: shoppingMemos });
+  await filter(page).fill("사과");
+  await expect(row(page, "장보기").locator(".memo-preview")).toHaveText("사과 두 개");
+  await expect(row(page, "장보기").locator(".memo-preview mark")).toHaveText("사과");
+  // Found by its name only: its own preview.
+  await expect(row(page, "사과 농장").locator(".memo-preview")).toHaveText("주소");
+});
+
+test("with the preview off a content match stays one line", async ({ page }) => {
+  await start(page, {
+    memos: shoppingMemos,
+    settings: { ...defaultFakeData().settings, sidebar: { preview: false, sort: "modified-desc" } },
+  });
+  await filter(page).fill("사과");
+  await expect(names(page)).toHaveText(["장보기", "사과 농장"]);
+  await expect(page.locator(".memo-preview")).toHaveCount(0);
+  expect((await row(page, "장보기").boundingBox())?.height).toBe(28);
+});
+
+test("clicking a content match opens the memo at its first match", async ({ page }) => {
+  await start(page, { memos: shoppingMemos });
+  await filter(page).fill("두 개");
+  await row(page, "장보기").click();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("장보기");
+  // Line 2 (0-based), column 3: 「장보기\n우유\n」 is 7 characters.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.view.state.selection.main.head))
+    .toBe(7 + 3);
+});
+
+test("a memo found by its name only opens as before", async ({ page }) => {
+  await start(page, { memos: shoppingMemos });
+  await filter(page).fill("농장");
+  await expect(names(page)).toHaveText(["사과 농장"]);
+  await row(page, "사과 농장").click();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("사과 농장");
+  expect(await page.evaluate(() => window.__tote.app.view.state.selection.main.head)).toBe(0);
+});
+
+test("nothing matching says 맞는 메모가 없습니다", async ({ page }) => {
+  await start(page, { memos: shoppingMemos });
+  await expect(page.locator(".memo-none")).toBeHidden();
+  await filter(page).fill("없는 말");
+  await expect(page.locator(".memo-none")).toHaveText("맞는 메모가 없습니다");
+  await filter(page).fill("");
+  await expect(page.locator(".memo-none")).toBeHidden();
+  await expect(names(page)).toHaveCount(3);
+});
+
+test("a newer query's ask makes the earlier one answer nothing", async ({ page }) => {
+  await start(page, { memos: shoppingMemos, holdMemoFilter: true });
+  await filter(page).fill("사과");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0))
+    .toBe(1);
+  await filter(page).fill("청소");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0))
+    .toBe(2);
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters());
+  await expect(names(page)).toHaveText(["할 일"]);
+  const calls = await page.evaluate(() => window.__tote.backend.data.memoFilterCalls ?? []);
+  expect(calls[1].requestId).toBeGreaterThan(calls[0].requestId);
+});
+
+test("an answer that arrives after the filter is cleared is dropped", async ({ page }) => {
+  await start(page, { memos: shoppingMemos, holdMemoFilter: true });
+  await filter(page).fill("청소");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0))
+    .toBe(1);
+  await filter(page).fill("");
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters());
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterAnswers ?? 0))
+    .toBe(1);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(names(page)).toHaveText(["장보기", "사과 농장", "할 일"]);
+  await expect(page.locator(".memo-hit")).toHaveCount(0);
+});
+
+test("the pinned zone filters by content too", async ({ page }) => {
+  await start(page, {
+    memos: { ...shoppingMemos, c: { ...shoppingMemos.c, pinned: true } },
+  });
+  await filter(page).fill("청소");
+  await expect(page.locator(".memo-pinned .memo-row .memo-name")).toHaveText(["할 일"]);
+  await expect(page.locator(".memo-pinned .memo-preview mark")).toHaveText("청소");
+});

@@ -136,6 +136,17 @@ export interface SearchMatch {
   after: string[];
 }
 
+/** A memo the memo list's filter found by its content: its first match (`ContentHit`). */
+export interface ContentHit {
+  memoId: string;
+  /** 0-based. */
+  line: number;
+  /** Characters before the match in the whole line. */
+  column: number;
+  /** The line, cut like a search match's `text`. */
+  text: string;
+}
+
 /** One file's matches as soon as it is done, in no fixed order, then one `done`. */
 export type SearchEvent =
   | { kind: "file"; memoId: string; file: string; matches: SearchMatch[] }
@@ -573,6 +584,11 @@ export interface Backend {
   ): Promise<void>;
   /** Stops this window's running workspace search, as a newer one would. */
   cancelWorkspaceSearch(): Promise<void>;
+  /** The memo list's filter: the first match of each text memo holding any of `queries` (one text
+   * in each normalization form), literally, case ignored. A newer `requestId` from this window, or
+   * `cancelMemoFilter`, makes this one answer empty. */
+  findInMemos(queries: string[], requestId: number): Promise<ContentHit[]>;
+  cancelMemoFilter(): Promise<void>;
   /** The update found in this run as it stands now (`current_update`), for the update button;
    * `null` before one is found. */
   currentUpdate(): Promise<UpdateOffer | null>;

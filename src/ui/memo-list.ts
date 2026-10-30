@@ -1,20 +1,13 @@
-import type { MemoInfo, MemoSort } from "../backend/types";
+import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
 import { splitName } from "../core/names";
 import { h } from "./dom";
-import { sortMemos, splitPinned } from "./memo-order";
+import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
+import { SEARCH_DEBOUNCE_MS } from "./search-panel";
 
 export const ROW_HEIGHT = 28;
 /** A row with its preview line under the name (spec 2026-10-30 「미리보기」). */
 export const PREVIEW_ROW_HEIGHT = 46;
 const OVERSCAN_ROWS = 8;
-
-/** For matching only: Finder may hand over decomposed (NFD) Hangul while typed text is composed. */
-const fold = (text: string) => text.normalize("NFC").toLocaleLowerCase();
-
-export function filterMemos(memos: readonly MemoInfo[], query: string): MemoInfo[] {
-  const wanted = fold(query.trim());
-  return wanted ? memos.filter((memo) => fold(memo.file).includes(wanted)) : [...memos];
-}
 
 /** Rows [start, end) worth rendering for a viewport, with some to spare on both sides. A
  * workspace may hold 10,000 memos; only these exist in the DOM. */
@@ -36,6 +29,13 @@ export interface MemoListHost {
   menu(id: string): void;
   /** The sort button: the order menu. */
   sort(): void;
+  /** A row found by its content (spec 2026-10-30 「필터가 내용도 찾는다」): the memo, its cursor
+   * on the match. `line` is 0-based; `column` counts characters in the whole line. */
+  openAt(id: string, line: number, column: number): void;
+  /** The memos holding `query` in their text, first match each. */
+  find(query: string): Promise<ContentHit[]>;
+  /** The filter was emptied: the content filter running stops. */
+  cancelFind(): void;
 }
 
 const SVG = "http://www.w3.org/2000/svg";
@@ -108,11 +108,12 @@ class RowSection {
 }
 
 /** The sidebar's memo pane: the pinned memos in a zone that stays put above the list, then every
- * other memo, newest first, all filtered by name (spec 「메모 목록」, 2026-10-30 「고정」). */
+ * other memo in the order picked, all filtered by name at once and by content a moment later
+ * (spec 「메모 목록」, 2026-10-30 「고정」·「정렬」·「필터가 내용도 찾는다」). */
 export class MemoList {
   private readonly filter = h("input", {
     type: "search",
-    placeholder: "제목 필터",
+    placeholder: "제목·내용 검색",
     class: "memo-filter",
   });
   private readonly sortButton = h("button", { class: "memo-sort", type: "button" }, sortMark());
@@ -135,12 +136,21 @@ export class MemoList {
     this.divider,
     this.list.el,
   );
+  private readonly none = h("p", { class: "memo-none", textContent: "맞는 메모가 없습니다" });
   private memos: MemoInfo[] = [];
   private activeId: string | null = null;
   private sort: MemoSort = "modified-desc";
   private preview = true;
+  /** The content filter's answer for `hitsFor`, by memo ID. */
+  private hits = new Map<string, ContentHit>();
+  private hitsFor = "";
+  /** The content filter waits for typing to stop (`SEARCH_DEBOUNCE_MS`), then asks. */
+  private findTimer: ReturnType<typeof setTimeout> | null = null;
+  /** The query of the ask on its way, `null` when none is. */
+  private asking: string | null = null;
 
   constructor(private readonly host: MemoListHost) {
+    this.list.el.append(this.none);
     this.filter.spellcheck = false;
     this.sortButton.setAttribute("aria-label", "정렬");
     this.sortButton.title = "정렬";
@@ -148,7 +158,7 @@ export class MemoList {
     this.filter.addEventListener("input", () => {
       this.list.el.scrollTop = 0;
       this.pinned.el.scrollTop = 0;
-      this.refilter();
+      this.queryChanged();
     });
   }
 
@@ -202,8 +212,59 @@ export class MemoList {
     this.render();
   }
 
+  private get query(): string {
+    return this.filter.value.trim();
+  }
+
+  /** Names match at once; the content's answer for the old query is dropped and a new one asked
+   * once typing stops. */
+  private queryChanged(): void {
+    if (this.findTimer !== null) clearTimeout(this.findTimer);
+    this.findTimer = null;
+    this.hits = new Map();
+    this.hitsFor = "";
+    const query = this.query;
+    if (!query) {
+      if (this.asking !== null) this.host.cancelFind();
+      this.asking = null;
+    } else {
+      this.asking = query;
+      this.findTimer = setTimeout(() => void this.find(query), SEARCH_DEBOUNCE_MS);
+    }
+    this.refilter();
+  }
+
+  private async find(query: string): Promise<void> {
+    this.findTimer = null;
+    let found: ContentHit[];
+    try {
+      found = await this.host.find(query);
+    } catch (error) {
+      console.warn(error);
+      found = [];
+    }
+    // Typed on or emptied since: this answer is for a query no longer there.
+    if (query !== this.query || this.asking !== query) return;
+    this.asking = null;
+    this.hits = new Map(found.map((hit) => [hit.memoId, hit]));
+    this.hitsFor = query;
+    this.refilter();
+  }
+
+  /** The row's content match, when the filter found it by its content for the query there is. */
+  private hitOf(memo: MemoInfo): ContentHit | undefined {
+    return this.hitsFor === this.query ? this.hits.get(memo.id) : undefined;
+  }
+
   private refilter(): void {
-    const { pinned, rest } = splitPinned(filterMemos(this.memos, this.filter.value));
+    const shown = filterMemos(
+      this.memos,
+      this.query,
+      this.hitsFor === this.query ? this.hits : undefined,
+    );
+    // Said only once the content's answer is in: until then a memo may still turn up.
+    this.none.hidden = shown.length > 0 || !this.query || this.asking !== null;
+    const { pinned, rest } = splitPinned(shown);
     this.pinned.items = pinned;
     this.list.items = rest;
     this.pinned.el.hidden = pinned.length === 0;
@@ -234,16 +295,34 @@ export class MemoList {
           h("span", { class: "memo-name", textContent: stem }),
           ext ? h("span", { class: "memo-ext", textContent: ext }) : null,
         ),
-        this.preview ? h("span", { class: "memo-preview", textContent: memo.preview ?? "" }) : null,
+        this.preview ? this.previewLine(memo) : null,
       ),
       memo.pinned ? pinMark() : null,
     );
     row.style.top = `${index * this.rowHeight}px`;
-    row.addEventListener("click", () => this.host.open(memo.id));
+    row.addEventListener("click", () => {
+      const hit = this.hitOf(memo);
+      if (hit) this.host.openAt(memo.id, hit.line, hit.column);
+      else this.host.open(memo.id);
+    });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
       this.host.menu(memo.id);
     });
     return row;
+  }
+
+  /** The preview, or for a memo found by its content the matching line, the match marked. */
+  private previewLine(memo: MemoInfo): HTMLElement {
+    const hit = this.hitOf(memo);
+    if (!hit) return h("span", { class: "memo-preview", textContent: memo.preview ?? "" });
+    const { before, match, after } = snippet(hit, this.query);
+    return h(
+      "span",
+      { class: "memo-preview memo-hit" },
+      before,
+      match ? h("mark", { textContent: match }) : null,
+      after,
+    );
   }
 }
