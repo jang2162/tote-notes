@@ -275,8 +275,11 @@ test("a memo row shows its preview under the name, 46px tall", async ({ page }) 
   });
   await expect(row(page, "가").locator(".memo-preview")).toHaveText("본문 첫 줄");
   await expect(row(page, "사진").locator(".memo-preview")).toHaveText("");
-  expect((await row(page, "가").boundingBox())?.height).toBe(46);
-  expect((await row(page, "사진").boundingBox())?.height).toBe(46);
+  const first = await row(page, "가").boundingBox();
+  const second = await row(page, "사진").boundingBox();
+  expect([first?.height, second?.height]).toEqual([46, 46]);
+  // The virtual list places each row a preview row below the one before.
+  expect(second!.y - first!.y).toBe(46);
 });
 
 test("turning the preview off in settings applies to every window at once", async ({ context }) => {
@@ -296,6 +299,9 @@ test("turning the preview off in settings applies to every window at once", asyn
   for (const page of [first, second]) {
     await expect(row(page, "가").locator(".memo-preview")).toHaveCount(0);
     expect((await row(page, "가").boundingBox())?.height).toBe(28);
+    expect(await page.locator(".memo-scroller .memo-rows").evaluate((el) => el.style.height)).toBe(
+      "28px",
+    );
   }
   expect(await first.evaluate(() => window.__tote.backend.data.settings.sidebar.preview)).toBe(
     false,
@@ -395,6 +401,27 @@ test("a newer query's ask makes the earlier one answer nothing", async ({ page }
   await expect(names(page)).toHaveText(["할 일"]);
   const calls = await page.evaluate(() => window.__tote.backend.data.memoFilterCalls ?? []);
   expect(calls[1].requestId).toBeGreaterThan(calls[0].requestId);
+});
+
+test("an earlier query's answer does not end the wait for the newer one", async ({ page }) => {
+  await start(page, { memos: shoppingMemos, holdMemoFilter: true });
+  await filter(page).fill("청소");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0))
+    .toBe(1);
+  await filter(page).fill("없는 말");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterCalls?.length ?? 0))
+    .toBe(2);
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters(1));
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memoFilterAnswers ?? 0))
+    .toBe(1);
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  // The newer ask is still out: nothing is said to match nothing yet.
+  await expect(page.locator(".memo-none")).toBeHidden();
+  await page.evaluate(() => window.__tote.backend.releaseMemoFilters());
+  await expect(page.locator(".memo-none")).toBeVisible();
 });
 
 test("an answer that arrives after the filter is cleared is dropped", async ({ page }) => {

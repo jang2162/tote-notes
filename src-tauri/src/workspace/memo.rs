@@ -224,6 +224,13 @@ mod tests {
         assert_eq!(ws.list_memos().unwrap()[0].preview.as_deref(), Some("old"));
         set_mtime(&path, 2_000);
         assert_eq!(ws.list_memos().unwrap()[0].preview.as_deref(), Some("new"));
+        // Another size at the same time is another file too.
+        fs::write(&path, b"t\nlonger").unwrap();
+        set_mtime(&path, 2_000);
+        assert_eq!(
+            ws.list_memos().unwrap()[0].preview.as_deref(),
+            Some("longer")
+        );
     }
 
     #[test]

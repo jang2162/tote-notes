@@ -1672,9 +1672,9 @@ export class FakeBackend implements Backend {
     this.liveMemoFilter = 0;
   }
 
-  /** Lets the held `findInMemos` answers go (`holdMemoFilter`). */
-  releaseMemoFilters(): void {
-    for (const resolve of this.heldMemoFilters.splice(0)) resolve();
+  /** Lets the held `findInMemos` answers go (`holdMemoFilter`), the first `count` of them or all. */
+  releaseMemoFilters(count = Infinity): void {
+    for (const resolve of this.heldMemoFilters.splice(0, count)) resolve();
   }
 
   async cancelWorkspaceSearch() {
