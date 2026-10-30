@@ -118,8 +118,8 @@ html.sidebar-resizing * {
 
 /* The grip on the sidebar's right edge: a pane divider's (`.pane-divider`), straddling the line,
  * from the window's top — the top row too — to its bottom. Fixed to the window, out of the grid,
- * and not in the sidebar, which goes inert as a drag collapses it. Gone while collapsed, except
- * under the drag that collapsed it, which may bring the sidebar back. */
+ * and not in the sidebar, which goes inert as a drag collapses it. Gone while collapsed: the drag
+ * that collapsed it keeps the pointer all the same (pointer capture), so it can bring it back. */
 .sidebar-divider {
   position: fixed;
   top: 0;
@@ -131,7 +131,7 @@ html.sidebar-resizing * {
   touch-action: none;
 }
 
-html.sidebar-collapsed:not(.sidebar-resizing) .sidebar-divider {
+html.sidebar-collapsed .sidebar-divider {
   display: none;
 }
 
