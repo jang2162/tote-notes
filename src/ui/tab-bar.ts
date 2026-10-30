@@ -14,11 +14,65 @@ export interface TabView {
 /** How far a pressed tab moves before it is being dragged; less is a click. */
 export const DRAG_START_PX = 4;
 
-/** Where a tab dropped at `x` goes among `tabs` (their client boxes, left to right): before the
- * first tab whose middle is right of `x`, else at the end. */
-export function dropIndex(tabs: { left: number; width: number }[], x: number): number {
-  const index = tabs.findIndex((tab) => x < tab.left + tab.width / 2);
-  return index < 0 ? tabs.length : index;
+/** A tab's box in its bar as laid out — the transforms of a preview leave it be — in the bar's
+ * content's coordinates, however far the bar is scrolled. */
+export interface TabBox {
+  left: number;
+  width: number;
+}
+
+const middleOf = (tab: TabBox) => tab.left + tab.width / 2;
+
+/** Where a dragged tab whose middle is at `middle` lands among `tabs` (left to right): past every
+ * tab whose middle it has reached. `from` is the dragged tab's own index among them, when it is
+ * one of them: it does not count. Returns its index once it is there. */
+export function landing(tabs: readonly TabBox[], middle: number, from: number | null): number {
+  let to = 0;
+  tabs.forEach((tab, index) => {
+    if (index !== from && middleOf(tab) <= middle) to++;
+  });
+  return to;
+}
+
+/** How `tabs` show a tab dragged over their bar: where it lands (`to`, as `landing`) and how far
+ * each tab moves for that, by index. Dragged in its own bar — tab `from`, its left edge at `left`
+ * — the others step aside into the order it would leave, and it stays between the bar's first and
+ * last places however far past them it goes. From another bar, `width` wide with its middle at
+ * `middle`, the tabs from where it would go on open a gap for it. */
+export function arrange(
+  tabs: readonly TabBox[],
+  dragged: { from: number; left: number } | { from: null; middle: number; width: number },
+): { to: number; shifts: number[] } {
+  if (dragged.from === null) {
+    const to = landing(tabs, dragged.middle, null);
+    return { to, shifts: tabs.map((_, index) => (index < to ? 0 : dragged.width)) };
+  }
+  const { from } = dragged;
+  const own = tabs[from];
+  // Where the pointer is, not where the tab is held: a wide tab held at the end may be short of a
+  // narrow last tab's middle.
+  const to = landing(tabs, dragged.left + own.width / 2, from);
+  const first = tabs[0].left;
+  const last = tabs[tabs.length - 1];
+  const order = tabs.map((_, index) => index).filter((index) => index !== from);
+  order.splice(to, 0, from);
+  const shifts = tabs.map(() => 0);
+  let left = first;
+  for (const index of order) {
+    shifts[index] = left - tabs[index].left;
+    left += tabs[index].width;
+  }
+  const held = Math.min(last.left + last.width - own.width, Math.max(first, dragged.left));
+  shifts[from] = held - own.left;
+  return { to, shifts };
+}
+
+/** A tab dragged over a bar (`TabBar.preview`): tab `id`, `width` wide, with the pointer at `x` in
+ * client coordinates. */
+export interface TabPreview {
+  id: string;
+  width: number;
+  x: number;
 }
 
 /** A tab being dragged, in client coordinates — out of the window too, past its edges: it goes
@@ -32,8 +86,13 @@ export interface TabDrag {
 
 export class TabBar {
   readonly el = h("div", { class: "tabbar", role: "tablist" });
-  /** The tab dragged out of the window, dimmed while it is (`markOut`). */
+  /** The tab dragged away from this bar, dimmed while it is (`markOut`). */
   private out: string | null = null;
+  /** The tab of this bar being dragged and how far right of its left edge it was pressed: over this
+   * bar it follows the pointer from there. */
+  private held: { id: string; grab: number } | null = null;
+  /** The preview shown (`preview`), shown again as the bar is drawn again. */
+  private shown: TabPreview | null = null;
 
   constructor(
     private readonly actions: {
@@ -55,37 +114,71 @@ export class TabBar {
 
   render(tabs: TabView[]): void {
     this.el.replaceChildren(...tabs.map((tab) => this.tab(tab)));
+    // Before the preview: the active tab is scrolled to where it is laid out, not where it is shown.
     this.el.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
+    if (this.shown) this.show();
   }
 
-  /** Where a tab dropped at `x` goes in this bar (`dropIndex`). */
-  indexAt(x: number): number {
-    return dropIndex(
-      this.tabEls().map((el) => el.getBoundingClientRect()),
-      x,
-    );
+  /** Where tab `id`, let go with the pointer at `x`, goes in this bar: the index `Tabs.place` takes.
+   * The place `preview` shows for the same `x`. */
+  indexAt(x: number, id?: string): number {
+    const { from, to } = this.arrangement({ id: id ?? "", width: 0, x });
+    return from !== null && to >= from ? to + 1 : to;
   }
 
-  /** Marks where a dropped tab would go: before tab `index`, after the last one, or — with no
-   * tabs — the bar itself. Null takes the mark away. */
-  markDrop(index: number | null): void {
-    const tabs = this.tabEls();
-    for (const el of tabs) el.classList.remove("drop-before", "drop-after");
-    this.el.classList.toggle("drop-into", index !== null && tabs.length === 0);
-    if (index === null || tabs.length === 0) return;
-    if (index < tabs.length) tabs[index].classList.add("drop-before");
-    else tabs[tabs.length - 1].classList.add("drop-after");
+  /** Shows the tabs as they would be with `drag` let go over this bar (`arrange`): only how they
+   * look — their order, as the tabs and a screen reader know it, is the same until a drop moves
+   * the tab. A bar with no tabs is marked as a whole. Null puts every tab back. */
+  preview(drag: TabPreview | null): void {
+    this.shown = drag;
+    this.show();
   }
 
-  /** Dims tab `id`, dragged out of the window; null takes that away. It stays dimmed as the bar is
-   * drawn again. */
+  /** Dims tab `id`, dragged away from this bar — over another one, or out of the window; null takes
+   * that away. It stays dimmed as the bar is drawn again. */
   markOut(id: string | null): void {
     this.out = id;
     for (const el of this.tabEls()) el.classList.toggle("dragging-out", el.dataset.id === id);
   }
 
+  /** How wide tab `id` is laid out; 0 when it is not in this bar. */
+  widthOf(id: string): number {
+    return this.tabEls().find((el) => el.dataset.id === id)?.offsetWidth ?? 0;
+  }
+
   private tabEls(): HTMLElement[] {
     return [...this.el.querySelectorAll<HTMLElement>(".tab")];
+  }
+
+  /** Client `x` in the bar's content's coordinates, those of `TabBox`. */
+  private contentX(x: number): number {
+    return x - this.el.getBoundingClientRect().left - this.el.clientLeft + this.el.scrollLeft;
+  }
+
+  /** `arrange` for `drag` over this bar as it is laid out now. Tab `id` is this bar's own when it is
+   * in it: held where it was pressed, or by its middle when no press is followed here. */
+  private arrangement(drag: TabPreview): { from: number | null; to: number; shifts: number[] } {
+    const els = this.tabEls();
+    // The bar is their offset parent (styles.css): offsets are in its content, transforms left out.
+    const tabs = els.map((el) => ({ left: el.offsetLeft, width: el.offsetWidth }));
+    const at = this.contentX(drag.x);
+    const from = els.findIndex((el) => el.dataset.id === drag.id);
+    if (from < 0)
+      return { from: null, ...arrange(tabs, { from: null, middle: at, width: drag.width }) };
+    const grab = this.held?.id === drag.id ? this.held.grab : tabs[from].width / 2;
+    return { from, ...arrange(tabs, { from, left: at - grab }) };
+  }
+
+  private show(): void {
+    const els = this.tabEls();
+    this.el.classList.toggle("drop-into", this.shown !== null && els.length === 0);
+    const { from, shifts } = this.shown
+      ? this.arrangement(this.shown)
+      : { from: null, shifts: els.map(() => 0) };
+    els.forEach((el, index) => {
+      el.style.transform = shifts[index] ? `translateX(${shifts[index]}px)` : "";
+      el.classList.toggle("dragging", index === from);
+    });
   }
 
   private tab(tab: TabView): HTMLElement {
@@ -132,7 +225,7 @@ export class TabBar {
     );
     el.addEventListener("pointerdown", (event) => {
       if (event.button === 0 && !(event.target as Element).closest(".tab-close"))
-        this.follow(tab.id, event);
+        this.follow(tab.id, event, el);
     });
     el.addEventListener("mousedown", (event) => {
       if (event.button === 0 && !(event.target as Element).closest(".tab-close"))
@@ -154,13 +247,18 @@ export class TabBar {
     return el;
   }
 
-  /** Follows a press on tab `id` until it is let go. Pointer events rather than HTML5 drag and
+  /** Follows a press on tab `id` (`pressed`) until it is let go. Pointer events rather than HTML5 drag and
    * drop: the spike could not confirm the latter between tab bars in the app's webview. The tab's
    * element is drawn again as it is selected, so the listeners are the window's. */
-  private follow(id: string, down: PointerEvent): void {
+  private follow(id: string, down: PointerEvent, pressed: HTMLElement): void {
     let drag: TabDrag | null = null;
     const listening = new AbortController();
-    const stop = () => listening.abort();
+    // Measured now: selecting the tab may scroll the bar before the drag starts.
+    const grab = this.contentX(down.clientX) - pressed.offsetLeft;
+    const stop = () => {
+      listening.abort();
+      this.held = null;
+    };
     const ours = (event: PointerEvent) => event.pointerId === down.pointerId;
     const move = (event: PointerEvent) => {
       if (!ours(event)) return;
@@ -170,6 +268,7 @@ export class TabBar {
         const dx = event.clientX - down.clientX;
         const dy = event.clientY - down.clientY;
         if (Math.hypot(dx, dy) <= DRAG_START_PX) return;
+        this.held = { id, grab };
         drag = this.actions.drag(id);
         // Over a viewer's frame the moves would go to the frame's document. Without the capture the
         // drag still follows the pointer over the page.
@@ -183,8 +282,12 @@ export class TabBar {
     };
     const up = (event: PointerEvent) => {
       if (!ours(event)) return;
-      stop();
-      drag?.drop(event.clientX, event.clientY, event.screenX, event.screenY);
+      // Still held while it is dropped: the drop goes where the tab is shown, held where it was.
+      try {
+        drag?.drop(event.clientX, event.clientY, event.screenX, event.screenY);
+      } finally {
+        stop();
+      }
     };
     const cancel = () => {
       stop();

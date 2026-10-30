@@ -26,6 +26,8 @@ const editor = (page: Page, index: number) => pane(page, index).locator(".cm-con
 const memoTab = (memoId: string) => ({ kind: "memo", memoId });
 const titlesIn = (target: Locator) => target.locator(".tab .tab-title");
 const mask = (page: Page) => page.locator(".drop-mask");
+/** Tabs a drag's preview has moved from their place (tests/e2e/tab-drag-preview.spec.ts). */
+const moved = (page: Page) => page.locator('.tab[style*="translate"]');
 
 type Box = { x: number; y: number; width: number; height: number };
 
@@ -131,8 +133,8 @@ test("the mask covers the half a drop on the right edge would take", async ({ pa
     width: box.width / 2,
     height: box.height,
   });
-  // Over a pane's body the tab bar marks no place.
-  await expect(page.locator(".tab.drop-before, .tab.drop-after")).toHaveCount(0);
+  // Over a pane's body the tab bar shows no place.
+  await expect(moved(page)).toHaveCount(0);
   await page.mouse.up();
   await expect(mask(page)).toHaveCount(0);
   await expect(panes(page)).toHaveCount(2);
@@ -326,16 +328,18 @@ test("Esc during a drag calls it off", async ({ page }) => {
     session: paneSession([[memoTab("a"), memoTab("b")], [memoTab("c")]]),
   });
   await drag(page, tab(page, 0, "나"), await before(tab(page, 1, "다")), false);
-  await expect(page.locator(".tab.drop-before")).toHaveCount(1);
+  // 다 steps aside for it.
+  await expect(moved(page)).toHaveCount(1);
   await expect(mask(page)).toHaveCount(0);
-  // On into the pane's body: the mask takes over from the tab bar's mark.
+  // On into the pane's body: the mask takes over from the tab bar's preview.
   const body = await inBody(pane(page, 1), 1 / 2, 1 / 2);
   await page.mouse.move(body.x, body.y, { steps: 4 });
   await expect(mask(page)).toHaveCount(1);
-  await expect(page.locator(".tab.drop-before")).toHaveCount(0);
+  await expect(moved(page)).toHaveCount(0);
   await page.keyboard.press("Escape");
   await expect(mask(page)).toHaveCount(0);
-  await expect(page.locator(".tab.drop-before, .tab.drop-after")).toHaveCount(0);
+  await expect(moved(page)).toHaveCount(0);
+  await expect(page.locator(".tab.dragging, .tab.dragging-out")).toHaveCount(0);
   await page.mouse.up();
   await expect(panes(page)).toHaveCount(2);
   await expect(titles(page, 0)).toHaveText(["가", "나"]);
@@ -351,8 +355,9 @@ test("a press that moves no more than 4px is a click", async ({ page }) => {
   await page.mouse.move(x, y);
   await page.mouse.down();
   await page.mouse.move(x + 4, y, { steps: 2 });
-  // Not dragging: no landing place is marked.
-  await expect(page.locator(".tab.drop-before, .tab.drop-after")).toHaveCount(0);
+  // Not dragging: no tab follows the pointer or moves aside.
+  await expect(page.locator(".tab.dragging")).toHaveCount(0);
+  await expect(moved(page)).toHaveCount(0);
   await page.mouse.up();
   await expect(activeTitle(page, 0)).toHaveText("나");
   await expect(titles(page, 0)).toHaveText(["가", "나"]);

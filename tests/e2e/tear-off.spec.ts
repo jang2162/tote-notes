@@ -490,9 +490,9 @@ test("dragging back over the tab bar and letting go keeps the tab where it was",
   await dragOut(page, tab(page, "가"), false);
   await expect(tab(page, "가")).toHaveClass(/\bdragging-out\b/);
   await page.mouse.move(box.x + box.width / 4, box.y + box.height / 2, { steps: 8 });
-  // Back in the window: no longer dimmed, its place in the bar marked.
+  // Back in the window: no longer dimmed, it follows the pointer in its bar.
   await expect(page.locator(".tab.dragging-out")).toHaveCount(0);
-  await expect(tab(page, "가")).toHaveClass(/\bdrop-before\b/);
+  await expect(tab(page, "가")).toHaveClass(/(^|\s)dragging(\s|$)/);
   await page.mouse.up();
   await expect(page.locator(".tab .tab-title")).toHaveText(["가", "나"]);
   await expect(page.locator(".pane")).toHaveCount(1);

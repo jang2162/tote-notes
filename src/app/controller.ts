@@ -1176,58 +1176,65 @@ export class AppController implements DocHost, PaneHost {
   }
 
   dragTab(tabId: string): TabDrag {
-    let marked: Pane | null = null;
     let dimmed: Pane | null = null;
+    let previewed: Pane | null = null;
+    /** Where a drop would go, as `over` last showed it: the drop goes there. */
+    let target: DropTarget = null;
     const dragged = () => this.docs.find((each) => each.tabId === tabId);
     const outside = (x: number, y: number) =>
       x < 0 || y < 0 || x >= window.innerWidth || y >= window.innerHeight;
-    // Out of the window the tab is left dimmed in its bar, and no place in this window is marked.
-    const dim = (doc: Doc | undefined) => {
+    // Away from its own bar — over another pane's, or out of the window — the tab is left dimmed
+    // there.
+    const dim = (pane: Pane | null) => {
       dimmed?.tabBar.markOut(null);
-      dimmed = doc ? this.paneOf(doc) : null;
+      dimmed = pane;
       dimmed?.tabBar.markOut(tabId);
     };
-    // A place in a tab bar is marked there, a zone of a pane's body by the mask; never both.
-    const mark = (target: DropTarget) => {
-      marked?.tabBar.markDrop(null);
-      marked = null;
-      if (target && "index" in target) {
-        marked = target.pane;
-        target.pane.tabBar.markDrop(target.index);
-      }
+    // A place in a tab bar is shown there, the tabs moved for it; a zone of a pane's body by the
+    // mask; never both.
+    const show = (x: number, home: Pane | null) => {
+      const bar = target && "index" in target ? target.pane : null;
+      if (previewed !== bar) previewed?.tabBar.preview(null);
+      previewed = bar;
+      bar?.tabBar.preview({ id: tabId, width: home?.tabBar.widthOf(tabId) ?? 0, x });
       this.showDropMask(target && "zone" in target ? target : null);
     };
+    const over = (x: number, y: number) => {
+      const doc = dragged();
+      const home = doc ? this.paneOf(doc) : null;
+      const away = outside(x, y);
+      target = away ? null : this.dropTarget(x, y, doc);
+      show(x, home);
+      dim(away || (previewed && previewed !== home) ? home : null);
+    };
+    const end = () => {
+      target = null;
+      show(0, null);
+      dim(null);
+    };
     return {
-      over: (x, y) => {
-        const doc = dragged();
-        dim(outside(x, y) ? doc : undefined);
-        mark(outside(x, y) ? null : this.dropTarget(x, y, doc));
-      },
+      over,
       drop: (x, y, screenX, screenY) => {
+        over(x, y);
         const doc = dragged();
-        dim(undefined);
+        const to = target;
+        end();
         if (doc && outside(x, y)) {
-          mark(null);
           void this.tearOff(doc, { x: screenX, y: screenY }).catch((error: unknown) =>
             this.report(error),
           );
           return;
         }
-        const target = this.dropTarget(x, y, doc);
-        mark(null);
-        if (!doc || !target) return;
+        if (!doc || !to) return;
         const moved =
-          "index" in target
-            ? this.moveTab(doc, target.pane, target.index)
-            : target.zone === "center"
-              ? this.moveTab(doc, target.pane, target.pane.tabs.list.length)
-              : this.splitWithTab(doc, target.pane, target.zone);
+          "index" in to
+            ? this.moveTab(doc, to.pane, to.index)
+            : to.zone === "center"
+              ? this.moveTab(doc, to.pane, to.pane.tabs.list.length)
+              : this.splitWithTab(doc, to.pane, to.zone);
         void moved.catch((error: unknown) => this.report(error));
       },
-      cancel: () => {
-        dim(undefined);
-        mark(null);
-      },
+      cancel: end,
     };
   }
 
@@ -1239,7 +1246,7 @@ export class AppController implements DocHost, PaneHost {
     const pane = this.panes.find((each) => hit.includes(each.el));
     if (!pane) return null;
     // The lead in front of the tab bar is left of its first tab: a drop there goes first.
-    if (hit.includes(pane.head)) return { pane, index: pane.tabBar.indexAt(x) };
+    if (hit.includes(pane.head)) return { pane, index: pane.tabBar.indexAt(x, doc?.tabId) };
     const zone = dropZone(pane.surface.el.getBoundingClientRect(), x, y);
     if (zone === "center") return { pane, zone };
     if (pane.tabs.list.length === 1 && pane.tabs.list[0] === doc) return null;

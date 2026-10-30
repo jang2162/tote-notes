@@ -605,8 +605,10 @@ html:not(.sidebar-collapsed) .tab-lead {
   box-shadow: inset 0 2px 0 var(--accent);
 }
 
-/* Fills the pane's top row (`.pane-head`), whose line it sits on, and scrolls sideways. */
+/* Fills the pane's top row (`.pane-head`), whose line it sits on, and scrolls sideways. Positioned:
+ * it is its tabs' offset parent, which a drag's preview measures them by (`TabBar`). */
 .tabbar {
+  position: relative;
   display: flex;
   flex: 1;
   align-self: stretch;
@@ -616,28 +618,10 @@ html:not(.sidebar-collapsed) .tab-lead {
   user-select: none;
 }
 
-/* A dragged tab's landing place: a bar before the tab it would go in front of, after the last
- * tab, or the whole bar of a pane with no tabs. */
+/* A dragged tab's landing place in a pane with no tabs: the whole bar. In a bar with tabs, they
+ * move aside for it. */
 .tabbar.drop-into {
   box-shadow: inset 0 -2px 0 var(--accent);
-}
-
-.tab.drop-before::before,
-.tab.drop-after::after {
-  content: "";
-  position: absolute;
-  top: 4px;
-  bottom: 4px;
-  width: 2px;
-  background: var(--accent);
-}
-
-.tab.drop-before::before {
-  left: -1px;
-}
-
-.tab.drop-after::after {
-  right: -1px;
 }
 
 /* The box around a tab and its close button, which sits beside the role=tab label, not in it. */
@@ -667,7 +651,30 @@ html:not(.sidebar-collapsed) .tab-lead {
   color: var(--fg);
 }
 
-/* Dragged out of the window: it stays here, dimmed, until it is let go. */
+/* Tabs move aside for a tab dragged over their bar, and back: a short slide, none for reduced
+ * motion (the 워크스페이스 section's rows do the same). */
+.tab {
+  transition: transform 150ms ease;
+}
+
+/* The dragged tab follows the pointer as it is, over the tabs it passes. */
+.tab.dragging {
+  z-index: 1;
+  transition: none;
+}
+
+.tab.dragging:not(.active) {
+  background: var(--sidebar-bg);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tab {
+    transition: none;
+  }
+}
+
+/* Dragged away from its bar — over another one, or out of the window: it stays here, dimmed, until
+ * it is let go. */
 .tab.dragging-out {
   opacity: 0.4;
 }
