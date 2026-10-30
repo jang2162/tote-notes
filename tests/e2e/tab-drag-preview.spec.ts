@@ -141,6 +141,34 @@ test("a neighbour gives way once the dragged tab covers two thirds of it", async
   await expect(titles(page, 0)).toHaveText(["나", "가", "다"]);
 });
 
+test("a neighbour on the left gives way once two thirds of it is covered", async ({ page }) => {
+  await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]) });
+  await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+  const was = await edges(page, 0);
+  const from = await centre(tab(page, 0, "다"));
+  const width = was["나"].right - was["나"].left;
+  // 다's left edge starts at 나's right edge: moved left by a part of 나's width, it covers that
+  // part. Each step waits for 다 to be shown there, as on the right.
+  const cover = async (part: number) => {
+    await page.mouse.move(from.x - width * part, from.y, { steps: 4 });
+    await expect
+      .poll(async () =>
+        Math.abs(was["나"].right - (await edges(page, 0))["다"].left - width * part),
+      )
+      .toBeLessThanOrEqual(1);
+  };
+  await press(page, tab(page, 0, "다"), from);
+  await cover(1 / 2);
+  await expect(tab(page, 0, "다")).toHaveClass(/(^|\s)dragging(\s|$)/);
+  expect(await shownOrder(page, 0)).toEqual(["가", "나", "다"]);
+  await cover(2 / 3 - 3 / width);
+  expect(await shownOrder(page, 0)).toEqual(["가", "나", "다"]);
+  await cover(2 / 3 + 3 / width);
+  expect(await shownOrder(page, 0)).toEqual(["가", "다", "나"]);
+  await page.mouse.up();
+  await expect(titles(page, 0)).toHaveText(["가", "다", "나"]);
+});
+
 test("a tab dragged past the bar's end drops last", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, { memos, session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]) });

@@ -4,9 +4,8 @@ import { boxOf, dragSidebarTo, menu, sidebarWidth, start, writesSettled } from "
 
 // The grip on the sidebar's right edge (spec 「사이드바 너비 조절」): 240px by default, 200 to 480
 // and at most half the window, held at 200 and collapsed below 150 while dragged, 240 again on a
-// double click,
-// written in the window's session once let go. Its first frames, the workspace switch and new
-// windows are in sidebar-session.spec.ts.
+// double click, written in the window's session once let go. Its first frames, the workspace
+// switch and new windows are in sidebar-session.spec.ts.
 
 const EXPAND = "사이드바 펼치기";
 

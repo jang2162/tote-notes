@@ -482,8 +482,9 @@ export class AppController implements DocHost, PaneHost {
 
   /** The grip on the sidebar's right edge (spec 「사이드바 너비 조절」). Dragged, the sidebar is as
    * wide as the pointer says, at once, but never below 200px; below 150px it collapses as the
-   * toggle collapses it, and comes back while the pointer does. Let go, the width is kept — collapsed, the one from before
-   * the drag stays for the next expand. A double click goes back to 240px. */
+   * toggle collapses it, and comes back at 200px once the pointer is back at 150px. Let go, the
+   * width is kept — collapsed, the one from before the drag stays for the next expand. A double
+   * click goes back to 240px. */
   private sidebarGrip(): HTMLElement {
     const el = h("div", { class: "sidebar-divider" });
     el.addEventListener("pointerdown", (down) => {
