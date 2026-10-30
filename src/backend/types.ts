@@ -583,4 +583,6 @@ export interface Backend {
   /** A workspace was made, a window came to show another workspace, or the order or the hidden
    * ones changed: the switcher lists them again. */
   onWorkspacesChanged(handler: () => void): void;
+  /** Whether the window is in macOS full screen: once as the page starts, then at each change. */
+  onFullscreen(handler: (fullscreen: boolean) => void): void;
 }

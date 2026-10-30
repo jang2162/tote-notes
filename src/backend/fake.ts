@@ -210,6 +210,8 @@ export interface FakeData {
   menuCommandRuns?: string[];
   /** The window's title bar is overlaid, as on macOS. Absent in old seeds. */
   macTitlebar?: boolean;
+  /** The window is in macOS full screen (`fullscreen` changes it). Absent in old seeds. */
+  fullscreen?: boolean;
   /** `startWindowDrag` and `toggleWindowZoom` calls. Absent in old seeds. */
   windowDrags?: number;
   windowZooms?: number;
@@ -427,6 +429,7 @@ export class FakeBackend implements Backend {
     adopt: [] as ((tab: string, x: number, y: number) => void)[],
     workspaces: [] as (() => void)[],
     restartOff: [] as (() => void)[],
+    fullscreen: [] as ((fullscreen: boolean) => void)[],
   };
   /** What the next `installUpdate` and `restartForUpdate` do instead of succeeding (tests). */
   private nextInstallFails: string | null = null;
@@ -542,6 +545,12 @@ export class FakeBackend implements Backend {
   }
   requestFlush(id: number, goal: FlushGoal = "quit"): void {
     for (const handler of this.handlers.flush) handler(id, goal);
+  }
+  /** The window goes into macOS full screen or comes out of it. */
+  fullscreen(on: boolean): void {
+    this.data.fullscreen = on;
+    this.commit();
+    for (const handler of this.handlers.fullscreen) handler(on);
   }
   /** The close or switch this window wrote its tabs for is off, as `tote://stay` tells it. */
   stay(): void {
@@ -1646,6 +1655,12 @@ export class FakeBackend implements Backend {
   }
   async onAdopt(handler: (tab: string, x: number, y: number) => void) {
     this.handlers.adopt.push(handler);
+  }
+  onFullscreen(handler: (fullscreen: boolean) => void) {
+    this.handlers.fullscreen.push(handler);
+    // As the app's first answer: after the call, not in it.
+    const fullscreen = this.data.fullscreen === true;
+    queueMicrotask(() => handler(fullscreen));
   }
 
   /** The window a tab let go at `at` goes to: the first of `dropTargets` under it — the one in

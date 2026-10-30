@@ -328,6 +328,22 @@ export class TauriBackend implements Backend {
   onPending(handler: () => void) {
     void this.window.listen("tote://pending", () => handler());
   }
+  onFullscreen(handler: (fullscreen: boolean) => void) {
+    // tao marks the window in or out of full screen before the resize that ends the transition.
+    // Only the latest ask's answer counts: answers to asks made one after another can cross.
+    let asks = 0;
+    let told: boolean | null = null;
+    const ask = async () => {
+      const at = ++asks;
+      const fullscreen = await this.window.isFullscreen();
+      if (at !== asks || fullscreen === told) return;
+      told = fullscreen;
+      handler(fullscreen);
+    };
+    // A failed ask leaves the room as it is; the next resize asks again.
+    void this.window.onResized(() => void ask().catch(() => {}));
+    void ask().catch(() => {});
+  }
   onRestartOff(handler: () => void) {
     // Sent to every window (`Step::RestartOff`); only a dialog waiting on the restart listens.
     let stopped = false;

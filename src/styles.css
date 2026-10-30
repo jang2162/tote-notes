@@ -284,6 +284,11 @@ html.mac-titlebar .tab-lead .traffic-lights-room {
   width: var(--traffic-lights-width);
 }
 
+/* In full screen the traffic lights are gone. At once: the system's own transition is moving. */
+html.mac-titlebar.fullscreen {
+  --traffic-lights-width: 0px;
+}
+
 /* Not on macOS the window has its title bar: no traffic lights to leave room for, and the title
  * names the app. */
 html:not(.mac-titlebar) .app-name,

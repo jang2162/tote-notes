@@ -334,6 +334,9 @@ export class AppController implements DocHost, PaneHost {
     this.windowStart = backend.windowStart();
     // Before the first frame, so the top row is never drawn the other way first.
     document.documentElement.classList.toggle("mac-titlebar", this.windowStart.macTitlebar);
+    // In macOS full screen the traffic lights are gone: so is their room in the top line.
+    if (this.windowStart.macTitlebar)
+      backend.onFullscreen((on) => document.documentElement.classList.toggle("fullscreen", on));
     // The rest of the top line drags the window: the panes' tab bars do so themselves (`Pane`).
     const offButtons = (target: Element) => !target.closest("button");
     const onMac = () => this.windowStart.macTitlebar;

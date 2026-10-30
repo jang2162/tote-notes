@@ -15,8 +15,16 @@ vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel }));
 vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({}) }));
 const startDragging = vi.fn();
 const toggleMaximize = vi.fn();
+const isFullscreen = vi.fn();
+const onResized = vi.fn(async (_handler: () => void) => () => {});
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
-  getCurrentWebviewWindow: () => ({ label: "ws-9", startDragging, toggleMaximize }),
+  getCurrentWebviewWindow: () => ({
+    label: "ws-9",
+    startDragging,
+    toggleMaximize,
+    isFullscreen,
+    onResized,
+  }),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
 
@@ -268,5 +276,35 @@ describe("TauriBackend window start", () => {
     await backend.toggleWindowZoom();
     expect(startDragging).toHaveBeenCalledTimes(1);
     expect(toggleMaximize).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("TauriBackend full screen", () => {
+  const settle = () => new Promise((resolve) => setTimeout(resolve, 0));
+
+  it("tells the state as the page starts, then each change, from the latest ask only", async () => {
+    const answers: ((fullscreen: boolean) => void)[] = [];
+    isFullscreen.mockImplementation(() => new Promise<boolean>((resolve) => answers.push(resolve)));
+    const told: boolean[] = [];
+    new TauriBackend().onFullscreen((fullscreen) => told.push(fullscreen));
+    const resized = onResized.mock.calls.at(-1)![0];
+    answers[0](false);
+    await settle();
+    expect(told).toEqual([false]);
+
+    resized();
+    resized();
+    answers[2](true);
+    await settle();
+    // The older ask's answer comes late: the window has moved on since.
+    answers[1](false);
+    await settle();
+    expect(told).toEqual([false, true]);
+
+    // A resize that changes nothing tells nothing.
+    resized();
+    answers[3](true);
+    await settle();
+    expect(told).toEqual([false, true]);
   });
 });

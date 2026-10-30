@@ -214,3 +214,48 @@ test("not on macOS nothing drags or zooms the window", async ({ page }) => {
   expect(await drags(page)).toBe(0);
   expect(await zooms(page)).toBe(0);
 });
+
+// Spec 「전체 화면에서 맨 윗줄」 (docs/superpowers/specs/2026-10-30-tote-notes-sidebar-resize-and-fullscreen-design.md):
+// the fake goes in and out of macOS full screen with `fullscreen`, telling the page in the call.
+
+/** Where the app's name starts, and the lead's expand button, the moment the window goes in or out
+ * of full screen: read in the same task, so a transition would show its start. */
+const xsAt = (page: Page, fullscreen: boolean) =>
+  page.evaluate((on) => {
+    window.__tote.backend.fullscreen(on);
+    const x = (selector: string) => document.querySelector(selector)!.getBoundingClientRect().x;
+    return { name: x(".sidebar-head .app-name"), lead: x(".tab-lead button") };
+  }, fullscreen);
+
+test("in full screen the traffic lights' room goes at once, and comes back after", async ({
+  page,
+}) => {
+  await start(page, { ...mac, ...twoTabs });
+  await expect(titles(page)).toHaveText(["가", "나"]);
+  const name = page.locator(".sidebar-head .app-name");
+  expect((await boxOf(name)).x).toBe(88);
+
+  expect((await xsAt(page, true)).name).toBe(8);
+  await expect(page.locator("html")).toHaveClass(/\bfullscreen\b/);
+  await toggle(page, COLLAPSE).click();
+  await slid(page, 0);
+  const expand = page.locator(".tab-lead").getByRole("button", { name: EXPAND, exact: true });
+  expect((await boxOf(expand)).x).toBe(8);
+  expect((await xsAt(page, false)).lead).toBe(88);
+  expect((await xsAt(page, true)).lead).toBe(8);
+
+  // A switch reloads the page in full screen: it starts without the room.
+  await page.reload();
+  await expect(titles(page)).toHaveText(["가", "나"]);
+  await expect.poll(async () => (await boxOf(expand)).x).toBe(8);
+  expect((await xsAt(page, false)).lead).toBe(88);
+});
+
+test("not on macOS full screen changes nothing in the top row", async ({ page }) => {
+  await start(page, twoTabs);
+  await expect(titles(page)).toHaveText(["가", "나"]);
+  const own = await boxOf(toggle(page, COLLAPSE));
+  await page.evaluate(() => window.__tote.backend.fullscreen(true));
+  await expect(page.locator("html")).not.toHaveClass(/\bfullscreen\b/);
+  expect(await boxOf(toggle(page, COLLAPSE))).toEqual(own);
+});
