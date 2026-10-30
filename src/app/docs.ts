@@ -698,14 +698,15 @@ export class MemoDoc extends Doc {
     this.setInfo(await this.host.backend.renameMemo(this.info.id, file));
   }
 
-  /** Spec 「편집기」: the file takes the language's first extension, the index keeps the id. */
-  async changeLanguage(lang: LanguageInfo): Promise<void> {
+  /** Spec 「편집기」: the file takes the language's first extension, the index keeps the id. A
+   * `detected` language leaves a memo the person named as it is (the backend checks: this tab may
+   * not have heard of a rename another window made). */
+  async changeLanguage(lang: LanguageInfo, detected = false): Promise<void> {
     await this.saveNow();
     const ext = lang.extensions[0] ?? splitName(this.info.file).ext;
-    this.info = await this.host.backend.setMemoLanguage(this.info.id, lang.id, ext);
-    this.language = lang.id;
-    this.host.changed(this, "info");
-    await this.refreshLanguage();
+    const info = await this.host.backend.setMemoLanguage(this.info.id, lang.id, ext, detected);
+    // Through `setInfo`: a listing that set out before this answer must not undo it (`follow`).
+    await (this.setInfo(info) ?? this.refreshLanguage());
   }
 
   /** Automatic detection (spec 「편집기」): only a `.md` memo without a language whose name tote
@@ -731,7 +732,7 @@ export class MemoDoc extends Doc {
     const found = detectLanguage(this.state.doc, this.host.languages());
     if (!found || found.id === "markdown") return;
     try {
-      await this.changeLanguage(found);
+      await this.changeLanguage(found, true);
     } catch (error) {
       this.fail(error);
     }
@@ -844,14 +845,15 @@ export class MemoDoc extends Doc {
 
   private infoCount = 0;
 
-  private setInfo(info: MemoInfo): void {
+  /** Returns the language's refresh when the extension changed, for a caller to wait on. */
+  private setInfo(info: MemoInfo): Promise<void> | undefined {
     this.infoCount++;
     const extensionChanged = splitName(info.file).ext !== splitName(this.info.file).ext;
     this.info = info;
     this.language = info.language ?? null;
     this.host.changed(this, "info");
     // A new extension is a new language: its configuration is read, then the editor follows.
-    if (extensionChanged) void this.refreshLanguage();
+    return extensionChanged ? this.refreshLanguage() : undefined;
   }
 }
 

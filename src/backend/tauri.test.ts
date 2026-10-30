@@ -56,7 +56,7 @@ describe("TauriBackend", () => {
       [
         () => backend.setMemoLanguage("m", "python", "py"),
         "set_memo_language",
-        { id: "m", language: "python", ext: "py" },
+        { id: "m", language: "python", ext: "py", detected: false },
       ],
       [() => backend.deleteMemo("m"), "delete_memo", { id: "m" }],
       [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],

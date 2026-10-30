@@ -814,9 +814,11 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
-  async setMemoLanguage(id: string, language: string, ext: string) {
+  async setMemoLanguage(id: string, language: string, ext: string, detected = false) {
     this.refuseWhileSwitching();
     const memo = this.memo(id);
+    // As `set_language`: a detected language leaves a name the person chose.
+    if (detected && !memo.autoTitle) return this.info(id, memo);
     const { stem, ext: current } = splitName(memo.file);
     if (current.toLowerCase() !== ext.toLowerCase()) {
       if (!validName(`${stem}.${ext}`)) throw new BackendError("invalid-name", ext);

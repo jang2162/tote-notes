@@ -326,9 +326,10 @@ pub async fn set_memo_language(
     id: String,
     language: String,
     ext: String,
+    detected: Option<bool>,
 ) -> CmdResult<MemoInfo> {
     let workspace = workspace_to_change(&core, &window)?;
-    let info = lock(&workspace).set_language(&id, &language, &ext)?;
+    let info = lock(&workspace).set_language(&id, &language, &ext, detected.unwrap_or(false))?;
     memos_changed(window.app_handle(), window.label());
     Ok(info)
 }

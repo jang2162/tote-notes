@@ -459,7 +459,8 @@ export interface Backend {
   memoViewed(id: string): Promise<MemoInfo>;
   /** Pins the memo to the top of the memo list, or lets it go; every window's list follows. */
   setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
-  setMemoLanguage(id: string, language: string, ext: string): Promise<MemoInfo>;
+  /** `detected`: the editor's automatic pick, which leaves a memo the person named as it is. */
+  setMemoLanguage(id: string, language: string, ext: string, detected?: boolean): Promise<MemoInfo>;
   deleteMemo(id: string): Promise<void>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;

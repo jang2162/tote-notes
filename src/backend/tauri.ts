@@ -125,8 +125,8 @@ export class TauriBackend implements Backend {
   setMemoPinned(id: string, pinned: boolean) {
     return call<MemoInfo>("set_memo_pinned", { id, pinned });
   }
-  setMemoLanguage(id: string, language: string, ext: string) {
-    return call<MemoInfo>("set_memo_language", { id, language, ext });
+  setMemoLanguage(id: string, language: string, ext: string, detected = false) {
+    return call<MemoInfo>("set_memo_language", { id, language, ext, detected });
   }
   deleteMemo(id: string) {
     return call<void>("delete_memo", { id });
