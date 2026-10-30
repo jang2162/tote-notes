@@ -3,7 +3,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { boxOf, dragSidebarTo, menu, sidebarWidth, start, writesSettled } from "./helpers";
 
 // The grip on the sidebar's right edge (spec 「사이드바 너비 조절」): 240px by default, 180 to 480
-// and at most half the window, collapsed below 120 while dragged, 240 again on a double click,
+// and at most half the window, collapsed below 200 while dragged, 240 again on a double click,
 // written in the window's session once let go. Its first frames, the workspace switch and new
 // windows are in sidebar-session.spec.ts.
 
@@ -63,13 +63,10 @@ test("dragging the grip widens the sidebar, written in the session once let go",
   await expectWidth(page, 300);
 });
 
-test("below 180 the sidebar holds at 180, and past half the window at the half", async ({
+test("past 480 the sidebar holds at 480, and past half the window at the half", async ({
   page,
 }) => {
   await start(page);
-  await dragSidebarTo(page, 150);
-  await expectWidth(page, 180);
-  await expect.poll(async () => (await saved(page)).width).toBe(180);
   await dragSidebarTo(page, 900);
   await expectWidth(page, 480);
   await page.setViewportSize({ width: 800, height: 720 });
@@ -81,7 +78,7 @@ test("below 180 the sidebar holds at 180, and past half the window at the half",
   await expect.poll(async () => (await saved(page)).width).toBe(400);
 });
 
-test("below 120 it collapses while still dragged, and back over 120 it expands at the pointer", async ({
+test("below 200 it collapses while still dragged, and back at 200 it expands at the pointer", async ({
   page,
 }) => {
   await start(page);
@@ -93,9 +90,15 @@ test("below 120 it collapses while still dragged, and back over 120 it expands a
   expect(await page.evaluate(() => !!document.activeElement?.closest(".sidebar"))).toBe(false);
   expect(await sidebarWidth(page)).toBe(0);
 
-  await page.mouse.move(150, 300, { steps: 2 });
+  await page.mouse.move(199, 300, { steps: 2 });
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await page.mouse.move(200, 300, { steps: 2 });
   await expect(page.locator("html")).not.toHaveClass(/\bsidebar-collapsed\b/);
-  await expectWidth(page, 180);
+  await expectWidth(page, 200);
+  await page.mouse.move(260, 300, { steps: 2 });
+  await expectWidth(page, 260);
+  await page.mouse.move(150, 300, { steps: 2 });
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
   await page.mouse.move(200, 300, { steps: 2 });
   await expectWidth(page, 200);
   await page.mouse.up();

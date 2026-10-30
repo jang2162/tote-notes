@@ -9,8 +9,8 @@ import {
 } from "./sidebar-width";
 
 describe("the sidebar's width", () => {
-  it("is 240 by default, between 180 and 480, and collapses below 120", () => {
-    expect(SIDEBAR_WIDTH).toEqual({ default: 240, min: 180, max: 480, collapseBelow: 120 });
+  it("is 240 by default, between 180 and 480, and collapses below 200", () => {
+    expect(SIDEBAR_WIDTH).toEqual({ default: 240, min: 180, max: 480, collapseBelow: 200 });
   });
 
   it("reads only numbers from 180 to 480, as the native side does (`layout_sidebar_width`)", () => {
@@ -37,12 +37,12 @@ describe("the sidebar's width", () => {
     expect(shownSidebarWidth(240, 480)).toBe(240);
   });
 
-  it("follows the pointer while dragged, held at 180 down to 120 and collapsed below", () => {
+  it("follows the pointer while dragged, collapsed below 200 (200 itself stays open)", () => {
     expect(draggedSidebar(300, 1280)).toEqual({ collapsed: false, width: 300 });
     expect(draggedSidebar(300.4, 1280)).toEqual({ collapsed: false, width: 300 });
-    expect(draggedSidebar(150, 1280)).toEqual({ collapsed: false, width: 180 });
-    expect(draggedSidebar(120, 1280)).toEqual({ collapsed: false, width: 180 });
-    expect(draggedSidebar(119.9, 1280)).toEqual({ collapsed: true });
+    expect(draggedSidebar(200, 1280)).toEqual({ collapsed: false, width: 200 });
+    expect(draggedSidebar(199.9, 1280)).toEqual({ collapsed: true });
+    expect(draggedSidebar(150, 1280)).toEqual({ collapsed: true });
     expect(draggedSidebar(-50, 1280)).toEqual({ collapsed: true });
     expect(draggedSidebar(700, 1280)).toEqual({ collapsed: false, width: 480 });
     expect(draggedSidebar(450, 800)).toEqual({ collapsed: false, width: 400 });
