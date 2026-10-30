@@ -23,35 +23,46 @@ export interface TabBox {
 
 const middleOf = (tab: TabBox) => tab.left + tab.width / 2;
 
-/** Where a dragged tab whose middle is at `middle` lands among `tabs` (left to right): past every
- * tab whose middle it has reached. `from` is the dragged tab's own index among them, when it is
- * one of them: it does not count. Returns its index once it is there. */
-export function landing(tabs: readonly TabBox[], middle: number, from: number | null): number {
+/** Where a tab from another bar whose middle is at `middle` lands among `tabs` (left to right):
+ * past every tab whose middle it has reached. Returns its index once it is there. */
+export function landing(tabs: readonly TabBox[], middle: number): number {
+  return tabs.filter((tab) => middleOf(tab) <= middle).length;
+}
+
+/** Where tab `from` of `tabs`, dragged in its own bar with its left edge at `left`, lands among the
+ * others: a tab gives way once the dragged tab's leading edge goes over two thirds of it — its
+ * right edge past the left two thirds of a tab right of it, its left edge past the right two
+ * thirds of a tab left of it (spec 「끌어 온 탭 바 자기 위」). Returns its index once it is
+ * there, the others counted without it. */
+export function ownLanding(tabs: readonly TabBox[], from: number, left: number): number {
+  const right = left + tabs[from].width;
   let to = 0;
   tabs.forEach((tab, index) => {
-    if (index !== from && middleOf(tab) <= middle) to++;
+    const twoThirds = (tab.width * 2) / 3;
+    // A tab left of it stays before it until it gives way; one right of it comes before it once it
+    // has.
+    if (index < from && left >= tab.left + tab.width - twoThirds) to++;
+    if (index > from && right > tab.left + twoThirds) to++;
   });
   return to;
 }
 
-/** How `tabs` show a tab dragged over their bar: where it lands (`to`, as `landing`) and how far
- * each tab moves for that, by index. Dragged in its own bar — tab `from`, its left edge at `left`
- * — the others step aside into the order it would leave, and it stays between the bar's first and
+/** How `tabs` show a tab dragged over their bar: where it lands (`to`) and how far each tab moves
+ * for that, by index. Dragged in its own bar — tab `from`, its left edge at `left` — the others
+ * step aside into the order it would leave (`ownLanding`), and it stays between the bar's first and
  * last places however far past them it goes. From another bar, `width` wide with its middle at
- * `middle`, the tabs from where it would go on open a gap for it. */
+ * `middle`, the tabs from where it would go on (`landing`) open a gap for it. */
 export function arrange(
   tabs: readonly TabBox[],
   dragged: { from: number; left: number } | { from: null; middle: number; width: number },
 ): { to: number; shifts: number[] } {
   if (dragged.from === null) {
-    const to = landing(tabs, dragged.middle, null);
+    const to = landing(tabs, dragged.middle);
     return { to, shifts: tabs.map((_, index) => (index < to ? 0 : dragged.width)) };
   }
   const { from } = dragged;
   const own = tabs[from];
-  // Where the pointer is, not where the tab is held: a wide tab held at the end may be short of a
-  // narrow last tab's middle.
-  const to = landing(tabs, dragged.left + own.width / 2, from);
+  const to = ownLanding(tabs, from, dragged.left);
   const first = tabs[0].left;
   const last = tabs[tabs.length - 1];
   const order = tabs.map((_, index) => index).filter((index) => index !== from);
