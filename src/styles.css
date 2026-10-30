@@ -1015,6 +1015,12 @@ html:not(.sidebar-collapsed) .tab-lead {
   font-size: 12px;
 }
 
+/* With nothing to say (an empty pane) the bar would shrink to its padding and border: a stray
+ * line under the placeholder. It goes until something is said. */
+.statusbar:not(:has(> :not(:empty))) {
+  display: none;
+}
+
 .status-message {
   flex: 1;
   overflow: hidden;

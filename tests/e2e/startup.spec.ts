@@ -73,6 +73,14 @@ test("the window has one pane holding the tab bar and the editor", async ({ page
   await expect(page.locator("main.main > .statusbar")).toHaveCount(1);
 });
 
+test("an empty pane shows no status bar until there is something to say", async ({ page }) => {
+  await start(page);
+  const bar = page.locator("main.main > .statusbar");
+  await expect(bar).toBeHidden();
+  await page.evaluate(() => window.__tote.backend.notice("워크스페이스가 없습니다: 없는곳"));
+  await expect(bar).toBeVisible();
+});
+
 test("a CLI failure shows in the status bar", async ({ page }) => {
   await start(page);
   await page.evaluate(() => window.__tote.backend.notice("워크스페이스가 없습니다: 없는곳"));
