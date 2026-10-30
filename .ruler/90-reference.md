@@ -27,6 +27,7 @@
 | tote-notes 워크스페이스 순서·숨김·설정 「워크스페이스」 구역·고르개 단축키 안내를 고치거나 그 설계를 바꿀 때 | `docs/superpowers/specs/2026-10-29-tote-notes-workspace-order-and-hiding-design.md`       |
 | tote-notes 워크스페이스 순서·숨김 계획을 실행할 때                                                           | `docs/superpowers/plans/2026-10-29-tote-notes-workspace-order-and-hiding.md`              |
 | tote-notes 워크스페이스 순서·숨김을 실기기(WKWebView)에서 확인할 때                                          | `docs/superpowers/reports/2026-10-29-tote-notes-workspace-order-smoke.md`                 |
+| tote-notes 탭 끌기 미리 보기를 실기기(WKWebView)에서 확인할 때                                               | `docs/superpowers/reports/2026-10-30-tote-notes-tab-drag-preview-smoke.md`                |
 | tote-notes 제목 줄 탭(macOS 신호등 줄)·사이드바 접기를 고치거나 그 설계를 바꿀 때                            | `docs/superpowers/specs/2026-10-29-tote-notes-titlebar-tabs-and-sidebar-toggle-design.md` |
 | tote-notes 제목 줄 탭·사이드바 접기 계획을 실행할 때                                                         | `docs/superpowers/plans/2026-10-29-tote-notes-titlebar-tabs-and-sidebar-toggle.md`        |
 | tote-notes 사이드바 너비 조절·전체 화면 맨 윗줄·신호등 첫 위치를 고치거나 그 설계를 바꿀 때                  | `docs/superpowers/specs/2026-10-30-tote-notes-sidebar-resize-and-fullscreen-design.md`    |
