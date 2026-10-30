@@ -111,10 +111,6 @@ export interface FakeData {
   roots: WorkspaceRoots;
   /** Where each folder dialog was asked to open (`pickFolder`), `null` for nowhere. */
   folderStarts: (string | null)[];
-  /** Every `relocateWorkspace` call, in order. */
-  relocations: { from: string; to: string }[];
-  /** Folders `relocateWorkspace` refuses with `not-a-workspace`. */
-  notWorkspaces: string[];
   clock: number;
   /** `readMemo` calls per memo ID — lets tests check that a restore loads lazily. */
   reads: Record<string, number>;
@@ -289,8 +285,6 @@ export function defaultFakeData(): FakeData {
     picks: [],
     roots: { current: "/fake", default: "/fake", defaultShown: "~/.tote" },
     folderStarts: [],
-    relocations: [],
-    notWorkspaces: [],
     clock: 1000,
     reads: {},
     memoWrites: {},
@@ -1179,21 +1173,6 @@ export class FakeBackend implements Backend {
     return answered.finally(() => {
       this.roundOpen = false;
     });
-  }
-
-  async openWorkspace(path: string) {
-    const workspace = this.data.workspaces.find((w) => w.path === path);
-    if (workspace && !workspace.open) Object.assign(workspace, { open: true, windows: 1 });
-    this.commit();
-  }
-
-  async relocateWorkspace(from: string, to: string) {
-    if (this.data.notWorkspaces.includes(to))
-      throw new BackendError("not-a-workspace", `${to} is not a tote workspace`);
-    this.data.relocations.push({ from, to });
-    const item = this.data.workspaces.find((w) => w.path === from);
-    if (item) Object.assign(item, { path: to, open: true, windows: 1, missing: false });
-    this.commit();
   }
 
   async listVersions(id: string): Promise<Version[]> {

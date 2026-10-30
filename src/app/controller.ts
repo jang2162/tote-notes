@@ -56,7 +56,7 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, pickLanguage, promptText, workspacePicker } from "../ui/dialogs";
+import { askUnsaved, pickLanguage, promptText } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -1798,7 +1798,7 @@ export class AppController implements DocHost, PaneHost {
         case "toggle-preview":
           return await this.togglePreview();
         case "open-workspace":
-          return await this.showPicker();
+          return this.openSwitcher();
         case "new-workspace":
           return await this.newWorkspace();
         case "settings":
@@ -2016,33 +2016,10 @@ export class AppController implements DocHost, PaneHost {
     }
   }
 
-  private async showPicker(): Promise<void> {
-    const items = await this.backend.listWorkspaces();
-    await workspacePicker(items, {
-      open: (path) =>
-        void this.backend.openWorkspace(path).catch((error: unknown) => this.report(error)),
-      // Made here, it opens in this window; one picked opens in a window of its own.
-      create: async (name) => {
-        try {
-          const path = await this.backend.createWorkspace(name);
-          void this.backend.switchWorkspace(path).catch((error: unknown) => this.report(error));
-          return null;
-        } catch (error) {
-          return describeError(error);
-        }
-      },
-      relocate: async (from) => {
-        try {
-          const to = await this.backend.pickFolder();
-          if (to === null) return "";
-          await this.backend.relocateWorkspace(from, to);
-          return null;
-        } catch (error) {
-          return describeError(error);
-        }
-      },
-    });
-    if (this.focused.tabs.active) this.focused.view.focus();
+  /** 「워크스페이스 열기…」: the switcher's list, in a sidebar expanded for it if it was collapsed. */
+  private openSwitcher(): void {
+    if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
+    this.switcher.open();
   }
 
   /** Opens the settings screen at `section`, or at the one seen last. */

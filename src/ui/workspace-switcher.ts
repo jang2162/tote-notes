@@ -47,7 +47,7 @@ export function switcherShortcut(
 /** The combo box at the top of the sidebar (spec 「워크스페이스 고르개」): a button with the
  * current workspace's name, and the list it opens — the workspaces, each with the ⌃ key that picks
  * it, then 「새 워크스페이스…」 and 「워크스페이스 관리…」, which opens the settings at their
- * 워크스페이스 section. 「워크스페이스 열기…」 is the 파일 menu's alone. */
+ * 워크스페이스 section. The 파일 menu's 「워크스페이스 열기…」 opens this list (`open`). */
 export class WorkspaceSwitcher {
   readonly el = h("div", { class: "ws-switcher" });
   private readonly button = h("button", {
@@ -82,7 +82,7 @@ export class WorkspaceSwitcher {
     this.list.addEventListener("focusout", (event) =>
       this.close(event.relatedTarget === null && !document.hasFocus()),
     );
-    this.button.addEventListener("click", () => (this.isOpen ? this.close() : this.openList()));
+    this.button.addEventListener("click", () => (this.isOpen ? this.close() : this.open()));
   }
 
   get isOpen(): boolean {
@@ -155,7 +155,9 @@ export class WorkspaceSwitcher {
     if (restore && back && back.isConnected && document.activeElement !== back) back.focus();
   }
 
-  private openList(): void {
+  /** Opens the list as the button does; one open already stays as it is. */
+  open(): void {
+    if (this.isOpen) return;
     const active = document.activeElement;
     this.restoreTo = active instanceof HTMLElement && active !== document.body ? active : null;
     this.list.hidden = false;

@@ -743,28 +743,6 @@ pub async fn set_workspace_order(
     Ok(())
 }
 
-/// The workspace that was at `from` is now at `to`: the recent list and the windows to reopen
-/// follow it, and it opens.
-#[tauri::command]
-pub async fn relocate_workspace(
-    app: AppHandle,
-    core: State<'_, AppCore>,
-    from: String,
-    to: String,
-) -> CmdResult<()> {
-    let from = absolute_path(&from)?;
-    let to = std::fs::canonicalize(absolute_path(&to)?)?;
-    if !Workspace::is_workspace(&to) {
-        return Err(CommandError::new(
-            "not-a-workspace",
-            format!("{} is not a tote workspace", to.display()),
-        ));
-    }
-    core.relocate(&from, &to);
-    windows::show(&app, &to)?;
-    Ok(())
-}
-
 /// Makes a workspace under the workspace root and returns its folder; no window opens on it (the
 /// window that asked switches to it).
 #[tauri::command]
@@ -794,12 +772,6 @@ pub async fn switch_workspace(
         windows::Switched::Focused => "focused",
         windows::Switched::Switching => "switching",
     })
-}
-
-#[tauri::command]
-pub async fn open_workspace(app: AppHandle, path: String) -> CmdResult<()> {
-    windows::show(&app, &absolute_path(&path)?)?;
-    Ok(())
 }
 
 #[tauri::command]

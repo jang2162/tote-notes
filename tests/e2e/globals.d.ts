@@ -5,13 +5,7 @@ import type { IRawTheme } from "@shikijs/vscode-textmate";
 
 import type { AppController } from "../../src/app/controller";
 import type { FakeBackend } from "../../src/backend/fake";
-import type {
-  askUnsaved,
-  modal,
-  pickLanguage,
-  promptText,
-  workspacePicker,
-} from "../../src/ui/dialogs";
+import type { askUnsaved, modal, pickLanguage, promptText } from "../../src/ui/dialogs";
 import type { HighlightClient } from "../../src/highlight/client";
 import type { BackendError, LanguageInfo, TextQuery, TextSearch } from "../../src/backend/types";
 import type { ViewerHost } from "../../src/viewer/host";
@@ -49,7 +43,6 @@ declare global {
     parsedOnMain: number;
     askUnsaved: typeof askUnsaved;
     promptText: typeof promptText;
-    workspacePicker: typeof workspacePicker;
     pickLanguage: typeof pickLanguage;
     modal: typeof modal;
     result: unknown;

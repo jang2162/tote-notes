@@ -1106,13 +1106,6 @@ impl AppCore {
         lock(&self.inner).launch.recent.clone()
     }
 
-    /// The workspace at `from` moved to `to`: the recent list and the windows to reopen follow it.
-    pub fn relocate(&self, from: &Path, to: &Path) {
-        let mut inner = lock(&self.inner);
-        inner.launch.relocate(from, to);
-        self.save_launch(&inner.launch);
-    }
-
     /// A window finished opening: it is the newest, and it reopens at the next launch.
     pub fn opened(&self, label: &str) {
         let mut inner = lock(&self.inner);

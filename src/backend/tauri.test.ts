@@ -99,13 +99,7 @@ describe("TauriBackend", () => {
         { order: ["/w/업무", "/w/개인"], hidden: ["/w/개인"] },
       ],
       [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
-      [() => backend.openWorkspace("/w/업무"), "open_workspace", { path: "/w/업무" }],
       [() => backend.switchWorkspace("/w/업무"), "switch_workspace", { path: "/w/업무" }],
-      [
-        () => backend.relocateWorkspace("/gone/업무", "/new/업무"),
-        "relocate_workspace",
-        { from: "/gone/업무", to: "/new/업무" },
-      ],
       [
         () => backend.flushDone(3, "저장하지 못한 메모 1개"),
         "flush_done",

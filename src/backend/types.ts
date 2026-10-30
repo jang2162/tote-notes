@@ -508,15 +508,10 @@ export interface Backend {
   /** Makes a workspace under the workspace root and returns its folder. No window opens on it:
    * the window that asked switches to it (`switchWorkspace`). */
   createWorkspace(name: string): Promise<string>;
-  /** Opens the workspace in a window of its own, or brings forward the window showing it. */
-  openWorkspace(path: string): Promise<void>;
   /** This window shows the workspace at `path`: `"focused"` when it shows it already or another
    * window showing it came forward (this window stays), `"switching"` when this window writes its
    * tabs (`onFlush`) and then reloads on it. `not-a-workspace` when `path` is not one. */
   switchWorkspace(path: string): Promise<"focused" | "switching">;
-  /** The workspace listed at `from` now lives at `to`; opens it. `not-a-workspace` when `to` is
-   * not one. */
-  relocateWorkspace(from: string, to: string): Promise<void>;
 
   /** The memo's earlier versions in this workspace's backups, newest first, only where the text
    * differs from the next older one (spec 「백업」 복원). */

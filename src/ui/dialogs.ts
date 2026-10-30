@@ -1,4 +1,4 @@
-import type { LanguageInfo, WorkspaceListItem } from "../backend/types";
+import type { LanguageInfo } from "../backend/types";
 import { h } from "./dom";
 
 /** The backdrops of the modals open now, the last one on top: Escape closes only that one. */
@@ -136,95 +136,6 @@ export function promptText(message: string, initial: string): Promise<string | n
         button("취소", () => close(null)),
         button("확인", () => close(input.value), "primary"),
       ),
-    );
-  });
-}
-
-export interface PickerActions {
-  open(path: string): void;
-  /** Resolves with the reason a name was refused, or `null` when the workspace was made. */
-  create(name: string): Promise<string | null>;
-  /** Asks where the vanished workspace at `from` went. Resolves with `null` when it was pointed
-   * at a new place, the reason it was not, or `""` when the person cancelled (nothing to show). */
-  relocate(from: string): Promise<string | null>;
-}
-
-export async function workspacePicker(
-  items: WorkspaceListItem[],
-  actions: PickerActions,
-): Promise<void> {
-  await modal<true>((close) => {
-    const list = h(
-      "ul",
-      { class: "picker-list" },
-      ...items.map((item) => {
-        const li = h("li", {
-          textContent: item.missing
-            ? `${item.name} (찾을 수 없음)`
-            : item.open
-              ? `${item.name} (열림)`
-              : item.name,
-          title: item.path,
-        });
-        li.addEventListener("click", () => {
-          if (item.missing) void relocate(item.path);
-          else {
-            actions.open(item.path);
-            close(true);
-          }
-        });
-        return li;
-      }),
-    );
-    const input = h("input", { placeholder: "새 워크스페이스 이름" });
-    input.spellcheck = false;
-    const error = h("p", { class: "modal-error" });
-    error.setAttribute("aria-live", "polite");
-    let relocating = false;
-    const relocate = async (from: string) => {
-      if (relocating) return;
-      relocating = true;
-      try {
-        const problem = await actions.relocate(from);
-        if (problem === null) close(true);
-        else error.textContent = problem;
-      } catch (e) {
-        error.textContent = e instanceof Error ? e.message : String(e);
-      } finally {
-        relocating = false;
-      }
-    };
-    let creating = false;
-    const create = async () => {
-      if (creating) return;
-      creating = true;
-      try {
-        const problem = await actions.create(input.value.trim());
-        if (problem) error.textContent = problem;
-        else close(true);
-      } catch (e) {
-        error.textContent = e instanceof Error ? e.message : String(e);
-      } finally {
-        creating = false;
-      }
-    };
-    input.addEventListener("keydown", (event) => {
-      if (!isSubmitEnter(event)) return;
-      event.preventDefault();
-      void create();
-    });
-    return h(
-      "div",
-      { class: "modal picker", role: "dialog" },
-      h("p", { textContent: "워크스페이스" }),
-      list,
-      h(
-        "div",
-        { class: "picker-create" },
-        input,
-        button("만들기", () => void create(), "primary"),
-      ),
-      error,
     );
   });
 }

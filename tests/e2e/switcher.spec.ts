@@ -366,9 +366,63 @@ test("the switcher no longer offers 워크스페이스 열기…", async ({ page
     0,
   );
   await page.keyboard.press("Escape");
-  // The 파일 menu still opens it.
+});
+
+test("워크스페이스 열기… opens the switcher's list as its button does, and no dialog", async ({
+  page,
+}) => {
+  await open(page);
+  await expect(page.locator(".cm-content")).toBeFocused();
   await menu(page, "open-workspace");
-  await expect(page.locator(".modal.picker")).toBeVisible();
+  const list = page.locator(".ws-switcher-list");
+  await expect(list).toBeVisible();
+  await expect(list).toBeFocused();
+  await expect(button(page)).toHaveAttribute("aria-expanded", "true");
+  await expect(page.locator(".ws-switcher-list .highlight")).toContainText("업무");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  // The keys work as they do on a list the button opened, and Esc gives them back to the editor.
+  await page.keyboard.press("ArrowDown");
+  await expect(page.locator(".ws-switcher-list .highlight")).toContainText("개인");
+  await page.keyboard.press("Escape");
+  await expect(list).toBeHidden();
+  await expect(page.locator(".cm-content")).toBeFocused();
+});
+
+test("워크스페이스 열기… on an open list leaves it open where it was", async ({ page }) => {
+  await open(page);
+  await button(page).click();
+  await page.keyboard.press("ArrowDown");
+  await menu(page, "open-workspace");
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  await expect(page.locator(".ws-switcher-list")).toBeFocused();
+  await expect(page.locator(".ws-switcher-list .highlight")).toContainText("개인");
+});
+
+test("워크스페이스 열기… expands a collapsed sidebar first, and it stays expanded", async ({
+  page,
+}) => {
+  await open(page);
+  await menu(page, "toggle-sidebar");
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await menu(page, "open-workspace");
+  await expect(page.locator("html")).not.toHaveClass(/\bsidebar-collapsed\b/);
+  await expect(page.locator(".ws-switcher-list")).toBeVisible();
+  await expect(page.locator(".ws-switcher-list")).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".ws-switcher-list")).toBeHidden();
+  await expect(page.locator("html")).not.toHaveClass(/\bsidebar-collapsed\b/);
+  expect(await page.evaluate(() => window.__tote.app.sidebarCollapsed)).toBe(false);
+});
+
+test("워크스페이스 열기… beside the search panel leaves the search on", async ({ page }) => {
+  await open(page);
+  await menu(page, "search-workspace");
+  await expect(page.locator(".search-input")).toBeFocused();
+  await menu(page, "open-workspace");
+  await expect(page.locator(".ws-switcher-list")).toBeFocused();
+  await expect(page.locator(".search-input")).toBeVisible();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".search-input")).toBeFocused();
 });
 
 test("clicking a workspace switches this window to it and restores its session", async ({
@@ -745,15 +799,6 @@ test("새 워크스페이스… in the menu switches this window too", async ({ 
   await page.locator(".modal input").fill("독서");
   await page.locator(".modal input").press("Enter");
   await switchedTo(page, "독서");
-  await expect(page.locator(".tab")).toHaveCount(0);
-});
-
-test("만들기 in the workspace picker switches this window too", async ({ page }) => {
-  await open(page);
-  await menu(page, "open-workspace");
-  await page.locator(".modal.picker input").fill("요리");
-  await page.locator(".modal.picker button", { hasText: "만들기" }).click();
-  await switchedTo(page, "요리");
   await expect(page.locator(".tab")).toHaveCount(0);
 });
 
