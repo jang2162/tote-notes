@@ -65,6 +65,22 @@ export const SCENARIOS: Scenario[] = [
     targetMs: 1500,
   })),
   {
+    id: "list-10k",
+    title: "메모 목록 첫 수신 메모 1만 개",
+    file: "list-10k",
+    from: "process-start",
+    to: "memos-listed",
+    targetMs: 1500,
+  },
+  {
+    id: "list-10k-ready",
+    title: "콜드 스타트 메모 1만 개",
+    file: "list-10k",
+    from: "process-start",
+    to: "app-ready",
+    targetMs: 1500,
+  },
+  {
     id: "restore-50",
     title: "세션 복원 탭 50개",
     file: "restore-50",

@@ -2171,6 +2171,7 @@ export class AppController implements DocHost, PaneHost {
       );
       const memos = await this.backend.listMemos();
       this.memoList.setMemos(memos);
+      if (!this.memosLoaded) this.mark("memos-listed");
       const listed = new Map(memos.map((memo) => [memo.id, memo]));
       for (const [doc, changes] of asked) {
         const memo = listed.get(doc.info.id);
