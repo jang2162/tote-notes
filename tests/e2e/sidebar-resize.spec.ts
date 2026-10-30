@@ -198,3 +198,151 @@ test("on macOS a press on the grip in the top row resizes and never drags or zoo
   expect(await drags()).toBe(0);
   expect(await zooms()).toBe(0);
 });
+
+/** A pointer event from the mouse (WebKit's pointer 1), as captured on the grip: from there it goes
+ * up to the window. A release lost out of the window comes back as a move with no button down. */
+const firePointer = (page: Page, type: string, x: number, buttons: number) =>
+  page.evaluate(
+    ({ type, x, buttons }) => {
+      document.querySelector(".sidebar-divider")!.dispatchEvent(
+        new PointerEvent(type, {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons,
+          clientX: x,
+          clientY: 300,
+          bubbles: true,
+        }),
+      );
+    },
+    { type, x, buttons },
+  );
+
+const resizing = (page: Page) =>
+  page.evaluate(() => document.documentElement.classList.contains("sidebar-resizing"));
+
+test("a move with no button down ends a drag whose release never came, and keeps its width", async ({
+  page,
+}) => {
+  await start(page);
+  await dragSidebarTo(page, 300, { release: false });
+  await expectWidth(page, 300);
+  await firePointer(page, "pointermove", 300, 0);
+  expect(await resizing(page)).toBe(false);
+  await expect.poll(async () => (await saved(page)).width).toBe(300);
+  // Passing over the grip with no button down moves nothing any more.
+  await firePointer(page, "pointermove", 400, 0);
+  await page.mouse.move(400, 300, { steps: 2 });
+  await expectWidth(page, 300);
+  await page.mouse.up();
+  await expectWidth(page, 300);
+  expect(await duration(page)).toBe("0s");
+});
+
+test("the window's blur or a lost capture ends a drag, which keeps the width it had", async ({
+  page,
+}) => {
+  await start(page);
+  await dragSidebarTo(page, 320, { release: false });
+  await page.evaluate(() => window.dispatchEvent(new Event("blur")));
+  expect(await resizing(page)).toBe(false);
+  await expect.poll(async () => (await saved(page)).width).toBe(320);
+  await page.mouse.move(400, 300, { steps: 2 });
+  await expectWidth(page, 320);
+  await page.mouse.up();
+
+  await dragSidebarTo(page, 260, { release: false });
+  await page.locator(".sidebar-divider").evaluate((el) => el.releasePointerCapture(1));
+  await page.mouse.move(380, 300, { steps: 2 });
+  expect(await resizing(page)).toBe(false);
+  await expectWidth(page, 260);
+  await expect.poll(async () => (await saved(page)).width).toBe(260);
+  await page.mouse.up();
+});
+
+test("a release in the frame of the last move does not slide the sidebar there", async ({
+  page,
+}) => {
+  await start(page);
+  // The column slides from the first collapse or expand on.
+  await menu(page, "toggle-sidebar");
+  await menu(page, "toggle-sidebar");
+  await expectWidth(page, 240);
+  const slides = () =>
+    document.getAnimations().filter((each) => each instanceof CSSTransition).length;
+  await expect.poll(() => page.evaluate(slides)).toBe(0);
+  /** Moves to `x` and lets go there in one go, then counts the slides it started. */
+  const flick = (x: number) =>
+    page.evaluate((x) => {
+      const grip = document.querySelector(".sidebar-divider")!;
+      for (const [type, buttons] of [
+        ["pointermove", 1],
+        ["pointerup", 0],
+      ] as const)
+        grip.dispatchEvent(
+          new PointerEvent(type, {
+            pointerId: 1,
+            pointerType: "mouse",
+            isPrimary: true,
+            buttons,
+            clientX: x,
+            clientY: 300,
+            bubbles: true,
+          }),
+        );
+      return document.getAnimations().filter((each) => each instanceof CSSTransition).length;
+    }, x);
+  await dragSidebarTo(page, 300, { release: false });
+  expect(await flick(380)).toBe(0);
+  await expectWidth(page, 380);
+  await page.mouse.up();
+  await dragSidebarTo(page, 300, { release: false });
+  expect(await flick(40)).toBe(0);
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await page.mouse.up();
+});
+
+test("the toggle wins over a drag: it ends the drag, and the next move undoes nothing", async ({
+  page,
+}) => {
+  await start(page);
+  await dragSidebarTo(page, 300, { release: false });
+  await menu(page, "toggle-sidebar");
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  expect(await resizing(page)).toBe(false);
+  await page.mouse.move(350, 300, { steps: 2 });
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await page.mouse.up();
+  await expect.poll(() => saved(page)).toEqual({ collapsed: true, width: 300 });
+
+  await menu(page, "toggle-sidebar");
+  await expectWidth(page, 300);
+  await dragSidebarTo(page, 60, { release: false });
+  await expect(page.locator("html")).toHaveClass(/\bsidebar-collapsed\b/);
+  await menu(page, "toggle-sidebar");
+  await expect(page.locator("html")).not.toHaveClass(/\bsidebar-collapsed\b/);
+  await page.mouse.move(40, 300, { steps: 2 });
+  await expect(page.locator("html")).not.toHaveClass(/\bsidebar-collapsed\b/);
+  await page.mouse.up();
+  await expectWidth(page, 300);
+});
+
+test("a press held as the window narrows shows the sidebar narrower once let go", async ({
+  page,
+}) => {
+  await start(page, { session: withWidth(400) });
+  await expectWidth(page, 400);
+  const at = await boxOf(grip(page));
+  await page.mouse.move(at.x + at.width / 2, at.y + at.height / 2);
+  await page.mouse.down();
+  await page.setViewportSize({ width: 700, height: 720 });
+  // The resize comes in a frame's rendering steps, before its animation frame callbacks: while held,
+  // the grip leaves the width alone.
+  await page.evaluate(() => new Promise((resolve) => requestAnimationFrame(resolve)));
+  expect(await sidebarWidth(page)).toBe(400);
+  await page.mouse.up();
+  await expectWidth(page, 350);
+  await writesSettled(page);
+  expect((await saved(page)).width).toBe(400);
+});

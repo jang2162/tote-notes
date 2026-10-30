@@ -193,6 +193,42 @@ function place(el: HTMLElement, rect: Rect, thin?: "width" | "height"): void {
   el.style.height = thin === "height" ? "" : percent(rect.height);
 }
 
+/** Follows a press on the grip `el` until it is let go: `move` for each move with the button down,
+ * then `end`, once. The release out of the window may never arrive (as `tab-bar.ts` follows a tab):
+ * a move with no button down, the window's blur and a lost capture end the press too. Returns what
+ * ends it early. */
+function followPress(
+  el: HTMLElement,
+  down: PointerEvent,
+  move: (event: PointerEvent) => void,
+  end: () => void,
+): () => void {
+  const listening = new AbortController();
+  const stop = () => {
+    if (listening.signal.aborted) return;
+    listening.abort();
+    end();
+  };
+  const ours = (event: PointerEvent) => event.pointerId === down.pointerId;
+  const options = { signal: listening.signal };
+  // Captured, the moves come to `el` — over a viewer's frame too — and go up to the window.
+  el.setPointerCapture(down.pointerId);
+  window.addEventListener(
+    "pointermove",
+    (event) => {
+      if (!ours(event)) return;
+      if (event.buttons === 0) return stop();
+      move(event);
+    },
+    options,
+  );
+  for (const type of ["pointerup", "pointercancel"] as const)
+    window.addEventListener(type, (event) => ours(event) && stop(), options);
+  el.addEventListener("lostpointercapture", (event) => ours(event) && stop(), options);
+  window.addEventListener("blur", stop, options);
+  return stop;
+}
+
 /** One workspace window: the sidebar with its workspace switcher, the status bar, menu actions, opening and
  * closing tabs, the session and the places its tabs hold. Each editor pane — its tabs, tab bar and
  * editor area — is a `Pane`; the session is read and written by `SessionSync`. */
@@ -335,6 +371,8 @@ export class AppController implements DocHost, PaneHost {
   /** The sidebar's width as the window keeps it (session, `sidebar-state.ts`); a window too narrow
    * for it shows less (`showSidebarWidth`). */
   private sidebarWidth: number = SIDEBAR_WIDTH.default;
+  /** Ends the drag of the sidebar's grip under way, if one is. */
+  private endSidebarDrag: (() => void) | null = null;
 
   constructor(
     root: HTMLElement,
@@ -400,8 +438,15 @@ export class AppController implements DocHost, PaneHost {
   /** Collapses the sidebar to nothing, or brings it back. Out of the keys' and the accessibility
    * tree's reach while collapsed; keys that were in it go to the focused pane, and keys on the
    * lead, hidden once expanded, go to the collapse button. The column slides from the first call
-   * on, never as the window is first drawn. The window keeps the state, in its session too. */
+   * on, never as the window is first drawn. The window keeps the state, in its session too. A drag
+   * of the grip under way ends first: the toggle wins over it. */
   setSidebarCollapsed(collapsed: boolean): void {
+    this.endSidebarDrag?.();
+    this.collapseSidebar(collapsed);
+  }
+
+  /** `setSidebarCollapsed`, leaving a drag of the grip — which calls it — to go on. */
+  private collapseSidebar(collapsed: boolean): void {
     const root = document.documentElement;
     const keysOnLead = !collapsed && this.lead.contains(document.activeElement);
     root.classList.add("sidebar-animates");
@@ -441,7 +486,6 @@ export class AppController implements DocHost, PaneHost {
     el.addEventListener("pointerdown", (down) => {
       if (down.button !== 0 || this.sidebarCollapsed) return;
       down.preventDefault();
-      el.setPointerCapture(down.pointerId);
       const root = document.documentElement;
       const before = this.sidebarWidth;
       const from = shownSidebarWidth(before, window.innerWidth);
@@ -451,26 +495,27 @@ export class AppController implements DocHost, PaneHost {
         const dragged = draggedSidebar(from + event.clientX - down.clientX, window.innerWidth);
         if (dragged.collapsed) {
           if (this.sidebarCollapsed) return;
-          this.setSidebarCollapsed(true);
+          this.collapseSidebar(true);
           width = from;
           this.showSidebarWidth(before);
           return;
         }
-        if (this.sidebarCollapsed) this.setSidebarCollapsed(false);
+        if (this.sidebarCollapsed) this.collapseSidebar(false);
         width = dragged.width;
         root.style.setProperty("--sidebar-width", `${width}px`);
       };
       const end = () => {
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", end);
-        el.removeEventListener("pointercancel", end);
-        root.classList.remove("sidebar-resizing");
-        // A press that moved nothing keeps a width the window is too narrow to show.
+        this.endSidebarDrag = null;
+        // A press that moved nothing keeps a width the window is too narrow to show; the window
+        // may have changed under it all the same.
         if (width !== from) this.keepSidebarWidth(width);
+        else this.showSidebarWidth(this.sidebarWidth);
+        // The last move's width, or collapse, takes hold before the slide comes back: let go in the
+        // same frame, it would slide there.
+        void getComputedStyle(document.body).gridTemplateColumns;
+        root.classList.remove("sidebar-resizing");
       };
-      el.addEventListener("pointermove", move);
-      el.addEventListener("pointerup", end);
-      el.addEventListener("pointercancel", end);
+      this.endSidebarDrag = followPress(el, down, move, end);
     });
     el.addEventListener("dblclick", () => this.keepSidebarWidth(SIDEBAR_WIDTH.default));
     return el;
@@ -1308,28 +1353,23 @@ export class AppController implements DocHost, PaneHost {
       const boundary = this.boundaries[this.grips.indexOf(el)];
       if (!boundary || down.button !== 0) return;
       down.preventDefault();
-      el.setPointerCapture(down.pointerId);
       const start = this.layout;
       const { width, height } = this.panesEl.getBoundingClientRect();
       let current = start;
-      const end = () => {
-        el.removeEventListener("pointermove", move);
-        el.removeEventListener("pointerup", end);
-        el.removeEventListener("pointercancel", end);
-        this.saveSessionSoon();
-      };
-      const move = (event: PointerEvent) => {
-        // A pane opened or closed under the drag: the boundary is no longer the one taken.
-        if (this.layout !== current) return end();
-        const delta =
-          boundary.axis === "row" ? event.clientX - down.clientX : event.clientY - down.clientY;
-        current = resizeAt(start, boundary.path, boundary.index, delta, { width, height });
-        this.layout = current;
-        this.layoutPanes();
-      };
-      el.addEventListener("pointermove", move);
-      el.addEventListener("pointerup", end);
-      el.addEventListener("pointercancel", end);
+      const stop = followPress(
+        el,
+        down,
+        (event) => {
+          // A pane opened or closed under the drag: the boundary is no longer the one taken.
+          if (this.layout !== current) return stop();
+          const delta =
+            boundary.axis === "row" ? event.clientX - down.clientX : event.clientY - down.clientY;
+          current = resizeAt(start, boundary.path, boundary.index, delta, { width, height });
+          this.layout = current;
+          this.layoutPanes();
+        },
+        () => this.saveSessionSoon(),
+      );
     });
     return el;
   }

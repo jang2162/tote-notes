@@ -656,6 +656,49 @@ test("a horizontal boundary drags and keeps 160px", async ({ page }) => {
   await expect.poll(async () => await sessionWidth(page, 0, 0)).toBeCloseTo(160 / total, 3);
 });
 
+test("a move with no button down ends a divider drag whose release never came", async ({
+  page,
+}) => {
+  await page.setViewportSize({ width: 1232, height: 720 });
+  await start(page, { memos, session: paneSession([[memoTab("a")], [memoTab("b")]]) });
+  await expect(panes(page)).toHaveCount(2);
+  const width = (index: number) =>
+    pane(page, index).evaluate((el) => el.getBoundingClientRect().width);
+  const area = (await width(0)) + (await width(1));
+  const box = (await page.locator(".pane-divider").boundingBox())!;
+  const x = box.x + box.width / 2;
+  const y = box.y + box.height / 2;
+  await page.mouse.move(x, y);
+  await page.mouse.down();
+  await page.mouse.move(x - 100, y, { steps: 4 });
+  expect(await width(0)).toBeCloseTo(area / 2 - 100, 0);
+  // The release was lost out of the window: the pointer comes back with no button down, as
+  // captured on the divider (WebKit's mouse is pointer 1).
+  await page.locator(".pane-divider").evaluate(
+    (el, at) => {
+      el.dispatchEvent(
+        new PointerEvent("pointermove", {
+          pointerId: 1,
+          pointerType: "mouse",
+          isPrimary: true,
+          buttons: 0,
+          clientX: at.x,
+          clientY: at.y,
+          bubbles: true,
+        }),
+      );
+    },
+    { x: x - 300, y },
+  );
+  expect(await width(0)).toBeCloseTo(area / 2 - 100, 0);
+  await expect
+    .poll(async () => await sessionWidth(page, 0, 0))
+    .toBeCloseTo((area / 2 - 100) / area, 3);
+  await page.mouse.move(x - 200, y, { steps: 2 });
+  expect(await width(0)).toBeCloseTo(area / 2 - 100, 0);
+  await page.mouse.up();
+});
+
 test("closing a pane gives its room to the pane before it", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 720 });
   await start(page, {
