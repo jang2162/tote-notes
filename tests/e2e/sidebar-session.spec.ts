@@ -245,6 +245,11 @@ test("a width out of range opens at 240", async ({ page }) => {
   await expect.poll(() => sidebarWide(page)).toBe(240);
 });
 
+test("a width 0.2.0 saved below 200 opens at 240", async ({ page }) => {
+  await start(page, { session: oneWindow({ ...emptyWindow, sidebarWidth: 190 }) });
+  await expect.poll(() => sidebarWide(page)).toBe(240);
+});
+
 test("a width dragged to is written in the session and comes back at the next launch", async ({
   context,
 }) => {

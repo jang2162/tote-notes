@@ -90,10 +90,10 @@ describe("parseWindowSession", () => {
     expect(parseWindowSession({})).not.toHaveProperty("sidebarCollapsed");
   });
 
-  it("reads the sidebar's width only from 180 to 480 and other than 240", () => {
-    for (const sidebarWidth of [180, 300, 480])
+  it("reads the sidebar's width only from 200 to 480 and other than 240", () => {
+    for (const sidebarWidth of [200, 300, 480])
       expect(parseWindowSession({ sidebarWidth }).sidebarWidth).toBe(sidebarWidth);
-    for (const sidebarWidth of [240, 179, 481, "300", null, true, undefined]) {
+    for (const sidebarWidth of [240, 199, 190, 180, 481, "300", null, true, undefined]) {
       expect(parseWindowSession({ sidebarWidth })).not.toHaveProperty("sidebarWidth");
     }
   });
