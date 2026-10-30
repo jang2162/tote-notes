@@ -25,13 +25,6 @@ const DEFAULT_WIDTH: f64 = 1100.0;
 const DEFAULT_HEIGHT: f64 = 760.0;
 /// How far right and down a new window sits from the window it came from.
 const NEAR_OFFSET: f64 = 24.0;
-/// Where the macOS traffic lights sit on the overlaid title bar, in logical pixels. The y puts
-/// them at the vertical middle of the 36px top row (`--top-row-height`); the x pairs with the CSS
-/// `--traffic-lights-width`.
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_X: f64 = 14.0;
-#[cfg(target_os = "macos")]
-const TRAFFIC_LIGHTS_Y: f64 = 11.0;
 
 /// The script that runs before the page's own: what the page needs to know at its first paint.
 fn window_start_script(label: &str, mac_titlebar: bool, sidebar_collapsed: bool) -> String {
@@ -227,21 +220,24 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
     #[cfg(target_os = "macos")]
     let builder = builder
         .title_bar_style(tauri::TitleBarStyle::Overlay)
-        .hidden_title(true)
-        .traffic_light_position(tauri::LogicalPosition::new(
-            TRAFFIC_LIGHTS_X,
-            TRAFFIC_LIGHTS_Y,
-        ));
+        .hidden_title(true);
     let builder = match frame.and_then(|f| place(f, &monitor_rects(app))) {
         Some(f) => builder.position(f.x, f.y).inner_size(f.width, f.height),
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
     };
-    if let Err(err) = builder.build() {
-        match undo {
-            Undo::Release => core.release(&label),
-            Undo::GiveBack { from, key } => core.give_back(&label, &from, &key),
+    match builder.build() {
+        // Not `traffic_light_position` on the builder: `traffic_lights` says why.
+        #[cfg(target_os = "macos")]
+        Ok(window) => super::traffic_lights::place(&window),
+        #[cfg(not(target_os = "macos"))]
+        Ok(_) => {}
+        Err(err) => {
+            match undo {
+                Undo::Release => core.release(&label),
+                Undo::GiveBack { from, key } => core.give_back(&label, &from, &key),
+            }
+            return Err(err.into());
         }
-        return Err(err.into());
     }
     crate::perf::mark("window-shown");
     core.opened(&label);
@@ -286,6 +282,9 @@ fn title_of(core: &AppCore, path: &Path, label: &str) -> String {
 pub fn retitle(app: &AppHandle, path: &Path) {
     for (label, title) in app.state::<AppCore>().titles_of(path) {
         if let Some(window) = app.get_webview_window(&label) {
+            #[cfg(target_os = "macos")]
+            super::traffic_lights::set_title(&window, &title);
+            #[cfg(not(target_os = "macos"))]
             let _ = window.set_title(&title);
         }
     }
@@ -365,6 +364,8 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
     let label = window.label();
     match event {
         WindowEvent::Focused(true) => core.focused(label),
+        #[cfg(target_os = "macos")]
+        WindowEvent::Resized(_) => super::traffic_lights::on_resized(window),
         // Closing writes first: the frontend gets `tote://flush`, and the window goes once it
         // answers or the timeout runs out.
         WindowEvent::CloseRequested { api, .. } if !core.is_quitting() => {

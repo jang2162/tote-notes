@@ -11,6 +11,8 @@ pub mod lifecycle;
 pub mod menu;
 pub mod places;
 pub mod requests;
+#[cfg(target_os = "macos")]
+pub mod traffic_lights;
 pub mod update;
 pub mod windows;
 
