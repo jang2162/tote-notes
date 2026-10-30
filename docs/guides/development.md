@@ -64,6 +64,13 @@
 - 설치 자체(받기·서명 확인·번들 바꿔 넣기)는 창 없이 볼 수 있다. 서버가 떠 있는 동안 `tauri::test::mock_builder()` 로 만든 앱에 같은 업데이터 설정(`plugins.updater`)을 주고 `updater_builder().executable_path("$W/Applications/tote-updatetest.app/Contents/MacOS/tote")` 로 `check()`·`download_and_install()` 을 부르는 작은 프로그램(저장소 밖 임시 폴더의 `cargo` 프로젝트, `tauri` 는 `test` 기능, 판은 `Cargo.lock` 과 같게)을 돌린다. 2026-10-26 결과: 번들 파일 이름은 `tote-updatetest.app` 그대로, 내용은 새 판(`CFBundleName` `Tote Notes Updatetest`), `bin/tote` 링크가 새 번들의 스크립트로 `--help` 를 낸다. 시험 버전이 루트 버전과 같으면 `version_comparator(|_, _| true)` 로 비교를 건너뛴다.
 - 질문·진행 문구·다시 시작·셸 명령 링크가 새 판으로 이어지는지는 창이 있어야 보인다. 사람이나 화면 워커가 찍힌 명령으로 띄워 확인한다.
 
+## vitest 의 실행 개수는 `pnpm test` 의 `Tests` 줄로 센다
+
+`vitest list` 나 소스의 `it(` 를 세서 개수를 맞추지 않는다. 실행된 개수는 `pnpm test` 출력의 `Tests  N passed` 줄이다.
+
+- **Why:** 반복문 안에서 만드는 시험(`for … it(…)`, `it.each`)은 `vitest list`·정적 집계가 한 번만 센다. 실제로는 여러 개가 도는데 적게 세어, 맞는 보고를 「개수가 틀렸다」로 뒤집게 된다.
+- **How to apply:** 보고의 개수와 다시 잰 개수가 다르면 먼저 둘이 같은 방법으로 셌는지 본다.
+
 ## zsh 에서 파일 목록은 배열로 넘긴다
 
 `oxfmt`·`oxlint` 에 파일 여러 개를 넘길 때는 `FILES=(a b c)` 로 담아 `"${FILES[@]}"` 로 넘긴다.
