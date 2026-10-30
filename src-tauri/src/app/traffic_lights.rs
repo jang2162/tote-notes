@@ -14,7 +14,7 @@
 //! of full screen. Main thread only, as AppKit wants.
 
 use objc2_app_kit::{NSButton, NSWindow, NSWindowButton, NSWindowStyleMask};
-use objc2_foundation::{NSPoint, NSString};
+use objc2_foundation::{MainThreadMarker, NSPoint, NSString};
 use tauri::{WebviewWindow, Window};
 
 /// The window's top row in logical pixels: the CSS `--top-row-height`.
@@ -99,6 +99,9 @@ pub fn set_title(window: &WebviewWindow, title: &str) {
 /// A window resized, as it is when it leaves full screen, where AppKit put the buttons back.
 /// Window events come on the main thread.
 pub fn on_resized(window: &Window) {
+    if MainThreadMarker::new().is_none() {
+        return;
+    }
     if let Ok(ptr) = window.ns_window() {
         // SAFETY: as in `on_main`.
         place_now(unsafe { &*ptr.cast::<NSWindow>() });

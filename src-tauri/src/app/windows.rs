@@ -226,7 +226,8 @@ pub fn open_window(app: &AppHandle, path: &Path, plan: WindowPlan) -> Result<Str
         None => builder.inner_size(DEFAULT_WIDTH, DEFAULT_HEIGHT).center(),
     };
     match builder.build() {
-        // Not `traffic_light_position` on the builder: `traffic_lights` says why.
+        // Not `traffic_light_position` on the builder: `traffic_lights` says why. Not left to
+        // `retitle` below either, which titles only the windows `AppCore` lists for the workspace.
         #[cfg(target_os = "macos")]
         Ok(window) => super::traffic_lights::place(&window),
         #[cfg(not(target_os = "macos"))]

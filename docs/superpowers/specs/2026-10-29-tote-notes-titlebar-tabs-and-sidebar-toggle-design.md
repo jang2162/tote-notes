@@ -35,7 +35,7 @@
 - 창을 만들 때(`src-tauri/src/app/windows.rs` 의 `WebviewWindowBuilder`) 제목 표시줄을 내용 위에 겹치는 방식으로 바꾸고 제목 글자를 숨긴다. Tauri 2 의 `title_bar_style(TitleBarStyle::Overlay)`·`hidden_title(true)` 가 그 자리다.
 - 신호등 버튼은 **맨 윗줄의 세로 가운데**에 오게 놓는다(`src-tauri/src/app/traffic_lights.rs`. Tauri 의 `traffic_light_position` 은 macOS 판마다 세로 위치가 어긋나고 제목을 바꾸면 풀려서 쓰지 않는다). 가로 위치는 시스템 기본과 비슷하게 둔다(설계자 판단).
 - 맨 윗줄 높이는 탭 줄 높이와 같다. 신호등이 가운데에 예쁘게 오도록 지금 탭 줄(위아래 6px 여백)보다 몇 px 키워도 된다(설계자 판단: 34~38px 안에서 만드는 사람이 정한다). 이 높이는 사이드바 윗줄과 탭 줄이 **함께** 쓰는 CSS 변수 하나로 둔다.
-- 전체 화면에서는 신호등이 사라지지만 배치는 바꾸지 않는다(설계자 판단). 앱 이름과 접기 버튼은 그 자리에 그대로 있다.
+- 전체 화면에서는 신호등이 사라지므로 신호등 자리(`--traffic-lights-width`)가 0 이 되어, 사이드바 윗줄의 앱 이름과 접었을 때 앞머리의 펼치기 버튼이 왼쪽 여백에 붙는다. 전체 화면에서 나오면 자리가 돌아온다. 규칙은 `docs/superpowers/specs/2026-10-30-tote-notes-sidebar-resize-and-fullscreen-design.md` 「전체 화면에서 맨 윗줄」 절이다.
 
 ## 맨 윗줄 배치
 

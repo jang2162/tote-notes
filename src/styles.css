@@ -29,7 +29,8 @@
   --editor-size: 14px;
   /* WebKit draws a focus ring 3px outside a control; a box that clips leaves this much room. */
   --focus-ring-room: 4px;
-  /* The window's top line: the sidebar's top row and the panes' tab bars, one height. */
+  /* The window's top line: the sidebar's top row and the panes' tab bars, one height. The traffic
+   * lights centre on it: `TOP_ROW_HEIGHT` in src-tauri/src/app/traffic_lights.rs. */
   --top-row-height: 36px;
   /* The traffic lights' room in the top line (macOS), from the window's left edge: the close
    * button's 14px start (`TRAFFIC_LIGHTS_X`, src-tauri/src/app/traffic_lights.rs), the three
