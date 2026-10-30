@@ -70,6 +70,7 @@ export interface FakeMemo {
   /** Contents, base64. */
   data: string;
   modifiedMs: number;
+  pinned?: boolean;
 }
 
 /** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
@@ -766,6 +767,16 @@ export class FakeBackend implements Backend {
       delete memo.language;
     memo.file = file;
     memo.autoTitle = false;
+    this.commit();
+    this.memosTouched();
+    return this.info(id, memo);
+  }
+
+  async setMemoPinned(id: string, pinned: boolean) {
+    this.refuseWhileSwitching();
+    const memo = this.memo(id);
+    if (pinned) memo.pinned = true;
+    else delete memo.pinned;
     this.commit();
     this.memosTouched();
     return this.info(id, memo);
@@ -1708,6 +1719,7 @@ export class FakeBackend implements Backend {
       size: fromBase64(memo.data).length,
       kind: kindOf(memo.file),
       ...(memo.language ? { language: memo.language } : {}),
+      ...(memo.pinned ? { pinned: true } : {}),
     };
   }
 

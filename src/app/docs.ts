@@ -826,14 +826,15 @@ export class MemoDoc extends Doc {
    * change of name answered is older than what the tab knows, and is not followed. */
   follow(listed: MemoInfo, changes: number): void {
     if (changes !== this.infoChanges) return;
-    const { file, autoTitle, language } = listed;
+    const { file, autoTitle, language, pinned } = listed;
     if (
       file === this.info.file &&
       autoTitle === this.info.autoTitle &&
-      language === this.info.language
+      language === this.info.language &&
+      pinned === this.info.pinned
     )
       return;
-    this.setInfo({ ...this.info, file, autoTitle, language });
+    this.setInfo({ ...this.info, file, autoTitle, language, pinned });
   }
 
   /** How many times `setInfo` has run, for `follow`. */

@@ -297,6 +297,7 @@ impl Workspace {
                     file: file.clone(),
                     auto_title: false,
                     language: None,
+                    pinned: false,
                 },
             );
             self.track_inode(&file);

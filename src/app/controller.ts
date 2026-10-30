@@ -1896,9 +1896,19 @@ export class AppController implements DocHost, PaneHost {
 
   /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」). */
   private async memoMenu(id: string): Promise<void> {
-    if (!this.memoList.get(id)) return;
-    const picked = await this.backend.showPopupMenu([{ id: "rename", text: "이름 바꾸기…" }]);
+    const info = this.memoList.get(id);
+    if (!info) return;
+    const picked = await this.backend.showPopupMenu([
+      { id: "rename", text: "이름 바꾸기…" },
+      { id: "pin", text: info.pinned ? "고정 해제" : "맨 위에 고정" },
+    ]);
     if (picked === "rename") await this.renameMemo(id);
+    if (picked !== "pin") return;
+    const pinned = await this.backend.setMemoPinned(id, !info.pinned);
+    this.memoList.upsert(pinned);
+    // An open tab's info goes back into the list with each change of its own.
+    const doc = this.memoTab(id);
+    doc?.follow(pinned, doc.infoChanges);
   }
 
   /** The sidebar's rename: of a memo open in this window, through its tab (saved first, as the

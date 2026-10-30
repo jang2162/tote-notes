@@ -100,6 +100,21 @@ impl Workspace {
         self.memo_info(id)
     }
 
+    /// Pins the memo to the top of the memo list, or lets it go (spec 2026-10-30 「고정」). The
+    /// index keeps it, so it follows the memo through renames and into backups.
+    pub fn set_pinned(&mut self, id: &str, pinned: bool) -> Result<MemoInfo, WorkspaceError> {
+        let entry = self
+            .index
+            .get_mut(id)
+            .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
+        if entry.pinned != pinned {
+            entry.pinned = pinned;
+            self.mark_changed();
+            self.index.save()?;
+        }
+        self.memo_info(id)
+    }
+
     pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let file = self.entry(id)?.file.clone();
         self.mark_changed();
@@ -156,6 +171,7 @@ impl Workspace {
                 file,
                 auto_title,
                 language: None,
+                pinned: false,
             },
         );
         self.index.save()?;
@@ -276,6 +292,35 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    #[test]
+    fn pinned_survives_a_rename() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("가.md", b"x").unwrap();
+        assert!(!memo.pinned);
+        assert!(ws.set_pinned(&memo.id, true).unwrap().pinned);
+        ws.rename_memo(&memo.id, "나.md").unwrap();
+        assert!(ws.memo_info(&memo.id).unwrap().pinned);
+        let reopened = Workspace::open(ws.root()).unwrap();
+        assert!(reopened.memo_info(&memo.id).unwrap().pinned);
+        assert!(!ws.set_pinned(&memo.id, false).unwrap().pinned);
+        let index = fs::read_to_string(ws.root().join(".tote/index.json")).unwrap();
+        assert!(!index.contains("pinned"), "{index}");
+    }
+
+    #[test]
+    fn deleting_a_pinned_memo_drops_its_entry() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("가.md", b"x").unwrap();
+        ws.set_pinned(&memo.id, true).unwrap();
+        ws.delete_memo(&memo.id).unwrap();
+        assert!(matches!(
+            ws.set_pinned(&memo.id, true),
+            Err(WorkspaceError::UnknownMemo(_))
+        ));
+        let index = fs::read_to_string(ws.root().join(".tote/index.json")).unwrap();
+        assert!(!index.contains("pinned"), "{index}");
     }
 
     #[test]

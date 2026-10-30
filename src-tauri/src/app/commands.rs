@@ -270,6 +270,20 @@ pub async fn rename_memo(
     Ok(info)
 }
 
+/// Pins the memo to the top of the memo list, or lets it go; every window's list follows.
+#[tauri::command]
+pub async fn set_memo_pinned(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+    pinned: bool,
+) -> CmdResult<MemoInfo> {
+    let workspace = workspace_to_change(&core, &window)?;
+    let info = lock(&workspace).set_pinned(&id, pinned)?;
+    memos_changed(window.app_handle(), window.label());
+    Ok(info)
+}
+
 #[tauri::command]
 pub async fn set_memo_language(
     core: State<'_, AppCore>,

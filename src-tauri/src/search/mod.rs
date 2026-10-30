@@ -321,11 +321,8 @@ mod tests {
         MemoInfo {
             id: id.to_string(),
             file: file.to_string(),
-            auto_title: false,
-            language: None,
-            modified_ms: 0,
-            size: 0,
             kind: crate::workspace::kind_for(file),
+            ..Default::default()
         }
     }
 

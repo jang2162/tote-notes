@@ -1,6 +1,7 @@
 import type { MemoInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import { h } from "./dom";
+import { splitPinned } from "./memo-order";
 
 export const ROW_HEIGHT = 28;
 const OVERSCAN_ROWS = 8;
@@ -33,28 +34,79 @@ export interface MemoListHost {
   menu(id: string): void;
 }
 
-/** The sidebar's memo pane: every memo, newest first, filtered by name (spec 「메모 목록」). */
+const SVG = "http://www.w3.org/2000/svg";
+
+/** The mark of a pinned row: a pushpin. */
+function pinMark(): SVGElement {
+  const svg = document.createElementNS(SVG, "svg");
+  svg.setAttribute("viewBox", "0 0 16 16");
+  svg.setAttribute("width", "12");
+  svg.setAttribute("height", "12");
+  svg.setAttribute("class", "memo-pin");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS(SVG, "path");
+  path.setAttribute(
+    "d",
+    "M10 1.5 14.5 6l-2 .8-2.6 2.6.6 3.1-1.1 1.1L6.6 10.8 3 14.5 1.5 13l3.7-3.6-2.8-2.8 1.1-1.1 3.1.6L9.2 3.5z",
+  );
+  path.setAttribute("fill", "currentColor");
+  svg.append(path);
+  return svg;
+}
+
+/** One run of rows in a scroller of its own; only the rows in view are in the DOM. */
+class RowSection {
+  private readonly rows = h("div", { class: "memo-rows" });
+  readonly el: HTMLElement;
+  items: MemoInfo[] = [];
+
+  constructor(
+    className: string,
+    private readonly draw: (memo: MemoInfo, index: number) => HTMLElement,
+  ) {
+    this.el = h("div", { class: className }, this.rows);
+    this.el.addEventListener("scroll", () => this.render(), { passive: true });
+    new ResizeObserver(() => this.render()).observe(this.el);
+  }
+
+  render(): void {
+    this.rows.style.height = `${this.items.length * ROW_HEIGHT}px`;
+    const [start, end] = visibleRows(this.el.scrollTop, this.el.clientHeight, this.items.length);
+    this.rows.replaceChildren(
+      ...this.items.slice(start, end).map((memo, i) => this.draw(memo, start + i)),
+    );
+  }
+}
+
+/** The sidebar's memo pane: the pinned memos in a zone that stays put above the list, then every
+ * other memo, newest first, all filtered by name (spec 「메모 목록」, 2026-10-30 「고정」). */
 export class MemoList {
   private readonly filter = h("input", {
     type: "search",
     placeholder: "제목 필터",
     class: "memo-filter",
   });
-  private readonly rows = h("div", { class: "memo-rows" });
-  private readonly scroller = h("div", { class: "memo-scroller" }, this.rows);
-  readonly el = h("div", { class: "memo-pane" }, this.filter, this.scroller);
+  private readonly pinned = new RowSection("memo-pinned", (memo, i) => this.row(memo, i));
+  private readonly divider = h("div", { class: "memo-pinned-divider" });
+  private readonly list = new RowSection("memo-scroller", (memo, i) => this.row(memo, i));
+  readonly el = h(
+    "div",
+    { class: "memo-pane" },
+    this.filter,
+    this.pinned.el,
+    this.divider,
+    this.list.el,
+  );
   private memos: MemoInfo[] = [];
-  private shown: MemoInfo[] = [];
   private activeId: string | null = null;
 
   constructor(private readonly host: MemoListHost) {
     this.filter.spellcheck = false;
     this.filter.addEventListener("input", () => {
-      this.scroller.scrollTop = 0;
+      this.list.el.scrollTop = 0;
+      this.pinned.el.scrollTop = 0;
       this.refilter();
     });
-    this.scroller.addEventListener("scroll", () => this.render(), { passive: true });
-    new ResizeObserver(() => this.render()).observe(this.scroller);
   }
 
   get(id: string): MemoInfo | undefined {
@@ -82,20 +134,19 @@ export class MemoList {
   }
 
   private refilter(): void {
-    this.shown = filterMemos(this.memos, this.filter.value);
+    const { pinned, rest } = splitPinned(filterMemos(this.memos, this.filter.value));
+    this.pinned.items = pinned;
+    this.list.items = rest;
+    this.pinned.el.hidden = pinned.length === 0;
+    this.divider.hidden = pinned.length === 0;
+    // As tall as its rows, up to the stylesheet's share of the pane; past it, it scrolls.
+    this.pinned.el.style.height = `${pinned.length * ROW_HEIGHT}px`;
     this.render();
   }
 
   private render(): void {
-    this.rows.style.height = `${this.shown.length * ROW_HEIGHT}px`;
-    const [start, end] = visibleRows(
-      this.scroller.scrollTop,
-      this.scroller.clientHeight,
-      this.shown.length,
-    );
-    this.rows.replaceChildren(
-      ...this.shown.slice(start, end).map((memo, i) => this.row(memo, start + i)),
-    );
+    this.pinned.render();
+    this.list.render();
   }
 
   private row(memo: MemoInfo, index: number): HTMLElement {
@@ -107,6 +158,7 @@ export class MemoList {
       h("span", { class: "memo-icon" }),
       h("span", { class: "memo-name", textContent: stem }),
       ext ? h("span", { class: "memo-ext", textContent: ext }) : null,
+      memo.pinned ? pinMark() : null,
     );
     row.style.top = `${index * ROW_HEIGHT}px`;
     row.addEventListener("click", () => this.host.open(memo.id));

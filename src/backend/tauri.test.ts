@@ -46,6 +46,7 @@ describe("TauriBackend", () => {
       [() => backend.readMemo("m"), "read_memo", { id: "m" }],
       [() => backend.retitleMemo("m", "제목"), "retitle_memo", { id: "m", stem: "제목" }],
       [() => backend.renameMemo("m", "a.md"), "rename_memo", { id: "m", file: "a.md" }],
+      [() => backend.setMemoPinned("m", true), "set_memo_pinned", { id: "m", pinned: true }],
       [
         () => backend.setMemoLanguage("m", "python", "py"),
         "set_memo_language",

@@ -10,9 +10,10 @@ use super::index::MemoEntry;
 use super::names::split_name;
 use super::{Workspace, WorkspaceError};
 
-#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "lowercase")]
 pub enum FileKind {
+    #[default]
     Text,
     Image,
     Video,
@@ -35,7 +36,7 @@ pub fn kind_for(file_name: &str) -> FileKind {
     }
 }
 
-#[derive(Clone, Debug, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, PartialEq, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MemoInfo {
     pub id: String,
@@ -46,6 +47,9 @@ pub struct MemoInfo {
     pub modified_ms: u64,
     pub size: u64,
     pub kind: FileKind,
+    /// Left out when false, as in the index.
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub pinned: bool,
 }
 
 impl Workspace {
@@ -96,6 +100,7 @@ impl Workspace {
             modified_ms,
             size: meta.len(),
             kind: kind_for(&entry.file),
+            pinned: entry.pinned,
         })
     }
 }
@@ -171,6 +176,7 @@ mod tests {
             modified_ms: 5,
             size: 1,
             kind: FileKind::Text,
+            pinned: false,
         };
         assert_eq!(
             serde_json::to_string(&info).unwrap(),

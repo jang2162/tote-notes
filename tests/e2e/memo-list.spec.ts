@@ -79,3 +79,100 @@ test("another window's rename reaches this window's open tab", async ({ context 
     .poll(() => first.evaluate(() => window.__tote.backend.memoTextByFile("라.md")))
     .toBe("첫째\n새 줄");
 });
+
+const many = (count: number, pinned: (i: number) => boolean = () => false) =>
+  Object.fromEntries(
+    Array.from({ length: count }, (_, i) => [
+      `m${i}`,
+      {
+        ...fakeMemo(`메모 ${i}.md`, "", { modifiedMs: count - i }),
+        ...(pinned(i) ? { pinned: true } : {}),
+      },
+    ]),
+  );
+
+test("pinning a memo moves it to the zone above the list", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "", { modifiedMs: 2 }),
+      b: fakeMemo("나.md", "", { modifiedMs: 1 }),
+    },
+    popupMenuPick: "pin",
+  });
+  await row(page, "나").click({ button: "right" });
+  await expect(page.locator(".memo-pinned .memo-row .memo-name")).toHaveText(["나"]);
+  await expect(names(page)).toHaveText(["가"]);
+  await expect(page.locator(".memo-pinned .memo-row .memo-pin")).toHaveCount(1);
+  expect((await lastMenu(page))?.map((item) => [item.id, item.text])).toEqual([
+    ["rename", "이름 바꾸기…"],
+    ["pin", "맨 위에 고정"],
+  ]);
+  expect(await page.evaluate(() => window.__tote.backend.data.memos.b.pinned)).toBe(true);
+  await expect(page.locator(".memo-pinned-divider")).toBeVisible();
+
+  await row(page, "나").click({ button: "right" });
+  expect((await lastMenu(page))?.[1].text).toBe("고정 해제");
+  await expect(names(page)).toHaveText(["가", "나"]);
+  await expect(page.locator(".memo-pinned")).toBeHidden();
+  await expect(page.locator(".memo-pinned-divider")).toBeHidden();
+});
+
+test("the pinned zone stays put while the list scrolls", async ({ page }) => {
+  await start(page, { memos: many(200, (i) => i === 150) });
+  const pinned = page.locator(".memo-pinned .memo-row");
+  await expect(pinned.locator(".memo-name")).toHaveText("메모 150");
+  const before = await pinned.boundingBox();
+  await page.locator(".memo-scroller").evaluate((el) => (el.scrollTop = 2000));
+  await expect(names(page).first()).not.toHaveText("메모 0");
+  expect(await pinned.boundingBox()).toEqual(before);
+});
+
+test("the pinned zone scrolls on its own past 40% of the list", async ({ page }) => {
+  await start(page, { memos: many(80, (i) => i < 40) });
+  const sizes = await page.evaluate(() => {
+    const zone = document.querySelector<HTMLElement>(".memo-pinned")!;
+    const pane = document.querySelector<HTMLElement>(".memo-pane")!;
+    return { zone: zone.clientHeight, scroll: zone.scrollHeight, pane: pane.clientHeight };
+  });
+  expect(sizes.zone).toBeLessThanOrEqual(sizes.pane * 0.4 + 1);
+  expect(sizes.scroll).toBeGreaterThan(sizes.zone);
+  await expect(names(page).first()).toBeVisible();
+});
+
+test("the pinned zone hides when no pinned memo matches the filter", async ({ page }) => {
+  await start(page, {
+    memos: { a: { ...fakeMemo("고정.md", ""), pinned: true }, b: fakeMemo("나머지.md", "") },
+  });
+  await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
+  await page.locator(".memo-filter").fill("나머");
+  await expect(page.locator(".memo-pinned")).toBeHidden();
+  await expect(page.locator(".memo-pinned-divider")).toBeHidden();
+  await expect(names(page)).toHaveText(["나머지"]);
+  await page.locator(".memo-filter").fill("고정");
+  await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
+  await expect(names(page)).toHaveCount(0);
+});
+
+test("another window follows a pin", async ({ context }) => {
+  const first = await startWindows(context, {
+    memos: { a: fakeMemo("가.md", "") },
+    popupMenuPick: "pin",
+  });
+  const second = await openWindow(context, "ws-2");
+  await row(second, "가").click({ button: "right" });
+  await expect(first.locator(".memo-pinned .memo-row")).toHaveCount(1);
+});
+
+test("an open memo stays pinned through its saves", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "첫째") }, popupMenuPick: "pin" });
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await row(page, "가").click({ button: "right" });
+  await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
+  await page.locator(".cm-content").click();
+  await page.keyboard.insertText("더");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoTextByFile("가.md")))
+    .toContain("더");
+  await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
+});

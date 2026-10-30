@@ -366,6 +366,28 @@ html:not(.sidebar-collapsed) .tab-lead {
   overflow: auto;
 }
 
+/* The pinned memos: as tall as its rows up to 40% of the pane, then it scrolls on its own; the
+   list below scrolls without moving it. */
+.memo-pinned {
+  position: relative;
+  flex: none;
+  max-height: 40%;
+  overflow: auto;
+}
+
+.memo-pinned-divider {
+  flex: none;
+  height: 1px;
+  margin: 2px 8px;
+  background: var(--border);
+}
+
+.memo-pin {
+  flex: none;
+  margin-left: auto;
+  color: var(--muted);
+}
+
 .memo-rows {
   position: relative;
 }

@@ -12,6 +12,8 @@ export interface MemoInfo {
   modifiedMs: number;
   size: number;
   kind: FileKind;
+  /** At the top of the memo list (spec 2026-10-30 「고정」); left out when not. */
+  pinned?: boolean;
 }
 
 export interface WorkspaceInfo {
@@ -418,6 +420,8 @@ export interface Backend {
   writeMemo(id: string, bytes: Uint8Array): Promise<MemoInfo>;
   retitleMemo(id: string, stem: string): Promise<MemoInfo>;
   renameMemo(id: string, file: string): Promise<MemoInfo>;
+  /** Pins the memo to the top of the memo list, or lets it go; every window's list follows. */
+  setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
   setMemoLanguage(id: string, language: string, ext: string): Promise<MemoInfo>;
   deleteMemo(id: string): Promise<void>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
