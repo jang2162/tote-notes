@@ -612,14 +612,21 @@ impl AppCore {
         restored: Option<usize>,
     ) -> bool {
         let retention = self.settings().trash.retention_days;
+        // Emptied before every window's commands wait on `inner`: deleting a full trash takes the
+        // disk's time. Only a workspace about to open here; one already open is left to its own.
+        let opened = opened.map(|mut workspace| {
+            if !lock(&self.inner).workspaces.contains_key(path) {
+                expire_as_it_opens(&mut workspace, retention);
+            }
+            workspace
+        });
         let watch = {
             let mut inner = lock(&self.inner);
             if inner.reserved.get(path).is_some_and(|l| l == label) {
                 inner.reserved.remove(path);
             }
             let watch = match opened {
-                Some(mut workspace) if !inner.workspaces.contains_key(path) => {
-                    expire_as_it_opens(&mut workspace, retention);
+                Some(workspace) if !inner.workspaces.contains_key(path) => {
                     // A session that cannot be read starts the windows with no tabs.
                     let saved = read_layouts(path, &self.machine.device_id).unwrap_or_else(|err| {
                         eprintln!("tote: cannot read the session of {}: {err}", path.display());
@@ -872,6 +879,10 @@ impl AppCore {
     /// registered, changing nothing.
     pub fn switch_window(&self, label: &str, to: &Path, mut opened: Workspace) -> io::Result<()> {
         let retention = self.settings().trash.retention_days;
+        // Outside `inner`, as in `register_window`.
+        if !lock(&self.inner).workspaces.contains_key(to) {
+            expire_as_it_opens(&mut opened, retention);
+        }
         let leaving = self.workspace(label);
         let (fresh, closed) = {
             let mut inner = lock(&self.inner);
@@ -887,7 +898,6 @@ impl AppCore {
             };
             let fresh = !inner.workspaces.contains_key(to);
             if fresh {
-                expire_as_it_opens(&mut opened, retention);
                 let saved = read_layouts(to, &self.machine.device_id).unwrap_or_else(|err| {
                     eprintln!("tote: cannot read the session of {}: {err}", to.display());
                     Vec::new()
