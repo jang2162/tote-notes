@@ -310,6 +310,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
       sidebar: { preview: true, sort: "modified-desc" },
+      trash: { retentionDays: 60 },
     },
   });
   await openSection(page, "모양");

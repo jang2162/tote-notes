@@ -276,6 +276,7 @@ export class AppController implements DocHost, PaneHost {
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
     sidebar: { preview: true, sort: "modified-desc" },
+    trash: { retentionDays: 60 },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */

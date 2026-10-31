@@ -34,6 +34,8 @@ import {
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
+  type TrashedInfo,
+  type TrashOutcome,
   type SearchEvent,
   type SearchMatch,
   type SearchQuery,
@@ -78,6 +80,10 @@ export interface FakeMemo {
    * after the first, run together) — the rule itself is Rust's (`workspace::preview`). */
   preview?: string;
 }
+
+/** A memo in the trash: as it was, less when it was last on show, and when it went (on the
+ * fake's clock). */
+export type FakeTrashed = Omit<FakeMemo, "viewedMs"> & { deletedMs: number };
 
 /** A workspace as a seed lists it. Seeds from before the order file leave out `order`, `hidden`
  * and `orderable`; `listWorkspaces` fills them in. */
@@ -206,6 +212,11 @@ export interface FakeData {
   popupMenus?: PopupMenuItem[][];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
   hub?: HubState;
+  /** The workspace's trash by memo ID (`.trash` on the native side). Absent in old seeds. */
+  trash?: Record<string, FakeTrashed>;
+  /** The windows `trashMemo` asked to save, close and trash a memo they held, in order. Absent
+   * until one is asked. */
+  trashRequests?: { label: string; id: string }[];
   /** The workspaces other than `workspace`, by path, each as `workspace`, `memos` and `session`
    * hold the current one: `switchWorkspace` trades the current one for one of these. Absent in old
    * seeds. */
@@ -298,6 +309,7 @@ export function defaultFakeData(): FakeData {
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
       sidebar: { preview: true, sort: "modified-desc" },
+      trash: { retentionDays: 60 },
     },
     userExtensions: [],
     packages: {},
@@ -445,6 +457,8 @@ export class FakeBackend implements Backend {
     config: [] as (() => void)[],
     outside: [] as ((change: OutsideChange) => void)[],
     memos: [] as (() => void)[],
+    trash: [] as (() => void)[],
+    trashRequest: [] as ((id: string) => void)[],
     reveal: [] as ((tab: TabRef) => void)[],
     adopt: [] as ((tab: string, x: number, y: number) => void)[],
     workspaces: [] as (() => void)[],
@@ -651,6 +665,15 @@ export class FakeBackend implements Backend {
   memosChanged(): void {
     for (const handler of this.handlers.memos) handler();
   }
+  /** Another window changed the trash, or the hourly emptying did, as the native side tells this
+   * one. The test changes `data` first. */
+  trashChanged(): void {
+    for (const handler of this.handlers.trash) handler();
+  }
+  /** Another window trashes a memo this one holds (`tote://trash-memo`). */
+  trashRequest(id: string): void {
+    for (const handler of this.handlers.trashRequest) handler(id);
+  }
   /** Another window asked for a tab this one holds. */
   reveal(tab: TabRef): void {
     for (const handler of this.handlers.reveal) handler(tab);
@@ -669,6 +692,8 @@ export class FakeBackend implements Backend {
   private heard(event: HubEvent): void {
     if (event.type === "flush") this.requestFlush(event.id, event.goal);
     else if (event.type === "memos") this.memosChanged();
+    else if (event.type === "trash") this.trashChanged();
+    else if (event.type === "trash-memo") this.trashRequest(event.id);
     else if (event.type === "reveal") this.reveal(event.tab);
     else if (event.type === "adopt") this.adopt(event.tab, event.x, event.y);
     else if (event.type === "workspaces") this.workspacesChanged();
@@ -683,6 +708,15 @@ export class FakeBackend implements Backend {
   /** The memo list changed: the other windows read it again, as the native side tells them. */
   private memosTouched(): void {
     this.hub?.send(this.hub.siblings(this.data), { type: "memos" });
+  }
+  /** The trash changed: the other windows read it again, as `trash_changed` tells them. */
+  private trashTouched(): void {
+    this.hub?.send(this.hub.siblings(this.data), { type: "trash" });
+  }
+  /** A trashed memo's text, or null. */
+  trashedText(id: string): string | null {
+    const item = this.data.trash?.[id];
+    return item ? decode(item.data) : null;
   }
   dropFiles(paths: string[]): void {
     for (const handler of this.handlers.drop) handler(paths);
@@ -830,6 +864,74 @@ export class FakeBackend implements Backend {
     delete this.data.memos[id];
     this.commit();
     this.memosTouched();
+  }
+
+  /** As the `trash_memo` command: a memo another window holds stays, and that window is asked;
+   * otherwise it goes to the trash, its place let go. */
+  async trashMemo(id: string): Promise<TrashOutcome> {
+    this.refuseWhileSwitching();
+    const memo = this.memo(id);
+    const places = (this.data.places ??= {});
+    const key = placeKey({ kind: "memo", id });
+    const owner = places[key];
+    if (owner !== undefined && owner !== this.label) {
+      (this.data.trashRequests ??= []).push({ label: owner, id });
+      this.commit();
+      this.hub?.trashRequest(owner, id);
+      return { kind: "elsewhere" };
+    }
+    delete places[key];
+    const { viewedMs: _viewed, ...kept } = memo;
+    const trash = (this.data.trash ??= {});
+    trash[id] = { ...kept, deletedMs: this.tick() };
+    delete this.data.memos[id];
+    this.commit();
+    this.memosTouched();
+    this.trashTouched();
+    return { kind: "trashed", item: this.trashedInfo(id, trash[id]) };
+  }
+
+  async listTrash() {
+    return Object.entries(this.data.trash ?? {})
+      .map(([id, item]) => this.trashedInfo(id, item))
+      .sort((a, b) => b.deletedMs - a.deletedMs || (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
+  }
+
+  async readTrashed(id: string) {
+    const item = this.trashed(id);
+    return textOnly(fromBase64(item.data), item.file);
+  }
+
+  /** As `restore_memo`: the same ID, pin and language, under `free_name` when its name is taken. */
+  async restoreMemo(id: string) {
+    this.refuseWhileSwitching();
+    const item = this.trashed(id);
+    if (this.data.memos[id]) throw new BackendError("already-exists", id);
+    const { deletedMs: _deleted, ...memo } = item;
+    const { stem, ext } = splitName(item.file);
+    this.data.memos[id] = { ...memo, file: this.freeName(stem, ext) };
+    delete this.data.trash![id];
+    this.commit();
+    this.memosTouched();
+    this.trashTouched();
+    return this.info(id, this.data.memos[id]);
+  }
+
+  async purgeTrashed(id: string) {
+    this.refuseWhileSwitching();
+    this.trashed(id);
+    delete this.data.trash![id];
+    this.commit();
+    this.trashTouched();
+  }
+
+  async emptyTrash() {
+    this.refuseWhileSwitching();
+    const count = Object.keys(this.data.trash ?? {}).length;
+    this.data.trash = {};
+    this.commit();
+    this.trashTouched();
+    return count;
   }
 
   async importMemo(fileName: string, bytes: Uint8Array) {
@@ -1379,6 +1481,8 @@ export class FakeBackend implements Backend {
     // An old seed has no `updates`; Rust reads a missing one as on.
     settings.updates ??= { autoCheck: true };
     settings.sidebar ??= { preview: true, sort: "modified-desc" };
+    // An old seed has no `trash`; Rust reads a missing one as the default.
+    settings.trash ??= { retentionDays: 60 };
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1411,6 +1515,11 @@ export class FakeBackend implements Backend {
     if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
     if (patch.sidebarSort !== undefined) settings.sidebar.sort = patch.sidebarSort;
     if (patch.sidebarPreview !== undefined) settings.sidebar.preview = patch.sidebarPreview;
+    // As `patch_retention_days`: rounded, held to 1–3650, less than a day being off.
+    if (patch.trashRetentionDays !== undefined) {
+      const days = patch.trashRetentionDays === null ? 0 : Math.round(patch.trashRetentionDays);
+      settings.trash = { retentionDays: days >= 1 ? Math.min(days, 3650) : null };
+    }
     if (patch.editorLineNumbers !== undefined)
       settings.editor.lineNumbers = patch.editorLineNumbers;
     // Rust takes any number and clamps it, rounding a fraction.
@@ -1723,6 +1832,12 @@ export class FakeBackend implements Backend {
   onMemosChanged(handler: () => void) {
     this.handlers.memos.push(handler);
   }
+  onTrashChanged(handler: () => void) {
+    this.handlers.trash.push(handler);
+  }
+  onTrashRequest(handler: (id: string) => void) {
+    this.handlers.trashRequest.push(handler);
+  }
   onReveal(handler: (tab: TabRef) => void) {
     this.handlers.reveal.push(handler);
   }
@@ -1762,6 +1877,24 @@ export class FakeBackend implements Backend {
     const memo = this.data.memos[id];
     if (!memo) throw new BackendError("unknown-memo", `no memo with id ${id}`);
     return memo;
+  }
+
+  private trashed(id: string): FakeTrashed {
+    const item = this.data.trash?.[id];
+    if (!item) throw new BackendError("unknown-memo", `nothing in the trash with id ${id}`);
+    return item;
+  }
+
+  private trashedInfo(id: string, item: FakeTrashed): TrashedInfo {
+    return {
+      id,
+      file: item.file,
+      deletedMs: item.deletedMs,
+      autoTitle: item.autoTitle,
+      kind: kindOf(item.file),
+      ...(item.language ? { language: item.language } : {}),
+      ...(item.pinned ? { pinned: true } : {}),
+    };
   }
 
   private add(file: string, autoTitle: boolean, bytes: Uint8Array): MemoInfo {

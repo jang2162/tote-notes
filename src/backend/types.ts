@@ -65,12 +65,34 @@ export type UpdateProgress =
   | { kind: "progress"; done: number; total: number | null }
   | { kind: "installing" };
 
-/** An item of `showPopupMenu`; with `checked` it is a check item, ticked or not. */
+/** An item of `showPopupMenu`; with `checked` it is a check item, ticked or not. With
+ * `separator` it is a line between items, whose `id` and `text` are not read. */
 export interface PopupMenuItem {
   id: string;
   text: string;
   checked?: boolean;
+  separator?: boolean;
 }
+
+/** The line between a pop-up menu's items. */
+export const MENU_SEPARATOR: PopupMenuItem = { id: "", text: "", separator: true };
+
+/** A memo in the workspace's trash (`TrashedInfo` in src-tauri/src/workspace/trash.rs). `file` is
+ * its name when it was trashed; `deletedMs` when, on the native side's clock. */
+export interface TrashedInfo {
+  id: string;
+  file: string;
+  deletedMs: number;
+  autoTitle: boolean;
+  language?: string;
+  pinned?: boolean;
+  kind: FileKind;
+}
+
+/** What `trashMemo` did (`TrashOutcome` in src-tauri/src/app/commands.rs): moved it, or left it
+ * because another window has it open — that window was asked to save, close and trash it
+ * (`onTrashRequest`). */
+export type TrashOutcome = { kind: "trashed"; item: TrashedInfo } | { kind: "elsewhere" };
 
 /** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
  * workspace, or an external file. */
@@ -242,6 +264,9 @@ export interface Settings {
   /** The check for a new version at launch (src-tauri/src/app/update.rs). */
   updates: { autoCheck: boolean };
   sidebar: SidebarSettings;
+  /** The trash's automatic emptying: memos trashed more than `retentionDays` days ago go for good;
+   * `null` keeps them (`TrashSettings` in src-tauri/src/appdata.rs). */
+  trash: { retentionDays: number | null };
   /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
    * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
   shortcuts?: Record<string, string | null>;
@@ -296,6 +321,8 @@ export interface SettingsPatch {
   updatesAutoCheck?: boolean;
   sidebarPreview?: boolean;
   sidebarSort?: MemoSort;
+  /** Days, which Rust rounds and holds to 1–3650, less than one being off; `null` is off. */
+  trashRetentionDays?: number | null;
   /** The whole map: a command left out goes back to its default. Refused (`bad-request`) when an
    * entry breaks a rule (`shortcuts::validate` in src-tauri/src/shortcuts.rs). */
   shortcuts?: Record<string, string | null>;
@@ -462,6 +489,21 @@ export interface Backend {
   /** `detected`: the editor's automatic pick, which leaves a memo the person named as it is. */
   setMemoLanguage(id: string, language: string, ext: string, detected?: boolean): Promise<MemoInfo>;
   deleteMemo(id: string): Promise<void>;
+  /** Moves the memo to the workspace's trash. A memo another window has open stays where it is:
+   * `elsewhere`, and that window hears `onTrashRequest`. Every window's memo list and trash
+   * follow. */
+  trashMemo(id: string): Promise<TrashOutcome>;
+  /** The workspace's trash, most recently trashed first. */
+  listTrash(): Promise<TrashedInfo[]>;
+  /** A trashed memo's bytes; `not-text` as `readMemo`'s. */
+  readTrashed(id: string): Promise<Uint8Array>;
+  /** Puts the memo back with its ID, pin and language, under the next free name when its own is
+   * taken. */
+  restoreMemo(id: string): Promise<MemoInfo>;
+  /** Removes a trashed memo for good. */
+  purgeTrashed(id: string): Promise<void>;
+  /** Removes everything in the trash for good; how many memos went. */
+  emptyTrash(): Promise<number>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;
 
@@ -624,6 +666,11 @@ export interface Backend {
   onOutsideChange(handler: (change: OutsideChange) => void): void;
   /** Another window changed the memo list of this window's workspace. */
   onMemosChanged(handler: () => void): void;
+  /** Another window — or the hourly emptying — changed the trash of this window's workspace. */
+  onTrashChanged(handler: () => void): void;
+  /** Another window trashes a memo this window has open: save it, close its tab, then trash it
+   * from here (`tote://trash-memo`). */
+  onTrashRequest(handler: (id: string) => void): void;
   /** Another window asked for a tab this window holds: show it. */
   onReveal(handler: (tab: TabRef) => void): void;
   /** Another window of this workspace let its tab go on this one (`tearOffTab`): its session entry

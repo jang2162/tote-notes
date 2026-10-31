@@ -15,6 +15,8 @@ export const HUB_CHANNEL = "tote-fake";
 export type HubEvent =
   | { type: "flush"; id: number; goal: FlushGoal }
   | { type: "memos" }
+  | { type: "trash" }
+  | { type: "trash-memo"; id: string }
   | { type: "reveal"; tab: TabRef }
   | { type: "adopt"; tab: string; x: number; y: number }
   | { type: "workspaces" }
@@ -130,6 +132,12 @@ export class FakeHub {
     (data.places ??= {})[placeKey(ref)] = label;
     writeSession(data);
     return label;
+  }
+
+  /** Another window holds the memo being trashed: it saves and closes it, then trashes it
+   * (`tote://trash-memo`). */
+  trashRequest(owner: string, id: string): void {
+    this.send([owner], { type: "trash-memo", id });
   }
 
   /** Opens the page of window `label`. */

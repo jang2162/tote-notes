@@ -355,3 +355,112 @@ describe("FakeBackend window start", () => {
     expect(backend.data.windowZooms).toBe(2);
   });
 });
+
+describe("FakeBackend trash", () => {
+  const text = (bytes: Uint8Array) => new TextDecoder().decode(bytes);
+  const seeded = () => {
+    const data = defaultFakeData();
+    data.memos = {
+      a: { ...fakeMemo("회의록.md", "회의"), pinned: true, language: "markdown" },
+      b: fakeMemo("b.md", "비"),
+      c: fakeMemo("untitled.md", "자동", { autoTitle: true }),
+    };
+    return new FakeBackend(memoryStorage(JSON.stringify(data)));
+  };
+
+  it("fake trash moves, lists newest first, restores with a free name, purges and empties", async () => {
+    const backend = seeded();
+    const moved = await backend.trashMemo("a");
+    expect(moved).toMatchObject({
+      kind: "trashed",
+      item: { id: "a", file: "회의록.md", pinned: true, language: "markdown", autoTitle: false },
+    });
+    await backend.trashMemo("b");
+    expect((await backend.listMemos()).map((m) => m.id)).toEqual(["c"]);
+    const listed = await backend.listTrash();
+    expect(listed.map((item) => item.id)).toEqual(["b", "a"]);
+    expect(listed[0].deletedMs).toBeGreaterThan(listed[1].deletedMs);
+    expect(listed[1]).toMatchObject({ file: "회의록.md", kind: "text" });
+    expect(text(await backend.readTrashed("a"))).toBe("회의");
+
+    // The old name is taken meanwhile: the restored memo takes the next free one.
+    await backend.importMemo("회의록.md", new TextEncoder().encode("새것"));
+    const restored = await backend.restoreMemo("a");
+    expect(restored).toMatchObject({
+      id: "a",
+      file: "회의록 2.md",
+      pinned: true,
+      language: "markdown",
+      autoTitle: false,
+    });
+    expect(backend.memoTextByFile("회의록.md")).toBe("새것");
+    expect(backend.memoText("a")).toBe("회의");
+    expect((await backend.listTrash()).map((item) => item.id)).toEqual(["b"]);
+    await expect(backend.restoreMemo("a")).rejects.toMatchObject({ code: "unknown-memo" });
+
+    await backend.trashMemo("c");
+    await backend.purgeTrashed("b");
+    expect((await backend.listTrash()).map((item) => item.id)).toEqual(["c"]);
+    await expect(backend.purgeTrashed("b")).rejects.toMatchObject({ code: "unknown-memo" });
+    await backend.trashMemo("a");
+    expect(await backend.emptyTrash()).toBe(2);
+    expect(await backend.listTrash()).toEqual([]);
+    expect(await backend.emptyTrash()).toBe(0);
+    await expect(backend.trashMemo("zz")).rejects.toMatchObject({ code: "unknown-memo" });
+  });
+
+  it("restores an auto-titled memo with its auto title, a number added", async () => {
+    const backend = seeded();
+    await backend.trashMemo("c");
+    await backend.createMemo();
+    expect(await backend.restoreMemo("c")).toMatchObject({
+      file: "untitled 2.md",
+      autoTitle: true,
+    });
+  });
+
+  it("leaves a memo another window holds where it is and asks that window", async () => {
+    const backend = seeded();
+    backend.data.places = { "memo:a": "ws-2" };
+    expect(await backend.trashMemo("a")).toEqual({ kind: "elsewhere" });
+    expect(backend.data.memos.a).toBeDefined();
+    expect(backend.data.trash ?? {}).toEqual({});
+    expect(backend.data.trashRequests).toEqual([{ label: "ws-2", id: "a" }]);
+  });
+
+  it("moves a memo this window holds and lets its place go", async () => {
+    const backend = seeded();
+    backend.data.places = { "memo:a": FAKE_LABEL };
+    expect((await backend.trashMemo("a")).kind).toBe("trashed");
+    expect(backend.data.places).toEqual({});
+  });
+
+  it("hands what the native side would tell the page to its listeners", () => {
+    const backend = seeded();
+    const heard: string[] = [];
+    backend.onTrashChanged(() => heard.push("trash"));
+    backend.onTrashRequest((id) => heard.push(`request ${id}`));
+    backend.trashChanged();
+    backend.trashRequest("a");
+    expect(heard).toEqual(["trash", "request a"]);
+  });
+
+  it("keeps the trash's days as Rust does: 60 by default, 1–3650, nothing or null for off", async () => {
+    const backend = seeded();
+    expect((await backend.settings()).trash).toEqual({ retentionDays: 60 });
+    const after = async (days: number | null) => {
+      await backend.patchSettings({ trashRetentionDays: days });
+      return (await backend.settings()).trash.retentionDays;
+    };
+    expect(await after(29.6)).toBe(30);
+    expect(await after(5000)).toBe(3650);
+    expect(await after(0)).toBeNull();
+    expect(await after(7)).toBe(7);
+    expect(await after(null)).toBeNull();
+    // A seed from before the setting reads as the default.
+    const old = defaultFakeData() as Partial<ReturnType<typeof defaultFakeData>>;
+    delete (old.settings as Partial<ReturnType<typeof defaultFakeData>["settings"]>).trash;
+    const reader = new FakeBackend(memoryStorage(JSON.stringify(old)));
+    expect((await reader.settings()).trash).toEqual({ retentionDays: 60 });
+  });
+});
