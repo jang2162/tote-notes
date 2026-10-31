@@ -13,6 +13,7 @@ import type {
   TabRef,
   WindowStart,
 } from "../backend/types";
+import { errorCode, MENU_SEPARATOR } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
@@ -121,6 +122,9 @@ import {
 } from "./sidebar-state";
 
 export { describeError, ERROR_TEXT } from "./errors";
+
+/** A memo the trash could not take: its tab could not be saved, or a conflict waits. */
+export const NOT_TRASHED = "저장하지 못해 휴지통으로 옮기지 않았습니다";
 
 /** The extensions and grammars that are on, with versions: equal signatures read the same files. */
 function extensionSignature(registry: Registry): string {
@@ -688,6 +692,10 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
+    // Another window trashes a memo this one has open: it is saved and closed here, then trashed.
+    this.backend.onTrashRequest(
+      (id) => void this.trashMemo(id).catch((error: unknown) => this.report(error)),
+    );
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => {
@@ -1058,15 +1066,51 @@ export class AppController implements DocHost, PaneHost {
   async closeTab(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
+    if (await this.closeDoc(doc)) return;
+    // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
+    if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
+  }
+
+  /** Closes `doc` as its close mark does; `false` when it stays open (focused again when it is
+   * the active tab). */
+  private async closeDoc(doc: Doc): Promise<boolean> {
     const pane = this.paneOf(doc);
     pane.capture(doc);
     if (!(await doc.close(() => askUnsaved(doc.title)))) {
-      // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
-      if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
       if (doc === pane.tabs.active) pane.view.focus();
-      return;
+      return false;
     }
     await this.takeOut(pane, doc);
+    return true;
+  }
+
+  /** 「휴지통으로 이동」 (memo trash spec 「휴지통으로 옮기기」), without asking. A tab of this window
+   * showing the memo is saved and closed first, so the trash gets its last text; when that fails or
+   * a conflict waits for its answer, nothing moves and the status bar says so. A memo another
+   * window has open is left to that window, which hears `onTrashRequest` and comes back here. */
+  async trashMemo(id: string): Promise<void> {
+    let target = id;
+    const doc = this.memoTab(id);
+    if (doc) {
+      await settleComposition(this.viewOf(doc));
+      if (!this.docs.includes(doc)) return;
+      if (!(await this.closeDoc(doc))) {
+        this.statusBar.setMessage(NOT_TRASHED);
+        return;
+      }
+      // A save that recovered a vanished memo wrote the text under a new ID.
+      target = doc.info.id;
+    }
+    let outcome;
+    try {
+      outcome = await this.backend.trashMemo(target);
+    } catch (error) {
+      // Gone already: an empty new memo its close deleted, or a file another app removed.
+      if (errorCode(error) !== "unknown-memo") throw error;
+      this.memoList.remove(target);
+      return;
+    }
+    if (outcome.kind === "trashed") this.memoList.remove(target);
   }
 
   /** Takes `doc` out of `pane` for good (closed, or gone to another window): its place is let go
@@ -1942,8 +1986,11 @@ export class AppController implements DocHost, PaneHost {
     const picked = await this.backend.showPopupMenu([
       { id: "rename", text: "이름 바꾸기…" },
       { id: "pin", text: info.pinned ? "고정 해제" : "맨 위에 고정" },
+      MENU_SEPARATOR,
+      { id: "trash", text: "휴지통으로 이동" },
     ]);
     if (picked === "rename") await this.renameMemo(id);
+    if (picked === "trash") await this.trashMemo(id);
     if (picked !== "pin") return;
     const pinned = await this.backend.setMemoPinned(id, !info.pinned);
     this.memoList.upsert(pinned);
