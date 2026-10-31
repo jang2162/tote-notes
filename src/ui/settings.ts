@@ -194,6 +194,11 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           textContent: "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
         }),
         ...field("실행할 때 업데이트 확인", autoCheck),
+        h("p", {
+          class: "settings-note update-note",
+          textContent:
+            "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
+        }),
         field("휴지통 자동 비우기", trashDays)[0],
         h(
           "div",
@@ -203,11 +208,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           trashNever,
           h("label", { htmlFor: trashNever.id, textContent: "안 비움" }),
         ),
-        h("p", {
-          class: "settings-note update-note",
-          textContent:
-            "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
-        }),
       );
     };
 

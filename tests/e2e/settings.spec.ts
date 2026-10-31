@@ -106,6 +106,12 @@ test("the update check switch saves updates.autoCheck", async ({ page }) => {
   await expect(panel.locator(".update-note")).toHaveText(
     "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
   );
+  // The note is the switch's: right under it, above the next setting.
+  const note = (await panel.locator(".update-note").boundingBox())!;
+  const own = (await box.boundingBox())!;
+  const next = (await panel.getByRole("spinbutton", { name: "휴지통 자동 비우기" }).boundingBox())!;
+  expect(note.y).toBeGreaterThanOrEqual(own.y + own.height);
+  expect(note.y + note.height).toBeLessThanOrEqual(next.y);
   await box.uncheck();
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.settings.updates))
