@@ -159,6 +159,8 @@ pub struct Settings {
     pub updates: UpdateSettings,
     #[serde(default, deserialize_with = "lenient")]
     pub sidebar: SidebarSettings,
+    #[serde(default, deserialize_with = "lenient")]
+    pub trash: TrashSettings,
     /// Command id → the shortcut it has instead of its default, `None` for none (src/shortcuts.rs).
     #[serde(
         default,
@@ -273,6 +275,55 @@ impl Default for SidebarSettings {
     }
 }
 
+/// The trash's automatic emptying (memo trash spec 「자동 비우기」): one setting for every workspace.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TrashSettings {
+    /// Memos trashed more than this many days ago go for good; `None` keeps them. Written as
+    /// `null` when off, since a missing value is the default.
+    #[serde(deserialize_with = "retention_days")]
+    pub retention_days: Option<u32>,
+}
+
+const DEFAULT_RETENTION_DAYS: u32 = 60;
+const MAX_RETENTION_DAYS: u32 = 3650;
+
+impl Default for TrashSettings {
+    fn default() -> Self {
+        TrashSettings {
+            retention_days: Some(DEFAULT_RETENTION_DAYS),
+        }
+    }
+}
+
+/// `null` is off; a number is held to 1–3650, nothing (0 or less) being off; anything else is the
+/// default.
+fn retention_days<'de, D>(deserializer: D) -> Result<Option<u32>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Ok(match serde_json::Value::deserialize(deserializer)? {
+        serde_json::Value::Null => None,
+        value => value
+            .as_f64()
+            .map_or(Some(DEFAULT_RETENTION_DAYS), clamp_retention_days),
+    })
+}
+
+/// A patch's days, held to the range the way a hand-edited file's are; `null` is off. Not a
+/// number is refused.
+fn patch_retention_days<'de, D>(deserializer: D) -> Result<Option<Option<u32>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    Option::<f64>::deserialize(deserializer).map(|days| Some(days.and_then(clamp_retention_days)))
+}
+
+fn clamp_retention_days(days: f64) -> Option<u32> {
+    let days = days.round();
+    (days >= 1.0).then(|| days.min(f64::from(MAX_RETENTION_DAYS)) as u32)
+}
+
 /// The memo list's order (`MemoSort` in src/backend/types.ts).
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
@@ -366,6 +417,9 @@ pub struct SettingsPatch {
     pub sidebar_preview: Option<bool>,
     #[serde(default)]
     pub sidebar_sort: Option<SortOrder>,
+    /// `null` turns the automatic emptying off.
+    #[serde(default, deserialize_with = "patch_retention_days")]
+    pub trash_retention_days: Option<Option<u32>>,
     /// The whole map: what is not in it goes back to its default.
     #[serde(default)]
     pub shortcuts: Option<BTreeMap<String, Option<String>>>,
@@ -432,6 +486,9 @@ impl SettingsPatch {
         }
         if let Some(sort) = self.sidebar_sort {
             settings.sidebar.sort = sort;
+        }
+        if let Some(days) = self.trash_retention_days {
+            settings.trash.retention_days = days;
         }
         if let Some(overrides) = &self.shortcuts {
             settings.shortcuts = overrides.clone();
@@ -983,6 +1040,9 @@ mod tests {
             },
             updates: UpdateSettings { auto_check: false },
             sidebar: SidebarSettings::default(),
+            trash: TrashSettings {
+                retention_days: Some(90),
+            },
             shortcuts: BTreeMap::from([
                 ("rename".into(), Some("CmdOrCtrl+K".into())),
                 ("new-memo".into(), None),
@@ -1029,6 +1089,71 @@ mod tests {
                 ..expected
             }
         );
+    }
+
+    #[test]
+    fn trash_retention_defaults_to_60_and_clamps() {
+        let read = |trash: &str| {
+            serde_json::from_str::<Settings>(&format!(r#"{{"workspaceRoot": "/x"{trash}}}"#))
+                .unwrap()
+        };
+        assert_eq!(read("").trash.retention_days, Some(60));
+        assert_eq!(Settings::default().trash.retention_days, Some(60));
+        for (days, expected) in [
+            ("0", None),
+            ("5000", Some(3650)),
+            ("null", None),
+            (r#""x""#, Some(60)),
+            ("-3", None),
+            ("1", Some(1)),
+            ("90", Some(90)),
+            ("29.6", Some(30)),
+        ] {
+            let settings = read(&format!(r#", "trash": {{"retentionDays": {days}}}"#));
+            assert_eq!(settings.trash.retention_days, expected, "{days}");
+            assert_eq!(settings.workspace_root, Some("/x".into()), "{days}");
+        }
+        assert_eq!(read(r#", "trash": 5"#).trash.retention_days, Some(60));
+        // Written as `null` when off: a missing value reads as the default.
+        let off = Settings {
+            trash: TrashSettings {
+                retention_days: None,
+            },
+            ..Settings::default()
+        };
+        let json = serde_json::to_string(&off).unwrap();
+        assert!(json.contains(r#""trash":{"retentionDays":null}"#), "{json}");
+        assert_eq!(
+            serde_json::from_str::<Settings>(&json)
+                .unwrap()
+                .trash
+                .retention_days,
+            None
+        );
+    }
+
+    #[test]
+    fn a_patch_sets_and_clears_retention() {
+        let mut settings = Settings::default();
+        let patch = |json: &str| serde_json::from_str::<SettingsPatch>(json).unwrap();
+        patch(r#"{"trashRetentionDays": 30}"#)
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.trash.retention_days, Some(30));
+        // Another field leaves it alone.
+        patch(r#"{"sidebarPreview": false}"#)
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.trash.retention_days, Some(30));
+        patch(r#"{"trashRetentionDays": null}"#)
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.trash.retention_days, None);
+        patch(r#"{"trashRetentionDays": 9999}"#)
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.trash.retention_days, Some(3650));
+        assert!(serde_json::from_str::<SettingsPatch>(r#"{"trashRetentionDays": "x"}"#).is_err());
     }
 
     #[test]
@@ -1319,6 +1444,9 @@ mod tests {
             },
             updates: UpdateSettings { auto_check: false },
             sidebar: SidebarSettings::default(),
+            trash: TrashSettings {
+                retention_days: Some(90),
+            },
             shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
         };
         SettingsPatch {

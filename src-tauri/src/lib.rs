@@ -84,6 +84,7 @@ pub fn run() {
             windows::restore(app.handle(), CliRequest::find_in(std::env::args()));
             requests::opened_after_setup(app.handle());
             start_backups(app.handle().clone());
+            start_trash_expiry(app.handle().clone());
             app::update::start(app.handle());
             Ok(())
         })
@@ -99,6 +100,12 @@ pub fn run() {
             commands::memo_viewed,
             commands::set_memo_language,
             commands::delete_memo,
+            commands::trash_memo,
+            commands::list_trash,
+            commands::read_trashed,
+            commands::restore_memo,
+            commands::purge_trashed,
+            commands::empty_trash,
             commands::import_memo,
             commands::import_file,
             commands::read_window_layout,
@@ -264,6 +271,24 @@ fn start_backups(app: AppHandle) {
                 // After a long round, count one interval from now.
                 deadline = Instant::now() + interval;
             }
+        }
+    });
+}
+
+/// How often the open workspaces' trash is emptied of what is past its days (memo trash spec
+/// 「자동 비우기」); a workspace also does it as it opens (`AppCore::register_window`).
+const TRASH_EXPIRY_INTERVAL: Duration = Duration::from_secs(60 * 60);
+
+/// Hourly rounds of `AppCore::expire_trash_all` on a thread of their own; the windows of a
+/// workspace that lost some read their trash again (`tote://trash`).
+fn start_trash_expiry(app: AppHandle) {
+    std::thread::spawn(move || loop {
+        std::thread::sleep(TRASH_EXPIRY_INTERVAL);
+        let now_ms = SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map_or(0, |d| d.as_millis() as u64);
+        for label in app.state::<AppCore>().expire_trash_all(now_ms) {
+            let _ = app.emit_to(EventTarget::webview_window(&label), "tote://trash", ());
         }
     });
 }

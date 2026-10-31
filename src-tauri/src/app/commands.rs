@@ -28,7 +28,7 @@ use crate::search::{self, SearchEvent, SearchQuery};
 use crate::shortcuts::{self, ShortcutTable};
 use crate::workspace::order::{self, Arranged, Entry, WorkspaceOrder};
 use crate::workspace::viewed::VIEWED_DELAY_MS;
-use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
+use crate::workspace::{MemoInfo, TrashedInfo, Workspace, WorkspaceError};
 
 /// What a rejected command returns. `code` is what the frontend branches on (`BackendError`).
 #[derive(Debug, Serialize)]
@@ -125,6 +125,14 @@ fn workspace_to_change(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<
 pub fn memos_changed(app: &AppHandle, label: &str) {
     for sibling in app.state::<AppCore>().siblings(label) {
         let _ = app.emit_to(EventTarget::webview_window(&sibling), "tote://memos", ());
+    }
+}
+
+/// The trash of window `label`'s workspace changed: its other windows read it again
+/// (`tote://trash`).
+pub fn trash_changed(app: &AppHandle, label: &str) {
+    for sibling in app.state::<AppCore>().siblings(label) {
+        let _ = app.emit_to(EventTarget::webview_window(&sibling), "tote://trash", ());
     }
 }
 
@@ -344,6 +352,112 @@ pub async fn delete_memo(
     lock(&workspace).delete_memo(&id)?;
     memos_changed(window.app_handle(), window.label());
     Ok(())
+}
+
+/// What `trash_memo` did. `Elsewhere`: another window has the memo open, so nothing moved; that
+/// window got `tote://trash-memo` to save and close it (memo trash spec 「열린 탭」).
+#[derive(Debug, Serialize)]
+#[serde(tag = "kind", rename_all = "camelCase")]
+pub enum TrashOutcome {
+    Trashed { item: TrashedInfo },
+    Elsewhere,
+}
+
+/// What `tote://trash-memo` asks of the window holding the memo.
+#[derive(Clone, Serialize)]
+struct TrashRequest {
+    id: String,
+}
+
+/// Moves the memo to the workspace's trash. The window holds the memo's place while it moves, so
+/// no other window opens it meanwhile; a memo another window has open is left where it is and
+/// that window is asked to save and close it (`TrashOutcome::Elsewhere`).
+#[tauri::command]
+pub async fn trash_memo(
+    app: AppHandle,
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<TrashOutcome> {
+    let workspace = workspace_to_change(&core, &window)?;
+    let fresh = match core.hold_memo(window.label(), &id)? {
+        Ok(fresh) => fresh,
+        Err(owner) => {
+            let _ = app.emit_to(
+                EventTarget::webview_window(&owner),
+                "tote://trash-memo",
+                TrashRequest { id },
+            );
+            return Ok(TrashOutcome::Elsewhere);
+        }
+    };
+    let result = lock(&workspace).trash_memo(&id, now_ms());
+    // Moved, the memo has no place left to hold. Not moved, a tab of this window may still show
+    // it, and only a hold taken here is let go.
+    if result.is_ok() || fresh {
+        core.release_tab(window.label(), &TabRef::Memo { id });
+    }
+    let item = result?;
+    memos_changed(&app, window.label());
+    trash_changed(&app, window.label());
+    Ok(TrashOutcome::Trashed { item })
+}
+
+/// The workspace's trash, most recently trashed first.
+#[tauri::command]
+pub async fn list_trash(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+) -> CmdResult<Vec<TrashedInfo>> {
+    let workspace = workspace_of(&core, &window)?;
+    let list = lock(&workspace).list_trash(now_ms())?;
+    Ok(list)
+}
+
+/// A trashed memo's bytes, as `read_memo` sends a memo's.
+#[tauri::command]
+pub async fn read_trashed(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<Response> {
+    let workspace = workspace_of(&core, &window)?;
+    let bytes = lock(&workspace).read_trashed(&id)?;
+    Ok(Response::new(bytes))
+}
+
+#[tauri::command]
+pub async fn restore_memo(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<MemoInfo> {
+    let workspace = workspace_to_change(&core, &window)?;
+    let info = lock(&workspace).restore_memo(&id)?;
+    memos_changed(window.app_handle(), window.label());
+    trash_changed(window.app_handle(), window.label());
+    Ok(info)
+}
+
+#[tauri::command]
+pub async fn purge_trashed(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: String,
+) -> CmdResult<()> {
+    let workspace = workspace_to_change(&core, &window)?;
+    lock(&workspace).purge_trashed(&id)?;
+    trash_changed(window.app_handle(), window.label());
+    Ok(())
+}
+
+/// Removes everything in the trash for good; how many memos went.
+#[tauri::command]
+pub async fn empty_trash(core: State<'_, AppCore>, window: WebviewWindow) -> CmdResult<usize> {
+    let workspace = workspace_to_change(&core, &window)?;
+    let count = lock(&workspace).empty_trash()?;
+    trash_changed(window.app_handle(), window.label());
+    Ok(count)
 }
 
 #[tauri::command]
@@ -1224,6 +1338,34 @@ pub fn perf_config() -> PerfConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The shape `TrashOutcome` in src/backend/types.ts reads.
+    #[test]
+    fn a_trash_outcome_serializes_as_the_frontend_reads_it() {
+        let item = TrashedInfo {
+            id: "i".into(),
+            file: "회의록.md".into(),
+            deleted_ms: 5,
+            auto_title: true,
+            language: None,
+            pinned: false,
+            kind: crate::workspace::FileKind::Text,
+        };
+        assert_eq!(
+            serde_json::to_value(TrashOutcome::Trashed { item }).unwrap(),
+            serde_json::json!({"kind": "trashed", "item": {
+                "id": "i", "file": "회의록.md", "deletedMs": 5, "autoTitle": true, "kind": "text"
+            }})
+        );
+        assert_eq!(
+            serde_json::to_value(TrashOutcome::Elsewhere).unwrap(),
+            serde_json::json!({"kind": "elsewhere"})
+        );
+        assert_eq!(
+            serde_json::to_value(TrashRequest { id: "i".into() }).unwrap(),
+            serde_json::json!({"id": "i"})
+        );
+    }
     use crate::workspace::order::{arranged, save};
     use crate::workspace::TOTE_DIR;
     use serde_json::json;
