@@ -623,6 +623,30 @@ test("a trashed picture is not handed to a viewer", async ({ page }) => {
   await expect(page.locator(".status-message")).toHaveText("");
 });
 
+test("a trashed memo over the editor's limit says so, as a memo tab does", async ({ page }) => {
+  await start(page, { trash: { t: trashed("큰.txt", "x", 5) } });
+  // The native side refuses it by its size before reading (`read_trashed`).
+  await page.evaluate(async () => {
+    const { backend } = window.__tote;
+    // The app's own `BackendError`, as the fake throws it for a memo the trash does not have.
+    const Refusal = await backend.readTrashed("없음").then(
+      () => null,
+      (error: Error) => error.constructor as typeof window.BackendError,
+    );
+    backend.readTrashed = async () => {
+      throw new Refusal!("too-large", "over the editor's limit");
+    };
+  });
+  await trashButton(page).click();
+  await trashRow(page, "큰").click();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("큰.txt");
+  await expect(page.locator(".editor-placeholder")).toContainText(
+    "100MB 가 넘어 편집기로 열 수 없습니다",
+  );
+  await expect(banner(page).locator(".banner-text")).toHaveText(TRASHED_AT);
+  await expect(page.locator(".large-text")).toHaveCount(0);
+});
+
 test("a restore heard of before the memo list turns the tab into the memo", async ({ page }) => {
   await start(page, { trash: { t: trashed("회의록.md", "옛것", 5) } });
   await trashButton(page).click();

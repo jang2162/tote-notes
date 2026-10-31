@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 use super::index::MemoEntry;
 use super::names::split_name;
 use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
-use crate::persist::{read_json, read_text, write_json};
+use crate::persist::{read_editable_text, read_json, write_json};
 
 pub const TRASH_DIR: &str = ".trash";
 const TRASH_FILE: &str = "trash.json";
@@ -108,13 +108,14 @@ impl Workspace {
         Ok(list)
     }
 
-    /// The trashed memo's bytes, refused as `read_memo` refuses what is not text. The folder is
-    /// the original, so `trash.json` is not needed to find it.
+    /// The trashed memo's bytes, refused as `read_memo` refuses what is not text, and unread when
+    /// it is over the editor's limit: the trash list carries no size for the page to check first,
+    /// as a memo tab does. The folder is the original, so `trash.json` is not needed to find it.
     pub fn read_trashed(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
         let file = self
             .trashed_file(id, None)
             .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
-        Ok(read_text(&self.trash_dir().join(id).join(file))?)
+        Ok(read_editable_text(&self.trash_dir().join(id).join(file))?)
     }
 
     /// Puts the memo back under its ID with its automatic titles, language and pin. A name another
@@ -447,6 +448,42 @@ mod tests {
             ws.read_trashed(".."),
             Err(WorkspaceError::UnknownMemo(_))
         ));
+    }
+
+    /// Over the editor's limit, as a memo tab's size check turns one away: refused before it is
+    /// read, as `too-large` to the page.
+    #[test]
+    fn a_trashed_memo_over_the_editor_limit_is_refused_unread() {
+        use crate::app::commands::CommandError;
+        use crate::persist::external::MAX_EDITOR_BYTES;
+        let (_root, mut ws) = workspace();
+        let memo = ws.import_memo("큰.txt", b"x").unwrap();
+        ws.trash_memo(&memo.id, NOW).unwrap();
+        let file = ws.root().join(TRASH_DIR).join(&memo.id).join("큰.txt");
+        // Text in its first bytes, so only the size can turn it away; the rest is a sparse tail.
+        fs::write(&file, vec![b'a'; crate::persist::BINARY_PROBE_BYTES]).unwrap();
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_len(MAX_EDITOR_BYTES + 1)
+            .unwrap();
+        let err = ws
+            .read_trashed(&memo.id)
+            .map(|bytes| bytes.len())
+            .unwrap_err();
+        assert_eq!(CommandError::from(err).code, "too-large");
+        // At the limit it is read.
+        fs::OpenOptions::new()
+            .write(true)
+            .open(&file)
+            .unwrap()
+            .set_len(MAX_EDITOR_BYTES)
+            .unwrap();
+        assert_eq!(
+            ws.read_trashed(&memo.id).unwrap().len() as u64,
+            MAX_EDITOR_BYTES
+        );
     }
 
     #[test]

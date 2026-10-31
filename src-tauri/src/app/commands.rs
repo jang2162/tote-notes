@@ -92,6 +92,9 @@ fn io_code(err: &io::Error) -> &'static str {
     if crate::persist::is_not_text(err) {
         return "not-text";
     }
+    if crate::persist::is_too_large(err) {
+        return "too-large";
+    }
     match err.kind() {
         io::ErrorKind::NotFound => "not-found",
         io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput => "bad-request",

@@ -437,6 +437,8 @@ export const BACKEND_ERROR_CODES = [
   "window-busy",
   // A read refused after the file's first bytes: it is not text (`persist::read_text`).
   "not-text",
+  // A read refused by the file's size, over the editor's limit (`persist::read_editable_text`).
+  "too-large",
   // The update's (src-tauri/src/app/commands.rs `install_update`, `restart_for_update`).
   "no-update",
   "update-failed",
@@ -500,7 +502,8 @@ export interface Backend {
   trashMemo(id: string): Promise<TrashOutcome>;
   /** The workspace's trash, most recently trashed first. */
   listTrash(): Promise<TrashedInfo[]>;
-  /** A trashed memo's bytes; `not-text` as `readMemo`'s. */
+  /** A trashed memo's bytes; `not-text` as `readMemo`'s, `too-large` unread over the editor's
+   * limit (`MAX_EDITOR_BYTES`). */
   readTrashed(id: string): Promise<Uint8Array>;
   /** Puts the memo back with its ID, pin and language, under the next free name when its own is
    * taken. */

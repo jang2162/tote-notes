@@ -1206,9 +1206,14 @@ export class TrashDoc extends Doc {
 
   protected async read(): Promise<Uint8Array | Problem> {
     if (!this.forceText && this.info.kind !== "text") return "binary";
-    const bytes = await this.host.backend.readTrashed(this.info.id);
-    // The trash keeps no size to check first: a file this big is turned away once read.
-    return bytes.length > MAX_EDITOR_BYTES ? "too-large" : bytes;
+    // The trash list carries no size to check first: the native side turns one this big away
+    // unread, and the tab shows what a memo tab's own size check would.
+    try {
+      return await this.host.backend.readTrashed(this.info.id);
+    } catch (error) {
+      if (errorCode(error) === "too-large") return "too-large";
+      throw error;
+    }
   }
 
   /** Read-only (`EditorOptions.readOnly`): no edit reaches it. */
