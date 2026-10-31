@@ -553,10 +553,12 @@ test("the menu leaves a trashed tab alone", async ({ page }) => {
   await trashRow(page, "회의록").click();
   await expect(editor(page)).toHaveText("# 옛것");
   for (const id of ["save", "rename", "import", "toggle-preview"]) await menu(page, id);
-  await expect(page.locator(".modal")).toHaveCount(0);
-  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   await menu(page, "versions");
   await expect(page.locator(".status-message")).toHaveText("메모 탭에서만 쓸 수 있습니다");
+  // Asked after them, the last command has answered: whatever the ones before would have shown
+  // is showing by now.
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   // Not to another window: the trashed tab has no place there.
   await menu(page, "move-tab-to-new-window");
   await expect(page.locator(".status-message")).toHaveText(NOT_TORN_OFF);
@@ -614,7 +616,9 @@ test("a trashed picture is not handed to a viewer", async ({ page }) => {
   // No file a viewer could read: the placeholder of a file the editor cannot show.
   await expect(page.locator(".editor-placeholder")).toContainText("열 수 없음");
   await expect(banner(page).locator(".banner-text")).toHaveText(TRASHED_AT);
-  await page.waitForTimeout(200);
+  // Shown, and no viewer asked for a file: the pane asks as it shows the tab, so by now it would
+  // have — whatever the fake then made of the missing file.
+  expect(await page.evaluate(() => window.__tote.backend.data.fileTokenRequests ?? [])).toEqual([]);
   await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
   await expect(page.locator(".status-message")).toHaveText("");
 });

@@ -146,6 +146,10 @@ export interface FakeData {
   /** Owner → the names of the files issued to it and not yet revoked; tests check the
    * revocation. Names, not the data: URLs — a big file's would overflow sessionStorage. */
   tokens: Record<string, string[]>;
+  /** Every `issueFileToken` call's source, in order, recorded before it is looked at: a test
+   * checks that no viewer asked for a file, whatever the fake then makes of the source. Absent
+   * until one is asked. */
+  fileTokenRequests?: FileSource[];
   /** `cancelTextSearch` calls; the fake's searches finish at once, so tests count the asks. */
   textSearchCancelled: number;
   /** Workspace searches stopped before they finished — by a newer one or by
@@ -1605,6 +1609,8 @@ export class FakeBackend implements Backend {
   }
 
   async issueFileToken(source: FileSource, owner: string) {
+    (this.data.fileTokenRequests ??= []).push(source);
+    this.commit();
     const found = this.sourceBytes(source);
     if (!found) throw new BackendError("not-found", JSON.stringify(source));
     return this.issue(owner, found.name, found.data);
