@@ -222,7 +222,12 @@ export interface FakeData {
    * seeds. */
   otherWorkspaces?: Record<
     string,
-    { workspace: WorkspaceInfo; memos: Record<string, FakeMemo>; session: string | null }
+    {
+      workspace: WorkspaceInfo;
+      memos: Record<string, FakeMemo>;
+      session: string | null;
+      trash?: Record<string, FakeTrashed>;
+    }
   >;
   /** The workspace whose window `switchWorkspace` brought forward last, by path. */
   focusedWorkspace?: string;
@@ -1246,9 +1251,15 @@ export class FakeBackend implements Backend {
       workspace: data.workspace,
       memos: data.memos,
       session: data.session,
+      trash: data.trash ?? {},
     };
     delete others[path];
-    Object.assign(data, { workspace: other.workspace, memos: other.memos, session: other.session });
+    Object.assign(data, {
+      workspace: other.workspace,
+      memos: other.memos,
+      session: other.session,
+      trash: other.trash ?? {},
+    });
     data.pending = [];
     const places = data.places ?? {};
     for (const [key, owner] of Object.entries(places)) if (owner === this.label) delete places[key];

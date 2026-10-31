@@ -343,7 +343,8 @@ html:not(.sidebar-collapsed) .tab-lead {
 }
 
 .memo-pane,
-.search-panel {
+.search-panel,
+.trash-pane {
   display: flex;
   flex: 1;
   flex-direction: column;
@@ -390,6 +391,77 @@ html:not(.sidebar-collapsed) .tab-lead {
   position: relative;
   flex: 1;
   overflow: auto;
+}
+
+/* The trash in the memo list's place (memo trash spec 「휴지통 화면」): 「← 메모」 and the count
+   on top, the rows, 「휴지통 비우기」 at the foot. */
+.trash-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 8px;
+}
+
+.trash-back {
+  padding: 2px 6px;
+  border-color: transparent;
+  background: transparent;
+  color: inherit;
+}
+
+.trash-back:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.trash-heading {
+  color: var(--muted);
+}
+
+.trash-scroller {
+  position: relative;
+  flex: 1;
+  overflow: auto;
+}
+
+.trash-row {
+  height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  box-sizing: border-box;
+  padding: 0 12px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.trash-row:hover {
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.trash-when {
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 11px;
+  text-overflow: ellipsis;
+}
+
+.trash-none {
+  margin: 8px 12px;
+  color: var(--muted);
+}
+
+.trash-foot {
+  flex: none;
+  margin: 8px;
+}
+
+.trash-empty {
+  width: 100%;
+}
+
+.trash-empty:disabled {
+  color: var(--muted);
 }
 
 /* The pinned memos: as tall as its rows up to 40% of the pane, then it scrolls on its own; the
@@ -1049,10 +1121,10 @@ button {
   font: inherit;
 }
 
-/* The sidebar's foot: the settings button, and the update button filling the rest of the row when
- * there is one. The set height leaves 8px above and below the buttons so their focus ring is not cut
- * at the window's bottom edge (the body clips); being set, it also keeps the row, and the memo list
- * above it, where they are as the update button comes and goes. */
+/* The sidebar's foot: the settings and trash buttons, and the update button filling the rest of
+ * the row when there is one. The set height leaves 8px above and below the buttons so their focus
+ * ring is not cut at the window's bottom edge (the body clips); being set, it also keeps the row,
+ * and the memo list above it, where they are as the update button comes and goes. */
 .sidebar-footer {
   display: flex;
   flex: none;
@@ -1067,12 +1139,14 @@ button {
 /* One height, so the two sit level as one row. It alone would keep the row's height too: the row
  * moves only when both this and the set height above are gone. */
 .settings-button,
+.trash-button,
 .update-button {
   box-sizing: border-box;
   height: 28px;
 }
 
 .settings-button,
+.trash-button,
 .sidebar-toggle {
   display: grid;
   flex: none;
@@ -1086,8 +1160,15 @@ button {
 }
 
 .settings-button:hover,
+.trash-button:hover,
 .sidebar-toggle:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+  color: var(--fg);
+}
+
+/* Pressed while the trash is in the memo list's place. */
+.trash-button[aria-pressed="true"] {
+  background: var(--active-bg);
   color: var(--fg);
 }
 

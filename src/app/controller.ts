@@ -57,7 +57,7 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, pickLanguage, promptText } from "../ui/dialogs";
+import { askUnsaved, confirm, pickLanguage, promptText } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -70,6 +70,8 @@ import { Sidebar } from "../ui/sidebar";
 import { SidebarToggle, tabLead } from "../ui/sidebar-toggle";
 import { dragsWindow } from "../ui/window-drag";
 import { StatusBar } from "../ui/status-bar";
+import { TrashButton } from "../ui/trash-button";
+import { TrashList } from "../ui/trash-list";
 import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
 import {
@@ -349,6 +351,20 @@ export class AppController implements DocHost, PaneHost {
     manage: () =>
       void this.showSettings("workspaces").catch((error: unknown) => this.report(error)),
   });
+  private readonly trashList = new TrashList({
+    // A trashed memo opens read-only once there is a tab for it (memo trash spec 「내용 보기」).
+    open: () => {},
+    menu: (id) => void this.trashMenu(id).catch((error: unknown) => this.report(error)),
+    back: () => this.showMemoList(),
+    empty: () => void this.emptyTrash().catch((error: unknown) => this.report(error)),
+  });
+  private readonly trashButton = new TrashButton(
+    () => void this.toggleTrash().catch((error: unknown) => this.report(error)),
+  );
+  /** Numbers the trash's reads: only the latest one's answer is shown. */
+  private trashReads = 0;
+  /** Another window's change to the trash is waiting to be read (`MEMOS_GATHER_MS`). */
+  private trashChangedSoon: number | null = null;
   /** Goes by the menu item's id, so `showSettings`'s one-screen guard holds for it too. */
   private readonly settingsButton = new SettingsButton(() => void this.onMenu("settings"));
   private readonly updateButton = new UpdateButton(
@@ -369,7 +385,9 @@ export class AppController implements DocHost, PaneHost {
     this.switcher,
     this.memoList,
     this.searchPanel,
+    this.trashList,
     this.settingsButton,
+    this.trashButton,
     this.updateButton,
   );
   /** What the switcher lists, for ⌃1 – ⌃9. */
@@ -641,6 +659,7 @@ export class AppController implements DocHost, PaneHost {
     this.workspaceName = info.name;
     document.title = info.title;
     void this.refreshSwitcher();
+    void this.refreshTrash();
     this.backend.onWorkspacesChanged(() => {
       void this.refreshSwitcher();
       for (const listener of this.workspaceListeners) listener();
@@ -692,6 +711,7 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
+    this.backend.onTrashChanged(() => this.trashChanged());
     // Another window trashes a memo this one has open: it is saved and closed here, then trashed.
     this.backend.onTrashRequest(
       (id) => void this.trashMemo(id).catch((error: unknown) => this.report(error)),
@@ -711,6 +731,7 @@ export class AppController implements DocHost, PaneHost {
     });
     window.addEventListener("focus", () => {
       void this.refreshMemos();
+      void this.refreshTrash();
       void this.refreshSwitcher();
       // A first read that failed left the empty panes without their hint: read it again.
       if (!this.shortcuts) void this.loadShortcuts().then((c) => c && this.shortcutsChanged());
@@ -1110,7 +1131,88 @@ export class AppController implements DocHost, PaneHost {
       this.memoList.remove(target);
       return;
     }
-    if (outcome.kind === "trashed") this.memoList.remove(target);
+    if (outcome.kind !== "trashed") return;
+    this.memoList.remove(target);
+    await this.refreshTrash();
+  }
+
+  /** Another window changed the trash: read the way the memo list's changes are, a burst once. */
+  private trashChanged(): void {
+    if (this.trashChangedSoon !== null) return;
+    this.trashChangedSoon = window.setTimeout(() => {
+      this.trashChangedSoon = null;
+      void this.refreshTrash();
+    }, MEMOS_GATHER_MS);
+  }
+
+  /** Reads the trash again for its pane and its button's count. */
+  private async refreshTrash(): Promise<void> {
+    const read = ++this.trashReads;
+    try {
+      const items = await this.backend.listTrash();
+      if (read !== this.trashReads) return;
+      this.trashList.setItems(items);
+      this.trashButton.setCount(items.length);
+    } catch (error) {
+      console.warn(error);
+    }
+  }
+
+  /** The trash button: the trash in the memo list's place, or the memo list back. */
+  private async toggleTrash(): Promise<void> {
+    if (this.sidebar.shown === "trash") return this.showMemoList();
+    this.sidebar.show("trash");
+    await this.refreshTrash();
+  }
+
+  private showMemoList(): void {
+    this.sidebar.show("memos");
+  }
+
+  /** A trashed row's context menu: 복구, or 영구 삭제 after asking. */
+  private async trashMenu(id: string): Promise<void> {
+    const picked = await this.backend.showPopupMenu([
+      { id: "restore", text: "복구" },
+      MENU_SEPARATOR,
+      { id: "purge", text: "영구 삭제" },
+    ]);
+    if (picked === "restore") await this.restoreTrashed(id);
+    if (picked === "purge") await this.purgeTrashed(id);
+  }
+
+  /** Back into the memo list, under the next free name when its own is taken; not opened. */
+  async restoreTrashed(id: string): Promise<void> {
+    const info = await this.backend.restoreMemo(id);
+    this.memoList.upsert(info);
+    await this.refreshTrash();
+  }
+
+  /** Removes a trashed memo for good, once the person said so. */
+  async purgeTrashed(id: string): Promise<void> {
+    const item = this.trashList.get(id);
+    if (!item) return;
+    const sure = await confirm(
+      `「${item.file}」 를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+      "영구 삭제",
+      "danger",
+    );
+    if (!sure) return;
+    await this.backend.purgeTrashed(id);
+    await this.refreshTrash();
+  }
+
+  /** 「휴지통 비우기」: everything in the trash goes for good, once the person said so. */
+  async emptyTrash(): Promise<void> {
+    const count = this.trashList.count;
+    if (count === 0) return;
+    const sure = await confirm(
+      `휴지통의 메모 ${count}개를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+      "영구 삭제",
+      "danger",
+    );
+    if (!sure) return;
+    await this.backend.emptyTrash();
+    await this.refreshTrash();
   }
 
   /** Takes `doc` out of `pane` for good (closed, or gone to another window): its place is let go
