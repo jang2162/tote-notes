@@ -1,6 +1,6 @@
 import { h } from "./dom";
 
-export type BannerKind = "conflict" | "deleted" | "info";
+export type BannerKind = "conflict" | "deleted" | "info" | "trash";
 
 export interface BannerAction {
   label: string;

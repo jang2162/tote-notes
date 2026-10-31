@@ -145,14 +145,25 @@ export function highlightEffect(extension: Extension) {
   return highlightSlot.reconfigure(extension);
 }
 
+/** The text's line height, in ems of the text. */
+const LINE_HEIGHT = 1.55;
+/** The line numbers' text size against the body's (memo trash spec 「줄번호 글자 크기」). */
+const LINE_NUMBER_SCALE = 0.85;
+
 /** Colours come from the CSS variables in styles.css, which the theme manager fills from the selected theme. */
 const appTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "var(--bg)" },
-  ".cm-scroller": { lineHeight: "1.55" },
+  ".cm-scroller": { lineHeight: String(LINE_HEIGHT) },
   ".cm-gutters": {
     backgroundColor: "var(--bg)",
     color: "var(--line-number, var(--muted))",
     border: "none",
+  },
+  // The smaller numbers keep the body's line height, in their own ems, so each sits in the middle
+  // of a line box as tall as its line's.
+  ".cm-lineNumbers .cm-gutterElement": {
+    fontSize: `${LINE_NUMBER_SCALE}em`,
+    lineHeight: `${LINE_HEIGHT / LINE_NUMBER_SCALE}em`,
   },
   ".cm-activeLineGutter": {
     backgroundColor: "var(--active-line)",
@@ -192,7 +203,17 @@ export interface EditorOptions {
   languageData?: LanguageData;
   /** TextMate colours (`workerHighlighting`); absent for plain text and over the size limit. */
   highlight?: Extension;
+  /** A trashed memo: nothing edits the text, whatever key, paste, drop or command tries. */
+  readOnly?: boolean;
 }
+
+/** CodeMirror's read-only flag turns away typing, paste, drop and its own commands; the filter
+ * also stops the app's commands that dispatch changes themselves (Tab's `insertIndent`, the
+ * multi-cursor composition). Focus, selection, copy and the find bar still work. */
+const readOnly: Extension = [
+  EditorState.readOnly.of(true),
+  EditorState.changeFilter.of(() => false),
+];
 
 export function editorExtensions(options: EditorOptions): Extension[] {
   return [
@@ -220,6 +241,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     ),
     highlightSlot.of(options.highlight ?? []),
     appTheme,
+    options.readOnly ? readOnly : [],
     EditorView.updateListener.of(options.onUpdate),
   ];
 }

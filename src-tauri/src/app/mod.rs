@@ -42,6 +42,8 @@ use crate::session::drafts::DraftStore;
 use crate::session::{read_layouts, write_layouts};
 use crate::watch::{Batch, WatchTarget, Watcher};
 use crate::workspace::viewed::ViewedTimes;
+#[cfg(test)]
+use crate::workspace::DAY_MS;
 use crate::workspace::{order, Change, Workspace, WorkspaceError};
 use flush::{Ack, Begin, FlushCoordinator, FlushGoal};
 use places::{Places, TabKey, TabRef};
@@ -609,6 +611,15 @@ impl AppCore {
         opened: Option<Workspace>,
         restored: Option<usize>,
     ) -> bool {
+        let retention = self.settings().trash.retention_days;
+        // Emptied before every window's commands wait on `inner`: deleting a full trash takes the
+        // disk's time. Only a workspace about to open here; one already open is left to its own.
+        let opened = opened.map(|mut workspace| {
+            if !lock(&self.inner).workspaces.contains_key(path) {
+                expire_as_it_opens(&mut workspace, retention);
+            }
+            workspace
+        });
         let watch = {
             let mut inner = lock(&self.inner);
             if inner.reserved.get(path).is_some_and(|l| l == label) {
@@ -866,7 +877,12 @@ impl AppCore {
     /// first saved layout of `to`, keeps its spot among the windows to reopen, and refuses changes
     /// from its page until the new page is up (`page_started`). `NotFound` for a window not
     /// registered, changing nothing.
-    pub fn switch_window(&self, label: &str, to: &Path, opened: Workspace) -> io::Result<()> {
+    pub fn switch_window(&self, label: &str, to: &Path, mut opened: Workspace) -> io::Result<()> {
+        let retention = self.settings().trash.retention_days;
+        // Outside `inner`, as in `register_window`.
+        if !lock(&self.inner).workspaces.contains_key(to) {
+            expire_as_it_opens(&mut opened, retention);
+        }
         let leaving = self.workspace(label);
         let (fresh, closed) = {
             let mut inner = lock(&self.inner);
@@ -1225,6 +1241,24 @@ impl AppCore {
                 None => Ok(()),
             })
             .collect())
+    }
+
+    /// Holds memo `id` of window `label`'s workspace for the window while it moves out of the
+    /// workspace (to the trash), so no other window opens it meanwhile: `Ok(fresh)`, `fresh` when
+    /// the window did not hold it already (the caller then lets it go with `release_tab`), or
+    /// `Err(owner)` when another window has it open. A window not registered holds nothing.
+    /// `Err` while the window switches workspaces (`page_started`).
+    pub fn hold_memo(&self, label: &str, id: &str) -> io::Result<Result<bool, String>> {
+        let mut inner = lock(&self.inner);
+        let Some(window) = inner.windows.get(label) else {
+            return Ok(Ok(false));
+        };
+        window.check_writable(label)?;
+        let Some(key) = inner.key_for(label, &TabRef::Memo { id: id.to_string() }) else {
+            return Ok(Ok(false));
+        };
+        let fresh = inner.places.owner(&key).is_none();
+        Ok(inner.places.claim(label, key).map(|()| fresh))
     }
 
     /// Window `label` closed the tab: another window may open it now. Nothing while the window
@@ -1669,6 +1703,37 @@ impl AppCore {
         ticked
     }
 
+    /// Empties what is past the settings' days from the trash of every open workspace (memo trash
+    /// spec 「자동 비우기」), once each however many windows show it. Returns the labels of the
+    /// windows whose workspace lost some, to tell (`tote://trash`).
+    pub fn expire_trash_all(&self, now_ms: u64) -> Vec<String> {
+        let retention = self.settings().trash.retention_days;
+        if retention.is_none() {
+            return Vec::new();
+        }
+        let workspaces: Vec<(Vec<String>, Arc<Mutex<Workspace>>)> = {
+            let inner = lock(&self.inner);
+            inner
+                .workspaces
+                .iter()
+                .map(|(path, open)| (inner.windows_of(path), open.workspace.clone()))
+                .collect()
+        };
+        let mut labels = Vec::new();
+        for (windows, workspace) in workspaces {
+            let mut workspace = lock(&workspace);
+            match workspace.expire_trash(now_ms, retention) {
+                Ok(gone) if !gone.is_empty() => labels.extend(windows),
+                Ok(_) => {}
+                Err(err) => eprintln!(
+                    "tote: could not empty the trash of {}: {err}",
+                    workspace.name()
+                ),
+            }
+        }
+        labels
+    }
+
     pub fn is_quitting(&self) -> bool {
         lock(&self.inner).quitting
     }
@@ -1677,6 +1742,20 @@ impl AppCore {
         if let Err(err) = launch.save(&self.paths.launch_file()) {
             eprintln!("tote: could not save state.json: {err}");
         }
+    }
+}
+
+/// A workspace opening empties what is past the settings' days from its trash (memo trash spec
+/// 「자동 비우기」). A failure leaves the trash as it is; the hourly round tries again.
+fn expire_as_it_opens(workspace: &mut Workspace, retention: Option<u32>) {
+    let now_ms = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map_or(0, |d| d.as_millis() as u64);
+    if let Err(err) = workspace.expire_trash(now_ms, retention) {
+        eprintln!(
+            "tote: could not empty the trash of {}: {err}",
+            workspace.name()
+        );
     }
 }
 
@@ -3045,6 +3124,101 @@ mod tests {
         // The closed window is not registered: its claims all pass and leave no record.
         assert_eq!(core.claim_tabs(&w1, &tabs).unwrap(), vec![Ok(()), Ok(())]);
         assert_eq!(core.claim_tabs(&w2, &tabs).unwrap(), vec![Ok(()), Ok(())]);
+    }
+
+    #[test]
+    fn expire_trash_all_empties_old_items_of_open_workspaces() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let other = open(&core, "나");
+        let now = 1_793_464_405_000;
+        let trash = |label: &str, file: &str, at: u64| {
+            let workspace = core.workspace(label).unwrap();
+            let mut workspace = lock(&workspace);
+            let memo = workspace.import_memo(file, b"x").unwrap();
+            workspace.trash_memo(&memo.id, at).unwrap();
+            memo.id
+        };
+        let old = trash(&w1, "old.md", now - 61 * DAY_MS);
+        let recent = trash(&w1, "recent.md", now - DAY_MS);
+        trash(&other, "recent.md", now - DAY_MS);
+        let mut labels = core.expire_trash_all(now);
+        labels.sort();
+        let mut expected = vec![w1.clone(), w2];
+        expected.sort();
+        assert_eq!(
+            labels, expected,
+            "the windows of the workspace that lost some"
+        );
+        let left: Vec<String> = lock(&core.workspace(&w1).unwrap())
+            .list_trash(now)
+            .unwrap()
+            .into_iter()
+            .map(|t| t.id)
+            .collect();
+        assert_eq!(left, vec![recent]);
+        assert!(!left.contains(&old));
+        assert!(
+            core.expire_trash_all(now).is_empty(),
+            "nothing left to expire"
+        );
+        // Off in the settings: nothing goes.
+        core.modify_settings(|s| s.trash.retention_days = None)
+            .unwrap();
+        trash(&w1, "older.md", now - 400 * DAY_MS);
+        assert!(core.expire_trash_all(now).is_empty());
+    }
+
+    #[test]
+    fn a_workspace_expires_its_trash_as_it_opens() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let mut workspace = Workspace::create(&core.workspace_root(), "가").unwrap();
+        let memo = workspace.import_memo("old.md", b"x").unwrap();
+        workspace.trash_memo(&memo.id, 1000).unwrap();
+        let path = workspace.root().to_path_buf();
+        drop(workspace);
+        let label = core.next_label();
+        assert!(core.register_window(&label, &path, Some(Workspace::open(&path).unwrap()), None));
+        let workspace = core.workspace(&label).unwrap();
+        assert!(lock(&workspace).list_trash(1000).unwrap().is_empty());
+        // And as a window switches to it.
+        let mut other = Workspace::create(&core.workspace_root(), "나").unwrap();
+        let memo = other.import_memo("old.md", b"x").unwrap();
+        other.trash_memo(&memo.id, 1000).unwrap();
+        let to = other.root().to_path_buf();
+        drop(other);
+        let opened = core.prepare_switch(&label, &to).unwrap();
+        core.switch_window(&label, &to, opened).unwrap();
+        let workspace = core.workspace(&label).unwrap();
+        assert!(lock(&workspace).list_trash(1000).unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_memo_another_window_holds_is_not_held_for_the_trash() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let w1 = open(&core, "가");
+        let w2 = attach(&core, &core.path_of(&w1).unwrap());
+        let a = TabRef::Memo { id: "a".into() };
+        core.claim_tabs(&w1, std::slice::from_ref(&a)).unwrap();
+        assert_eq!(core.hold_memo(&w2, "a").unwrap(), Err(w1.clone()));
+        // Its own: held, but not freshly.
+        assert_eq!(core.hold_memo(&w1, "a").unwrap(), Ok(false));
+        // A free one is held for the window while it moves: no other window opens it meanwhile.
+        assert_eq!(core.hold_memo(&w2, "b").unwrap(), Ok(true));
+        let b = TabRef::Memo { id: "b".into() };
+        assert_eq!(
+            core.claim_tabs(&w1, std::slice::from_ref(&b)).unwrap(),
+            vec![Err(w2.clone())]
+        );
+        core.release_tab(&w2, &b);
+        assert_eq!(
+            core.claim_tabs(&w1, std::slice::from_ref(&b)).unwrap(),
+            vec![Ok(())]
+        );
     }
 
     /// A window `w1` on 「가」 whose layout holds the memo tabs `a` and `b`, both claimed by it.

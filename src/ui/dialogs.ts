@@ -72,21 +72,25 @@ function button(label: string, onClick: () => void, className = ""): HTMLButtonE
   return b;
 }
 
-/** A yes/no question; Escape and 「취소」 answer false. */
-export async function confirm(message: string, okLabel: string): Promise<boolean> {
-  const answer = await modal<boolean>((close) =>
-    h(
+/** A yes/no question; Escape and 「취소」 answer false. With `tone` "danger" the yes is for
+ * something that cannot be undone: it is styled as 「저장하지 않음」 is, and 「취소」 takes the focus,
+ * so a stray Enter keeps what is there. */
+export async function confirm(message: string, okLabel: string, tone?: "danger"): Promise<boolean> {
+  const answer = await modal<boolean>((close) => {
+    const cancel = button("취소", () => close(false));
+    if (tone === "danger") cancel.dataset.autofocus = "";
+    return h(
       "div",
       { class: "modal confirm", role: "dialog" },
       h("p", { textContent: message }),
       h(
         "div",
         { class: "modal-buttons" },
-        button("취소", () => close(false)),
-        button(okLabel, () => close(true), "primary"),
+        cancel,
+        button(okLabel, () => close(true), tone ?? "primary"),
       ),
-    ),
-  );
+    );
+  });
   return answer ?? false;
 }
 

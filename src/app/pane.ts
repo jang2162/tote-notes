@@ -1,6 +1,6 @@
 import { EditorView } from "@codemirror/view";
 
-import { errorCode, type Backend, type ViewerInfo } from "../backend/types";
+import { errorCode, type Backend, type FileSource, type ViewerInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import type { Registry } from "../extensions/registry";
 import type { ThemeManager } from "../theme/manager";
@@ -206,11 +206,16 @@ export class Pane {
     this.host.showing(this, doc);
     const status = this.host.statusOf(this);
     status?.setMessage(doc.notice ?? "");
+    // A trashed memo has no file a viewer could read — a preview's pictures included: its text
+    // shows in the editor or not at all.
+    const source = doc.source;
     if (state) {
       const preview =
-        doc.mode === "preview" ? this.host.registry.viewerFor(doc.fileName, "preview") : undefined;
+        doc.mode === "preview" && source
+          ? this.host.registry.viewerFor(doc.fileName, "preview")
+          : undefined;
       if (preview) {
-        this.openViewer(doc, preview, state.doc.toString());
+        this.openViewer(doc, source!, preview, state.doc.toString());
         this.keepKeys();
         status?.setPosition(null);
         // A notice of the document (a restored draft) is not to be hidden by the mode's hint.
@@ -226,15 +231,15 @@ export class Pane {
     }
     status?.setPosition(null);
     this.keepKeys();
-    if (doc.problem === "too-large" || doc.problem === "long-line") {
-      void this.openLargeText(doc);
+    if (source && (doc.problem === "too-large" || doc.problem === "long-line")) {
+      void this.openLargeText(doc, source);
       return;
     }
     const viewer =
-      doc.problem === "binary" && !doc.forceText
+      source && doc.problem === "binary" && !doc.forceText
         ? this.host.registry.viewerFor(doc.fileName, "primary")
         : undefined;
-    if (viewer) this.openViewer(doc, viewer);
+    if (viewer) this.openViewer(doc, source!, viewer);
     else this.showProblem(doc);
   }
 
@@ -333,6 +338,7 @@ export class Pane {
         dirty: doc.dirty,
         failed: doc.saveFailed,
         external: doc.kind === "external",
+        trashed: doc.kind === "trashed",
         active: doc === this.tabs.active,
       })),
     );
@@ -388,7 +394,7 @@ export class Pane {
   /** A viewer for `doc` (spec 「뷰어」): a primary viewer for a file the editor cannot show gets a
    * token URL, a preview viewer gets `text` — the text as it is now. The token lives as long as
    * this view: leaving the tab, closing it or a viewer failure revokes it. */
-  private openViewer(doc: Doc, viewer: ViewerInfo, text?: string): void {
+  private openViewer(doc: Doc, source: FileSource, viewer: ViewerInfo, text?: string): void {
     const owner = this.nextOwner(doc, viewer.id);
     const fallBack = () => {
       // Another view took over meanwhile; this one is already gone.
@@ -407,7 +413,7 @@ export class Pane {
       url: this.host.backend.viewerUrl(viewer.extension, viewer.entry),
       resolveRelative: async (path) => {
         if (this.panel !== panel) return null;
-        const url = await this.host.backend.resolveRelative(doc.source, path, owner);
+        const url = await this.host.backend.resolveRelative(source, path, owner);
         if (this.panel === panel) return url;
         // The view closed while this was on its way: its tokens were revoked before this one.
         this.revoke(owner);
@@ -432,7 +438,7 @@ export class Pane {
       return;
     }
     void this.host.backend
-      .issueFileToken(doc.source, owner)
+      .issueFileToken(source, owner)
       .then((url) => {
         if (this.panel !== panel) return;
         host.start({
@@ -448,15 +454,15 @@ export class Pane {
   }
 
   /** The read-only large text viewer (spec 「크기별 단계」). Its token lives as long as the view. */
-  private async openLargeText(doc: Doc): Promise<void> {
+  private async openLargeText(doc: Doc, source: FileSource): Promise<void> {
     const owner = this.nextOwner(doc, "large-text");
     const view = this.views;
     // Another tab or view was shown while this one was on its way.
     const stale = () => this.tabs.active !== doc || this.views !== view;
     try {
       const [url, scan] = await Promise.all([
-        this.host.backend.issueFileToken(doc.source, owner),
-        this.host.backend.scanText(doc.source),
+        this.host.backend.issueFileToken(source, owner),
+        this.host.backend.scanText(source),
       ]);
       if (stale()) return this.revoke(owner);
       const viewer = new LargeTextViewer({
@@ -464,7 +470,7 @@ export class Pane {
         scan,
         fileName: doc.fileName,
         search: (query, fromLine) =>
-          this.host.backend.searchText(doc.source, query, fromLine, this.host.nextTextSearch()),
+          this.host.backend.searchText(source, query, fromLine, this.host.nextTextSearch()),
       });
       this.panel = { doc, owner, host: viewer };
       this.surface.showPanel(viewer.el);

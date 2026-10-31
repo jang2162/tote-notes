@@ -11,8 +11,10 @@ import type {
   Settings,
   ShortcutTable,
   TabRef,
+  TrashedInfo,
   WindowStart,
 } from "../backend/types";
+import { errorCode, MENU_SEPARATOR } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
@@ -56,7 +58,7 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, pickLanguage, promptText } from "../ui/dialogs";
+import { askUnsaved, confirm, pickLanguage, promptText } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -69,6 +71,8 @@ import { Sidebar } from "../ui/sidebar";
 import { SidebarToggle, tabLead } from "../ui/sidebar-toggle";
 import { dragsWindow } from "../ui/window-drag";
 import { StatusBar } from "../ui/status-bar";
+import { TrashButton } from "../ui/trash-button";
+import { TrashList } from "../ui/trash-list";
 import type { TabDrag } from "../ui/tab-bar";
 import { openVersions } from "../ui/versions";
 import {
@@ -84,9 +88,11 @@ import {
   ExternalDoc,
   importExternal,
   MemoDoc,
+  TrashDoc,
   type Change,
   type Doc,
   type DocHost,
+  type PlacedDoc,
 } from "./docs";
 import { editorFontStack } from "./editor-font";
 import { describeError } from "./errors";
@@ -109,7 +115,7 @@ import {
   type Zone,
 } from "./layout";
 import { Pane, type PaneHost } from "./pane";
-import { claimPlaces, parseJson, sessionTab, SessionSync } from "./session-sync";
+import { claimPlaces, inSession, parseJson, sessionTab, SessionSync } from "./session-sync";
 import { draggedSidebar, shownSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
 import {
   startsCollapsed,
@@ -121,6 +127,11 @@ import {
 } from "./sidebar-state";
 
 export { describeError, ERROR_TEXT } from "./errors";
+
+/** A memo the trash could not take: its tab could not be saved, or a conflict waits. */
+export const NOT_TRASHED = "저장하지 못해 휴지통으로 옮기지 않았습니다";
+/** A trashed memo's tab has no place nor session entry another window could open it from. */
+export const NOT_TORN_OFF = "휴지통 메모는 새 창으로 옮길 수 없습니다";
 
 /** The extensions and grammars that are on, with versions: equal signatures read the same files. */
 function extensionSignature(registry: Registry): string {
@@ -276,6 +287,7 @@ export class AppController implements DocHost, PaneHost {
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
     sidebar: { preview: true, sort: "modified-desc" },
+    trash: { retentionDays: 60 },
   };
   /** The app commands' shortcuts as of the last config change; the hints that name one read it.
    * Null until it is first read (a failed first read too: the empty panes then show no hint). */
@@ -344,6 +356,19 @@ export class AppController implements DocHost, PaneHost {
     manage: () =>
       void this.showSettings("workspaces").catch((error: unknown) => this.report(error)),
   });
+  private readonly trashList = new TrashList({
+    open: (id) => void this.openTrashed(id).catch((error: unknown) => this.report(error)),
+    menu: (id) => void this.trashMenu(id).catch((error: unknown) => this.report(error)),
+    back: () => this.showMemoList(),
+    empty: () => void this.emptyTrash().catch((error: unknown) => this.report(error)),
+  });
+  private readonly trashButton = new TrashButton(
+    () => void this.toggleTrash().catch((error: unknown) => this.report(error)),
+  );
+  /** Numbers the trash's reads: only the latest one's answer is shown. */
+  private trashReads = 0;
+  /** Another window's change to the trash is waiting to be read (`MEMOS_GATHER_MS`). */
+  private trashChangedSoon: number | null = null;
   /** Goes by the menu item's id, so `showSettings`'s one-screen guard holds for it too. */
   private readonly settingsButton = new SettingsButton(() => void this.onMenu("settings"));
   private readonly updateButton = new UpdateButton(
@@ -364,7 +389,9 @@ export class AppController implements DocHost, PaneHost {
     this.switcher,
     this.memoList,
     this.searchPanel,
+    this.trashList,
     this.settingsButton,
+    this.trashButton,
     this.updateButton,
   );
   /** What the switcher lists, for ⌃1 – ⌃9. */
@@ -583,6 +610,14 @@ export class AppController implements DocHost, PaneHost {
     return undefined;
   }
 
+  private trashedTab(id: string): TrashDoc | undefined {
+    for (const pane of this.panes) {
+      const doc = pane.tabs.trashed(id);
+      if (doc) return doc;
+    }
+    return undefined;
+  }
+
   private isActive(doc: Doc): boolean {
     return this.paneOf(doc).tabs.active === doc;
   }
@@ -636,6 +671,7 @@ export class AppController implements DocHost, PaneHost {
     this.workspaceName = info.name;
     document.title = info.title;
     void this.refreshSwitcher();
+    void this.refreshTrash();
     this.backend.onWorkspacesChanged(() => {
       void this.refreshSwitcher();
       for (const listener of this.workspaceListeners) listener();
@@ -687,6 +723,11 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
+    this.backend.onTrashChanged(() => this.trashChanged());
+    // Another window trashes a memo this one has open: it is saved and closed here, then trashed.
+    this.backend.onTrashRequest(
+      (id) => void this.trashMemo(id).catch((error: unknown) => this.report(error)),
+    );
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => {
@@ -702,6 +743,7 @@ export class AppController implements DocHost, PaneHost {
     });
     window.addEventListener("focus", () => {
       void this.refreshMemos();
+      void this.refreshTrash();
       void this.refreshSwitcher();
       // A first read that failed left the empty panes without their hint: read it again.
       if (!this.shortcuts) void this.loadShortcuts().then((c) => c && this.shortcutsChanged());
@@ -893,6 +935,7 @@ export class AppController implements DocHost, PaneHost {
       menuKeys: this.menuKeys,
       languageData: doc.languageData,
       highlight: this.highlightFor(doc, options.text.length),
+      readOnly: doc.kind === "trashed",
       onUpdate: (update) => this.onUpdate(doc, update),
     });
   }
@@ -1029,6 +1072,18 @@ export class AppController implements DocHost, PaneHost {
     await this.showTab(doc);
   }
 
+  /** A trashed row (memo trash spec 「내용 보기」): the memo read-only, in the tab it has if one is
+   * open. Not claimed: the trash reads the same in every window. */
+  async openTrashed(id: string): Promise<void> {
+    let doc: Doc | undefined = this.trashedTab(id);
+    if (!doc) {
+      const info = this.trashList.get(id);
+      if (!info) return;
+      doc = this.focused.tabs.insertAfterActive(this.trashDoc(info));
+    }
+    await this.showTab(doc);
+  }
+
   async newMemo(): Promise<void> {
     await this.newMemoIn(this.focused, "after-active");
   }
@@ -1057,15 +1112,207 @@ export class AppController implements DocHost, PaneHost {
   async closeTab(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
+    if (await this.closeDoc(doc)) return;
+    // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
+    if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
+  }
+
+  /** Closes `doc` as its close mark does; `false` when it stays open (focused again when it is
+   * the active tab). */
+  private async closeDoc(doc: Doc): Promise<boolean> {
     const pane = this.paneOf(doc);
     pane.capture(doc);
     if (!(await doc.close(() => askUnsaved(doc.title)))) {
-      // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
-      if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
       if (doc === pane.tabs.active) pane.view.focus();
-      return;
+      return false;
     }
     await this.takeOut(pane, doc);
+    return true;
+  }
+
+  /** 「휴지통으로 이동」 (memo trash spec 「휴지통으로 옮기기」), without asking. A tab of this window
+   * showing the memo is saved and closed first, so the trash gets its last text; when that fails or
+   * a conflict waits for its answer, nothing moves and the status bar says so. A memo another
+   * window has open is left to that window, which hears `onTrashRequest` and comes back here. */
+  async trashMemo(id: string): Promise<void> {
+    let target = id;
+    const doc = this.memoTab(id);
+    if (doc) {
+      await settleComposition(this.viewOf(doc));
+      if (!this.docs.includes(doc)) return;
+      if (!(await this.closeDoc(doc))) {
+        this.statusBar.setMessage(NOT_TRASHED);
+        return;
+      }
+      // A save that recovered a vanished memo wrote the text under a new ID.
+      target = doc.info.id;
+    }
+    let outcome;
+    try {
+      outcome = await this.backend.trashMemo(target);
+    } catch (error) {
+      // Gone already: an empty new memo its close deleted, or a file another app removed.
+      if (errorCode(error) !== "unknown-memo") throw error;
+      this.memoList.remove(target);
+      return;
+    }
+    if (outcome.kind !== "trashed") return;
+    this.memoList.remove(target);
+    await this.refreshTrash();
+  }
+
+  /** Another window changed the trash: read the way the memo list's changes are, a burst once. */
+  private trashChanged(): void {
+    if (this.trashChangedSoon !== null) return;
+    this.trashChangedSoon = window.setTimeout(() => {
+      this.trashChangedSoon = null;
+      void this.refreshTrash();
+    }, MEMOS_GATHER_MS);
+  }
+
+  /** Reads the trash again for its pane and its button's count. */
+  private async refreshTrash(): Promise<void> {
+    const read = ++this.trashReads;
+    try {
+      const items = await this.backend.listTrash();
+      if (read !== this.trashReads) return;
+      this.trashList.setItems(items);
+      this.trashButton.setCount(items.length);
+    } catch (error) {
+      console.warn(error);
+      return;
+    }
+    await this.followTrash();
+  }
+
+  /** The trashed tabs whose memo has left the trash, here or in another window: a restored one
+   * becomes the memo's tab, one purged or emptied closes (memo trash spec 「내용 보기」). One
+   * trashed again since it was read — restored, written in and trashed within one gather — reads
+   * what the trash holds now. */
+  private async followTrash(): Promise<void> {
+    const again = this.docs.filter(
+      (doc): doc is TrashDoc =>
+        doc instanceof TrashDoc &&
+        (this.trashList.get(doc.info.id)?.deletedMs ?? doc.info.deletedMs) !== doc.info.deletedMs,
+    );
+    for (const doc of again) {
+      const info = this.trashList.get(doc.info.id);
+      if (info && this.docs.includes(doc)) await this.swapDoc(doc, this.trashDoc(info));
+    }
+    const gone = this.docs.filter(
+      (doc): doc is TrashDoc => doc instanceof TrashDoc && !this.trashList.get(doc.info.id),
+    );
+    if (gone.length === 0) return;
+    // Another window's restore may not be in this window's memo list yet.
+    if (gone.some((doc) => !this.memoList.get(doc.info.id))) await this.refreshMemos();
+    for (const doc of gone) {
+      if (!this.docs.includes(doc)) continue;
+      const info = this.memoList.get(doc.info.id);
+      await (info ? this.turnIntoMemo(doc, info) : this.closeDoc(doc));
+    }
+  }
+
+  /** A restored memo takes its trashed tab's place, read and editable, once its place is this
+   * window's. Another window that opened it first keeps it, and the trashed tab closes: one memo
+   * is in one place. */
+  private async turnIntoMemo(doc: TrashDoc, info: MemoInfo): Promise<void> {
+    const ref: TabRef = { kind: "memo", id: info.id };
+    const [claimed] = await claimPlaces(this.backend, [ref], false);
+    // Turned already (two reads of the trash crossing): the memo's tab holds the place. Closed
+    // while the claim was out: no tab holds what it won, so it goes, or another window's click
+    // on the memo would be sent here to open it.
+    if (!this.docs.includes(doc)) {
+      if (claimed && !this.memoTab(info.id))
+        void this.backend.releaseTab(ref).catch((error: unknown) => console.warn(error));
+      return;
+    }
+    if (!claimed) {
+      await this.closeDoc(doc);
+      return;
+    }
+    this.paneOf(doc).capture(doc);
+    const memo = new MemoDoc(this, info);
+    memo.scrollAnchor = doc.scrollAnchor;
+    memo.restoreSelection = doc.selectionJSON;
+    this.held.set(memo, memo.tabRef);
+    await this.swapDoc(doc, memo);
+    this.saveSessionSoon();
+  }
+
+  /** `next` in `doc`'s place among its pane's tabs, shown when `doc` was. */
+  private async swapDoc(doc: Doc, next: Doc): Promise<void> {
+    const pane = this.paneOf(doc);
+    pane.tabs.replace(doc, next);
+    this.dropHighlight(doc);
+    this.coloured.delete(doc.tabId);
+    if (pane.tabs.active === doc) {
+      pane.tabs.active = null;
+      await pane.activate(next);
+    } else pane.renderTabs();
+  }
+
+  private trashDoc(info: TrashedInfo): TrashDoc {
+    return new TrashDoc(this, info, {
+      restore: (memo) => this.restoreTrashed(memo),
+      purge: (memo) => this.purgeTrashed(memo),
+    });
+  }
+
+  /** The trash button: the trash in the memo list's place, or the memo list back. */
+  private async toggleTrash(): Promise<void> {
+    if (this.sidebar.shown === "trash") return this.showMemoList();
+    this.sidebar.show("trash");
+    await this.refreshTrash();
+  }
+
+  private showMemoList(): void {
+    this.sidebar.show("memos");
+  }
+
+  /** A trashed row's context menu: 복구, or 영구 삭제 after asking. */
+  private async trashMenu(id: string): Promise<void> {
+    const picked = await this.backend.showPopupMenu([
+      { id: "restore", text: "복구" },
+      MENU_SEPARATOR,
+      { id: "purge", text: "영구 삭제" },
+    ]);
+    if (picked === "restore") await this.restoreTrashed(id);
+    if (picked === "purge") await this.purgeTrashed(id);
+  }
+
+  /** Back into the memo list, under the next free name when its own is taken; not opened. */
+  async restoreTrashed(id: string): Promise<void> {
+    const info = await this.backend.restoreMemo(id);
+    this.memoList.upsert(info);
+    await this.refreshTrash();
+  }
+
+  /** Removes a trashed memo for good, once the person said so. */
+  async purgeTrashed(id: string): Promise<void> {
+    const item = this.trashList.get(id);
+    if (!item) return;
+    const sure = await confirm(
+      `「${item.file}」 를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+      "영구 삭제",
+      "danger",
+    );
+    if (!sure) return;
+    await this.backend.purgeTrashed(id);
+    await this.refreshTrash();
+  }
+
+  /** 「휴지통 비우기」: everything in the trash goes for good, once the person said so. */
+  async emptyTrash(): Promise<void> {
+    const count = this.trashList.count;
+    if (count === 0) return;
+    const sure = await confirm(
+      `휴지통의 메모 ${count}개를 영구 삭제할까요? 되돌릴 수 없습니다.`,
+      "영구 삭제",
+      "danger",
+    );
+    if (!sure) return;
+    await this.backend.emptyTrash();
+    await this.refreshTrash();
   }
 
   /** Takes `doc` out of `pane` for good (closed, or gone to another window): its place is let go
@@ -1110,6 +1357,10 @@ export class AppController implements DocHost, PaneHost {
     // picked from its menu again. A second hand-over would be refused by the backend once the first
     // is through, and its `stay` would show a tab that is gone.
     if (!this.docs.includes(doc) || doc.leaving) return false;
+    if (!doc.tabRef) {
+      this.statusBar.setMessage(NOT_TORN_OFF);
+      return false;
+    }
     // The editor lets go of the tab first: a key typed while it is written and handed over would
     // reach a tab that is leaving, and its late save would land after the new window has read it.
     const from = this.paneOf(doc);
@@ -1142,7 +1393,7 @@ export class AppController implements DocHost, PaneHost {
       return false;
     }
     // Closed while it was written.
-    if (!this.docs.includes(doc)) return false;
+    if (!this.docs.includes(doc) || !inSession(doc)) return false;
     const pane = this.paneOf(doc);
     try {
       await this.backend.tearOffTab(JSON.stringify(sessionTab(doc, this.deviceId)), doc.tabRef, at);
@@ -1165,7 +1416,8 @@ export class AppController implements DocHost, PaneHost {
     if (!doc) return;
     const picked = await this.backend.showPopupMenu([
       ...SPLIT_TAB_ITEMS.map(({ id, text }) => ({ id, text })),
-      { id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" },
+      // A trashed memo's tab stays in this window.
+      ...(doc.tabRef ? [{ id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" }] : []),
     ]);
     if (picked === MOVE_TAB_TO_NEW_WINDOW) await this.tearOff(doc);
     const split = SPLIT_TAB_ITEMS.find((item) => item.id === picked);
@@ -1482,14 +1734,17 @@ export class AppController implements DocHost, PaneHost {
     return claimed;
   }
 
-  private insertClaimed<D extends Doc>(doc: D, at: "after-active" | "end" = "after-active"): D {
+  private insertClaimed<D extends PlacedDoc>(
+    doc: D,
+    at: "after-active" | "end" = "after-active",
+  ): D {
     this.held.set(doc, doc.tabRef);
     if (at === "end") return this.focused.tabs.place(doc, this.focused.tabs.list.length);
     return this.focused.tabs.insertAfterActive(doc);
   }
 
   /** `doc` took a tab over under a name of its own (an import): the place goes with the name. */
-  private hold(doc: Doc): void {
+  private hold(doc: PlacedDoc): void {
     this.held.set(doc, doc.tabRef);
     void this.backend.claimTabs([doc.tabRef], false).catch((error: unknown) => console.warn(error));
   }
@@ -1504,7 +1759,7 @@ export class AppController implements DocHost, PaneHost {
   /** A save that recovered a vanished memo gave the tab a new memo ID: its place follows. */
   private followPlace(doc: Doc): void {
     const held = this.held.get(doc);
-    if (!held || sameTab(held, doc.tabRef)) return;
+    if (!held || !(doc instanceof MemoDoc) || sameTab(held, doc.tabRef)) return;
     this.release(doc);
     this.hold(doc);
   }
@@ -1527,7 +1782,7 @@ export class AppController implements DocHost, PaneHost {
   async adoptTab(tab: SessionTab, x: number, y: number): Promise<void> {
     const open = () =>
       tab.kind === "memo" ? this.memoTab(tab.memoId) : this.externalTab(tab.path);
-    let doc: Doc | null | undefined = open();
+    let doc: PlacedDoc | null | undefined = open();
     // Made in the other window a moment ago, the memo may not be listed here yet. A reveal of the
     // tab may open it meanwhile: then that tab is the one.
     if (!doc && tab.kind === "memo" && !this.memoList.get(tab.memoId)) {
@@ -1941,8 +2196,11 @@ export class AppController implements DocHost, PaneHost {
     const picked = await this.backend.showPopupMenu([
       { id: "rename", text: "이름 바꾸기…" },
       { id: "pin", text: info.pinned ? "고정 해제" : "맨 위에 고정" },
+      MENU_SEPARATOR,
+      { id: "trash", text: "휴지통으로 이동" },
     ]);
     if (picked === "rename") await this.renameMemo(id);
+    if (picked === "trash") await this.trashMemo(id);
     if (picked !== "pin") return;
     const pinned = await this.backend.setMemoPinned(id, !info.pinned);
     this.memoList.upsert(pinned);
@@ -2128,7 +2386,8 @@ export class AppController implements DocHost, PaneHost {
   /** The status bar's language; a button for a tab showing text. */
   private showLanguage(doc: Doc): void {
     const label = languageLabelFor(this.languageOf(doc), doc.fileName);
-    const editable = doc.state && !doc.problem;
+    // A trashed memo is read-only, and a memo's language is its file's extension.
+    const editable = doc.state && !doc.problem && doc.kind !== "trashed";
     this.statusBar.setLanguage(label, editable ? () => void this.pickLanguageFor(doc) : undefined);
   }
 

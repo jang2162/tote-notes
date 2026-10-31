@@ -16,6 +16,7 @@ import {
   type LanguageInfo,
   type MemoInfo,
   type TabRef,
+  type TrashedInfo,
   type WorkspaceChange,
 } from "../backend/types";
 import { decodeText, encodeText, longestLine, type Eol } from "../core/codec";
@@ -27,6 +28,7 @@ import { memoTitle, titleLine } from "../core/title";
 import type { LanguageData } from "../editor/language-config";
 import { carrySearch } from "../editor/search-bar";
 import type { BannerAction, BannerState } from "../ui/banner";
+import { deletedLabel } from "../ui/trash-list";
 
 // Spec 「저장」·「크기별 단계」.
 export const MEMO_SAVE_DELAY_MS = 500;
@@ -149,7 +151,7 @@ export function leftFirstLine(update: DocUpdate): boolean {
 /** One tab's document. The editor view shows the active one; every document keeps its own
  * `EditorState`, so switching tabs keeps undo history, selection and scroll. */
 export abstract class Doc {
-  abstract readonly kind: "memo" | "external";
+  abstract readonly kind: "memo" | "external" | "trashed";
   /** Names the tab. A memo tab keeps it when its memo changes (save recovery, import). */
   readonly tabId = crypto.randomUUID();
   state: EditorState | null = null;
@@ -187,9 +189,11 @@ export abstract class Doc {
   constructor(protected readonly host: DocHost) {}
 
   abstract get fileName(): string;
-  abstract get source(): FileSource;
-  /** The tab's place among every window's tabs (`Backend.claimTabs`). */
-  abstract get tabRef(): TabRef;
+  /** The file a viewer reads; null for a tab no viewer can read (a trashed memo). */
+  abstract get source(): FileSource | null;
+  /** The tab's place among every window's tabs (`Backend.claimTabs`); null for a tab that holds
+   * none (a trashed memo). */
+  abstract get tabRef(): TabRef | null;
   abstract get title(): string;
   abstract get hint(): string;
   abstract get dirty(): boolean;
@@ -1139,6 +1143,97 @@ export class ExternalDoc extends Doc {
     this.host.writes.cancel(this.draftKey);
     await this.host.writes.flush(this.draftKey);
   }
+}
+
+export const TRASHED_TEXT = "휴지통에 있는 메모입니다";
+export const RESTORE = "복구";
+export const PURGE = "영구 삭제";
+
+/** A tab that holds a place among the windows' tabs and has a file a viewer can read. */
+export type PlacedDoc = MemoDoc | ExternalDoc;
+
+/** What the trashed tab's banner buttons ask the window to do with its memo. */
+export interface TrashActions {
+  restore(id: string): Promise<void>;
+  purge(id: string): Promise<void>;
+}
+
+/** A memo in the trash, shown read-only in its original language (memo trash spec 「내용 보기」).
+ * It holds no place among the windows' tabs and stays out of the session: the trash is the same in
+ * every window, and nothing would be lost if it did not come back. Restored, the window puts a
+ * `MemoDoc` in its place; purged or emptied, it closes. */
+export class TrashDoc extends Doc {
+  readonly kind = "trashed" as const;
+
+  constructor(
+    host: DocHost,
+    readonly info: TrashedInfo,
+    actions: TrashActions,
+  ) {
+    super(host);
+    this.language = info.language ?? null;
+    this.banner = {
+      kind: "trash",
+      text: `${TRASHED_TEXT} · ${deletedLabel(info.deletedMs)}`,
+      actions: [
+        this.action(RESTORE, () => actions.restore(info.id)),
+        this.action(PURGE, () => actions.purge(info.id)),
+      ],
+    };
+  }
+
+  get fileName() {
+    return this.info.file;
+  }
+  get source(): null {
+    return null;
+  }
+  get tabRef(): null {
+    return null;
+  }
+  get title() {
+    return displayName(this.info.file);
+  }
+  get hint() {
+    return `${this.info.file} · 휴지통`;
+  }
+  get dirty() {
+    return false;
+  }
+  get unwritten() {
+    return false;
+  }
+
+  protected async read(): Promise<Uint8Array | Problem> {
+    if (!this.forceText && this.info.kind !== "text") return "binary";
+    // The trash list carries no size to check first: the native side turns one this big away
+    // unread, and the tab shows what a memo tab's own size check would.
+    try {
+      return await this.host.backend.readTrashed(this.info.id);
+    } catch (error) {
+      if (errorCode(error) === "too-large") return "too-large";
+      throw error;
+    }
+  }
+
+  /** Read-only (`EditorOptions.readOnly`): no edit reaches it. */
+  protected edited(): void {}
+
+  async leave(): Promise<void> {}
+
+  async flush(): Promise<void> {}
+
+  async close(): Promise<boolean> {
+    return true;
+  }
+
+  /** Another window would have no place nor session entry for it. */
+  async handOver(): Promise<boolean> {
+    return false;
+  }
+
+  /** A memo's language is its file's extension: the trash's file is not to be renamed. */
+  async changeLanguage(): Promise<void> {}
 }
 
 /** A banner whose answer would be lost on the way: another window would read the file afresh. */

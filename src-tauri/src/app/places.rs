@@ -42,6 +42,11 @@ impl Places {
         }
     }
 
+    /// The label of the window holding `key`, if one does.
+    pub fn owner(&self, key: &TabKey) -> Option<&str> {
+        self.owners.get(key).map(String::as_str)
+    }
+
     /// Frees `key` only when `label` owns it.
     pub fn release(&mut self, label: &str, key: &TabKey) {
         if self.owners.get(key).is_some_and(|owner| owner == label) {

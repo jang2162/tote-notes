@@ -117,6 +117,39 @@ pub fn read_text(path: &Path) -> io::Result<Vec<u8>> {
     read_text_from(file, size)
 }
 
+/// What `read_editable_text` refuses: the file is over the editor's limit.
+#[derive(Debug)]
+pub struct TooLarge;
+
+impl std::fmt::Display for TooLarge {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "over the editor's limit of {} bytes",
+            external::MAX_EDITOR_BYTES
+        )
+    }
+}
+
+impl std::error::Error for TooLarge {}
+
+/// Whether `err` is `read_editable_text` refusing a file over the editor's limit.
+pub fn is_too_large(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<TooLarge>())
+}
+
+/// `read_text` for a file only the editor shows — no large text viewer to fall back on: one over
+/// `MAX_EDITOR_BYTES` is refused by its size before a byte is read, as `FileTooLarge` carrying
+/// `TooLarge` (`is_too_large`).
+pub fn read_editable_text(path: &Path) -> io::Result<Vec<u8>> {
+    let file = File::open(path)?;
+    let size = file.metadata()?.len();
+    if size > external::MAX_EDITOR_BYTES {
+        return Err(io::Error::new(io::ErrorKind::FileTooLarge, TooLarge));
+    }
+    read_text_from(file, size)
+}
+
 fn read_text_from(mut reader: impl Read, size: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
     (&mut reader)

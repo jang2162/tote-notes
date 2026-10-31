@@ -626,13 +626,18 @@ fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
 }
 
 /// An item of a pop-up menu (`show_popup_menu`). With `checked` it is a check item, ticked or
-/// not; without, a plain one.
+/// not; without, a plain one. With `separator` it is a dividing line, and `id` and `text` are not
+/// looked at.
 #[derive(Debug, Deserialize)]
 pub struct PopupMenuItem {
+    #[serde(default)]
     pub id: String,
+    #[serde(default)]
     pub text: String,
     #[serde(default)]
     pub checked: Option<bool>,
+    #[serde(default)]
+    pub separator: bool,
 }
 
 /// The item picked in the pop-up menu on show. One at a time: macOS shows one context menu at once.
@@ -668,6 +673,10 @@ pub fn show_popup_menu(
     picks.begin();
     let mut menu = MenuBuilder::new(app);
     for each in items {
+        if each.separator {
+            menu = menu.separator();
+            continue;
+        }
         let id = format!("{POPUP_MENU}{}", each.id);
         menu = match each.checked {
             Some(checked) => menu.item(
@@ -771,6 +780,16 @@ mod tests {
         ] {
             assert!(app_command(id).is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn a_separator_item_reads_without_id_or_text() {
+        let items: Vec<PopupMenuItem> = serde_json::from_str(
+            r#"[{"id":"a","text":"가"},{"separator":true},{"id":"","text":"","separator":true}]"#,
+        )
+        .unwrap();
+        assert!(!items[0].separator);
+        assert!(items[1].separator && items[2].separator);
     }
 
     #[test]

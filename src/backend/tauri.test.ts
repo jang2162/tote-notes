@@ -1,7 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { TauriBackend } from "./tauri";
-import { BackendError } from "./types";
+import { BackendError, MENU_SEPARATOR } from "./types";
 
 // Only invoke is under test; the window, webview and dialog modules reach the native side, so
 // they are stubbed.
@@ -17,6 +17,9 @@ const startDragging = vi.fn();
 const toggleMaximize = vi.fn();
 const isFullscreen = vi.fn();
 const onResized = vi.fn(async (_handler: () => void) => () => {});
+const listen = vi.fn(async (_event: string, _handler: (event: { payload: unknown }) => void) => {
+  return () => {};
+});
 vi.mock("@tauri-apps/api/webviewWindow", () => ({
   getCurrentWebviewWindow: () => ({
     label: "ws-9",
@@ -24,6 +27,7 @@ vi.mock("@tauri-apps/api/webviewWindow", () => ({
     toggleMaximize,
     isFullscreen,
     onResized,
+    listen,
   }),
 }));
 vi.mock("@tauri-apps/plugin-dialog", () => ({ open: vi.fn() }));
@@ -44,6 +48,7 @@ describe("TauriBackend", () => {
       [() => backend.listMemos(), "list_memos", undefined],
       [() => backend.createMemo(), "create_memo", undefined],
       [() => backend.readMemo("m"), "read_memo", { id: "m" }],
+      [() => backend.readTrashed("m"), "read_trashed", { id: "m" }],
       [() => backend.retitleMemo("m", "제목"), "retitle_memo", { id: "m", stem: "제목" }],
       [() => backend.renameMemo("m", "a.md"), "rename_memo", { id: "m", file: "a.md" }],
       [() => backend.setMemoPinned("m", true), "set_memo_pinned", { id: "m", pinned: true }],
@@ -59,6 +64,11 @@ describe("TauriBackend", () => {
         { id: "m", language: "python", ext: "py", detected: false },
       ],
       [() => backend.deleteMemo("m"), "delete_memo", { id: "m" }],
+      [() => backend.trashMemo("m"), "trash_memo", { id: "m" }],
+      [() => backend.listTrash(), "list_trash", undefined],
+      [() => backend.restoreMemo("m"), "restore_memo", { id: "m" }],
+      [() => backend.purgeTrashed("m"), "purge_trashed", { id: "m" }],
+      [() => backend.emptyTrash(), "empty_trash", undefined],
       [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],
       [() => backend.readWindowLayout(), "read_window_layout", undefined],
       [() => backend.writeWindowLayout("{}"), "write_window_layout", { json: "{}" }],
@@ -87,6 +97,12 @@ describe("TauriBackend", () => {
         () => backend.showPopupMenu([{ id: "x", text: "엑스" }]),
         "show_popup_menu",
         { items: [{ id: "x", text: "엑스" }] },
+      ],
+      [
+        () => backend.showPopupMenu([MENU_SEPARATOR]),
+        "show_popup_menu",
+        // Rust's `PopupMenuItem` reads this shape (`a_separator_item_reads_without_id_or_text`).
+        { items: [{ id: "", text: "", separator: true }] },
       ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
@@ -310,5 +326,23 @@ describe("TauriBackend full screen", () => {
     answers[3](true);
     await settle();
     expect(told).toEqual([false, true]);
+  });
+});
+
+// The events src-tauri/src/app/commands.rs sends about the trash (`trash_changed`, `trash_memo`).
+describe("TauriBackend trash events", () => {
+  it("hears the trash change and the request to trash a memo, with its id", () => {
+    const backend = new TauriBackend();
+    const heard: string[] = [];
+    listen.mockClear();
+    backend.onTrashChanged(() => heard.push("trash"));
+    backend.onTrashRequest((id) => heard.push(`request ${id}`));
+    expect(listen.mock.calls.map(([event]) => event)).toEqual([
+      "tote://trash",
+      "tote://trash-memo",
+    ]);
+    listen.mock.calls[0][1]({ payload: null });
+    listen.mock.calls[1][1]({ payload: { id: "m" } });
+    expect(heard).toEqual(["trash", "request m"]);
   });
 });

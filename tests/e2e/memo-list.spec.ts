@@ -106,6 +106,9 @@ test("pinning a memo moves it to the zone above the list", async ({ page }) => {
   expect((await lastMenu(page))?.map((item) => [item.id, item.text])).toEqual([
     ["rename", "이름 바꾸기…"],
     ["pin", "맨 위에 고정"],
+    // The trash's, below a line (memo trash spec 「휴지통으로 옮기기」).
+    ["", ""],
+    ["trash", "휴지통으로 이동"],
   ]);
   expect(await page.evaluate(() => window.__tote.backend.data.memos.b.pinned)).toBe(true);
   await expect(page.locator(".memo-pinned-divider")).toBeVisible();

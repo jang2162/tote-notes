@@ -21,6 +21,8 @@ import {
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
+  type TrashedInfo,
+  type TrashOutcome,
   type PerfConfig,
   type SearchEvent,
   type SearchQuery,
@@ -130,6 +132,24 @@ export class TauriBackend implements Backend {
   }
   deleteMemo(id: string) {
     return call<void>("delete_memo", { id });
+  }
+  trashMemo(id: string) {
+    return call<TrashOutcome>("trash_memo", { id });
+  }
+  listTrash() {
+    return call<TrashedInfo[]>("list_trash");
+  }
+  async readTrashed(id: string) {
+    return bytesOf(await call<ArrayBuffer>("read_trashed", { id }));
+  }
+  restoreMemo(id: string) {
+    return call<MemoInfo>("restore_memo", { id });
+  }
+  purgeTrashed(id: string) {
+    return call<void>("purge_trashed", { id });
+  }
+  emptyTrash() {
+    return call<number>("empty_trash");
   }
   importMemo(fileName: string, bytes: Uint8Array) {
     return call<MemoInfo>("import_memo", bytes, { "x-file-name": enc(fileName) });
@@ -378,6 +398,14 @@ export class TauriBackend implements Backend {
   }
   onMemosChanged(handler: () => void) {
     void this.window.listen("tote://memos", () => handler());
+  }
+  onTrashChanged(handler: () => void) {
+    void this.window.listen("tote://trash", () => handler());
+  }
+  onTrashRequest(handler: (id: string) => void) {
+    void this.window.listen<{ id: string }>("tote://trash-memo", (event) =>
+      handler(event.payload.id),
+    );
   }
   onReveal(handler: (tab: TabRef) => void) {
     void this.window.listen<TabRef>("tote://reveal", (event) => handler(event.payload));
