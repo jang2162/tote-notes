@@ -1,6 +1,13 @@
 import type { Backend, ExtensionRegistry, SettingsPatch, ThemeRef } from "../backend/types";
 import { describeError } from "../app/errors";
-import { EDITOR_FONT_SIZE_MAX, EDITOR_FONT_SIZE_MIN, errorCode } from "../backend/types";
+import {
+  EDITOR_FONT_SIZE_MAX,
+  EDITOR_FONT_SIZE_MIN,
+  errorCode,
+  TRASH_DAYS_DEFAULT,
+  TRASH_DAYS_MAX,
+  TRASH_DAYS_MIN,
+} from "../backend/types";
 import { Registry } from "../extensions/registry";
 import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
@@ -110,11 +117,56 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       if (!(await save(patch)) && synced.get(input) === sent) synced.set(input, before);
     };
 
+    /** A number field saved as `patchOf` says once it is a number: rounded and brought into
+     * `min`–`max` — the backend clamps as well; clamping here first is what lets the field show
+     * the value saved. Empty or not a number, it goes back to the saved value and nothing is sent;
+     * below `min` it is brought up to it, or goes back too (`below: "revert"`) where a small number
+     * would not be what was meant. */
+    const numberField = (
+      input: HTMLInputElement,
+      range: { min: number; max: number; below: "clamp" | "revert" },
+      patchOf: (value: number) => SettingsPatch,
+    ) => {
+      input.min = String(range.min);
+      input.max = String(range.max);
+      input.step = "1";
+      const commit = () => {
+        const typed = input.value.trim() === "" ? NaN : Math.round(Number(input.value));
+        const saved = synced.get(input) ?? "";
+        if (!Number.isFinite(typed) || (range.below === "revert" && typed < range.min)) {
+          input.value = saved;
+          return;
+        }
+        const value = Math.min(range.max, Math.max(range.min, typed));
+        input.value = String(value);
+        if (input.value === saved) return;
+        void saveTyped(input, input.value, patchOf(value));
+      };
+      input.addEventListener("change", commit);
+      onEnter(input, commit);
+    };
+
     // The placeholder is the default root, as the backend names it once the screen has asked.
     const rootInput = h("input", { name: "workspaceRoot" });
     rootInput.spellcheck = false;
     const autoCheck = h("input", { type: "checkbox", name: "updatesAutoCheck" });
     autoCheck.addEventListener("change", () => void save({ updatesAutoCheck: autoCheck.checked }));
+    // Memo trash spec 「자동 비우기」. Under 1 goes back rather than up to 1 day: a 0 typed to mean
+    // 「never」 would otherwise empty the trash of everything a day old.
+    const trashDays = h("input", { type: "number", name: "trashRetentionDays" });
+    numberField(
+      trashDays,
+      { min: TRASH_DAYS_MIN, max: TRASH_DAYS_MAX, below: "revert" },
+      (days) => ({ trashRetentionDays: days }),
+    );
+    const trashNever = h("input", { type: "checkbox", name: "trashNever" });
+    trashNever.id = "settings-trashNever";
+    trashNever.addEventListener("change", () => {
+      trashDays.disabled = trashNever.checked;
+      // Back on, the days the field shows count again.
+      const days = trashNever.checked ? null : Number(synced.get(trashDays) ?? TRASH_DAYS_DEFAULT);
+      void save({ trashRetentionDays: days });
+    });
     const generalSection = () => {
       const pick = h("button", { textContent: "폴더 선택…" });
       pick.addEventListener("click", async () => {
@@ -142,6 +194,15 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           textContent: "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
         }),
         ...field("실행할 때 업데이트 확인", autoCheck),
+        field("휴지통 자동 비우기", trashDays)[0],
+        h(
+          "div",
+          { class: "settings-row" },
+          trashDays,
+          h("span", { class: "trash-days-unit", textContent: "일 지난 메모" }),
+          trashNever,
+          h("label", { htmlFor: trashNever.id, textContent: "안 비움" }),
+        ),
         h("p", {
           class: "settings-note update-note",
           textContent:
@@ -163,31 +224,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       "change",
       () => void save({ editorLineNumbers: lineNumbers.checked }),
     );
-    const fontSize = h("input", {
-      type: "number",
-      name: "editorFontSize",
-      min: String(EDITOR_FONT_SIZE_MIN),
-      max: String(EDITOR_FONT_SIZE_MAX),
-      step: "1",
-    });
-    // The backend clamps as well; clamping here first is what lets the field show the size saved.
-    const commitFontSize = () => {
-      const typed = fontSize.value.trim() === "" ? NaN : Number(fontSize.value);
-      const saved = synced.get(fontSize) ?? "";
-      if (!Number.isFinite(typed)) {
-        fontSize.value = saved;
-        return;
-      }
-      const size = Math.min(
-        EDITOR_FONT_SIZE_MAX,
-        Math.max(EDITOR_FONT_SIZE_MIN, Math.round(typed)),
-      );
-      fontSize.value = String(size);
-      if (fontSize.value === saved) return;
-      void saveTyped(fontSize, fontSize.value, { editorFontSize: size });
-    };
-    fontSize.addEventListener("change", commitFontSize);
-    onEnter(fontSize, commitFontSize);
+    const fontSize = h("input", { type: "number", name: "editorFontSize" });
+    numberField(
+      fontSize,
+      { min: EDITOR_FONT_SIZE_MIN, max: EDITOR_FONT_SIZE_MAX, below: "clamp" },
+      (size) => ({ editorFontSize: size }),
+    );
     const fontFamily = h("input", { name: "editorFontFamily", placeholder: "기본 글꼴" });
     fontFamily.spellcheck = false;
     const commitFontFamily = () => {
@@ -357,6 +399,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         preview.checked = current.sidebar.preview;
         autoCheck.checked = current.updates.autoCheck;
         sync(fontSize, String(current.editor.fontSize));
+        // Off, the field keeps the days it shows, for when it is on again.
+        const days = current.trash.retentionDays;
+        if (days !== null) sync(trashDays, String(days));
+        else if (!synced.has(trashDays)) sync(trashDays, String(TRASH_DAYS_DEFAULT));
+        trashNever.checked = days === null;
+        trashDays.disabled = days === null;
         sync(fontFamily, current.editor.fontFamily);
         selectTheme(lightSelect, current.theme.light);
         selectTheme(darkSelect, current.theme.dark);

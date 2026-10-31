@@ -834,3 +834,83 @@ test("a new font size remeasures the open editors, so the line numbers stay with
   expect(after[5][1]).toBeGreaterThan(before[5][1]);
   expect(aligned(after), JSON.stringify(after)).toBe(true);
 });
+
+test("the general section sets the trash retention", async ({ page }) => {
+  await start(page);
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    (window as unknown as { patches: object[] }).patches = [];
+    backend.patchSettings = (change) => {
+      (window as unknown as { patches: object[] }).patches.push(change);
+      return patchSettings(change);
+    };
+  });
+  const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
+  const trash = () => page.evaluate(() => window.__tote.backend.data.settings.trash);
+  const panel = await openSection(page, "일반");
+  const days = panel.getByRole("spinbutton", { name: "휴지통 자동 비우기" });
+  const never = panel.getByRole("checkbox", { name: "안 비움" });
+  await expect(days).toHaveValue("60");
+  await expect(days).toBeEnabled();
+  await expect(days).toHaveAttribute("min", "1");
+  await expect(days).toHaveAttribute("max", "3650");
+  await expect(panel.locator(".trash-days-unit")).toHaveText("일 지난 메모");
+  await expect(never).not.toBeChecked();
+
+  await days.fill("30");
+  await days.press("Enter");
+  await expect.poll(trash).toEqual({ retentionDays: 30 });
+  expect(await patches()).toEqual([{ trashRetentionDays: 30 }]);
+
+  // No number of days: back to the saved one, and nothing is sent.
+  for (const typed of ["0", "", "-3"]) {
+    await days.fill(typed);
+    await days.press("Enter");
+    await expect(days).toHaveValue("30");
+  }
+  await days.fill("");
+  await days.pressSequentially("abc");
+  await days.press("Tab");
+  await expect(days).toHaveValue("30");
+  expect(await patches()).toHaveLength(1);
+
+  // Past the end is brought into the range, and the field shows what was saved.
+  await days.fill("5000");
+  await days.press("Enter");
+  await expect(days).toHaveValue("3650");
+  await expect.poll(trash).toEqual({ retentionDays: 3650 });
+  expect((await patches()).at(-1)).toEqual({ trashRetentionDays: 3650 });
+
+  await never.check();
+  await expect.poll(trash).toEqual({ retentionDays: null });
+  expect((await patches()).at(-1)).toEqual({ trashRetentionDays: null });
+  await expect(days).toBeDisabled();
+  await expect(days).toHaveValue("3650");
+
+  await page.keyboard.press("Escape");
+  await openSection(page, "일반");
+  await expect(never).toBeChecked();
+  await expect(days).toBeDisabled();
+  await never.uncheck();
+  await expect(days).toBeEnabled();
+  await expect.poll(trash).toEqual({ retentionDays: 60 });
+  expect((await patches()).at(-1)).toEqual({ trashRetentionDays: 60 });
+  expect(await patches()).toHaveLength(4);
+});
+
+test("a font size under the smallest is brought up to it, 0 included", async ({ page }) => {
+  await start(page);
+  const panel = await openSection(page, "편집기");
+  const size = panel.getByLabel("글꼴 크기");
+  for (const typed of ["5", "0"]) {
+    await size.fill("14");
+    await size.press("Enter");
+    await size.fill(typed);
+    await size.press("Enter");
+    await expect(size).toHaveValue("11");
+    await expect
+      .poll(() => page.evaluate(() => window.__tote.backend.data.settings.editor.fontSize))
+      .toBe(11);
+  }
+});

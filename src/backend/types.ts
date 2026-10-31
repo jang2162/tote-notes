@@ -300,6 +300,11 @@ export interface EditorSettings {
 export const EDITOR_FONT_SIZE_MIN = 11;
 export const EDITOR_FONT_SIZE_MAX = 24;
 
+/** The trash's days, from 1 to 3650, 60 unless set (`TrashSettings` in src-tauri/src/appdata.rs). */
+export const TRASH_DAYS_MIN = 1;
+export const TRASH_DAYS_MAX = 3650;
+export const TRASH_DAYS_DEFAULT = 60;
+
 /** `WorkspaceRoots` in src-tauri/src/app/commands.rs: absolute paths, and the default as the
  * settings screen shows it (home as `~`). */
 export interface WorkspaceRoots {
