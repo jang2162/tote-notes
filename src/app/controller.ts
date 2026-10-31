@@ -1211,8 +1211,14 @@ export class AppController implements DocHost, PaneHost {
   private async turnIntoMemo(doc: TrashDoc, info: MemoInfo): Promise<void> {
     const ref: TabRef = { kind: "memo", id: info.id };
     const [claimed] = await claimPlaces(this.backend, [ref], false);
-    // Closed or turned already (two reads of the trash crossing); the memo's tab holds the place.
-    if (!this.docs.includes(doc)) return;
+    // Turned already (two reads of the trash crossing): the memo's tab holds the place. Closed
+    // while the claim was out: no tab holds what it won, so it goes, or another window's click
+    // on the memo would be sent here to open it.
+    if (!this.docs.includes(doc)) {
+      if (claimed && !this.memoTab(info.id))
+        void this.backend.releaseTab(ref).catch((error: unknown) => console.warn(error));
+      return;
+    }
     if (!claimed) {
       await this.closeDoc(doc);
       return;

@@ -637,3 +637,47 @@ test("a restore heard of before the memo list turns the tab into the memo", asyn
   await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
   await expect(editor(page)).toHaveText("옛것");
 });
+
+test("a trashed tab closed while its restore claims the place lets the place go", async ({
+  page,
+}) => {
+  await start(page, { trash: { t: trashed("회의록.md", "옛것", 5) } });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(page.locator(".tab.trashed")).toHaveCount(1);
+  // This window's claim of the restored memo's place waits until the test lets it answer.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const claim = backend.claimTabs.bind(backend);
+    const w = window as unknown as { claimsHeld: number; letClaimsGo: () => void };
+    w.claimsHeld = 0;
+    let go!: () => void;
+    const gate = new Promise<void>((resolve) => (go = resolve));
+    w.letClaimsGo = go;
+    backend.claimTabs = async (...args) => {
+      w.claimsHeld++;
+      await gate;
+      return claim(...args);
+    };
+  });
+  // Another window restored it.
+  await page.evaluate((key) => {
+    const { backend } = window.__tote;
+    const { deletedMs: _deleted, ...memo } = backend.data.trash!.t;
+    backend.data.memos.t = memo;
+    delete backend.data.trash!.t;
+    localStorage.setItem(key, JSON.stringify(backend.data));
+    backend.trashChanged();
+  }, FAKE_STORAGE_KEY);
+  await expect
+    .poll(() => page.evaluate(() => (window as unknown as { claimsHeld: number }).claimsHeld))
+    .toBe(1);
+  // Closed by its close mark while the claim is out.
+  await page.getByRole("button", { name: "회의록 탭 닫기" }).click();
+  await expect(tab(page)).toHaveCount(0);
+  await page.evaluate(() => (window as unknown as { letClaimsGo: () => void }).letClaimsGo());
+  // The claim came back yes for a tab no longer here: the place goes, so another window that
+  // opens the memo opens it there instead of asking this window to.
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.places)).toEqual({});
+  await expect(tab(page)).toHaveCount(0);
+});
