@@ -127,15 +127,26 @@ test("trashing a memo open in another window saves it there and closes its tab",
   });
   await row(first, "장보기").click();
   await expect(first.locator(".cm-content")).toHaveText("우유");
+  // The pages share the fake's data as one `localStorage` blob that reaches the other page late,
+  // so a page writing from an old copy wipes what the other wrote meanwhile: the second window
+  // opens before the typing, and the clock (the context's, both pages') holds the save's timer,
+  // so the first window writes only once it is asked — after the second's last write.
+  const second = await openWindow(context, "ws-2");
+  await first.clock.install();
+  await first.clock.pauseAt(Date.now() + 60_000);
   await first.evaluate(() => window.__tote.app.view.dispatch({ selection: { anchor: 2 } }));
   await first.keyboard.insertText(" 계란");
-  const second = await openWindow(context, "ws-2");
   await pick(second, "trash");
+  expect(await first.evaluate(() => window.__tote.backend.memoText("a"))).toBe("우유");
   await row(second, "장보기").click({ button: "right" });
   await expect(first.locator(".tab")).toHaveCount(0);
   await expect(row(first, "장보기")).toHaveCount(0);
+  expect(await trashedText(first, "a")).toBe("우유 계란");
+  // The second window reads the change once it has reached its page, then hears of it (its
+  // gathering timer, MEMOS_GATHER_MS in src/app/controller.ts, runs on the held clock).
+  await expect.poll(() => trashedText(second, "a")).toBe("우유 계란");
+  await first.clock.runFor(300);
   await expect(row(second, "장보기")).toHaveCount(0);
-  expect(await trashedText(second, "a")).toBe("우유 계란");
   expect(await second.evaluate(() => window.__tote.backend.data.places)).toEqual({});
 });
 

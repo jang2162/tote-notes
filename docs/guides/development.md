@@ -134,6 +134,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
   - e2e 를 에이전트가 돌리면 Vite 가 에이전트를 감지해(`AI_AGENT` 같은 환경 변수) `server.forwardConsole` 을 켠다. 페이지의 `console` 이 개발 서버로 전달되는 래퍼를 지나므로 사람이 돌릴 때와 경로가 다르다. 사람과 에이전트에서 결과가 갈리면 이것부터 의심한다. `quietErrors` 가 이 래퍼와 서로를 불러 `RangeError` 를 내던 것이 그 예다(`tests/e2e/quiet-errors.spec.ts`, 에이전트 실행에서만 구분력이 있다).
+  - 가짜 백엔드의 두 창 시험(`startWindows`·`openWindow`)에서 한 창이 쓴 값이 가끔 옛 값으로 보이면 다른 창의 덮어쓰기부터 의심한다. 창들은 가짜의 데이터를 `localStorage` 한 덩어리로 나누는데, 한 페이지의 쓰기는 다른 페이지에 늦게 닿는다. 그래서 옛 사본을 든 창이 `commit()` 하면(창이 뜰 때 생성자가 하는 `commit` 도 쓰기다) 그사이 다른 창이 쓴 것이 통째로 지워진다. 앱(Rust 한 곳이 원천)에는 없는 경쟁이라 앱을 고칠 일이 아니고, 단언할 쓰기가 다른 창의 마지막 쓰기 뒤에 일어나게 순서를 짠다: 둘째 창을 먼저 띄우고, `page.clock` 으로 저장 타이머를 붙잡는다. 이 시계는 context 의 것이라 두 페이지가 함께 멈춘다 — 다른 창의 모으기 타이머(`MEMOS_GATHER_MS`)도 `runFor` 로 옮겨야 돈다. 다른 창에서 읽는 값은 `expect.poll` 로 그 페이지에 닿기를 기다린다(`tests/e2e/trash.spec.ts` 「trashing a memo open in another window …」). 누가 언제 썼는지는 init script 에서 `Storage.prototype.setItem` 을 감싸 창 라벨·시각·스택을 남기면 보인다.
 
 ## `@codemirror/view` 는 패치해서 쓴다 — 포커스 직후 커서가 줄 머리로 가지 않게
 
