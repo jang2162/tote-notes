@@ -203,7 +203,17 @@ export interface EditorOptions {
   languageData?: LanguageData;
   /** TextMate colours (`workerHighlighting`); absent for plain text and over the size limit. */
   highlight?: Extension;
+  /** A trashed memo: nothing edits the text, whatever key, paste, drop or command tries. */
+  readOnly?: boolean;
 }
+
+/** CodeMirror's read-only flag turns away typing, paste, drop and its own commands; the filter
+ * also stops the app's commands that dispatch changes themselves (Tab's `insertIndent`, the
+ * multi-cursor composition). Focus, selection, copy and the find bar still work. */
+const readOnly: Extension = [
+  EditorState.readOnly.of(true),
+  EditorState.changeFilter.of(() => false),
+];
 
 export function editorExtensions(options: EditorOptions): Extension[] {
   return [
@@ -231,6 +241,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     ),
     highlightSlot.of(options.highlight ?? []),
     appTheme,
+    options.readOnly ? readOnly : [],
     EditorView.updateListener.of(options.onUpdate),
   ];
 }

@@ -852,6 +852,11 @@ html:not(.sidebar-collapsed) .tab-lead {
   vertical-align: middle;
 }
 
+/* A trashed memo's read-only tab (memo trash spec 「내용 보기」): its title dimmed. */
+.tab.trashed .tab-title {
+  opacity: 0.55;
+}
+
 .tab.failed .tab-title::after {
   content: " ⚠";
   color: var(--danger);
@@ -912,6 +917,11 @@ html:not(.sidebar-collapsed) .tab-lead {
 
 .banner-info {
   border-left: 3px solid var(--accent);
+}
+
+/* The trashed memo's banner says where it is; nothing is wrong with it. */
+.banner-trash {
+  border-left: 3px solid var(--muted);
 }
 
 .banner-text {

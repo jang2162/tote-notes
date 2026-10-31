@@ -8,6 +8,8 @@ export interface TabView {
   /** The last save failed; the text is only in memory until a retry succeeds. */
   failed: boolean;
   external: boolean;
+  /** A trashed memo's read-only tab: its title is dimmed. Absent counts as false. */
+  trashed?: boolean;
   active: boolean;
 }
 
@@ -218,6 +220,7 @@ export class TabBar {
       tab.dirty && "dirty",
       tab.failed && "failed",
       tab.external && "external",
+      tab.trashed && "trashed",
       tab.id === this.out && "dragging-out",
     ]
       .filter(Boolean)

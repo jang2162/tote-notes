@@ -7,13 +7,13 @@ import {
   type WindowSession,
 } from "../core/session";
 import { SIDEBAR_WIDTH } from "../core/sidebar-width";
-import { ExternalDoc, MemoDoc, type Doc } from "./docs";
+import { ExternalDoc, MemoDoc, type Doc, type PlacedDoc } from "./docs";
 import type { LayoutNode } from "./layout";
 import type { Tabs } from "./tabs";
 
 /** The session tab for `doc`. Defaults are left out so a session written by an older build and
  * one written now read the same. */
-export function sessionTab(doc: Doc, deviceId: string): SessionTab {
+export function sessionTab(doc: PlacedDoc, deviceId: string): SessionTab {
   const place: { selection?: SessionTab["selection"]; scrollAnchor: number; mode?: "preview" } = {
     scrollAnchor: doc.scrollAnchor,
   };
@@ -24,11 +24,15 @@ export function sessionTab(doc: Doc, deviceId: string): SessionTab {
     if (doc.conflictKept) tab.conflictKept = { memoId: doc.conflictKept.memoId };
     return tab;
   }
-  const external = doc as ExternalDoc;
   // Spec 「동기화 대비」: external entries always carry the device they belong to.
-  const tab: SessionTab = { kind: "external", deviceId, path: external.path, ...place };
-  if (external.language) tab.language = external.language;
+  const tab: SessionTab = { kind: "external", deviceId, path: doc.path, ...place };
+  if (doc.language) tab.language = doc.language;
   return tab;
+}
+
+/** Whether `doc` has a place in the session: a trashed memo does not (memo trash spec 「내용 보기」). */
+export function inSession(doc: Doc): doc is PlacedDoc {
+  return doc instanceof MemoDoc || doc instanceof ExternalDoc;
 }
 
 /** The window a session is built from. */
@@ -49,7 +53,7 @@ export interface RestoredLayout {
   layout: SessionNode;
   /** One per pane of `layout`, in the order of its leaves (depth first): its tabs in order and the
    * one to activate — the pane's active tab, else its last one, else null. */
-  panes: { tabs: Doc[]; active: Doc | null }[];
+  panes: { tabs: PlacedDoc[]; active: PlacedDoc | null }[];
   focusedPane: number;
   /** What the session says; false when it says nothing. */
   sidebarCollapsed: boolean;
@@ -74,7 +78,7 @@ export class SessionSync {
    * from disk here (spec 「세션」 — lazy). A pane whose tabs are all left out comes back empty. */
   async restore(): Promise<RestoredLayout> {
     const window = parseWindowSession(parseJson(await this.backend.readWindowLayout()));
-    const found: { doc: Doc; tab: SessionTab; pane: number; index: number }[] = [];
+    const found: { doc: PlacedDoc; tab: SessionTab; pane: number; index: number }[] = [];
     const sessionPaneList = sessionPanes(window.layout);
     for (const [pane, { tabs }] of sessionPaneList.entries()) {
       for (const [index, tab] of tabs.entries()) {
@@ -89,7 +93,10 @@ export class SessionSync {
           false,
         )
       : [];
-    const panes = sessionPaneList.map(() => ({ tabs: [] as Doc[], active: null as Doc | null }));
+    const panes = sessionPaneList.map(() => ({
+      tabs: [] as PlacedDoc[],
+      active: null as PlacedDoc | null,
+    }));
     for (const [at, { doc, tab, pane, index }] of found.entries()) {
       if (!claims[at]) continue;
       placeAsSaved(doc, tab);
@@ -108,7 +115,7 @@ export class SessionSync {
 
   /** The tab for `tab` — another window's, handed to this one — as a restore would make it, its
    * place already this window's; null for a memo not listed here or another device's file. */
-  tabFor(tab: SessionTab): Doc | null {
+  tabFor(tab: SessionTab): PlacedDoc | null {
     const doc = this.docFor(tab, []);
     if (doc) placeAsSaved(doc, tab);
     return doc;
@@ -124,9 +131,12 @@ export class SessionSync {
       // A leaf no pane stands for is a slip of the window's: written empty, the rest still saves.
       const tabs = panes.get(node.id)?.tabs;
       if (!tabs) return { tabs: [], activeTab: -1 };
+      // A trashed tab in front leaves the pane's last tab to come back in front.
+      const kept = tabs.list.filter(inSession);
+      const active = tabs.active && inSession(tabs.active) ? tabs.active : null;
       return {
-        tabs: tabs.list.map((doc) => sessionTab(doc, this.deviceId)),
-        activeTab: tabs.active ? tabs.indexOf(tabs.active) : -1,
+        tabs: kept.map((doc) => sessionTab(doc, this.deviceId)),
+        activeTab: active ? kept.indexOf(active) : -1,
       };
     };
     const window: WindowSession = { layout: nodeOf(layout), focusedPane };
@@ -139,7 +149,7 @@ export class SessionSync {
 
   /** The tab for `tab`, or null for one already among `found` (in any pane) or not to be shown
    * here. */
-  private docFor(tab: SessionTab, found: readonly { doc: Doc }[]): Doc | null {
+  private docFor(tab: SessionTab, found: readonly { doc: Doc }[]): PlacedDoc | null {
     const open = (same: (doc: Doc) => boolean) => found.some(({ doc }) => same(doc));
     if (tab.kind === "memo") {
       const info = this.memoInfo(tab.memoId);

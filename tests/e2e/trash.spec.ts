@@ -2,19 +2,23 @@ import { expect, test, type Page } from "@playwright/test";
 
 import { FAKE_STORAGE_KEY, fakeMemo, type FakeTrashed } from "../../src/backend/fake";
 import {
+  menu,
   openShopping,
   openWindow,
   quietErrors,
   ready,
+  sessionPane,
   start,
   startWindows,
   typeWhileChangedElsewhere,
+  writesSettled,
 } from "./helpers";
 
 // The memo trash (spec 2026-11-01 「휴지통으로 옮기기」) on the fake backend: what goes into
 // `data.trash`, and what stays when it must not go.
 
 const NOT_TRASHED = "저장하지 못해 휴지통으로 옮기지 않았습니다";
+const NOT_TORN_OFF = "휴지통 메모는 새 창으로 옮길 수 없습니다";
 const WRITE_FAILED = "no space left on device";
 
 const row = (page: Page, name: string) => page.locator(".memo-row", { hasText: name });
@@ -341,4 +345,284 @@ test("switching workspaces shows the new workspace's trash", async ({ page }) =>
   await expect(trashButton(page)).toHaveAttribute("title", "휴지통 (1개)");
   await trashButton(page).click();
   await expect(trashNames(page)).toHaveText(["일기"]);
+});
+
+// A trashed memo's read-only tab (spec 2026-11-01 「내용 보기」).
+
+const tab = (page: Page) => page.locator(".tab");
+const editor = (page: Page) => page.locator(".cm-content");
+const banner = (page: Page) => page.locator(".banner");
+const TRASHED_AT = /^휴지통에 있는 메모입니다 · \d{4}-\d\d-\d\d \d\d:\d\d$/;
+
+test("a trashed row opens read-only with the trash banner", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("장보기.md", "우유") },
+    trash: { t: { ...trashed("회의록.md", "def f():\n    pass", 5), language: "python" } },
+  });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(tab(page)).toHaveCount(1);
+  // The original name, dimmed: a trashed memo's tab.
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
+  await expect(page.locator(".tab.active")).toHaveClass(/\btrashed\b/);
+  await expect(editor(page)).toHaveText("def f():    pass");
+  await expect(editor(page)).toHaveAttribute("aria-readonly", "true");
+  // Its own language, which the read-only tab does not offer to change.
+  await expect(page.locator(".status-language")).toHaveText("Python");
+  await expect(page.locator(".status-language")).not.toHaveClass(/\bclickable\b/);
+  await expect(banner(page)).toHaveClass(/\bbanner-trash\b/);
+  await expect(banner(page).locator(".banner-text")).toHaveText(TRASHED_AT);
+  // The same time the trash row shows.
+  const when = await trashRow(page, "회의록").locator(".trash-when").textContent();
+  await expect(banner(page).locator(".banner-text")).toHaveText(
+    `휴지통에 있는 메모입니다 · ${when}`,
+  );
+  await expect(banner(page).locator("button")).toHaveText(["복구", "영구 삭제"]);
+
+  // Pressed again, the row goes to the tab it has.
+  await page.getByRole("button", { name: "← 메모" }).click();
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await expect(tab(page)).toHaveCount(2);
+  await expect(banner(page)).toBeHidden();
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(tab(page)).toHaveCount(2);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
+  await expect(banner(page)).toBeVisible();
+  // Nothing about it changed in the trash, and nothing came into the memo list.
+  expect(await trashedText(page, "t")).toBe("def f():\n    pass");
+  expect(await page.evaluate(() => Object.keys(window.__tote.backend.data.memos))).toEqual(["a"]);
+});
+
+test("복구 in the banner turns the tab into the memo", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("장보기.md", "우유") },
+    trash: { t: { ...trashed("회의록.md", "옛것", 5), pinned: true } },
+  });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(banner(page)).toBeVisible();
+  // Another tab after it: the memo takes the trashed tab's place, not the end.
+  await page.getByRole("button", { name: "← 메모" }).click();
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await page.locator(".tab", { hasText: "회의록" }).click();
+  await expect(banner(page)).toBeVisible();
+  await banner(page).getByRole("button", { name: "복구" }).click();
+
+  await expect(banner(page)).toBeHidden();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["장보기", "회의록"]);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
+  await expect(page.locator(".tab.trashed")).toHaveCount(0);
+  await expect(editor(page)).not.toHaveAttribute("aria-readonly", "true");
+  await expect(page.locator(".memo-pinned .memo-row.active .memo-name")).toHaveText(["회의록"]);
+  await expect(trashButton(page)).toHaveAttribute("title", "휴지통 (0개)");
+  expect(await page.evaluate(() => window.__tote.backend.data.places)).toMatchObject({
+    "memo:t": expect.any(String),
+  });
+  // An ordinary memo tab now: what is typed is saved.
+  await editor(page).click();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText(" 새것");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("t")))
+    .toBe("옛것 새것");
+});
+
+test("a purged memo's tab closes, in every window", async ({ context }) => {
+  const first = await startWindows(context, {
+    memos: { a: fakeMemo("장보기.md", "우유") },
+    trash: { t: trashed("회의록.md", "옛것", 5), u: trashed("다른.md", "x", 4) },
+  });
+  await trashButton(first).click();
+  await trashRow(first, "회의록").click();
+  await trashRow(first, "다른").click();
+  await expect(tab(first)).toHaveCount(2);
+  const second = await openWindow(context, "ws-2");
+  await trashButton(second).click();
+  await trashRow(second, "회의록").click();
+  await expect(tab(second)).toHaveCount(1);
+
+  // 영구 삭제 in the banner asks as the row's menu does.
+  await first.locator(".tab", { hasText: "회의록" }).click();
+  await banner(first).getByRole("button", { name: "영구 삭제" }).click();
+  await expect(confirmDialog(first).locator("p")).toHaveText(
+    "「회의록.md」 를 영구 삭제할까요? 되돌릴 수 없습니다.",
+  );
+  await confirmDialog(first).getByRole("button", { name: "영구 삭제" }).click();
+  await expect(first.locator(".tab .tab-title")).toHaveText(["다른"]);
+  await expect(tab(second)).toHaveCount(0);
+  await expect(trashNames(second)).toHaveText(["다른"]);
+
+  // Emptied by the native side's hourly round: gone from the trash, the tab closes too.
+  await first.evaluate((key) => {
+    const { backend } = window.__tote;
+    delete backend.data.trash!.u;
+    localStorage.setItem(key, JSON.stringify(backend.data));
+    backend.trashChanged();
+  }, FAKE_STORAGE_KEY);
+  await expect(tab(first)).toHaveCount(0);
+  await expect(first.locator(".trash-none")).toBeVisible();
+});
+
+test("trashed tabs do not come back after a restart", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("장보기.md", "우유") },
+    trash: { t: trashed("회의록.md", "옛것", 5) },
+  });
+  await page.locator(".memo-row", { hasText: "장보기" }).click();
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
+  // Written with the trashed tab open and in front: only the memo's tab is in it.
+  await expect.poll(async () => (await sessionPane(page)).tabs.length).toBe(1);
+  await writesSettled(page);
+  const pane = await sessionPane(page);
+  expect(pane.tabs).toMatchObject([{ kind: "memo", memoId: "a" }]);
+  // Not even as an entry the reading drops: the file has the memo's tab alone.
+  const file = await page.evaluate(() => window.__tote.backend.data.session ?? "");
+  expect(file.match(/"kind":/g)).toHaveLength(1);
+  expect(await page.evaluate(() => window.__tote.backend.data.places)).toEqual({
+    "memo:a": "ws-1",
+  });
+
+  await page.reload();
+  await ready(page);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["장보기"]);
+  await expect(banner(page)).toBeHidden();
+});
+
+test("a trashed tab takes no typing, paste, drop or replace", async ({ page }) => {
+  await start(page, { trash: { t: trashed("회의록.md", "옛것", 5) } });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(editor(page)).toHaveText("옛것");
+  await editor(page).click();
+  await expect(editor(page)).toBeFocused();
+  await page.keyboard.type("ab");
+  await page.keyboard.insertText("가나");
+  for (const key of ["Enter", "Backspace", "Delete", "Tab", "Meta+Shift+d", "Meta+x"])
+    await page.keyboard.press(key);
+  await page.evaluate(() => {
+    const target = window.__tote.app.view.contentDOM;
+    const data = new DataTransfer();
+    data.setData("text/plain", "붙임");
+    target.dispatchEvent(new ClipboardEvent("paste", { clipboardData: data, bubbles: true }));
+    const { left, top } = target.getBoundingClientRect();
+    target.dispatchEvent(
+      new DragEvent("drop", {
+        dataTransfer: data,
+        clientX: left + 4,
+        clientY: top + 4,
+        bubbles: true,
+        cancelable: true,
+      }),
+    );
+  });
+  // ⌥⌘F: the find bar opens, its replace does nothing.
+  await page.keyboard.press("Meta+Alt+f");
+  await page.locator("input.find-bar-input[name=search]").fill("옛것");
+  await page.locator("input.find-bar-input[name=replace]").fill("새것");
+  await page.locator("button[name=replace]").click();
+  await page.locator("button[name=replace-all]").click();
+  await expect(page.locator(".find-bar-count")).toHaveText(/1/);
+  // A change the app dispatches itself, as Tab's indent and a composition's commit do.
+  await page.evaluate(() => window.__tote.app.view.dispatch({ changes: { from: 0, insert: "x" } }));
+  await expect(editor(page)).toHaveText("옛것");
+  expect(await trashedText(page, "t")).toBe("옛것");
+  expect(await page.evaluate(() => window.__tote.backend.data.memos)).toEqual({});
+});
+
+test("the menu leaves a trashed tab alone", async ({ page }) => {
+  await start(page, {
+    trash: { t: trashed("회의록.md", "# 옛것", 5) },
+    popupMenuPick: null,
+  });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(editor(page)).toHaveText("# 옛것");
+  for (const id of ["save", "rename", "import", "toggle-preview"]) await menu(page, id);
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  await menu(page, "versions");
+  await expect(page.locator(".status-message")).toHaveText("메모 탭에서만 쓸 수 있습니다");
+  // Not to another window: the trashed tab has no place there.
+  await menu(page, "move-tab-to-new-window");
+  await expect(page.locator(".status-message")).toHaveText(NOT_TORN_OFF);
+  await expect(tab(page)).toHaveCount(1);
+  expect(await page.evaluate(() => window.__tote.backend.data.tornOff ?? [])).toEqual([]);
+  await page.locator(".tab", { hasText: "회의록" }).click({ button: "right" });
+  await expect
+    .poll(async () => (await lastMenu(page))?.map((item: { id: string }) => item.id))
+    .toEqual(["split-tab-left", "split-tab-right", "split-tab-top", "split-tab-bottom"]);
+  expect(await trashedText(page, "t")).toBe("# 옛것");
+  expect(await page.evaluate(() => window.__tote.backend.data.memos)).toEqual({});
+});
+
+test("a restored memo another window holds closes the trashed tab here", async ({ page }) => {
+  await start(page, {
+    trash: { t: trashed("회의록.md", "옛것", 5) },
+    // Opened in another window between the restore and this window's claim.
+    places: { "memo:t": "ws-9" },
+  });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await banner(page).getByRole("button", { name: "복구" }).click();
+  await expect(tab(page)).toHaveCount(0);
+  await page.getByRole("button", { name: "← 메모" }).click();
+  await expect(page.locator(".memo-row", { hasText: "회의록" })).toHaveCount(1);
+  expect(await page.evaluate(() => window.__tote.backend.data.places)).toEqual({
+    "memo:t": "ws-9",
+  });
+});
+
+test("a memo restored in another window turns the tab here into the memo", async ({ context }) => {
+  const first = await startWindows(context, { trash: { t: trashed("회의록.md", "옛것", 5) } });
+  await trashButton(first).click();
+  await trashRow(first, "회의록").click();
+  await expect(first.locator(".tab.trashed")).toHaveCount(1);
+  const second = await openWindow(context, "ws-2");
+  await trashButton(second).click();
+  await pick(second, "restore");
+  await trashRow(second, "회의록").click({ button: "right" });
+  await expect(first.locator(".tab.trashed")).toHaveCount(0);
+  await expect(first.locator(".tab.active .tab-title")).toHaveText("회의록");
+  await expect(banner(first)).toBeHidden();
+  await expect(editor(first)).toHaveText("옛것");
+  await expect(editor(first)).not.toHaveAttribute("aria-readonly", "true");
+  expect(await second.evaluate(() => window.__tote.backend.data.places)).toEqual({
+    "memo:t": "ws-1",
+  });
+});
+
+test("a trashed picture is not handed to a viewer", async ({ page }) => {
+  await start(page, { trash: { p: trashed("점.png", "not a picture", 5) } });
+  await trashButton(page).click();
+  await trashRow(page, "점").click();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("점.png");
+  // No file a viewer could read: the placeholder of a file the editor cannot show.
+  await expect(page.locator(".editor-placeholder")).toContainText("열 수 없음");
+  await expect(banner(page).locator(".banner-text")).toHaveText(TRASHED_AT);
+  await page.waitForTimeout(200);
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(0);
+  await expect(page.locator(".status-message")).toHaveText("");
+});
+
+test("a restore heard of before the memo list turns the tab into the memo", async ({ page }) => {
+  await start(page, { trash: { t: trashed("회의록.md", "옛것", 5) } });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(page.locator(".tab.trashed")).toHaveCount(1);
+  // Another window restored it; the trash's word comes in first, the memo list's not yet.
+  await page.evaluate((key) => {
+    const { backend } = window.__tote;
+    const { deletedMs: _deleted, ...memo } = backend.data.trash!.t;
+    backend.data.memos.t = memo;
+    delete backend.data.trash!.t;
+    localStorage.setItem(key, JSON.stringify(backend.data));
+    backend.trashChanged();
+  }, FAKE_STORAGE_KEY);
+  await expect(page.locator(".tab.trashed")).toHaveCount(0);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("회의록");
+  await expect(editor(page)).toHaveText("옛것");
 });

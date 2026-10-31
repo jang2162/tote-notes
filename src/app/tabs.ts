@@ -1,4 +1,4 @@
-import { ExternalDoc, MemoDoc, type Doc } from "./docs";
+import { ExternalDoc, MemoDoc, TrashDoc, type Doc } from "./docs";
 
 /** The ordered tabs of one window and which one is active. No DOM, no backend: the controller
  * asks it where things go and renders the answer. */
@@ -75,5 +75,9 @@ export class Tabs {
 
   external(path: string): ExternalDoc | undefined {
     return this.list.find((d): d is ExternalDoc => d instanceof ExternalDoc && d.path === path);
+  }
+
+  trashed(id: string): TrashDoc | undefined {
+    return this.list.find((d): d is TrashDoc => d instanceof TrashDoc && d.info.id === id);
   }
 }
