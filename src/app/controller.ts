@@ -11,6 +11,7 @@ import type {
   Settings,
   ShortcutTable,
   TabRef,
+  TrashedInfo,
   WindowStart,
 } from "../backend/types";
 import { errorCode, MENU_SEPARATOR } from "../backend/types";
@@ -1078,12 +1079,7 @@ export class AppController implements DocHost, PaneHost {
     if (!doc) {
       const info = this.trashList.get(id);
       if (!info) return;
-      doc = this.focused.tabs.insertAfterActive(
-        new TrashDoc(this, info, {
-          restore: (memo) => this.restoreTrashed(memo),
-          purge: (memo) => this.purgeTrashed(memo),
-        }),
-      );
+      doc = this.focused.tabs.insertAfterActive(this.trashDoc(info));
     }
     await this.showTab(doc);
   }
@@ -1190,8 +1186,19 @@ export class AppController implements DocHost, PaneHost {
   }
 
   /** The trashed tabs whose memo has left the trash, here or in another window: a restored one
-   * becomes the memo's tab, one purged or emptied closes (memo trash spec 「내용 보기」). */
+   * becomes the memo's tab, one purged or emptied closes (memo trash spec 「내용 보기」). One
+   * trashed again since it was read — restored, written in and trashed within one gather — reads
+   * what the trash holds now. */
   private async followTrash(): Promise<void> {
+    const again = this.docs.filter(
+      (doc): doc is TrashDoc =>
+        doc instanceof TrashDoc &&
+        (this.trashList.get(doc.info.id)?.deletedMs ?? doc.info.deletedMs) !== doc.info.deletedMs,
+    );
+    for (const doc of again) {
+      const info = this.trashList.get(doc.info.id);
+      if (info && this.docs.includes(doc)) await this.swapDoc(doc, this.trashDoc(info));
+    }
     const gone = this.docs.filter(
       (doc): doc is TrashDoc => doc instanceof TrashDoc && !this.trashList.get(doc.info.id),
     );
@@ -1223,20 +1230,32 @@ export class AppController implements DocHost, PaneHost {
       await this.closeDoc(doc);
       return;
     }
-    const pane = this.paneOf(doc);
-    pane.capture(doc);
+    this.paneOf(doc).capture(doc);
     const memo = new MemoDoc(this, info);
     memo.scrollAnchor = doc.scrollAnchor;
     memo.restoreSelection = doc.selectionJSON;
-    pane.tabs.replace(doc, memo);
     this.held.set(memo, memo.tabRef);
+    await this.swapDoc(doc, memo);
+    this.saveSessionSoon();
+  }
+
+  /** `next` in `doc`'s place among its pane's tabs, shown when `doc` was. */
+  private async swapDoc(doc: Doc, next: Doc): Promise<void> {
+    const pane = this.paneOf(doc);
+    pane.tabs.replace(doc, next);
     this.dropHighlight(doc);
     this.coloured.delete(doc.tabId);
     if (pane.tabs.active === doc) {
       pane.tabs.active = null;
-      await pane.activate(memo);
+      await pane.activate(next);
     } else pane.renderTabs();
-    this.saveSessionSoon();
+  }
+
+  private trashDoc(info: TrashedInfo): TrashDoc {
+    return new TrashDoc(this, info, {
+      restore: (memo) => this.restoreTrashed(memo),
+      purge: (memo) => this.purgeTrashed(memo),
+    });
   }
 
   /** The trash button: the trash in the memo list's place, or the memo list back. */

@@ -709,3 +709,38 @@ test("a trashed tab closed while its restore claims the place lets the place go"
   await expect.poll(() => page.evaluate(() => window.__tote.backend.data.places)).toEqual({});
   await expect(tab(page)).toHaveCount(0);
 });
+
+test("a memo trashed again within one gather shows its new text and time", async ({ page }) => {
+  const hour = 60 * 60_000;
+  await start(page, { trash: { t: trashed("회의록.md", "옛것", 5) } });
+  await trashButton(page).click();
+  await trashRow(page, "회의록").click();
+  await expect(editor(page)).toHaveText("옛것");
+  const before = await banner(page).locator(".banner-text").textContent();
+  // The gathering timer (MEMOS_GATHER_MS in src/app/controller.ts) runs on the held clock.
+  await page.clock.install();
+  await page.clock.pauseAt(Date.now() + 60_000);
+  // Another window restored it, wrote in it and trashed it again before this window's gathering
+  // timer ran out: two words of the trash, and at the end the memo is in it still, as of later.
+  await page.evaluate(
+    ([key, again]) => {
+      const { backend } = window.__tote;
+      backend.trashChanged();
+      backend.data.trash!.t = again;
+      localStorage.setItem(key, JSON.stringify(backend.data));
+      backend.trashChanged();
+    },
+    [FAKE_STORAGE_KEY, trashed("회의록.md", "옛것 새것", 5 + hour)] as const,
+  );
+  await page.clock.runFor(300);
+  await expect(editor(page)).toHaveText("옛것 새것");
+  const when = await trashRow(page, "회의록").locator(".trash-when").textContent();
+  await expect(banner(page).locator(".banner-text")).toHaveText(
+    `휴지통에 있는 메모입니다 · ${when}`,
+  );
+  expect(`휴지통에 있는 메모입니다 · ${when}`).not.toBe(before);
+  // Still the trashed tab, in front, read-only.
+  await expect(tab(page)).toHaveCount(1);
+  await expect(page.locator(".tab.active.trashed .tab-title")).toHaveText("회의록");
+  await expect(editor(page)).toHaveAttribute("aria-readonly", "true");
+});
