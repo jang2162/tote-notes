@@ -128,8 +128,7 @@ impl Workspace {
             Err(err) if err.kind() == io::ErrorKind::NotFound => {}
             Err(err) => return Err(err.into()),
         }
-        self.last_written.remove(&file);
-        self.inodes.remove(&file);
+        self.went_out(&file);
         self.index.remove(id);
         self.index.save()?;
         if let Some(viewed) = self.viewed.as_mut() {
@@ -231,18 +230,41 @@ impl Workspace {
     /// tote's own. A file tote has not written since opening is hashed now, or the rename would
     /// look like another app's edit — unless the editor would not open it anyway.
     fn moved(&mut self, from: &str, to: &str) {
-        let hash = self.last_written.remove(from).or_else(|| {
-            let path = self.root.join(to);
-            let meta = fs::metadata(&path).ok()?;
-            (meta.len() <= MAX_EDITOR_BYTES && kind_for(to) == FileKind::Text)
-                .then(|| fs::read(&path).ok().map(|bytes| content_hash(&bytes)))
-                .flatten()
-        });
+        let hash = self
+            .last_written
+            .remove(from)
+            .or_else(|| self.editor_hash(to));
         if let Some(hash) = hash {
             self.last_written.insert(to.to_string(), hash);
         }
         self.inodes.remove(from);
         self.track_inode(to);
+    }
+
+    /// tote moved `file` in from outside the folder the watcher looks at (a memo back from the
+    /// trash): its next event there is this move, as for `moved`.
+    pub(super) fn came_in(&mut self, file: &str) {
+        match self.editor_hash(file) {
+            Some(hash) => self.last_written.insert(file.to_string(), hash),
+            None => self.last_written.remove(file),
+        };
+        self.track_inode(file);
+    }
+
+    /// `file` left the workspace by tote's hand (removed, or moved to the trash): nothing of it is
+    /// tote's own any more.
+    pub(super) fn went_out(&mut self, file: &str) {
+        self.last_written.remove(file);
+        self.inodes.remove(file);
+    }
+
+    /// The hash of `file` as it is now, when the editor would open it.
+    fn editor_hash(&self, file: &str) -> Option<String> {
+        let path = self.root.join(file);
+        let meta = fs::metadata(&path).ok()?;
+        (meta.len() <= MAX_EDITOR_BYTES && kind_for(file) == FileKind::Text)
+            .then(|| fs::read(&path).ok().map(|bytes| content_hash(&bytes)))
+            .flatten()
     }
 
     pub(super) fn track_inode(&mut self, file: &str) {
@@ -256,7 +278,7 @@ impl Workspace {
     /// file system decides what "uses" means: on APFS `Memo.md`, `memo.md` and a decomposed
     /// Hangul spelling all collide. `own` (the memo's current file) never counts as taken, which
     /// lets a memo change only the case of its name.
-    fn free_name(&self, stem: &str, ext: &str, own: Option<&str>) -> String {
+    pub(super) fn free_name(&self, stem: &str, ext: &str, own: Option<&str>) -> String {
         let own = own.map(|file| self.root.join(file));
         unique_file_name(stem, ext, |candidate| {
             let path = self.root.join(candidate);

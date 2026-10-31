@@ -8,6 +8,7 @@ pub mod names;
 mod ops;
 pub mod order;
 pub mod preview;
+mod trash;
 pub mod viewed;
 
 use std::cell::RefCell;
@@ -24,6 +25,7 @@ use names::is_valid_file_name;
 use viewed::ViewedTimes;
 
 pub use memo::{kind_for, FileKind, MemoInfo};
+pub use trash::{TrashedInfo, DAY_MS, TRASH_DIR};
 
 pub const TOTE_DIR: &str = ".tote";
 /// Made on the first launch so there is somewhere to type right away.
@@ -147,6 +149,7 @@ impl Workspace {
         let root = fs::canonicalize(path)?;
         remove_temp_files(&root);
         remove_temp_files_below(&root.join(TOTE_DIR));
+        remove_temp_files(&root.join(TRASH_DIR));
         let index = MemoIndex::load(&root)?;
         let inodes = index::file_ids(&root, &index);
         Ok(Workspace {
@@ -813,9 +816,14 @@ mod tests {
         fs::create_dir_all(&sessions).unwrap();
         let in_sessions = sessions.join(".tote-tmp-deadbeef");
         fs::write(&in_sessions, "half").unwrap();
+        let trash = root.path().join("w").join(TRASH_DIR);
+        fs::create_dir_all(&trash).unwrap();
+        let in_trash = trash.join(".tote-tmp-deadbeef");
+        fs::write(&in_trash, "half").unwrap();
         Workspace::open(&root.path().join("w")).unwrap();
         assert!(!leftover.exists());
         assert!(!in_tote.exists());
         assert!(!in_sessions.exists());
+        assert!(!in_trash.exists(), "a half-written trash.json");
     }
 }
