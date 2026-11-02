@@ -88,12 +88,30 @@ describe("the selection table", () => {
       "diff",
       "dockerfile",
       "makefile",
+      "kotlin",
+      "swift",
+      "ruby",
+      "lua",
+      "csharp",
+      "csv",
+      "tsv",
     ]) {
       expect(ids).toContain(wanted);
     }
     for (const lang of LANGUAGES) if (lang.grammar) expect(names.has(lang.grammar)).toBe(true);
     for (const extra of EXTRA_GRAMMARS) expect(names.has(extra)).toBe(true);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("lets no two languages claim the same extension or file name", () => {
+    const owners = new Map<string, string[]>();
+    for (const lang of LANGUAGES)
+      for (const key of [
+        ...lang.extensions.map((e) => `extension ${e.toLowerCase()}`),
+        ...(lang.filenames ?? []).map((name) => `file name ${name}`),
+      ])
+        owners.set(key, [...(owners.get(key) ?? []), lang.id]);
+    expect([...owners].filter(([, ids]) => ids.length > 1)).toEqual([]);
   });
 });
 

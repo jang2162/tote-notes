@@ -68,6 +68,10 @@ export const LANGUAGES: BundledLanguage[] = [
     aliases: ["YAML"],
     grammar: "yaml",
     extensions: ["yaml", "yml"],
+    // Compose files, under the names Docker's documentation gives them. VS Code's own `dockercompose`
+    // language also takes `compose.*.yml` and `*docker*compose*.yml`, which only a pattern
+    // reaches; those end in .yml/.yaml and are YAML by their extension anyway.
+    filenames: ["docker-compose.yml", "docker-compose.yaml", "compose.yml", "compose.yaml"],
     comments: HASH,
     license: {
       spdx: "textmate-bundle",
@@ -184,6 +188,74 @@ export const LANGUAGES: BundledLanguage[] = [
     filenames: ["Makefile", "makefile", "GNUmakefile"],
     comments: HASH,
   },
+  // From here on the ids, extensions, file names, first lines and comments are VS Code's: its
+  // built-in extensions where it has one, else the extension the grammar comes from (Kotlin:
+  // fwcd/vscode-kotlin; CSV, TSV: mechatroner/vscode_rainbow_csv).
+  {
+    id: "kotlin",
+    aliases: ["Kotlin"],
+    grammar: "kotlin",
+    extensions: ["kt", "kts"],
+    comments: C_COMMENTS,
+  },
+  {
+    id: "swift",
+    aliases: ["Swift"],
+    grammar: "swift",
+    extensions: ["swift"],
+    comments: C_COMMENTS,
+  },
+  {
+    id: "ruby",
+    aliases: ["Ruby"],
+    grammar: "ruby",
+    extensions: ["rb", "rbx", "rjs", "gemspec", "rake", "ru", "erb", "podspec", "rbi"],
+    // VS Code lists these in lower case and matches them ignoring case; here a name matches
+    // exactly, so they are written as the tools spell them.
+    filenames: [
+      "Rakefile",
+      "Gemfile",
+      "Guardfile",
+      "Podfile",
+      "Capfile",
+      "Cheffile",
+      "Hobofile",
+      "Vagrantfile",
+      "Appraisals",
+      "Rantfile",
+      "Berksfile",
+      "Berksfile.lock",
+      "Thorfile",
+      "Puppetfile",
+      "Dangerfile",
+      "Brewfile",
+      "Fastfile",
+      "Appfile",
+      "Deliverfile",
+      "Matchfile",
+      "Scanfile",
+      "Snapfile",
+      "Gymfile",
+    ],
+    firstLine: "^#!\\s*/.*\\bruby\\b",
+    comments: { line: "#", block: ["=begin", "=end"] },
+  },
+  {
+    id: "lua",
+    aliases: ["Lua"],
+    grammar: "lua",
+    extensions: ["lua"],
+    comments: { line: "--", block: ["--[[", "]]"] },
+  },
+  {
+    id: "csharp",
+    aliases: ["C#"],
+    grammar: "csharp",
+    extensions: ["cs", "csx", "cake"],
+    comments: C_COMMENTS,
+  },
+  { id: "csv", aliases: ["CSV"], grammar: "csv", extensions: ["csv"] },
+  { id: "tsv", aliases: ["TSV"], grammar: "tsv", extensions: ["tsv", "tab"] },
 ];
 
 /** Grammars shipped for `include` only (no language of their own): cpp includes its macro grammar. */

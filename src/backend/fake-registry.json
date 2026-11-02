@@ -146,7 +146,12 @@
         "yaml",
         "yml"
       ],
-      "filenames": [],
+      "filenames": [
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml"
+      ],
       "firstLine": null,
       "configuration": "language-configuration/yaml.json",
       "grammar": {
@@ -513,6 +518,168 @@
         "path": "grammars/make.json",
         "embeddedLanguages": {}
       }
+    },
+    {
+      "id": "kotlin",
+      "extension": "tote.languages",
+      "aliases": [
+        "Kotlin"
+      ],
+      "extensions": [
+        "kt",
+        "kts"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/kotlin.json",
+      "grammar": {
+        "scopeName": "source.kotlin",
+        "path": "grammars/kotlin.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "swift",
+      "extension": "tote.languages",
+      "aliases": [
+        "Swift"
+      ],
+      "extensions": [
+        "swift"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/swift.json",
+      "grammar": {
+        "scopeName": "source.swift",
+        "path": "grammars/swift.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "ruby",
+      "extension": "tote.languages",
+      "aliases": [
+        "Ruby"
+      ],
+      "extensions": [
+        "rb",
+        "rbx",
+        "rjs",
+        "gemspec",
+        "rake",
+        "ru",
+        "erb",
+        "podspec",
+        "rbi"
+      ],
+      "filenames": [
+        "Rakefile",
+        "Gemfile",
+        "Guardfile",
+        "Podfile",
+        "Capfile",
+        "Cheffile",
+        "Hobofile",
+        "Vagrantfile",
+        "Appraisals",
+        "Rantfile",
+        "Berksfile",
+        "Berksfile.lock",
+        "Thorfile",
+        "Puppetfile",
+        "Dangerfile",
+        "Brewfile",
+        "Fastfile",
+        "Appfile",
+        "Deliverfile",
+        "Matchfile",
+        "Scanfile",
+        "Snapfile",
+        "Gymfile"
+      ],
+      "firstLine": "^#!\\s*/.*\\bruby\\b",
+      "configuration": "language-configuration/ruby.json",
+      "grammar": {
+        "scopeName": "source.ruby",
+        "path": "grammars/ruby.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "lua",
+      "extension": "tote.languages",
+      "aliases": [
+        "Lua"
+      ],
+      "extensions": [
+        "lua"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/lua.json",
+      "grammar": {
+        "scopeName": "source.lua",
+        "path": "grammars/lua.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "csharp",
+      "extension": "tote.languages",
+      "aliases": [
+        "C#"
+      ],
+      "extensions": [
+        "cs",
+        "csx",
+        "cake"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/csharp.json",
+      "grammar": {
+        "scopeName": "source.cs",
+        "path": "grammars/csharp.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "csv",
+      "extension": "tote.languages",
+      "aliases": [
+        "CSV"
+      ],
+      "extensions": [
+        "csv"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/csv.json",
+      "grammar": {
+        "scopeName": "text.csv",
+        "path": "grammars/csv.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "tsv",
+      "extension": "tote.languages",
+      "aliases": [
+        "TSV"
+      ],
+      "extensions": [
+        "tsv",
+        "tab"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/tsv.json",
+      "grammar": {
+        "scopeName": "text.tsv",
+        "path": "grammars/tsv.json",
+        "embeddedLanguages": {}
+      }
     }
   ],
   "grammars": [
@@ -675,6 +842,55 @@
       "language": "makefile",
       "scopeName": "source.makefile",
       "path": "grammars/make.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "kotlin",
+      "scopeName": "source.kotlin",
+      "path": "grammars/kotlin.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "swift",
+      "scopeName": "source.swift",
+      "path": "grammars/swift.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "ruby",
+      "scopeName": "source.ruby",
+      "path": "grammars/ruby.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "lua",
+      "scopeName": "source.lua",
+      "path": "grammars/lua.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "csharp",
+      "scopeName": "source.cs",
+      "path": "grammars/csharp.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "csv",
+      "scopeName": "text.csv",
+      "path": "grammars/csv.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "tsv",
+      "scopeName": "text.tsv",
+      "path": "grammars/tsv.json",
       "embeddedLanguages": {}
     },
     {

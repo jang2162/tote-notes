@@ -25,9 +25,16 @@
 | diff | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
 | docker | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
 | make | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
+| kotlin | MIT | https://raw.githubusercontent.com/fwcd/vscode-kotlin/main/LICENSE |  |
+| swift | MIT | https://raw.githubusercontent.com/jtbandes/swift-tmlanguage/main/LICENSE.md |  |
+| ruby | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
+| lua | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
+| csharp | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
+| csv | MIT | https://raw.githubusercontent.com/mechatroner/vscode_rainbow_csv/master/LICENSE |  |
+| tsv | MIT | https://raw.githubusercontent.com/mechatroner/vscode_rainbow_csv/master/LICENSE |  |
 | cpp-macro | MIT | https://raw.githubusercontent.com/microsoft/vscode/main/LICENSE.txt |  |
 
-## markdown, shellscript, json, jsonc, ini, javascript, typescript, python, html, css, xml, sql, go, rust, java, c, cpp, diff, docker, make, cpp-macro
+## markdown, shellscript, json, jsonc, ini, javascript, typescript, python, html, css, xml, sql, go, rust, java, c, cpp, diff, docker, make, ruby, lua, csharp, cpp-macro
 
 MIT License
 
@@ -60,6 +67,53 @@ Permission to copy, use, modify, sell and distribute this software is granted. T
 MIT License
 
 Copyright (c) 2022 Scott Motte
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
+
+## kotlin
+
+The MIT License (MIT)
+
+Copyright (c) 2016 George Fraser
+Copyright (c) 2018 fwcd
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## swift
+
+Copyright 2023 Jacob Bandes-Storch
+
+Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the “Software”), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
+## csv, tsv
+
+MIT License
+
+Copyright (c) 2017 Dmitry Ignatovich
 
 Permission is hereby granted, free of charge, to any person obtaining a copy
 of this software and associated documentation files (the "Software"), to deal
