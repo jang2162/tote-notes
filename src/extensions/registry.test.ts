@@ -54,6 +54,14 @@ describe("Registry.languageForFile", () => {
     ["data.tab", "tsv"],
     ["docker-compose.yml", "yaml"],
     ["compose.yaml", "yaml"],
+    ["index.php", "php"],
+    ["view.phtml", "php"],
+    ["Caddyfile", "caddyfile"],
+    ["caddyfile", "caddyfile"],
+    ["site.Caddyfile", "caddyfile"],
+    ["index.jsp", "jsp"],
+    ["header.jspf", "jsp"],
+    ["button.tag", "jsp"],
   ])("picks the bundled language of %s: %s", (file, id) => {
     expect(bundled.languageForFile(file)?.id).toBe(id);
   });

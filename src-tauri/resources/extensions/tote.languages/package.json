@@ -444,6 +444,49 @@
         ],
         "filenames": [],
         "configuration": "./language-configuration/tsv.json"
+      },
+      {
+        "id": "php",
+        "aliases": [
+          "PHP"
+        ],
+        "extensions": [
+          ".php",
+          ".php4",
+          ".php5",
+          ".phtml",
+          ".ctp"
+        ],
+        "filenames": [],
+        "firstLine": "^#!\\s*/.*\\bphp\\b",
+        "configuration": "./language-configuration/php.json"
+      },
+      {
+        "id": "caddyfile",
+        "aliases": [
+          "Caddyfile"
+        ],
+        "extensions": [
+          ".caddyfile"
+        ],
+        "filenames": [
+          "Caddyfile",
+          "caddyfile"
+        ],
+        "configuration": "./language-configuration/caddyfile.json"
+      },
+      {
+        "id": "jsp",
+        "aliases": [
+          "Java Server Pages"
+        ],
+        "extensions": [
+          ".jsp",
+          ".jspf",
+          ".tag"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/jsp.json"
       }
     ],
     "grammars": [
@@ -598,8 +641,31 @@
         "path": "./grammars/tsv.json"
       },
       {
+        "language": "php",
+        "scopeName": "text.html.php",
+        "path": "./grammars/php-html.json"
+      },
+      {
+        "language": "caddyfile",
+        "scopeName": "source.Caddyfile",
+        "path": "./grammars/caddyfile.json"
+      },
+      {
+        "language": "jsp",
+        "scopeName": "text.html.jsp",
+        "path": "./grammars/jsp.json"
+      },
+      {
         "scopeName": "source.cpp.embedded.macro",
         "path": "./grammars/cpp-macro.json"
+      },
+      {
+        "scopeName": "source.php",
+        "path": "./grammars/php.json"
+      },
+      {
+        "scopeName": "text.html.derivative",
+        "path": "./grammars/html-derivative.json"
       }
     ]
   }

@@ -680,6 +680,69 @@
         "path": "grammars/tsv.json",
         "embeddedLanguages": {}
       }
+    },
+    {
+      "id": "php",
+      "extension": "tote.languages",
+      "aliases": [
+        "PHP"
+      ],
+      "extensions": [
+        "php",
+        "php4",
+        "php5",
+        "phtml",
+        "ctp"
+      ],
+      "filenames": [],
+      "firstLine": "^#!\\s*/.*\\bphp\\b",
+      "configuration": "language-configuration/php.json",
+      "grammar": {
+        "scopeName": "text.html.php",
+        "path": "grammars/php-html.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "caddyfile",
+      "extension": "tote.languages",
+      "aliases": [
+        "Caddyfile"
+      ],
+      "extensions": [
+        "caddyfile"
+      ],
+      "filenames": [
+        "Caddyfile",
+        "caddyfile"
+      ],
+      "firstLine": null,
+      "configuration": "language-configuration/caddyfile.json",
+      "grammar": {
+        "scopeName": "source.Caddyfile",
+        "path": "grammars/caddyfile.json",
+        "embeddedLanguages": {}
+      }
+    },
+    {
+      "id": "jsp",
+      "extension": "tote.languages",
+      "aliases": [
+        "Java Server Pages"
+      ],
+      "extensions": [
+        "jsp",
+        "jspf",
+        "tag"
+      ],
+      "filenames": [],
+      "firstLine": null,
+      "configuration": "language-configuration/jsp.json",
+      "grammar": {
+        "scopeName": "text.html.jsp",
+        "path": "grammars/jsp.json",
+        "embeddedLanguages": {}
+      }
     }
   ],
   "grammars": [
@@ -895,9 +958,44 @@
     },
     {
       "extension": "tote.languages",
+      "language": "php",
+      "scopeName": "text.html.php",
+      "path": "grammars/php-html.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "caddyfile",
+      "scopeName": "source.Caddyfile",
+      "path": "grammars/caddyfile.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": "jsp",
+      "scopeName": "text.html.jsp",
+      "path": "grammars/jsp.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
       "language": null,
       "scopeName": "source.cpp.embedded.macro",
       "path": "grammars/cpp-macro.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": null,
+      "scopeName": "source.php",
+      "path": "grammars/php.json",
+      "embeddedLanguages": {}
+    },
+    {
+      "extension": "tote.languages",
+      "language": null,
+      "scopeName": "text.html.derivative",
+      "path": "grammars/html-derivative.json",
       "embeddedLanguages": {}
     }
   ],

@@ -77,6 +77,13 @@ describe("the bundled grammars of the languages added after the first pack", () 
     ["csharp", 'class A { string s = "x"; } // c', "//", /\bcomment\./],
     ["csv", 'a,b,c\n1,"x",3', "b,", /\brainbow2\b/],
     ["tsv", "a\tb\tc", "b\t", /\brainbow2\b/],
+    ["caddyfile", "# c\nexample.com {\n\treverse_proxy localhost:8080\n}", "# c", /\bcomment\./],
+    [
+      "caddyfile",
+      "example.com {\n\treverse_proxy localhost:8080\n}",
+      "\treverse_proxy",
+      /\bentity\.name\.function\b/,
+    ],
   ])("%s colours %j: %j", (language, text, token, scope) => {
     expect(scopesOf(tokenize(language, text).tokens, token)).toMatch(scope);
   });
@@ -86,5 +93,31 @@ describe("the bundled grammars of the languages added after the first pack", () 
     expect(scopesOf(tokens, "SELECT")).toMatch(/\bsource\.sql\b.*\bkeyword\./);
     // Haml and GraphQL are not in the pack: the text inside them stays uncoloured, nothing fails.
     expect(missing).toEqual(expect.arrayContaining(["text.haml", "source.graphql"]));
+  });
+
+  // VS Code's PHP is HTML with PHP inside: both halves are coloured, each by its own grammar.
+  it("php colours the HTML of a page and the PHP between <?php and ?>", () => {
+    const { tokens, missing } = tokenize(
+      "php",
+      '<div class="a">\n<?php echo "hi"; ?>\n</div>\n<script>let x = 1;</script>',
+    );
+    expect(scopesOf(tokens, "div")).toMatch(/\bentity\.name\.tag\.html\b/);
+    expect(scopesOf(tokens, "<?php")).toMatch(/\bpunctuation\.section\.embedded\.begin\.php\b/);
+    expect(scopesOf(tokens, "echo")).toMatch(/\bsource\.php\b.*\bsupport\.function\./);
+    expect(scopesOf(tokens, "let")).toMatch(/\bsource\.js\b.*\bstorage\.type\.js\b/);
+    // Blade is Laravel's, not in the pack; only its injection goes unused.
+    expect(missing).toEqual(["text.html.php.blade"]);
+  });
+
+  it("jsp colours the HTML, its directives and the Java inside a scriptlet", () => {
+    const { tokens, missing } = tokenize(
+      "jsp",
+      '<%@ page import="java.util.*" %>\n<%-- c --%>\n<div><% int x = 1; %></div>',
+    );
+    expect(scopesOf(tokens, "page")).toMatch(/\bkeyword\.control\.page\.jsp\b/);
+    expect(scopesOf(tokens, " c ")).toMatch(/\bcomment\.block\.jsp\b/);
+    expect(scopesOf(tokens, "div")).toMatch(/\bentity\.name\.tag\.html\b/);
+    expect(scopesOf(tokens, "int")).toMatch(/\bsource\.java\b.*\bstorage\.type\.primitive\.java\b/);
+    expect(missing).toEqual([]);
   });
 });

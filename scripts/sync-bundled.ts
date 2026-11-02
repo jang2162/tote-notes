@@ -1,5 +1,6 @@
-/** Rebuilds the bundled extensions from their npm sources. Run it whenever bundled-languages.ts,
- * a viewer template or a vendor version changes: `pnpm sync:bundled`. The outputs are committed
+/** Rebuilds the bundled extensions from their npm sources and scripts/vendor-grammars. Run it
+ * whenever bundled-languages.ts, a viewer template, a vendored grammar or a vendor version
+ * changes: `pnpm sync:bundled`. The outputs are committed
  * so that cargo tests, the browser preview and the app see one and the same set. */
 
 import { createHash } from "node:crypto";
@@ -13,7 +14,9 @@ import {
   EXTRA_GRAMMARS,
   LANGUAGES,
   THEMES,
+  VENDOR_GRAMMARS,
   type BundledLanguage,
+  type VendorGrammar,
 } from "./bundled-languages.ts";
 
 const require = createRequire(import.meta.url);
@@ -287,6 +290,39 @@ function writeJson(path: string, value: unknown) {
   writeFileSync(path, JSON.stringify(value, null, 2) + "\n");
 }
 
+export const VENDOR_DIR = join(ROOT, "scripts/vendor-grammars");
+
+export interface VendoredGrammar {
+  scopeName: string;
+  text: string;
+  license: LicenseRow;
+}
+
+/** One vendored grammar read from `dir`, after checking it is still the file that was fetched
+ * and that its license is allowed. */
+export function readVendored(vendor: VendorGrammar, dir = VENDOR_DIR): VendoredGrammar {
+  const text = readFileSync(join(dir, `${vendor.name}.json`), "utf8");
+  const sha256 = createHash("sha256").update(text).digest("hex");
+  if (sha256 !== vendor.sha256)
+    throw new Error(
+      `${vendor.name}: the vendored file is not the one fetched from ${vendor.source} (sha256 ${sha256})`,
+    );
+  const row = checkLicense(
+    vendor.name,
+    { license: vendor.license.spdx, licenseUrl: vendor.license.url },
+    undefined,
+  );
+  return {
+    scopeName: (JSON.parse(text) as { scopeName: string }).scopeName,
+    text,
+    license: {
+      ...row,
+      note: vendor.note ?? "",
+      text: readFileSync(join(dir, `${vendor.name}.LICENSE.txt`), "utf8").trim(),
+    },
+  };
+}
+
 async function syncLanguages() {
   const { grammars, injections } = await import("tm-grammars");
   const dir = join(EXTENSIONS_DIR, "tote.languages");
@@ -297,15 +333,24 @@ async function syncLanguages() {
   const notice = noticeBeside("tm-grammars/grammars/markdown.json");
   const names = [...LANGUAGES.filter((l) => l.grammar).map((l) => l.grammar!), ...EXTRA_GRAMMARS];
   for (const name of names) {
-    const info = [...grammars, ...injections].find((g) => g.name === name);
-    if (!info) throw new Error(`tm-grammars has no grammar named ${name}`);
-    const override = LANGUAGES.find((l) => l.grammar === name)?.license;
-    rows.push({
-      ...checkLicense(name, info, override),
-      text: licenseTextFor(name, notice, override),
-    });
-    scopes[name] = info.scopeName;
-    const text = readFileSync(require.resolve(`tm-grammars/grammars/${name}.json`), "utf8");
+    const vendor = VENDOR_GRAMMARS.find((v) => v.name === name);
+    let text: string;
+    if (vendor) {
+      const vendored = readVendored(vendor);
+      rows.push(vendored.license);
+      scopes[name] = vendored.scopeName;
+      text = vendored.text;
+    } else {
+      const info = [...grammars, ...injections].find((g) => g.name === name);
+      if (!info) throw new Error(`tm-grammars has no grammar named ${name}`);
+      const override = LANGUAGES.find((l) => l.grammar === name)?.license;
+      rows.push({
+        ...checkLicense(name, info, override),
+        text: licenseTextFor(name, notice, override),
+      });
+      scopes[name] = info.scopeName;
+      text = readFileSync(require.resolve(`tm-grammars/grammars/${name}.json`), "utf8");
+    }
     mkdirSync(join(dir, "grammars"), { recursive: true });
     writeFileSync(join(dir, "grammars", `${name}.json`), text);
   }
