@@ -68,8 +68,8 @@ export class ThemeManager {
     // A theme that cannot be had never stops the app (spec 「오류 처리」): the defaults apply.
     try {
       const settings = await this.backend.settings();
-      // Read when the settings come: the OS may have changed meanwhile, and its change event
-      // brings another refresh only in auto.
+      // Read when the settings come: the OS may have changed meanwhile. Its change event brings
+      // another refresh in every mode, which in light and dark lands on the same slot.
       appearance = appearanceOf(settings.theme.mode, this.media.matches);
       const ref: ThemeRef | null = settings.theme[appearance];
       info = this.registry().themeFor(ref, appearance) ?? null;

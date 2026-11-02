@@ -1519,7 +1519,7 @@ button.danger {
   margin-top: 0;
 }
 
-.settings-modes {
+.settings-row.settings-modes {
   gap: 16px;
 }
 
