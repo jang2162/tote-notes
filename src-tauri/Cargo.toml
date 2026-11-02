@@ -1,6 +1,6 @@
 [package]
 name = "tote"
-version = "0.5.0"
+version = "0.6.0"
 description = "tote-notes: a light notes app that keeps everything as you left it"
 edition = "2021"
 
