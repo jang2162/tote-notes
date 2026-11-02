@@ -34,6 +34,7 @@ import {
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
+  type ThemeInfo,
   type TrashedInfo,
   type TrashOutcome,
   type SearchEvent,
@@ -127,12 +128,20 @@ export interface FakeData {
   flushed: { id: number; blocked?: string }[];
   windowClosed: boolean;
   settings: Settings;
-  /** Extensions the fake "installed"; they contribute nothing but a row in the list. */
+  /** Extensions the fake "installed"; they contribute a row in the list, and the themes their
+   * package names. */
   userExtensions: ExtensionSummary[];
-  /** What `installExtension(path)` finds at a path: the manifest identity of the package. */
+  /** What `installExtension(path)` finds at a path: the manifest identity of the package, and the
+   * themes it contributes (`path` inside the extension, its text in `extensionFiles`). */
   packages: Record<
     string,
-    { name: string; publisher: string; version: string; displayName?: string }
+    {
+      name: string;
+      publisher: string;
+      version: string;
+      displayName?: string;
+      themes?: Omit<ThemeInfo, "extension">[];
+    }
   >;
   /** `"<extension id>/<path>"` → file text. Missing entries are fetched from the dev server. */
   extensionFiles: Record<string, string>;
@@ -1431,9 +1440,23 @@ export class FakeBackend implements Backend {
       ...e,
       enabled: !this.data.settings.extensions.disabled.includes(e.id),
     }));
+    const userThemes = user
+      .filter((e) => e.enabled)
+      .flatMap((e) => {
+        const pkg = Object.values(this.data.packages).find(
+          (p) => `${p.publisher}.${p.name}` === e.id && p.version === e.version,
+        );
+        return (pkg?.themes ?? []).map((t) => ({ ...t, extension: e.id }));
+      });
+    // In precedence order, as Rust builds it: the user's first unless 「bundled」 goes first.
+    const themes =
+      this.data.settings.extensions.precedence === "bundled"
+        ? [...bundled.themes, ...userThemes]
+        : [...userThemes, ...bundled.themes];
     return {
       ...bundled,
       extensions: [...bundled.extensions, ...user],
+      themes,
       problems: [...bundled.problems, ...(this.data.problems ?? [])],
       viewers: [...bundled.viewers, ...this.data.extraViewers.map((v) => v.info)],
     };

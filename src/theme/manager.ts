@@ -71,8 +71,9 @@ export class ThemeManager {
       // Read when the settings come: the OS may have changed meanwhile. Its change event brings
       // another refresh in every mode, which in light and dark lands on the same theme.
       appearance = appearanceOf(settings.theme.mode, this.media.matches);
-      // The default of the appearance: a theme per appearance an older build saved is not read.
-      info = this.registry().themeFor(null, appearance) ?? null;
+      // The bundled default of the appearance: a user extension's theme the precedence puts first
+      // is not drawn, nor is a theme per appearance an older build saved.
+      info = this.registry().defaultTheme(appearance) ?? null;
       if (info) {
         const found = info;
         theme = await loadTheme(

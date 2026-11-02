@@ -8,14 +8,25 @@ import { contrastRatio } from "./contrast";
 import { applyToDocument, ThemeManager, type ActiveTheme } from "./manager";
 import { DEFAULT_VARIABLES, loadTheme, themeKind, themeVariables } from "./vscode-theme";
 
+const summary = (id: string, source: "bundled" | "user") => ({
+  id,
+  version: "1.0.0",
+  displayName: id,
+  source,
+  enabled: true,
+  path: `/x/${id}`,
+});
+
+/** In the order Rust builds it by default (precedence 「user」): the user's extension first. */
 const registry = new Registry({
-  extensions: [],
+  extensions: [summary("someone.night", "user"), summary("tote.themes", "bundled")],
   languages: [],
   grammars: [],
   themes: [
+    { extension: "someone.night", label: "Night", uiTheme: "vs-dark", path: "night.json" },
+    { extension: "someone.night", label: "Day", uiTheme: "vs", path: "day.json" },
     { extension: "tote.themes", label: "Light+", uiTheme: "vs", path: "themes/light.json" },
     { extension: "tote.themes", label: "Dark+", uiTheme: "vs-dark", path: "themes/dark.json" },
-    { extension: "someone.night", label: "Night", uiTheme: "vs-dark", path: "night.json" },
   ],
   viewers: [],
   problems: [],
@@ -45,6 +56,7 @@ function setup(dark: boolean) {
           "tote.themes/themes/light.json": `{ "colors": { "editor.background": "#ffffff" }, "tokenColors": [] }`,
           "tote.themes/themes/dark.json": `{ "colors": { "editor.background": "#1e1e1e" }, "tokenColors": [] }`,
           "someone.night/night.json": `{ "colors": { "editor.background": "#000000" } }`,
+          "someone.night/day.json": `{ "colors": { "editor.background": "#fffff0" } }`,
         },
       }),
     ),
@@ -85,6 +97,20 @@ describe("ThemeManager", () => {
     media.flip(false);
     await new Promise((r) => setTimeout(r, 0));
     expect(manager.active.info?.label).toBe("Light+");
+    await backend.patchSettings({ themeMode: "dark" });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Dark+");
+  });
+
+  it("draws the bundled theme of the appearance though a user extension's theme comes first", async () => {
+    const { backend, manager, media } = setup(true);
+    await manager.start();
+    expect(manager.active.info?.label).toBe("Dark+");
+    expect(manager.active.variables["--bg"]).toBe("#1e1e1e");
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+    expect(manager.active.variables["--bg"]).toBe("#ffffff");
     await backend.patchSettings({ themeMode: "dark" });
     await manager.refresh();
     expect(manager.active.info?.label).toBe("Dark+");

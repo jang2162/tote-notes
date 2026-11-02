@@ -331,6 +331,51 @@ test("a theme an older build saved for an appearance is neither offered nor draw
   await expect(page.locator("html")).toHaveAttribute("data-appearance", "dark");
 });
 
+test("a theme a user extension brings changes nothing drawn, though its precedence puts it first", async ({
+  page,
+}) => {
+  const themes = [
+    { label: "Night", uiTheme: "vs-dark", path: "night.json" },
+    { label: "Day", uiTheme: "vs", path: "day.json" },
+  ];
+  await start(page, {
+    packages: { "/pkg/night.vsix": { ...PKG, themes } },
+    picks: ["/pkg/night.vsix"],
+    extensionFiles: {
+      "someone.night/night.json": `{ "colors": { "editor.background": "#000000" } }`,
+      "someone.night/day.json": `{ "colors": { "editor.background": "#fffff0" } }`,
+    },
+  });
+  const panel = await openSection(page, "모양");
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.theme.active.info?.label))
+    .toBe("Dark+");
+  await section(panel, "확장");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  // The window has read the registry with Night and Day ahead of the bundled themes (precedence
+  // 「user」, the default), and the refresh after it is done.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.registry.themes.map((t) => t.label)))
+    .toEqual(["Night", "Day", "Light+", "Dark+"]);
+  const drawn = () =>
+    page.evaluate(async () => {
+      await window.__tote.app.theme.refresh();
+      return [
+        window.__tote.app.theme.active.info?.label,
+        getComputedStyle(document.documentElement).getPropertyValue("--bg").trim().toLowerCase(),
+      ];
+    });
+  expect(await drawn()).toEqual(["Dark+", "#1e1e1e"]);
+  await section(panel, "모양");
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "라이트" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("light");
+  expect(await drawn()).toEqual(["Light+", "#ffffff"]);
+});
+
 test("the root field shows the default root, and its folder dialog opens at the root in use", async ({
   page,
 }) => {

@@ -270,10 +270,10 @@ macOS 는 제목 표시줄을 내용 위에 겹친다(Overlay). 그래서 사이
 
 ### 테마
 
-설정 화면의 고르개 「테마」 하나로 **모드**(settings.json `theme.mode`, 패치 `themeMode`)를 고르고, 모드가 정한 모양(라이트·다크)의 **번들 기본 테마**(라이트는 Light+, 다크는 Dark+, 레지스트리의 `themeFor(null, 모양)`)를 쓴다. VS Code 테마의 `colors` 중 tote UI 에 대응하는 키만 CSS 변수로 옮기고, `tokenColors` 는 하이라이트에 쓴다. 뷰어에도 같은 CSS 변수를 넘긴다.
+설정 화면의 고르개 「테마」 하나로 **모드**(settings.json `theme.mode`, 패치 `themeMode`)를 고르고, 모드가 정한 모양(라이트·다크)의 **번들 기본 테마**(라이트는 Light+, 다크는 Dark+)를 쓴다. 기본 테마는 번들 확장(`source` 가 `bundled`)의 테마 중 그 모양의 첫 것이다(`Registry.defaultTheme(모양)`, `src/extensions/registry.ts`). 레지스트리의 테마 순서는 우선순위를 따라 기본값(「사용자 확장 먼저」)에서는 사용자 확장의 테마가 앞에 오지만, 기본 테마를 고를 때는 순서를 보지 않는다. 그 모양의 번들 테마가 없을 때만(번들 테마 확장이 레지스트리에 없을 때, 예: 매니페스트 문제) 그 모양의 아무 테마, 그것도 없으면 첫 테마로 대체한다. VS Code 테마의 `colors` 중 tote UI 에 대응하는 키만 CSS 변수로 옮기고, `tokenColors` 는 하이라이트에 쓴다. 뷰어에도 같은 CSS 변수를 넘긴다.
 
 - 모양마다 테마를 고르던 칸(「라이트 테마」·「다크 테마」, settings.json `theme.light`·`theme.dark`)은 사용자 요청(2026-11-02 「라이테테마 다크테마 옵션 없애고 나중에 다른 테마 선택은 모드 옵션에서」)으로 없앴다. 이미 settings.json 에 적힌 두 값은 **읽지 않고 그대로 둔다** — Rust 가 값을 해석하지 않은 채(`serde_json::Value`) 들고 있다가 저장할 때 그대로 다시 쓴다. 값이 없으면 키를 쓰지 않는다. 슬롯을 바꾸는 패치(`themeLight`·`themeDark`)는 없어졌다(보내도 무시된다).
-- **확장 테마는 나중에 고르개 「테마」의 옵션으로 붙는다**(설정 설계 3절 「테마 고르개」). 그때까지 사용자 설치 확장의 테마는 레지스트리에 실리지만 고를 길이 없다.
+- **확장 테마는 나중에 고르개 「테마」의 옵션으로 붙는다**(설정 설계 3절 「테마 고르개」). 그때까지 사용자 설치 확장의 테마는 레지스트리에 실리지만 그려지지 않는다 — 다크·라이트 테마 확장을 설치·활성해도 화면은 번들 기본 테마 그대로다. 처음 구현(2026-11-02)은 레지스트리에서 그 모양의 첫 테마를 골라, 기본 우선순위에서 사용자 확장의 테마가 저절로 그려졌다(리뷰 F1). 단위 시험(`src/theme/manager.test.ts`, `src/extensions/registry.test.ts`)과 e2e(`tests/e2e/settings.spec.ts` 「a theme a user extension brings changes nothing drawn …」)가 사용자 확장이 앞에 오는 순서로 이것을 본다.
 
 고른 테마가 그 모양과 다른 종류여도 된다(다크 모양에 라이트 테마). 지금은 기본 테마만 쓰므로 생기지 않지만, 확장 테마가 옵션으로 붙으면 생긴다. 테마가 주지 않은 CSS 변수는 **모양(OS 모양)이 아니라 테마 종류**의 기본값에서 채운다. 종류는 매니페스트의 `uiTheme`(`vs`·`hc-light` 는 라이트, `vs-dark`·`hc-black` 은 다크), 없거나 모르는 값이면 테마 파일의 `type`(`light`·`hcLight`·`dark`·`hc`), 그것도 없으면 모양이다(`themeKind`, `src/theme/vscode-theme.ts`). 페이지의 `color-scheme`(스크롤 막대·폼 컨트롤)도 테마 종류를 따른다. 모양에서 시작하던 때는 번들 Light+(`editor.background`·`editor.foreground` 만 tote 변수에 닿는다)를 다크 슬롯에 두면 `--fg` 만 검게 바뀌어 띠 입력칸·사이드바 글자가 어두운 바탕 위에서 1.2:1 로 읽히지 않았다(검색 띠 스모크 A-4). 번들 테마 전부를 두 모양에서 그려 글자 대비가 4.5:1 이상인지 단위 시험(`src/theme/manager.test.ts`)이 본다. 뷰어 프레임의 `color-scheme` 은 아직 `light dark`(앱의 모양)이다 — 뷰어는 변수만 받는다.
 
