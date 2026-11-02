@@ -1207,15 +1207,16 @@ button {
 }
 
 /* The icon and the words sit in the middle of the room the row leaves; a long version cuts the
- * words short, not the icon. */
+ * words short, not the icon. The gap and padding are as small as they go so 「업데이트 0.5.1」 fits
+ * the narrowest sidebar (200px) whole. */
 .update-button {
   display: flex;
   flex: 1;
   align-items: center;
   justify-content: center;
-  gap: 6px;
+  gap: 4px;
   min-width: 0;
-  padding: 0 8px;
+  padding: 0 6px;
   overflow: hidden;
   border: 1px solid var(--accent);
   border-radius: 6px;

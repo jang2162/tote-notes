@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { menu, sidebarWidth, start } from "./helpers";
 
 // The row at the foot of the sidebar: the settings button always, the update button beside it
 // when there is a newer version. What the update button does is update.spec.ts's.
@@ -159,4 +159,19 @@ test("the update button's icon and words sit in its middle, across and down", as
   const middle = button.y + button.height / 2;
   expect(Math.abs(icon.y + icon.height / 2 - middle)).toBeLessThanOrEqual(1);
   expect(Math.abs(label.y + label.height / 2 - middle)).toBeLessThanOrEqual(1);
+});
+
+test("at the narrowest sidebar a one-digit version fits whole beside the icon", async ({
+  page,
+}) => {
+  // 200px, the narrowest the sidebar goes (sidebar resize spec 3). A two-digit one such as
+  // 0.10.12 is cut there and whole in the title (settings spec 「3. 설정 화면」).
+  const window = { layout: { tabs: [], activeTab: -1 }, focusedPane: 0, sidebarWidth: 200 };
+  await start(page, { session: JSON.stringify({ version: 2, windows: [window] }) });
+  await expect.poll(() => sidebarWidth(page)).toBe(200);
+  await announce(page, "0.5.1");
+  const label = updateButton(page).locator(".update-label");
+  await expect(label).toHaveText("업데이트 0.5.1");
+  expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect((await box(page, ".update-button svg")).width).toBe(16);
 });
