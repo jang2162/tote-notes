@@ -1,4 +1,4 @@
-import type { Backend, ThemeInfo, ThemeMode, ThemeRef } from "../backend/types";
+import type { Backend, ThemeInfo, ThemeMode } from "../backend/types";
 import type { Registry } from "../extensions/registry";
 import {
   DEFAULT_VARIABLES,
@@ -13,7 +13,7 @@ export interface ActiveTheme {
   info: ThemeInfo | null;
   /** null when no theme could be read: the defaults of `appearance` apply. */
   theme: VsCodeTheme | null;
-  /** Which slot of the settings `theme` came from: the mode's, or the OS appearance in auto. */
+  /** The appearance `theme` is the default of: the mode's, or the OS appearance in auto. */
   appearance: Appearance;
   /** What the page is drawn as: the theme's kind (`themeKind`), `appearance` without a theme. */
   kind: Appearance;
@@ -26,9 +26,9 @@ type Media = {
   addEventListener(type: "change", fn: (e: { matches: boolean }) => void): void;
 };
 
-/** Which theme is on (spec 「테마」): the configured one for the mode's appearance (the OS's in
- * auto), re-read when the appearance or the settings change. `apply` puts the variables on the page; viewers and the
- * highlighter follow through `onChange`. */
+/** Which theme is on (spec 「테마」): the default one of the mode's appearance (the OS's in auto),
+ * re-read when the appearance or the settings change. `apply` puts the variables on the page;
+ * viewers and the highlighter follow through `onChange`. */
 export class ThemeManager {
   active: ActiveTheme = {
     info: null,
@@ -69,10 +69,11 @@ export class ThemeManager {
     try {
       const settings = await this.backend.settings();
       // Read when the settings come: the OS may have changed meanwhile. Its change event brings
-      // another refresh in every mode, which in light and dark lands on the same slot.
+      // another refresh in every mode, which in light and dark lands on the same theme.
       appearance = appearanceOf(settings.theme.mode, this.media.matches);
-      const ref: ThemeRef | null = settings.theme[appearance];
-      info = this.registry().themeFor(ref, appearance) ?? null;
+      // The bundled default of the appearance: a user extension's theme the precedence puts first
+      // is not drawn, nor is a theme per appearance an older build saved.
+      info = this.registry().defaultTheme(appearance) ?? null;
       if (info) {
         const found = info;
         theme = await loadTheme(
@@ -94,7 +95,7 @@ export class ThemeManager {
   }
 }
 
-/** The slot `mode` picks: the OS appearance (`dark`, from `prefers-color-scheme`) in auto. Rust
+/** The appearance `mode` picks: the OS appearance (`dark`, from `prefers-color-scheme`) in auto. Rust
  * forces the app's appearance in light and dark (src-tauri/src/app/appearance.rs), so there the
  * OS's would agree; the mode is read anyway, as the page may hear of the change first. */
 export function appearanceOf(mode: ThemeMode | undefined, dark: boolean): Appearance {
@@ -104,8 +105,8 @@ export function appearanceOf(mode: ThemeMode | undefined, dark: boolean): Appear
 export function applyToDocument(active: ActiveTheme): void {
   const root = document.documentElement;
   for (const [name, value] of Object.entries(active.variables)) root.style.setProperty(name, value);
-  // The theme's kind, not the OS appearance: a light theme in the dark slot gets light scroll
-  // bars and form controls.
+  // The theme's kind, not the OS appearance: a light theme drawn in the dark appearance gets light
+  // scroll bars and form controls.
   root.dataset.appearance = active.kind;
   root.style.colorScheme = active.kind;
 }

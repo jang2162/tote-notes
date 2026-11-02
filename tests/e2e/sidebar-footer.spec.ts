@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { fakeMemo } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { menu, sidebarWidth, start } from "./helpers";
 
 // The row at the foot of the sidebar: the settings button always, the update button beside it
 // when there is a newer version. What the update button does is update.spec.ts's.
@@ -109,7 +109,69 @@ test("a version too long for the row is cut short on the button and whole in its
   await announce(page, version);
   await expect(updateButton(page)).toHaveText(`업데이트 ${version}`);
   await expect(updateButton(page)).toHaveAttribute("title", `업데이트 ${version}`);
-  // Cut, not wrapped: the row stays one line high.
-  expect(await updateButton(page).evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  // Cut, not wrapped: the row stays one line high. The words are cut; the icon stays whole
+  // inside the button.
+  const label = updateButton(page).locator(".update-label");
+  expect(await label.evaluate((el) => el.scrollWidth > el.clientWidth)).toBe(true);
+  expect(await label.evaluate((el) => getComputedStyle(el).textOverflow)).toBe("ellipsis");
   expect(await box(page, ".sidebar-footer")).toEqual(before);
+  const button = await box(page, ".update-button");
+  const icon = await box(page, ".update-button svg");
+  expect(icon.width).toBe(16);
+  expect(icon.x).toBeGreaterThanOrEqual(button.x);
+  expect(
+    (await box(page, ".update-label")).x + (await box(page, ".update-label")).width,
+  ).toBeLessThanOrEqual(button.x + button.width);
+});
+
+test("the update button shows an icon before its words, and is named by the words", async ({
+  page,
+}) => {
+  await start(page);
+  await announce(page);
+  const named = page.getByRole("button", { name: "업데이트 0.2.0", exact: true });
+  await expect(named).toBeVisible();
+  await expect(named).toHaveAttribute("title", "업데이트 0.2.0");
+  const icon = updateButton(page).locator("svg");
+  await expect(icon).toHaveCount(1);
+  await expect(icon).toHaveAttribute("aria-hidden", "true");
+  // Drawn in the button's text colour, like the trash can.
+  await expect(icon.locator("[stroke]").first()).toHaveAttribute("stroke", "currentColor");
+  const iconBox = await box(page, ".update-button svg");
+  const label = await box(page, ".update-label");
+  expect(iconBox.width).toBe(16);
+  expect(iconBox.height).toBe(16);
+  expect(iconBox.x + iconBox.width).toBeLessThanOrEqual(label.x);
+});
+
+test("the update button's icon and words sit in its middle, across and down", async ({ page }) => {
+  await start(page);
+  await announce(page);
+  await expect(updateButton(page)).toBeVisible();
+  const button = await box(page, ".update-button");
+  const icon = await box(page, ".update-button svg");
+  const label = await box(page, ".update-label");
+  const left = icon.x - button.x;
+  const right = button.x + button.width - (label.x + label.width);
+  // Room to spare: a left-aligned button would leave all of it on the right.
+  expect(left).toBeGreaterThan(16);
+  expect(Math.abs(left - right)).toBeLessThanOrEqual(1);
+  const middle = button.y + button.height / 2;
+  expect(Math.abs(icon.y + icon.height / 2 - middle)).toBeLessThanOrEqual(1);
+  expect(Math.abs(label.y + label.height / 2 - middle)).toBeLessThanOrEqual(1);
+});
+
+test("at the narrowest sidebar a one-digit version fits whole beside the icon", async ({
+  page,
+}) => {
+  // 200px, the narrowest the sidebar goes (sidebar resize spec 3). A two-digit one such as
+  // 0.10.12 is cut there and whole in the title (settings spec 「3. 설정 화면」).
+  const window = { layout: { tabs: [], activeTab: -1 }, focusedPane: 0, sidebarWidth: 200 };
+  await start(page, { session: JSON.stringify({ version: 2, windows: [window] }) });
+  await expect.poll(() => sidebarWidth(page)).toBe(200);
+  await announce(page, "0.5.1");
+  const label = updateButton(page).locator(".update-label");
+  await expect(label).toHaveText("업데이트 0.5.1");
+  expect(await label.evaluate((el) => el.scrollWidth <= el.clientWidth)).toBe(true);
+  expect((await box(page, ".update-button svg")).width).toBe(16);
 });

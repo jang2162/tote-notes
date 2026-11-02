@@ -40,10 +40,10 @@ test("the settings screen shows the root, the themes and the extensions, and sav
   // No notes under the root and the update switch (user request 2026-11-02).
   await expect(panel.locator("#settings-panel-general .settings-note")).toHaveCount(0);
   await section(panel, "모양");
-  await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.dark))
-    .toEqual({ extension: "tote.themes", label: "Light+" });
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("dark");
   await section(panel, "확장");
   await expect(panel.locator(".extension-row")).toHaveText([
     /Tote Notes 기본 언어 묶음/,
@@ -213,10 +213,10 @@ test("an unsaved root survives another setting being saved", async ({ page }) =>
   const panel = page.locator(".modal.settings");
   await panel.locator("input[name=workspaceRoot]").fill("~/아직");
   await section(panel, "모양");
-  await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.dark))
-    .not.toBeNull();
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("dark");
   await section(panel, "일반");
   await expect(panel.locator("input[name=workspaceRoot]")).toHaveValue("~/아직");
   expect(await page.evaluate(() => window.__tote.backend.data.settings.workspaceRoot)).toBeNull();
@@ -247,10 +247,10 @@ test("saving a theme keeps a switch flipped a moment before", async ({ page }) =
     handlers.push(...held);
   });
   await section(panel, "모양");
-  await panel.locator("select[name=light]").selectOption({ label: "Light+ (tote.themes)" });
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "라이트" });
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.light))
-    .not.toBeNull();
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("light");
   expect(
     await page.evaluate(() => window.__tote.backend.data.settings.extensions.disabled),
   ).toEqual(["someone.night"]);
@@ -277,10 +277,10 @@ test("two settings screens do not undo each other", async ({ page }) => {
     };
   });
   await section(panel, "모양");
-  await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
   await expect
-    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.dark))
-    .toEqual({ extension: "tote.themes", label: "Light+" });
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("dark");
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.settings.workspaceRoot))
     .toBe("~/다른 창");
@@ -295,11 +295,19 @@ test("a second ⌘, does not pile a second settings screen", async ({ page }) =>
   await expect(page.locator(".modal.settings")).toHaveCount(0);
 });
 
-test("a theme that is not installed shows the default", async ({ page }) => {
+test("a theme an older build saved for an appearance is neither offered nor drawn", async ({
+  page,
+}) => {
+  // Kept in settings.json, not read (spec 「테마」).
+  const theme = {
+    mode: "dark" as const,
+    light: { extension: "tote.themes", label: "Dark+" },
+    dark: { extension: "tote.themes", label: "Light+" },
+  };
   await start(page, {
     settings: {
       workspaceRoot: null,
-      theme: { mode: "auto", light: { extension: "gone.theme", label: "Gone" }, dark: null },
+      theme,
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
@@ -307,10 +315,65 @@ test("a theme that is not installed shows the default", async ({ page }) => {
       trash: { retentionDays: 60 },
     },
   });
-  await openSection(page, "모양");
-  await expect(page.locator(".modal.settings select[name=light] option:checked")).toHaveText(
-    "기본",
-  );
+  const panel = await openSection(page, "모양");
+  const shown = panel.getByRole("tabpanel");
+  await expect(shown.getByRole("combobox")).toHaveCount(1);
+  await expect(shown.getByRole("combobox", { name: "테마" })).toHaveValue("dark");
+  await expect(shown.getByRole("combobox", { name: "테마" }).locator("option")).toHaveText([
+    "자동",
+    "라이트",
+    "다크",
+  ]);
+  // Dark+, the default dark theme: its editor.background, not Light+'s white.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.theme.active.info?.label))
+    .toBe("Dark+");
+  await expect(page.locator("html")).toHaveAttribute("data-appearance", "dark");
+});
+
+test("a theme a user extension brings changes nothing drawn, though its precedence puts it first", async ({
+  page,
+}) => {
+  const themes = [
+    { label: "Night", uiTheme: "vs-dark", path: "night.json" },
+    { label: "Day", uiTheme: "vs", path: "day.json" },
+  ];
+  await start(page, {
+    packages: { "/pkg/night.vsix": { ...PKG, themes } },
+    picks: ["/pkg/night.vsix"],
+    extensionFiles: {
+      "someone.night/night.json": `{ "colors": { "editor.background": "#000000" } }`,
+      "someone.night/day.json": `{ "colors": { "editor.background": "#fffff0" } }`,
+    },
+  });
+  const panel = await openSection(page, "모양");
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.theme.active.info?.label))
+    .toBe("Dark+");
+  await section(panel, "확장");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  // The window has read the registry with Night and Day ahead of the bundled themes (precedence
+  // 「user」, the default), and the refresh after it is done.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.app.registry.themes.map((t) => t.label)))
+    .toEqual(["Night", "Day", "Light+", "Dark+"]);
+  const drawn = () =>
+    page.evaluate(async () => {
+      await window.__tote.app.theme.refresh();
+      return [
+        window.__tote.app.theme.active.info?.label,
+        getComputedStyle(document.documentElement).getPropertyValue("--bg").trim().toLowerCase(),
+      ];
+    });
+  expect(await drawn()).toEqual(["Dark+", "#1e1e1e"]);
+  await section(panel, "모양");
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "라이트" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toBe("light");
+  expect(await drawn()).toEqual(["Light+", "#ffffff"]);
 });
 
 test("the root field shows the default root, and its folder dialog opens at the root in use", async ({
@@ -524,12 +587,12 @@ test("settings open on 일반 and remember the last section in the window", asyn
   await expect(selected).toHaveText("모양");
   await expect(panel.getByRole("tabpanel")).toHaveCount(1);
   await expect(panel.locator("input[name=workspaceRoot]")).toBeHidden();
-  await expect(panel.locator("select[name=light]")).toBeVisible();
+  await expect(panel.locator("select[name=themeMode]")).toBeVisible();
   await page.keyboard.press("Escape");
   await expect(panel).toHaveCount(0);
   await menu(page, "settings");
   await expect(selected).toHaveText("모양");
-  await expect(panel.locator("select[name=light]")).toBeVisible();
+  await expect(panel.locator("select[name=themeMode]")).toBeVisible();
   await section(panel, "단축키");
   await panel.getByRole("button", { name: "닫기", exact: true }).click();
   await menu(page, "settings");
@@ -712,9 +775,7 @@ test("the 모양 section holds the theme, editor and sidebar settings, each unde
   const tops = await Promise.all(
     [
       shown.getByRole("heading", { name: "테마" }),
-      shown.getByRole("radiogroup", { name: "모드" }),
-      shown.getByRole("combobox", { name: "라이트 테마" }),
-      shown.getByRole("combobox", { name: "다크 테마" }),
+      shown.getByRole("combobox", { name: "테마" }),
       shown.getByRole("heading", { name: "편집기" }),
       shown.getByRole("checkbox", { name: "줄번호 표시" }),
       shown.getByRole("spinbutton", { name: "글꼴 크기" }),
@@ -724,14 +785,12 @@ test("the 모양 section holds the theme, editor and sidebar settings, each unde
     ].map(async (control) => (await control.boundingBox())!.y),
   );
   expect(tops).toEqual([...tops].sort((a, b) => a - b));
-  const modes = shown.getByRole("radiogroup", { name: "모드" }).getByRole("radio");
-  await expect(modes).toHaveCount(3);
-  for (const [name, checked] of [
-    ["자동", true],
-    ["라이트", false],
-    ["다크", false],
-  ] as const)
-    await expect(shown.getByRole("radio", { name, exact: true })).toBeChecked({ checked });
+  // One picker for the theme: no mode radios, no theme per appearance (user request 2026-11-02).
+  await expect(shown.getByRole("radio")).toHaveCount(0);
+  await expect(shown.getByRole("combobox")).toHaveCount(1);
+  const picker = shown.getByRole("combobox", { name: "테마" });
+  await expect(picker.locator("option")).toHaveText(["자동", "라이트", "다크"]);
+  await expect(picker).toHaveValue("auto");
 });
 
 test("the theme mode keeps the page light or dark whatever the OS, saved at once", async ({
@@ -754,7 +813,8 @@ test("the theme mode keeps the page light or dark whatever the OS, saved at once
   const panel = await openSection(page, "모양");
   await expect.poll(drawnAs).toBe("light");
 
-  await panel.getByRole("radio", { name: "다크", exact: true }).check();
+  const picker = panel.getByRole("combobox", { name: "테마" });
+  await picker.selectOption({ label: "다크" });
   await expect.poll(mode).toBe("dark");
   await expect.poll(drawnAs).toBe("dark");
   expect(await patches()).toEqual([{ themeMode: "dark" }]);
@@ -764,11 +824,11 @@ test("the theme mode keeps the page light or dark whatever the OS, saved at once
   await expect.poll(drawnAs).toBe("dark");
 
   await page.emulateMedia({ colorScheme: "dark" });
-  await panel.getByRole("radio", { name: "라이트", exact: true }).check();
+  await picker.selectOption({ label: "라이트" });
   await expect.poll(mode).toBe("light");
   await expect.poll(drawnAs).toBe("light");
 
-  await panel.getByRole("radio", { name: "자동", exact: true }).check();
+  await picker.selectOption({ label: "자동" });
   await expect.poll(mode).toBe("auto");
   await expect.poll(drawnAs).toBe("dark");
   await page.emulateMedia({ colorScheme: "light" });
@@ -790,9 +850,9 @@ test("the theme mode reaches every window, and the screen shows a mode saved els
   await menu(second, "settings");
   await section(second.locator(".modal.settings"), "모양");
   const panel = await openSection(first, "모양");
-  await panel.getByRole("radio", { name: "다크", exact: true }).check();
+  await panel.getByRole("combobox", { name: "테마" }).selectOption({ label: "다크" });
   for (const page of [first, second]) await expect.poll(() => drawnAs(page)).toBe("dark");
-  await expect(second.getByRole("radio", { name: "다크", exact: true })).toBeChecked();
+  await expect(second.getByRole("combobox", { name: "테마" })).toHaveValue("dark");
 });
 
 test("the settings dialog is a labelled modal and its sections are tabs", async ({ page }) => {

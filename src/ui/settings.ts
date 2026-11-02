@@ -1,10 +1,4 @@
-import type {
-  Backend,
-  ExtensionRegistry,
-  SettingsPatch,
-  ThemeMode,
-  ThemeRef,
-} from "../backend/types";
+import type { Backend, ExtensionRegistry, SettingsPatch, ThemeMode } from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   EDITOR_FONT_SIZE_MAX,
@@ -14,7 +8,6 @@ import {
   TRASH_DAYS_MAX,
   TRASH_DAYS_MIN,
 } from "../backend/types";
-import { Registry } from "../extensions/registry";
 import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
 import { shortcutsSection } from "./shortcut-settings";
@@ -30,7 +23,9 @@ const SECTIONS: [SettingsSection, string][] = [
   ["extensions", "확장"],
 ];
 
-const MODES: [ThemeMode, string][] = [
+/** The 「테마」 picker's options, in order (spec 「테마」). Installed themes are to join them here
+ * later as further options; for now each appearance draws with its bundled default theme. */
+const THEME_OPTIONS: [ThemeMode, string][] = [
   ["auto", "자동"],
   ["light", "라이트"],
   ["dark", "다크"],
@@ -38,7 +33,6 @@ const MODES: [ThemeMode, string][] = [
 
 export interface SettingsOptions {
   backend: Backend;
-  registry: () => Registry;
   /** Subscribes to config changes; returns the unsubscribe. */
   onConfigChanged: (handler: () => void) => () => void;
   /** Subscribes to the workspace list changing (`Backend.onWorkspacesChanged`); returns the
@@ -49,14 +43,6 @@ export interface SettingsOptions {
   /** Hears each section picked, for the next opening to start there. */
   onSection?: (section: SettingsSection) => void;
 }
-
-const themeValue = (ref: ThemeRef | null) =>
-  ref ? JSON.stringify([ref.extension, ref.label]) : "";
-const themeRef = (value: string): ThemeRef | null => {
-  if (!value) return null;
-  const [extension, label] = JSON.parse(value) as [string, string];
-  return { extension, label };
-};
 
 /** The settings screen: a list of sections on the left, the picked one's settings on the right.
  * Every change is saved as it is made; the workspace root, a path, waits for 「적용」 or Enter. */
@@ -229,63 +215,23 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     fontFamily.addEventListener("change", commitFontFamily);
     onEnter(fontFamily, commitFontFamily);
 
-    const themeSelect = (name: "light" | "dark") => {
-      const select = h("select", { name });
-      select.addEventListener(
-        "change",
-        () =>
-          void save(
-            name === "light"
-              ? { themeLight: themeRef(select.value) }
-              : { themeDark: themeRef(select.value) },
-          ),
-      );
-      return select;
-    };
-    // Rebuilt on every refresh: installing or switching off a theme extension changes the list.
-    const fillThemes = (registry: Registry) => {
-      for (const select of [lightSelect, darkSelect]) {
-        select.replaceChildren(
-          h("option", { value: "", textContent: "기본" }),
-          ...registry.themes.map((theme) =>
-            h("option", {
-              value: themeValue(theme),
-              textContent: `${theme.label} (${theme.extension})`,
-            }),
-          ),
-        );
-      }
-    };
-    // A theme whose extension is off or gone is not an option; the default theme is what shows.
-    const selectTheme = (select: HTMLSelectElement, ref: ThemeRef | null) => {
-      select.value = themeValue(ref);
-      if (select.selectedIndex < 0) select.value = "";
-    };
-    const lightSelect = themeSelect("light");
-    const darkSelect = themeSelect("dark");
-    fillThemes(options.registry());
-    // Auto follows the OS; light and dark keep that slot's theme and the app's appearance.
-    const modeLabel = h("span", { id: "settings-themeMode-label", textContent: "모드" });
-    const modes = h(
-      "div",
-      { class: "settings-row settings-modes", role: "radiogroup" },
-      ...MODES.map(([value, label]) => {
-        const radio = h("input", { type: "radio", name: "themeMode", value });
-        radio.addEventListener("change", () => void save({ themeMode: value }));
-        return h("label", {}, radio, label);
-      }),
+    // Auto follows the OS; light and dark keep the app's appearance whatever the OS's.
+    const themePicker = h(
+      "select",
+      { name: "themeMode" },
+      ...THEME_OPTIONS.map(([value, label]) => h("option", { value, textContent: label })),
     );
-    modes.setAttribute("aria-labelledby", modeLabel.id);
+    themePicker.addEventListener(
+      "change",
+      () => void save({ themeMode: themePicker.value as ThemeMode }),
+    );
     const heading = (text: string) => h("h2", { class: "settings-heading", textContent: text });
     // One grid for the three groups: their controls line up under one another.
     const appearanceSection = h(
       "div",
       { class: "settings-form" },
       heading("테마"),
-      modeLabel,
-      modes,
-      ...field("라이트 테마", lightSelect),
-      ...field("다크 테마", darkSelect),
+      ...field("테마", themePicker),
       heading("편집기"),
       ...field("줄번호 표시", lineNumbers),
       ...field("글꼴 크기", fontSize),
@@ -397,7 +343,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
           backend.extensionRegistry(),
           backend.workspaceRoots(),
         ]);
-        fillThemes(new Registry(registry));
         sync(rootInput, current.workspaceRoot ?? "");
         rootInput.placeholder = roots.defaultShown;
         lineNumbers.checked = current.editor.lineNumbers;
@@ -412,11 +357,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         trashDays.disabled = days === null;
         sync(fontFamily, current.editor.fontFamily);
         // Rust always sends one; an old fake backend seed has none, which is auto.
-        modes.querySelector<HTMLInputElement>(
-          `input[value=${current.theme.mode ?? "auto"}]`,
-        )!.checked = true;
-        selectTheme(lightSelect, current.theme.light);
-        selectTheme(darkSelect, current.theme.dark);
+        themePicker.value = current.theme.mode ?? "auto";
         panel.querySelector<HTMLInputElement>(
           `input[name=precedence][value=${current.extensions.precedence}]`,
         )!.checked = true;

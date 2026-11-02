@@ -6,16 +6,27 @@ import type { ExtensionRegistry, ThemeInfo } from "../backend/types";
 import { Registry } from "../extensions/registry";
 import { contrastRatio } from "./contrast";
 import { applyToDocument, ThemeManager, type ActiveTheme } from "./manager";
-import { DEFAULT_VARIABLES } from "./vscode-theme";
+import { DEFAULT_VARIABLES, loadTheme, themeKind, themeVariables } from "./vscode-theme";
 
+const summary = (id: string, source: "bundled" | "user") => ({
+  id,
+  version: "1.0.0",
+  displayName: id,
+  source,
+  enabled: true,
+  path: `/x/${id}`,
+});
+
+/** In the order Rust builds it by default (precedence 「user」): the user's extension first. */
 const registry = new Registry({
-  extensions: [],
+  extensions: [summary("someone.night", "user"), summary("tote.themes", "bundled")],
   languages: [],
   grammars: [],
   themes: [
+    { extension: "someone.night", label: "Night", uiTheme: "vs-dark", path: "night.json" },
+    { extension: "someone.night", label: "Day", uiTheme: "vs", path: "day.json" },
     { extension: "tote.themes", label: "Light+", uiTheme: "vs", path: "themes/light.json" },
     { extension: "tote.themes", label: "Dark+", uiTheme: "vs-dark", path: "themes/dark.json" },
-    { extension: "someone.night", label: "Night", uiTheme: "vs-dark", path: "night.json" },
   ],
   viewers: [],
   problems: [],
@@ -45,6 +56,7 @@ function setup(dark: boolean) {
           "tote.themes/themes/light.json": `{ "colors": { "editor.background": "#ffffff" }, "tokenColors": [] }`,
           "tote.themes/themes/dark.json": `{ "colors": { "editor.background": "#1e1e1e" }, "tokenColors": [] }`,
           "someone.night/night.json": `{ "colors": { "editor.background": "#000000" } }`,
+          "someone.night/day.json": `{ "colors": { "editor.background": "#fffff0" } }`,
         },
       }),
     ),
@@ -72,23 +84,39 @@ describe("ThemeManager", () => {
     expect(manager.active.appearance).toBe("dark");
   });
 
-  it("uses the configured theme and re-reads it when the settings change", async () => {
+  it("draws the default theme of the appearance, whatever theme a slot of the settings names", async () => {
+    const { backend, manager, media } = setup(true);
+    // What an older build saved for each appearance (spec 「테마」: kept in the file, not read).
+    Object.assign(backend.data.settings.theme, {
+      light: { extension: "someone.night", label: "Night" },
+      dark: { extension: "someone.night", label: "Night" },
+    });
+    await manager.start();
+    expect(manager.active.info?.label).toBe("Dark+");
+    expect(manager.active.variables["--bg"]).toBe("#1e1e1e");
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+    await backend.patchSettings({ themeMode: "dark" });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Dark+");
+  });
+
+  it("draws the bundled theme of the appearance though a user extension's theme comes first", async () => {
     const { backend, manager, media } = setup(true);
     await manager.start();
     expect(manager.active.info?.label).toBe("Dark+");
-    const changes: string[] = [];
-    manager.onChange((a) => void changes.push(a.info?.label ?? "none"));
-    backend.data.settings.theme.dark = { extension: "someone.night", label: "Night" };
-    await manager.refresh();
-    expect(manager.active.info?.label).toBe("Night");
-    expect(manager.active.variables["--bg"]).toBe("#000000");
-    expect(changes).toEqual(["Night"]);
+    expect(manager.active.variables["--bg"]).toBe("#1e1e1e");
     media.flip(false);
     await new Promise((r) => setTimeout(r, 0));
-    expect(changes).toEqual(["Night", "Light+"]);
+    expect(manager.active.info?.label).toBe("Light+");
+    expect(manager.active.variables["--bg"]).toBe("#ffffff");
+    await backend.patchSettings({ themeMode: "dark" });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Dark+");
   });
 
-  it("keeps the slot the mode names whatever the OS appearance, and follows it again on auto", async () => {
+  it("keeps the appearance the mode names whatever the OS appearance, and follows it again on auto", async () => {
     const { backend, manager, media } = setup(false);
     backend.data.settings.theme.mode = "dark";
     await manager.start();
@@ -149,14 +177,13 @@ describe("ThemeManager failures and races", () => {
       }
       return read(ext, path);
     };
-    backend.data.settings.theme.dark = { extension: "tote.themes", label: "Dark+" };
-    const older = manager.refresh(); // blocks on the slow read
-    backend.data.settings.theme.dark = { extension: "someone.night", label: "Night" };
-    await manager.refresh(); // newer, reads Night at once
+    const older = manager.refresh(); // blocks on the slow read of Dark+
+    backend.data.settings.theme.mode = "light";
+    await manager.refresh(); // newer, reads Light+ at once
     gate.release();
     await older;
-    expect(manager.active.info?.label).toBe("Night");
-    expect(applied.map((a) => a.info?.label)).toEqual(["Dark+", "Night"]);
+    expect(manager.active.info?.label).toBe("Light+");
+    expect(applied.map((a) => a.info?.label)).toEqual(["Dark+", "Light+"]);
   });
 });
 
@@ -191,50 +218,57 @@ describe("ThemeManager with the bundled themes", () => {
     ["--muted", "--bg", "secondary text on the page"],
   ];
 
+  const unreadable = (v: Record<string, string>) =>
+    TEXTS.map(([fg, bg, what]) => ({
+      what,
+      ratio: Math.round(contrastRatio(v[fg], v[bg]) * 100) / 100,
+    })).filter((r) => r.ratio < 4.5);
+
+  for (const mode of ["light", "dark"] as const) {
+    it(`the ${mode} mode's theme keeps every text readable`, async () => {
+      const backend = new FakeBackend(
+        memoryStorage(JSON.stringify({ ...defaultFakeData(), extensionFiles: bundled.files })),
+      );
+      backend.data.settings.theme.mode = mode;
+      const manager = new ThemeManager(
+        backend,
+        () => new Registry({ ...registry.data, themes: bundled.themes }),
+        { media: media(mode !== "dark").query, apply: () => {} },
+      );
+      await manager.start();
+      expect(manager.active.info?.label).toBe(mode === "dark" ? "Dark+" : "Light+");
+      expect(unreadable(manager.active.variables)).toEqual([]);
+    });
+  }
+
+  // Whichever appearance it is drawn in: a theme the picker offers later (spec 「테마」) may sit
+  // in either.
   for (const info of bundled.themes) {
-    for (const slot of ["light", "dark"] as const) {
-      it(`${info.label} in the ${slot} slot keeps every text readable`, async () => {
-        const backend = new FakeBackend(
-          memoryStorage(JSON.stringify({ ...defaultFakeData(), extensionFiles: bundled.files })),
+    for (const appearance of ["light", "dark"] as const) {
+      it(`${info.label} drawn in the ${appearance} appearance keeps every text readable`, async () => {
+        const theme = await loadTheme(
+          async (path) => bundled.files[`tote.themes/${path}`],
+          info.path,
         );
-        backend.data.settings.theme[slot] = { extension: info.extension, label: info.label };
-        const manager = new ThemeManager(
-          backend,
-          () => new Registry({ ...registry.data, themes: bundled.themes }),
-          { media: media(slot === "dark").query, apply: () => {} },
-        );
-        await manager.start();
-        expect(manager.active.info?.label).toBe(info.label);
-        expect(manager.active.appearance).toBe(slot);
-        const v = manager.active.variables;
-        const ratios = TEXTS.map(([fg, bg, what]) => ({
-          what,
-          ratio: Math.round(contrastRatio(v[fg], v[bg]) * 100) / 100,
-        }));
-        expect(ratios.filter((r) => r.ratio < 4.5)).toEqual([]);
+        const kind = themeKind(info.uiTheme, theme.type, appearance);
+        expect(unreadable(themeVariables(theme, kind))).toEqual([]);
       });
     }
   }
 
-  it("takes the colours a theme leaves out from its kind, not from the slot", async () => {
-    const backend = new FakeBackend(
-      memoryStorage(JSON.stringify({ ...defaultFakeData(), extensionFiles: bundled.files })),
-    );
-    backend.data.settings.theme.dark = { extension: "tote.themes", label: "Light+" };
-    const manager = new ThemeManager(
-      backend,
-      () => new Registry({ ...registry.data, themes: bundled.themes }),
-      { media: media(true).query, apply: () => {} },
-    );
-    await manager.start();
-    expect(manager.active.kind).toBe("light");
-    expect(manager.active.variables["--input-bg"]).toBe(DEFAULT_VARIABLES.light["--input-bg"]);
-    expect(manager.active.variables["--sidebar-bg"]).toBe(DEFAULT_VARIABLES.light["--sidebar-bg"]);
+  it("takes the colours a theme leaves out from its kind, not from the appearance", async () => {
+    const info = bundled.themes.find((t) => t.label === "Light+")!;
+    const theme = await loadTheme(async (path) => bundled.files[`tote.themes/${path}`], info.path);
+    const kind = themeKind(info.uiTheme, theme.type, "dark");
+    expect(kind).toBe("light");
+    const variables = themeVariables(theme, kind);
+    expect(variables["--input-bg"]).toBe(DEFAULT_VARIABLES.light["--input-bg"]);
+    expect(variables["--sidebar-bg"]).toBe(DEFAULT_VARIABLES.light["--sidebar-bg"]);
   });
 });
 
 describe("applyToDocument", () => {
-  it("draws the page as the theme's kind, not the slot it was picked for", () => {
+  it("draws the page as the theme's kind, not the appearance it was picked for", () => {
     const properties: Record<string, string> = {};
     const root = {
       dataset: {} as Record<string, string>,
@@ -245,7 +279,7 @@ describe("applyToDocument", () => {
     };
     vi.stubGlobal("document", { documentElement: root });
     try {
-      // Light+ in the dark slot.
+      // Light+ in the dark appearance.
       applyToDocument({
         info: null,
         theme: null,

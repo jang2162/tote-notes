@@ -103,6 +103,49 @@ describe("Registry.viewerFor and themeFor", () => {
   });
 });
 
+describe("Registry.defaultTheme", () => {
+  const theme = (extension: string, label: string, uiTheme: string) => ({
+    extension,
+    label,
+    uiTheme,
+    path: `${label}.json`,
+  });
+  const summary = (id: string, source: "bundled" | "user") => ({
+    id,
+    version: "1.0.0",
+    displayName: id,
+    source,
+    enabled: true,
+    path: `/x/${id}`,
+  });
+
+  it("takes the bundled theme of the appearance though a user extension's comes first", () => {
+    // The order Rust builds by default (precedence 「user」): the user's extensions first.
+    const registry = new Registry({
+      ...(fake as ExtensionRegistry),
+      extensions: [summary("someone.night", "user"), summary("tote.themes", "bundled")],
+      themes: [
+        theme("someone.night", "Night", "vs-dark"),
+        theme("someone.night", "Day", "vs"),
+        theme("tote.themes", "Light+", "vs"),
+        theme("tote.themes", "Dark+", "vs-dark"),
+      ],
+    });
+    expect(registry.defaultTheme("dark")?.label).toBe("Dark+");
+    expect(registry.defaultTheme("light")?.label).toBe("Light+");
+  });
+
+  it("falls back to any theme of the appearance when no bundled one is there", () => {
+    const registry = new Registry({
+      ...(fake as ExtensionRegistry),
+      extensions: [summary("someone.night", "user"), summary("tote.themes", "bundled")],
+      themes: [theme("someone.night", "Day", "vs"), theme("someone.night", "Night", "vs-dark")],
+    });
+    expect(registry.defaultTheme("dark")?.label).toBe("Night");
+    expect(new Registry({ ...registry.data, themes: [] }).defaultTheme("dark")).toBeUndefined();
+  });
+});
+
 describe("languageLabelFor", () => {
   it("prefers the alias, then the id, then the upper-cased extension, then 텍스트", () => {
     expect(languageLabelFor(lang("python", "e", { aliases: ["Python", "py"] }), "a.py")).toBe(

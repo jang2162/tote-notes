@@ -57,15 +57,29 @@ export class Registry {
     return this.data.themes;
   }
 
+  /** The default theme of the appearance (spec 「테마」): the first of it a bundled extension
+   * gives, whatever the precedence puts first; any theme of it when no bundled one is there. */
+  defaultTheme(appearance: "light" | "dark"): ThemeInfo | undefined {
+    const bundled = new Set(
+      this.data.extensions.filter((e) => e.source === "bundled").map((e) => e.id),
+    );
+    return (
+      this.data.themes.find((t) => bundled.has(t.extension) && ofAppearance(t, appearance)) ??
+      this.themeFor(null, appearance)
+    );
+  }
+
   /** The referenced theme when it is installed, else the first theme of the appearance. */
   themeFor(ref: ThemeRef | null, appearance: "light" | "dark"): ThemeInfo | undefined {
     const wanted =
       ref && this.data.themes.find((t) => t.extension === ref.extension && t.label === ref.label);
     if (wanted) return wanted;
-    const dark = (t: ThemeInfo) => t.uiTheme === "vs-dark" || t.uiTheme === "hc-black";
-    return this.data.themes.find((t) => dark(t) === (appearance === "dark")) ?? this.data.themes[0];
+    return this.data.themes.find((t) => ofAppearance(t, appearance)) ?? this.data.themes[0];
   }
 }
+
+const ofAppearance = (t: ThemeInfo, appearance: "light" | "dark") =>
+  (t.uiTheme === "vs-dark" || t.uiTheme === "hc-black") === (appearance === "dark");
 
 const label = (lang: LanguageInfo) => lang.aliases[0] ?? lang.id;
 
