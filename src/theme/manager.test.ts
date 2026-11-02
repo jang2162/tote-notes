@@ -116,7 +116,7 @@ describe("ThemeManager", () => {
     expect(manager.active.info?.label).toBe("Dark+");
   });
 
-  it("keeps the slot the mode names whatever the OS appearance, and follows it again on auto", async () => {
+  it("keeps the appearance the mode names whatever the OS appearance, and follows it again on auto", async () => {
     const { backend, manager, media } = setup(false);
     backend.data.settings.theme.mode = "dark";
     await manager.start();
@@ -268,7 +268,7 @@ describe("ThemeManager with the bundled themes", () => {
 });
 
 describe("applyToDocument", () => {
-  it("draws the page as the theme's kind, not the slot it was picked for", () => {
+  it("draws the page as the theme's kind, not the appearance it was picked for", () => {
     const properties: Record<string, string> = {};
     const root = {
       dataset: {} as Record<string, string>,
@@ -279,7 +279,7 @@ describe("applyToDocument", () => {
     };
     vi.stubGlobal("document", { documentElement: root });
     try {
-      // Light+ in the dark slot.
+      // Light+ in the dark appearance.
       applyToDocument({
         info: null,
         theme: null,
