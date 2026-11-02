@@ -14,9 +14,9 @@ describe("FakeBackend settings", () => {
   it("hands out a copy, so a caller's edit is not a save", async () => {
     const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
     const copy = await backend.settings();
-    copy.theme.dark = { extension: "x", label: "y" };
+    copy.theme.mode = "dark";
     copy.extensions.disabled.push("z");
-    expect((await backend.settings()).theme.dark).toBeNull();
+    expect((await backend.settings()).theme.mode).toBe("auto");
     expect((await backend.settings()).extensions.disabled).toEqual([]);
   });
 

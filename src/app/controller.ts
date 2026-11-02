@@ -282,7 +282,7 @@ export class AppController implements DocHost, PaneHost {
   private extensionSet = "";
   /** The settings as of the last config change; the editor reads its options from here. */
   private settings: Settings = {
-    theme: { mode: "auto", light: null, dark: null },
+    theme: { mode: "auto" },
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },
@@ -2287,7 +2287,6 @@ export class AppController implements DocHost, PaneHost {
     this.settingsOpen = true;
     await openSettings({
       backend: this.backend,
-      registry: () => this.registry,
       onConfigChanged: (handler) => {
         this.configListeners.add(handler);
         return () => this.configListeners.delete(handler);

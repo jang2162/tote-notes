@@ -497,14 +497,8 @@ test("a shortcut change from another window reloads the table and ends a recordi
   const panel = await openShortcuts(first);
   await record(panel, "new-memo");
   // A setting other than the shortcuts leaves the recording on.
-  await second.evaluate(() =>
-    window.__tote.backend.patchSettings({
-      themeDark: { extension: "tote.themes", label: "Light+" },
-    }),
-  );
-  await expect(first.locator(".modal.settings select[name=dark]")).toHaveValue(
-    JSON.stringify(["tote.themes", "Light+"]),
-  );
+  await second.evaluate(() => window.__tote.backend.patchSettings({ themeMode: "dark" }));
+  await expect(first.locator(".modal.settings select[name=themeMode]")).toHaveValue("dark");
   await first.evaluate(() => window.__tote.backend.shortcutTable());
   await expect(keys(panel, "new-memo")).toHaveText("키를 누르세요");
   expect(await suspendCalls(first)).toEqual([true]);

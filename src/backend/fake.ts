@@ -313,7 +313,7 @@ export function defaultFakeData(): FakeData {
     windowClosed: false,
     settings: {
       workspaceRoot: null,
-      theme: { mode: "auto", light: null, dark: null },
+      theme: { mode: "auto" },
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
@@ -1521,8 +1521,6 @@ export class FakeBackend implements Backend {
     // `undefined` is what JSON leaves out on the way to Rust: such a field is kept.
     if (patch.workspaceRoot !== undefined) settings.workspaceRoot = patch.workspaceRoot;
     if (patch.themeMode !== undefined) settings.theme.mode = patch.themeMode;
-    if (patch.themeLight !== undefined) settings.theme.light = structuredClone(patch.themeLight);
-    if (patch.themeDark !== undefined) settings.theme.dark = structuredClone(patch.themeDark);
     if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
