@@ -12,6 +12,8 @@ describe("detectLanguage", () => {
     expect(detectLanguage("#!/bin/bash\necho hi", languages)?.id).toBe("shellscript");
     expect(detectLanguage("#!/usr/bin/env python3\nprint(1)", languages)?.id).toBe("python");
     expect(detectLanguage('<?xml version="1.0"?>\n<a/>', languages)?.id).toBe("xml");
+    expect(detectLanguage("#!/usr/bin/env ruby\nputs 1", languages)?.id).toBe("ruby");
+    expect(detectLanguage("#!/usr/bin/env php\n<?php echo 1;", languages)?.id).toBe("php");
   });
 
   it("recognises a doctype whatever its case", () => {

@@ -42,6 +42,26 @@ test("a ts fence inside markdown is coloured", async ({ page }) => {
   await expect(plain).not.toHaveCSS("color", DARK_PLUS_STORAGE);
 });
 
+/** Dark+ `entity.name.tag`, #569CD6 (the same blue as `storage.type`). */
+const DARK_PLUS_TAG = "rgb(86, 156, 214)";
+/** Dark+ `support.function`, #DCDCAA. */
+const DARK_PLUS_FUNCTION = "rgb(220, 220, 170)";
+
+// The worker fetches what PHP's wrapper includes — HTML through the derivative, PHP itself —
+// as it would for any language: both halves of the page are coloured.
+test("a PHP page colours its HTML and the PHP inside <?php ?>", async ({ page }) => {
+  await open(page, '<div>\n<?php echo "hi"; ?>\n</div>', "index.php");
+  const lines = page.locator(".cm-line");
+  await expect(lines.nth(0).locator("span[class*='tm-c']", { hasText: /^div$/ })).toHaveCSS(
+    "color",
+    DARK_PLUS_TAG,
+  );
+  await expect(lines.nth(1).locator("span[class*='tm-c']", { hasText: /^echo$/ })).toHaveCSS(
+    "color",
+    DARK_PLUS_FUNCTION,
+  );
+});
+
 test("typed text is coloured and an edit recolours from its line", async ({ page }) => {
   await open(page, "echo one\necho two", "run.sh");
   await expect(coloured(page).first()).toBeVisible();

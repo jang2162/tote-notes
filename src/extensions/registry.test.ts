@@ -37,6 +37,46 @@ describe("Registry.languageForFile", () => {
     expect(bundled.languageForFile("x.unknown")).toBeUndefined();
   });
 
+  it.each([
+    ["Main.kt", "kotlin"],
+    ["build.gradle.kts", "kotlin"],
+    ["App.swift", "swift"],
+    ["app.rb", "ruby"],
+    ["tool.gemspec", "ruby"],
+    ["Gemfile", "ruby"],
+    ["Rakefile", "ruby"],
+    ["Vagrantfile", "ruby"],
+    ["init.lua", "lua"],
+    ["Program.cs", "csharp"],
+    ["script.csx", "csharp"],
+    ["data.csv", "csv"],
+    ["data.tsv", "tsv"],
+    ["data.tab", "tsv"],
+    ["docker-compose.yml", "yaml"],
+    ["compose.yaml", "yaml"],
+    ["index.php", "php"],
+    ["view.phtml", "php"],
+    ["Caddyfile", "caddyfile"],
+    ["caddyfile", "caddyfile"],
+    ["site.Caddyfile", "caddyfile"],
+    ["index.jsp", "jsp"],
+    ["header.jspf", "jsp"],
+    ["button.tag", "jsp"],
+  ])("picks the bundled language of %s: %s", (file, id) => {
+    expect(bundled.languageForFile(file)?.id).toBe(id);
+  });
+
+  it("names Docker's compose files under YAML, not only through their extension", () => {
+    expect(bundled.language("yaml")?.filenames).toEqual(
+      expect.arrayContaining([
+        "docker-compose.yml",
+        "docker-compose.yaml",
+        "compose.yml",
+        "compose.yaml",
+      ]),
+    );
+  });
+
   it("takes the first language that claims the extension — the registry's order is precedence", () => {
     const registry = new Registry({
       extensions: [],

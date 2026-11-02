@@ -297,7 +297,13 @@ macOS 는 제목 표시줄을 내용 위에 겹친다(Overlay). 그래서 사이
 ### 번들 확장 (1차)
 
 1. 기본 테마 — 라이트, 다크.
-2. 기본 언어 묶음 — VS Code 내장 문법에서 고른다: markdown, plaintext, shellscript, json/jsonc, yaml, toml, ini/dotenv, javascript, typescript, python, html, css, xml, sql, go, rust, java, c/cpp, diff, dockerfile, makefile. **문법마다 라이선스를 확인한다**(VS Code 저장소는 MIT 지만 문법 일부는 다른 출처의 라이선스를 따른다).
+2. 기본 언어 묶음 — markdown, plaintext, shellscript, json/jsonc, yaml, toml, ini/dotenv, javascript, typescript, python, html, css, xml, sql, go, rust, java, c/cpp, diff, dockerfile, makefile, kotlin, swift, ruby, php, lua, csharp, csv, tsv, caddyfile, jsp. 고르는 표는 `scripts/bundled-languages.ts`, 생성은 `pnpm sync:bundled`.
+   - **문법은 npm `tm-grammars` 에서 가져온다**(VS Code 내장 문법과 그 밖의 널리 쓰이는 문법을 모아 둔 것). **문법마다 라이선스를 확인한다**(VS Code 저장소는 MIT 지만 문법 일부는 다른 출처의 라이선스를 따른다) — 허용 목록(`ALLOWED_LICENSES`) 밖이면 생성이 멈춘다.
+   - **`tm-grammars` 에 없는 문법은 저장소에 원본으로 둔다**(`scripts/vendor-grammars/`, 그곳 README). 커밋을 박은 출처 URL 에서 받은 파일을 한 바이트도 고치지 않고, 같은 커밋의 라이선스 파일을 곁에 둔다. 출처·sha256·라이선스는 `VENDOR_GRAMMARS` 에 적고, 생성은 네트워크에 나가지 않으며 sha256 이 다르면 멈춘다. 지금 셋이다: PHP 의 HTML 감싸개(`text.html.php`, VS Code 저장소), Caddyfile(caddyserver/vscode-caddyfile), JSP(pthorsson/vscode-jsp — TextMate java.tmbundle 문법의 JSON 판).
+   - **언어 정의(id·확장자·파일 이름·`firstLine`·주석 기호)는 VS Code 내장 언어 정의를 따른다.** VS Code 에 없는 언어(kotlin, csv, tsv, caddyfile, jsp)는 그 문법을 낸 VS Code 확장의 정의를 따른다. 파일 이름은 정확히 같아야 맞으므로(VS Code 는 대소문자를 무시한다) 도구가 쓰는 철자로 적는다(`Gemfile`, `Caddyfile`).
+   - **PHP 는 VS Code 처럼 HTML 감싸개 문법을 언어 문법으로 쓴다.** `.php` 는 HTML 안에 `<?php … ?>` 가 섞인 파일이 기본이고, `tm-grammars` 의 `php`(`source.php`)만으로는 HTML 까지 PHP 코드로 읽는다. `php` 와 `html-derivative` 는 감싸개가 include 하는 문법으로만 싣는다.
+   - **include 한 문법이 번들에 없으면 그 부분만 칠하지 않는다**(ruby 의 haml·graphql, php 의 blade 등). 파일은 정상적으로 열리고 나머지는 칠해진다.
+   - **Docker Compose 는 새 언어가 아니라 YAML 이다.** YAML 의 `filenames` 에 Docker 문서가 정한 기본 이름 넷(`docker-compose.yml`, `docker-compose.yaml`, `compose.yml`, `compose.yaml`)을 둔다. 이 넷은 확장자로도 이미 YAML 이므로 번들만 있을 때 고르는 언어는 같다. 다른 것은 이름 일치가 확장자보다 먼저라는 점이다 — 사용자 확장이 `.yml` 을 가져가도 이 넷은 번들 YAML 로 열린다. `docker-compose.override.yml`·`compose.prod.yaml` 같은 변형은 VS Code 가 패턴(`compose.*.yml`, `*docker*compose*.yml`)으로 잡는 것이고, 여기서는 확장자로 YAML 이 된다.
 3. 마크다운 미리보기 뷰어.
 4. 미디어 뷰어 — 이미지는 창 맞춤 ↔ 실제 크기 전환만, 영상·오디오는 WebView 기본 플레이어 컨트롤. 포맷은 macOS WebView 가 재생하는 것만(mp4, mov, mp3, m4a, wav 등). 재생할 수 없으면 「지원하지 않는 포맷」.
 

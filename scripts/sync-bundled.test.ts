@@ -1,10 +1,18 @@
-import { readFileSync } from "node:fs";
+import { createHash } from "node:crypto";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
-import { ALLOWED_LICENSES, EXTRA_GRAMMARS, LANGUAGES, THEMES } from "./bundled-languages.ts";
+import {
+  ALLOWED_LICENSES,
+  EXTRA_GRAMMARS,
+  LANGUAGES,
+  THEMES,
+  VENDOR_GRAMMARS,
+} from "./bundled-languages.ts";
 import {
   checkLicense,
   fakeRegistry,
@@ -15,6 +23,8 @@ import {
   licensesMarkdown,
   manifestFor,
   parseNotice,
+  readVendored,
+  VENDOR_DIR,
 } from "./sync-bundled.ts";
 
 const require = createRequire(import.meta.url);
@@ -37,9 +47,10 @@ describe("parseNotice", () => {
     expect(vscode.text).toContain("Permission is hereby granted, free of charge");
     expect(vscode.files).toContain("cpp-macro.json");
   });
-  it("gives every bundled grammar a text: NOTICE for most, the override for yaml and toml", () => {
+  it("gives every tm-grammars grammar a text: NOTICE for most, the override for yaml and toml", () => {
     const blocks = parseNotice(grammarsNotice());
-    for (const lang of LANGUAGES.filter((l) => l.grammar))
+    const vendored = new Set(VENDOR_GRAMMARS.map((v) => v.name));
+    for (const lang of LANGUAGES.filter((l) => l.grammar && !vendored.has(l.grammar)))
       expect(licenseTextFor(lang.grammar!, blocks, lang.license).length).toBeGreaterThan(100);
     expect(
       licenseTextFor("yaml", blocks, LANGUAGES.find((l) => l.id === "yaml")!.license),
@@ -59,7 +70,7 @@ describe("parseNotice", () => {
 });
 
 describe("the selection table", () => {
-  it("covers the spec's language list and names a grammar tm-grammars has", async () => {
+  it("covers the spec's language list and names a grammar tm-grammars or the vendored set has", async () => {
     const { grammars, injections } = await import("tm-grammars");
     const names = new Set([...grammars, ...injections].map((g) => g.name));
     const ids = LANGUAGES.map((l) => l.id);
@@ -88,12 +99,37 @@ describe("the selection table", () => {
       "diff",
       "dockerfile",
       "makefile",
+      "kotlin",
+      "swift",
+      "ruby",
+      "lua",
+      "csharp",
+      "csv",
+      "tsv",
+      "php",
+      "caddyfile",
+      "jsp",
     ]) {
       expect(ids).toContain(wanted);
     }
-    for (const lang of LANGUAGES) if (lang.grammar) expect(names.has(lang.grammar)).toBe(true);
-    for (const extra of EXTRA_GRAMMARS) expect(names.has(extra)).toBe(true);
+    const vendored = new Set(VENDOR_GRAMMARS.map((v) => v.name));
+    const known = (name: string) => names.has(name) || vendored.has(name);
+    for (const lang of LANGUAGES) if (lang.grammar) expect(known(lang.grammar)).toBe(true);
+    for (const extra of EXTRA_GRAMMARS) expect(known(extra)).toBe(true);
+    // A vendored name never hides a tm-grammars one: the grammar file names would collide.
+    for (const name of vendored) expect(names.has(name)).toBe(false);
     expect(new Set(ids).size).toBe(ids.length);
+  });
+
+  it("lets no two languages claim the same extension or file name", () => {
+    const owners = new Map<string, string[]>();
+    for (const lang of LANGUAGES)
+      for (const key of [
+        ...lang.extensions.map((e) => `extension ${e.toLowerCase()}`),
+        ...(lang.filenames ?? []).map((name) => `file name ${name}`),
+      ])
+        owners.set(key, [...(owners.get(key) ?? []), lang.id]);
+    expect([...owners].filter(([, ids]) => ids.length > 1)).toEqual([]);
   });
 });
 
@@ -127,6 +163,63 @@ describe("checkLicense", () => {
     ).toThrow(/GPL-3.0/);
     expect(() => checkLicense("mystery", {}, undefined)).toThrow(/mystery/);
     expect(ALLOWED_LICENSES).toContain("MIT");
+  });
+});
+
+describe("readVendored", () => {
+  const grammar = '{"scopeName": "source.x", "patterns": []}\n';
+  const vendor = {
+    name: "x",
+    source: "https://example.com/x.json",
+    sha256: createHash("sha256").update(grammar).digest("hex"),
+    license: { spdx: "MIT", url: "https://example.com/LICENSE" },
+    note: "a note",
+  };
+  const dirWith = (text: string, license = "MIT License\n\nCopyright (c) someone\n") => {
+    const dir = mkdtempSync(join(tmpdir(), "vendor-"));
+    writeFileSync(join(dir, "x.json"), text);
+    writeFileSync(join(dir, "x.LICENSE.txt"), license);
+    return dir;
+  };
+
+  it("reads the grammar's scope, its text as fetched and its license file", () => {
+    const read = readVendored(vendor, dirWith(grammar));
+    expect(read.scopeName).toBe("source.x");
+    expect(read.text).toBe(grammar);
+    expect(read.license).toEqual({
+      name: "x",
+      spdx: "MIT",
+      url: "https://example.com/LICENSE",
+      note: "a note",
+      text: "MIT License\n\nCopyright (c) someone",
+    });
+  });
+
+  it("refuses a copy that is not the file fetched, reformatted or edited", () => {
+    expect(() =>
+      readVendored(vendor, dirWith('{ "scopeName": "source.x", "patterns": [] }\n')),
+    ).toThrow(/not the one fetched from https:\/\/example.com\/x.json/);
+  });
+
+  it("refuses a license outside the allowed list", () => {
+    expect(() =>
+      readVendored({ ...vendor, license: { spdx: "GPL-3.0", url: "https://g" } }, dirWith(grammar)),
+    ).toThrow(/GPL-3.0/);
+  });
+
+  it("finds every vendored grammar as fetched, and nothing in the folder the table leaves out", () => {
+    for (const v of VENDOR_GRAMMARS) {
+      const read = readVendored(v);
+      expect(read.license.text).toContain("Permission is hereby granted");
+      expect(v.source).toMatch(/^https:\/\/raw\.githubusercontent\.com\/.+\/[0-9a-f]{40}\//);
+      expect(v.license.url).toMatch(/\/[0-9a-f]{40}\//);
+    }
+    const expected = VENDOR_GRAMMARS.flatMap((v) => [`${v.name}.json`, `${v.name}.LICENSE.txt`]);
+    expect(
+      readdirSync(VENDOR_DIR)
+        .filter((f) => f !== "README.md")
+        .sort(),
+    ).toEqual(expected.sort());
   });
 });
 
@@ -233,6 +326,7 @@ describe("the generated files", () => {
     const { grammars, injections } = await import("tm-grammars");
     const scopes: Record<string, string> = {};
     for (const g of [...grammars, ...injections]) scopes[g.name] = g.scopeName;
+    for (const v of VENDOR_GRAMMARS) scopes[v.name] = readVendored(v).scopeName;
     const manifest = JSON.parse(read("src-tauri/resources/extensions/tote.languages/package.json"));
     expect(manifest).toEqual(manifestFor(LANGUAGES, EXTRA_GRAMMARS, scopes));
     for (const name of [
@@ -240,7 +334,9 @@ describe("the generated files", () => {
       ...EXTRA_GRAMMARS,
     ])
       expect(read(`src-tauri/resources/extensions/tote.languages/grammars/${name}.json`)).toBe(
-        readFileSync(require.resolve(`tm-grammars/grammars/${name}.json`), "utf8"),
+        VENDOR_GRAMMARS.some((v) => v.name === name)
+          ? readFileSync(join(VENDOR_DIR, `${name}.json`), "utf8")
+          : readFileSync(require.resolve(`tm-grammars/grammars/${name}.json`), "utf8"),
       );
     for (const lang of LANGUAGES)
       expect(
@@ -274,6 +370,10 @@ describe("the generated files", () => {
     const licenses = read("src-tauri/resources/extensions/tote.languages/LICENSES.md");
     for (const lang of LANGUAGES)
       if (lang.grammar) expect(licenses).toContain(`| ${lang.grammar} |`);
+    for (const extra of EXTRA_GRAMMARS) expect(licenses).toContain(`| ${extra} |`);
+    // The vendored grammars carry their own license files, not the tm-grammars NOTICE.
+    expect(licenses).toContain("Copyright (c) 2023 Matthew Penner");
+    expect(licenses).toContain("Copyright (c) 2017 Patrik Thorsson");
     for (const id of ["tote.languages", "tote.themes", "tote.markdown-preview"])
       expect(read(`src-tauri/resources/extensions/${id}/LICENSES.md`)).toContain("Copyright");
     const themes = JSON.parse(read("src-tauri/resources/extensions/tote.themes/package.json"));

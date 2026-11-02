@@ -86,7 +86,12 @@
           ".yaml",
           ".yml"
         ],
-        "filenames": [],
+        "filenames": [
+          "docker-compose.yml",
+          "docker-compose.yaml",
+          "compose.yml",
+          "compose.yaml"
+        ],
         "configuration": "./language-configuration/yaml.json"
       },
       {
@@ -325,6 +330,163 @@
           "GNUmakefile"
         ],
         "configuration": "./language-configuration/makefile.json"
+      },
+      {
+        "id": "kotlin",
+        "aliases": [
+          "Kotlin"
+        ],
+        "extensions": [
+          ".kt",
+          ".kts"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/kotlin.json"
+      },
+      {
+        "id": "swift",
+        "aliases": [
+          "Swift"
+        ],
+        "extensions": [
+          ".swift"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/swift.json"
+      },
+      {
+        "id": "ruby",
+        "aliases": [
+          "Ruby"
+        ],
+        "extensions": [
+          ".rb",
+          ".rbx",
+          ".rjs",
+          ".gemspec",
+          ".rake",
+          ".ru",
+          ".erb",
+          ".podspec",
+          ".rbi"
+        ],
+        "filenames": [
+          "Rakefile",
+          "Gemfile",
+          "Guardfile",
+          "Podfile",
+          "Capfile",
+          "Cheffile",
+          "Hobofile",
+          "Vagrantfile",
+          "Appraisals",
+          "Rantfile",
+          "Berksfile",
+          "Berksfile.lock",
+          "Thorfile",
+          "Puppetfile",
+          "Dangerfile",
+          "Brewfile",
+          "Fastfile",
+          "Appfile",
+          "Deliverfile",
+          "Matchfile",
+          "Scanfile",
+          "Snapfile",
+          "Gymfile"
+        ],
+        "firstLine": "^#!\\s*/.*\\bruby\\b",
+        "configuration": "./language-configuration/ruby.json"
+      },
+      {
+        "id": "lua",
+        "aliases": [
+          "Lua"
+        ],
+        "extensions": [
+          ".lua"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/lua.json"
+      },
+      {
+        "id": "csharp",
+        "aliases": [
+          "C#"
+        ],
+        "extensions": [
+          ".cs",
+          ".csx",
+          ".cake"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/csharp.json"
+      },
+      {
+        "id": "csv",
+        "aliases": [
+          "CSV"
+        ],
+        "extensions": [
+          ".csv"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/csv.json"
+      },
+      {
+        "id": "tsv",
+        "aliases": [
+          "TSV"
+        ],
+        "extensions": [
+          ".tsv",
+          ".tab"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/tsv.json"
+      },
+      {
+        "id": "php",
+        "aliases": [
+          "PHP"
+        ],
+        "extensions": [
+          ".php",
+          ".php4",
+          ".php5",
+          ".phtml",
+          ".ctp"
+        ],
+        "filenames": [],
+        "firstLine": "^#!\\s*/.*\\bphp\\b",
+        "configuration": "./language-configuration/php.json"
+      },
+      {
+        "id": "caddyfile",
+        "aliases": [
+          "Caddyfile"
+        ],
+        "extensions": [
+          ".caddyfile"
+        ],
+        "filenames": [
+          "Caddyfile",
+          "caddyfile"
+        ],
+        "configuration": "./language-configuration/caddyfile.json"
+      },
+      {
+        "id": "jsp",
+        "aliases": [
+          "Java Server Pages"
+        ],
+        "extensions": [
+          ".jsp",
+          ".jspf",
+          ".tag"
+        ],
+        "filenames": [],
+        "configuration": "./language-configuration/jsp.json"
       }
     ],
     "grammars": [
@@ -444,8 +606,66 @@
         "path": "./grammars/make.json"
       },
       {
+        "language": "kotlin",
+        "scopeName": "source.kotlin",
+        "path": "./grammars/kotlin.json"
+      },
+      {
+        "language": "swift",
+        "scopeName": "source.swift",
+        "path": "./grammars/swift.json"
+      },
+      {
+        "language": "ruby",
+        "scopeName": "source.ruby",
+        "path": "./grammars/ruby.json"
+      },
+      {
+        "language": "lua",
+        "scopeName": "source.lua",
+        "path": "./grammars/lua.json"
+      },
+      {
+        "language": "csharp",
+        "scopeName": "source.cs",
+        "path": "./grammars/csharp.json"
+      },
+      {
+        "language": "csv",
+        "scopeName": "text.csv",
+        "path": "./grammars/csv.json"
+      },
+      {
+        "language": "tsv",
+        "scopeName": "text.tsv",
+        "path": "./grammars/tsv.json"
+      },
+      {
+        "language": "php",
+        "scopeName": "text.html.php",
+        "path": "./grammars/php-html.json"
+      },
+      {
+        "language": "caddyfile",
+        "scopeName": "source.Caddyfile",
+        "path": "./grammars/caddyfile.json"
+      },
+      {
+        "language": "jsp",
+        "scopeName": "text.html.jsp",
+        "path": "./grammars/jsp.json"
+      },
+      {
         "scopeName": "source.cpp.embedded.macro",
         "path": "./grammars/cpp-macro.json"
+      },
+      {
+        "scopeName": "source.php",
+        "path": "./grammars/php.json"
+      },
+      {
+        "scopeName": "text.html.derivative",
+        "path": "./grammars/html-derivative.json"
       }
     ]
   }
