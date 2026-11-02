@@ -128,18 +128,12 @@ test("the 워크스페이스 section sits under 일반 and lists the workspaces 
   await expect(panel.getByRole("tab")).toHaveText([
     "일반",
     "워크스페이스",
-    "사이드바",
-    "편집기",
     "모양",
     "단축키",
     "확장",
   ]);
-  await expect(
-    panel.getByText(
-      "끌어서 순서를 바꿉니다. 고르개와 ⌃1~⌃9 가 이 순서를 따릅니다. 숨긴 워크스페이스는 고르개에 보이지 않습니다.",
-      { exact: true },
-    ),
-  ).toBeVisible();
+  // No note over the list (user request 2026-11-02).
+  await expect(panel.getByText("끌어서 순서를 바꿉니다", { exact: false })).toHaveCount(0);
   // A missing workspace is not one to order.
   await expect(names(panel)).toHaveText(["업무", "개인", "가계부"]);
   await expect(keys(panel)).toHaveText(["⌃1", "⌃2", "⌃3"]);

@@ -88,6 +88,32 @@ describe("ThemeManager", () => {
     expect(changes).toEqual(["Night", "Light+"]);
   });
 
+  it("keeps the slot the mode names whatever the OS appearance, and follows it again on auto", async () => {
+    const { backend, manager, media } = setup(false);
+    backend.data.settings.theme.mode = "dark";
+    await manager.start();
+    expect(manager.active.info?.label).toBe("Dark+");
+    expect(manager.active.appearance).toBe("dark");
+    expect(manager.active.kind).toBe("dark");
+    media.flip(true);
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Dark+");
+
+    await backend.patchSettings({ themeMode: "light" });
+    media.flip(true);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+    expect(manager.active.appearance).toBe("light");
+
+    await backend.patchSettings({ themeMode: "auto" });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Dark+");
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+  });
+
   it("falls back to the defaults when the theme file cannot be read", async () => {
     const { backend, manager } = setup(true);
     delete backend.data.extensionFiles["tote.themes/themes/dark.json"];

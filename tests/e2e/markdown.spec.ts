@@ -27,7 +27,7 @@ const DOC = [
   "[링크](https://example.com)",
 ].join("\n");
 
-test("⇧⌘V shows the rendered Markdown and ⇧⌘V again the editor; the mode is in the session", async ({
+test("⇧⌘P shows the rendered Markdown and ⇧⌘P again the editor; the mode is in the session", async ({
   page,
 }) => {
   await start(page, {
@@ -138,7 +138,7 @@ test("the preview shows the text as it is when it opens, and the mode comes back
   await expect(frame(page).locator("body h1")).toHaveText("처음");
 });
 
-test("a file without a preview viewer ignores ⇧⌘V", async ({ page }) => {
+test("a file without a preview viewer ignores ⇧⌘P", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("a.txt", "plain") } });
   await page.locator(".memo-row", { hasText: "a" }).click();
   await menu(page, "toggle-preview");

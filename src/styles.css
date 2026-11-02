@@ -1505,9 +1505,33 @@ button.danger {
   gap: 10px 12px;
 }
 
-.settings-form > .settings-note {
-  grid-column: 2;
-  margin-top: -4px;
+/* A group's heading spans both columns; the groups share the columns, so their controls line up. */
+.settings-form > .settings-heading {
+  grid-column: 1 / -1;
+  margin: 12px 0 0;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border);
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.settings-form > .settings-heading:first-child {
+  margin-top: 0;
+}
+
+.settings-row.settings-modes {
+  gap: 16px;
+}
+
+.settings-modes label {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.settings-modes input[type="radio"] {
+  width: auto;
+  margin: 0;
 }
 
 .settings-form input[type="checkbox"] {

@@ -944,7 +944,7 @@ test("the preview hint follows the toggle preview shortcut", async ({ page }) =>
   await expect(page.locator(".cm-content")).toBeFocused();
   await menu(page, "toggle-preview");
   const status = page.locator(".status-message");
-  await expect(status).toHaveText("미리보기 · ⇧⌘V 로 편집");
+  await expect(status).toHaveText("미리보기 · ⇧⌘P 로 편집");
   await saveShortcuts(page, { "toggle-preview": "Alt+CmdOrCtrl+P" });
   await expect(status).toHaveText("미리보기 · ⌥⌘P 로 편집");
   await saveShortcuts(page, { "toggle-preview": null });
