@@ -383,7 +383,7 @@ test("keys typed while a preview tab's viewer starts do not reach the tab left",
   );
 });
 
-test("keys typed after ⇧⌘V turns the tab to its preview do not edit the hidden text", async ({
+test("keys typed after ⇧⌘P turns the tab to its preview do not edit the hidden text", async ({
   page,
 }) => {
   await start(page, { memos: { a: fakeMemo("a.md", "# 하나") } });

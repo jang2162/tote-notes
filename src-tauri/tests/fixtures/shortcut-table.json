@@ -173,8 +173,8 @@
       "id": "toggle-preview",
       "label": "미리보기 전환",
       "menu": "보기",
-      "default": "CmdOrCtrl+Shift+V",
-      "current": "CmdOrCtrl+Shift+V"
+      "default": "CmdOrCtrl+Shift+P",
+      "current": "CmdOrCtrl+Shift+P"
     },
     {
       "id": "move-tab-to-new-window",

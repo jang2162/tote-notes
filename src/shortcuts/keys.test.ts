@@ -291,6 +291,15 @@ describe("conflict", () => {
     expect(conflict(table(), "rename", "Ctrl+NumpadEnter")).toBeNull();
   });
 
+  it("finds nothing else on 미리보기 전환's default ⇧⌘P: no command, fixed key or editor key", () => {
+    expect(conflict(table(), "toggle-preview", "CmdOrCtrl+Shift+P")).toBeNull();
+    expect(conflict(table(), "rename", "CmdOrCtrl+Shift+P")).toEqual({
+      kind: "command",
+      id: "toggle-preview",
+      label: "미리보기 전환",
+    });
+  });
+
   it("does not hold a command's own key against it", () => {
     expect(conflict(table(), "split-pane-down", "CmdOrCtrl+Shift+\\")).toEqual({
       kind: "editor",
@@ -313,7 +322,7 @@ describe("conflict", () => {
 describe("shortcutHint", () => {
   it("writes the shortcut a command has now, or nothing", () => {
     expect(shortcutHint(table(), "new-memo")).toBe("⌘N");
-    expect(shortcutHint(table(), "toggle-preview")).toBe("⇧⌘V");
+    expect(shortcutHint(table(), "toggle-preview")).toBe("⇧⌘P");
     expect(shortcutHint(table({ "new-memo": "CmdOrCtrl+Shift+M" }), "new-memo")).toBe("⇧⌘M");
     expect(shortcutHint(table({ "new-memo": null }), "new-memo")).toBeNull();
     expect(shortcutHint(table(), "rename")).toBeNull();

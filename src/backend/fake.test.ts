@@ -183,7 +183,7 @@ describe("FakeBackend shortcuts", () => {
       [{ rename: "Shift+F5" }, "rename"],
       [{ rename: "CmdOrCtrl+C" }, "rename"],
       [{ rename: "CmdOrCtrl+N" }, "rename"],
-      [{ "close-window": "CmdOrCtrl+Shift+V" }, "close-window"],
+      [{ "close-window": "CmdOrCtrl+Shift+P" }, "close-window"],
       // ⌘Q is fixed, and so is the item it belongs to: no id for it to be saved under.
       [{ quit: "CmdOrCtrl+Shift+Q" }, "quit"],
       [{ quit: null }, "quit"],

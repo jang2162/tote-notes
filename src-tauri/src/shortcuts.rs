@@ -130,7 +130,7 @@ pub const COMMANDS: &[Command] = &[
         "toggle-preview",
         "미리보기 전환",
         "보기",
-        Some("CmdOrCtrl+Shift+V"),
+        Some("CmdOrCtrl+Shift+P"),
     ),
     command(
         "move-tab-to-new-window",
@@ -515,11 +515,11 @@ mod tests {
         assert_eq!(shortcut_of(&saved, "rename"), None);
         assert!(validate(&saved).unwrap_err().contains("rename"));
         // The default's command comes later in the menu: the default still wins.
-        let saved = overrides(&[("close-window", Some("CmdOrCtrl+Shift+V"))]);
+        let saved = overrides(&[("close-window", Some("CmdOrCtrl+Shift+P"))]);
         assert_eq!(sanitize(&saved), BTreeMap::new());
         assert_eq!(
             shortcut_of(&saved, "toggle-preview"),
-            Some("CmdOrCtrl+Shift+V".into())
+            Some("CmdOrCtrl+Shift+P".into())
         );
         assert_eq!(
             shortcut_of(&saved, "close-window"),
@@ -732,7 +732,7 @@ mod tests {
             ("focus-pane-down", Some("Alt+CmdOrCtrl+Down")),
             ("next-tab", Some("CmdOrCtrl+Shift+]")),
             ("prev-tab", Some("CmdOrCtrl+Shift+[")),
-            ("toggle-preview", Some("CmdOrCtrl+Shift+V")),
+            ("toggle-preview", Some("CmdOrCtrl+Shift+P")),
             ("move-tab-to-new-window", None),
         ];
         let actual: Vec<(&str, Option<String>)> = effective(&BTreeMap::new())

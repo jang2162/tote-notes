@@ -130,7 +130,7 @@ test("a result opens from the keyboard", async ({ page }) => {
   await expect(page.locator(".status-position")).toHaveText("줄 2, 열 3");
 });
 
-test("a result in a memo shown in preview puts the cursor there for ⇧⌘V", async ({ page }) => {
+test("a result in a memo shown in preview puts the cursor there for ⇧⌘P", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("가.md", "# 제목\n\n둘째 foo") } });
   await page.locator(".memo-row", { hasText: "가" }).click();
   await menu(page, "toggle-preview");

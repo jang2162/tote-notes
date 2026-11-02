@@ -16,6 +16,7 @@ open --env TOTE_DATA_DIR="$S" src-tauri/target/debug/bundle/macos/tote-dev.app
 - 개발용 폴더 `~/Tote-dev`·`~/Library/Application Support/tote-dev` 는 사람의 개발 앱 것일 수 있다. 지우지 않고 `find ~/Tote-dev "$HOME/Library/Application Support/tote-dev" -newer "$S/start-marker"` 가 비어 있는지로 판정한다.
 - 디버그 번들도 `beforeBuildCommand`(`pnpm build`)로 같은 프런트엔드 빌드를 쓰므로 압축·`keepNames` 가 배포 빌드와 같다. 이름 확인(C-1)은 이 번들로 한다.
 - 단축키 시험의 「바꿀 키」 는 **⌃⌥⌘J** 를 쓴다(기본값·고정·편집기 키 어디에도 없다).
+- 미리보기 전환의 기본값은 2026-11-02 부터 ⇧⌘P 다(설정 설계 「무엇을 바꿀 수 있나」). 그 전에 채운 행(D-10 등)의 ⇧⌘V 는 그때의 기본값이다. 다시 확인할 때는 ⇧⌘P 로 읽는다.
 - `debug_assert`(A-10)를 보려면 앱을 `open` 이 아니라 터미널에서 직접 띄워 stderr 를 읽는다: `TOTE_DATA_DIR="$S" src-tauri/target/debug/bundle/macos/tote-dev.app/Contents/MacOS/<실행 파일>`.
 - 다크·라이트는 시스템 설정 › 모양에서 바꾼다. 바꾸기 전 값을 적어 두고 끝나면 되돌린다.
 

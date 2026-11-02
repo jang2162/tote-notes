@@ -2108,14 +2108,14 @@ export class AppController implements DocHost, PaneHost {
       pane.view.focus();
       return;
     }
-    // A Markdown preview on show: the editor takes up from there on ⇧⌘V.
+    // A Markdown preview on show: the editor takes up from there on 미리보기 전환.
     const start = doc.state;
     const { state } = start.update(spec);
     doc.update({ state, startState: start, docChanged: false, selectionSet: true });
     doc.scrollAnchor = state.doc.lineAt(state.selection.main.head).from;
   }
 
-  /** ⇧⌘V (spec 「마크다운 미리보기」): per tab, with the text as it is right now. */
+  /** 미리보기 전환, ⇧⌘P by default (spec 「마크다운 미리보기」): per tab, with the text as it is right now. */
   async togglePreview(): Promise<void> {
     const pane = this.focused;
     const doc = pane.tabs.active;
