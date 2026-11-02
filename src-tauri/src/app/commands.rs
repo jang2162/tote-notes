@@ -13,7 +13,7 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
-use super::{lifecycle, lock, menu, update, windows, AppCore, PendingOpen};
+use super::{appearance, lifecycle, lock, menu, update, windows, AppCore, PendingOpen};
 use crate::appdata::{shown_from_home, Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
 use crate::backup::BackupDir;
@@ -1086,10 +1086,14 @@ pub async fn patch_settings(
     patch: SettingsPatch,
 ) -> CmdResult<()> {
     let shortcuts_changed = patch.shortcuts.is_some();
+    let mode_changed = patch.theme_mode.is_some();
     let root_changed = patch.workspace_root.is_some();
     core.patch_settings(patch)?;
     if shortcuts_changed {
         menu::follow_settings(&app);
+    }
+    if mode_changed {
+        appearance::follow_settings(&app);
     }
     broadcast_config(&app);
     if root_changed {

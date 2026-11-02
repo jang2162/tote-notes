@@ -270,9 +270,17 @@ macOS 는 제목 표시줄을 내용 위에 겹친다(Overlay). 그래서 사이
 
 ### 테마
 
-라이트 테마와 다크 테마를 따로 지정하고 OS 모양을 따른다. VS Code 테마의 `colors` 중 tote UI 에 대응하는 키만 CSS 변수로 옮기고, `tokenColors` 는 하이라이트에 쓴다. 뷰어에도 같은 CSS 변수를 넘긴다.
+라이트 테마와 다크 테마를 따로 지정하고, **모드**(settings.json `theme.mode`, 패치 `themeMode`)에 따라 둘 중 하나를 쓴다. VS Code 테마의 `colors` 중 tote UI 에 대응하는 키만 CSS 변수로 옮기고, `tokenColors` 는 하이라이트에 쓴다. 뷰어에도 같은 CSS 변수를 넘긴다.
 
-어느 슬롯에 어느 종류의 테마든 고를 수 있다(다크 슬롯에 Light+ 도 된다). 테마가 주지 않은 CSS 변수는 **슬롯(OS 모양)이 아니라 테마 종류**의 기본값에서 채운다. 종류는 매니페스트의 `uiTheme`(`vs`·`hc-light` 는 라이트, `vs-dark`·`hc-black` 은 다크), 없거나 모르는 값이면 테마 파일의 `type`(`light`·`hcLight`·`dark`·`hc`), 그것도 없으면 슬롯이다(`themeKind`, `src/theme/vscode-theme.ts`). 페이지의 `color-scheme`(스크롤 막대·폼 컨트롤)도 테마 종류를 따른다. 슬롯에서 시작하던 때는 번들 Light+(`editor.background`·`editor.foreground` 만 tote 변수에 닿는다)를 다크 슬롯에 두면 `--fg` 만 검게 바뀌어 띠 입력칸·사이드바 글자가 어두운 바탕 위에서 1.2:1 로 읽히지 않았다(검색 띠 스모크 A-4). 번들 테마 전부를 두 슬롯에 넣어 글자 대비가 4.5:1 이상인지 단위 시험(`src/theme/manager.test.ts`)이 본다. 뷰어 프레임의 `color-scheme` 은 아직 `light dark`(OS 모양)이다 — 뷰어는 변수만 받는다.
+어느 슬롯에 어느 종류의 테마든 고를 수 있다(다크 슬롯에 Light+ 도 된다). 테마가 주지 않은 CSS 변수는 **슬롯(OS 모양)이 아니라 테마 종류**의 기본값에서 채운다. 종류는 매니페스트의 `uiTheme`(`vs`·`hc-light` 는 라이트, `vs-dark`·`hc-black` 은 다크), 없거나 모르는 값이면 테마 파일의 `type`(`light`·`hcLight`·`dark`·`hc`), 그것도 없으면 슬롯이다(`themeKind`, `src/theme/vscode-theme.ts`). 페이지의 `color-scheme`(스크롤 막대·폼 컨트롤)도 테마 종류를 따른다. 슬롯에서 시작하던 때는 번들 Light+(`editor.background`·`editor.foreground` 만 tote 변수에 닿는다)를 다크 슬롯에 두면 `--fg` 만 검게 바뀌어 띠 입력칸·사이드바 글자가 어두운 바탕 위에서 1.2:1 로 읽히지 않았다(검색 띠 스모크 A-4). 번들 테마 전부를 두 슬롯에 넣어 글자 대비가 4.5:1 이상인지 단위 시험(`src/theme/manager.test.ts`)이 본다. 뷰어 프레임의 `color-scheme` 은 아직 `light dark`(앱의 모양)이다 — 뷰어는 변수만 받는다.
+
+모드는 셋이다(사용자 요청 2026-11-02 「테마는 다른 앱 처럼 자동, 다크, 라이트 옵션으로」). 기본은 자동이다.
+
+- **자동**(`auto`): OS 모양을 따른다. 라이트면 「라이트 테마」 칸, 다크면 「다크 테마」 칸의 테마.
+- **라이트**(`light`)·**다크**(`dark`): OS 와 상관없이 언제나 그 칸의 테마.
+- 잘못된 값(손으로 고친 settings.json)은 그 값만 자동으로 돌아가고 나머지 설정은 남는다(`lenient`). 패치의 잘못된 값은 거절한다.
+- **앱의 네이티브 모양도 모드를 따른다**: Rust 가 `AppHandle::set_theme` 으로 라이트·다크면 그 모양을 강제하고 자동이면 `None`(시스템)으로 돌린다(`src-tauri/src/app/appearance.rs`). macOS 에서는 앱 전체의 `NSApp.appearance` 라서 창 크롬·메뉴·대화상자·스크롤 막대, 그리고 웹뷰의 `prefers-color-scheme` 까지 함께 바뀌고, 나중에 여는 창도 그대로 받는다. 앱이 뜰 때(창을 열기 전)와 `themeMode` 패치 때 건다.
+- 테마 매니저(`src/theme/manager.ts`)는 OS 모양(`prefers-color-scheme`)보다 모드를 먼저 본다(`appearanceOf`). 강제한 모드에서는 둘이 같아야 하지만, 설정 변경 알림이 웹뷰의 모양 변경보다 먼저 올 수 있고 가짜 백엔드(브라우저)에는 네이티브 모양이 없어서 모드를 직접 읽는다.
 
 ### 뷰어
 

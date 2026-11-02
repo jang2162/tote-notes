@@ -282,7 +282,7 @@ export class AppController implements DocHost, PaneHost {
   private extensionSet = "";
   /** The settings as of the last config change; the editor reads its options from here. */
   private settings: Settings = {
-    theme: { light: null, dark: null },
+    theme: { mode: "auto", light: null, dark: null },
     extensions: { disabled: [], precedence: "user" },
     editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
     updates: { autoCheck: true },

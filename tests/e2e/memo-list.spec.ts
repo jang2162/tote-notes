@@ -292,10 +292,7 @@ test("turning the preview off in settings applies to every window at once", asyn
   const second = await openWindow(context, "ws-2");
   await expect(row(second, "가").locator(".memo-preview")).toHaveText("본문");
   await menu(first, "settings");
-  await first
-    .locator(".modal.settings")
-    .getByRole("tab", { name: "사이드바", exact: true })
-    .click();
+  await first.locator(".modal.settings").getByRole("tab", { name: "모양", exact: true }).click();
   const box = first.getByRole("checkbox", { name: "메모 목록에 내용 미리보기" });
   await expect(box).toBeChecked();
   await box.uncheck();

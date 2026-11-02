@@ -3,6 +3,7 @@
 //! bookkeeping. No Tauri types in here, so it
 //! is tested with plain values; src/app/windows.rs and friends connect it to Tauri.
 
+pub mod appearance;
 pub mod commands;
 pub mod flush;
 #[cfg(target_os = "macos")]

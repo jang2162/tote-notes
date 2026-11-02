@@ -27,8 +27,6 @@ test("the settings screen shows the root, the themes and the extensions, and sav
   await expect(panel.getByRole("tab")).toHaveText([
     "일반",
     "워크스페이스",
-    "사이드바",
-    "편집기",
     "모양",
     "단축키",
     "확장",
@@ -39,9 +37,8 @@ test("the settings screen shows the root, the themes and the extensions, and sav
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.settings.workspaceRoot))
     .toBe("~/노트");
-  await expect(panel.locator(".root-note")).toHaveText(
-    "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
-  );
+  // No notes under the root and the update switch (user request 2026-11-02).
+  await expect(panel.locator("#settings-panel-general .settings-note")).toHaveCount(0);
   await section(panel, "모양");
   await panel.locator("select[name=dark]").selectOption({ label: "Light+ (tote.themes)" });
   await expect
@@ -103,15 +100,6 @@ test("the update check switch saves updates.autoCheck", async ({ page }) => {
   const panel = await openSection(page, "일반");
   const box = panel.getByRole("checkbox", { name: "실행할 때 업데이트 확인" });
   await expect(box).toBeChecked();
-  await expect(panel.locator(".update-note")).toHaveText(
-    "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
-  );
-  // The note is the switch's: right under it, above the next setting.
-  const note = (await panel.locator(".update-note").boundingBox())!;
-  const own = (await box.boundingBox())!;
-  const next = (await panel.getByRole("spinbutton", { name: "휴지통 자동 비우기" }).boundingBox())!;
-  expect(note.y).toBeGreaterThanOrEqual(own.y + own.height);
-  expect(note.y + note.height).toBeLessThanOrEqual(next.y);
   await box.uncheck();
   await expect
     .poll(() => page.evaluate(() => window.__tote.backend.data.settings.updates))
@@ -311,7 +299,7 @@ test("a theme that is not installed shows the default", async ({ page }) => {
   await start(page, {
     settings: {
       workspaceRoot: null,
-      theme: { light: { extension: "gone.theme", label: "Gone" }, dark: null },
+      theme: { mode: "auto", light: { extension: "gone.theme", label: "Gone" }, dark: null },
       extensions: { disabled: [], precedence: "user" },
       editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
       updates: { autoCheck: true },
@@ -542,10 +530,10 @@ test("settings open on 일반 and remember the last section in the window", asyn
   await menu(page, "settings");
   await expect(selected).toHaveText("모양");
   await expect(panel.locator("select[name=light]")).toBeVisible();
-  await section(panel, "편집기");
-  await panel.getByRole("button", { name: "닫기" }).click();
+  await section(panel, "단축키");
+  await panel.getByRole("button", { name: "닫기", exact: true }).click();
   await menu(page, "settings");
-  await expect(selected).toHaveText("편집기");
+  await expect(selected).toHaveText("단축키");
   // Only the window keeps it: the page loaded again starts on 일반.
   await page.keyboard.press("Escape");
   await page.reload();
@@ -567,7 +555,7 @@ test("the editor section saves line numbers, font size and font at once", async 
   });
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
   const editor = () => page.evaluate(() => window.__tote.backend.data.settings.editor);
-  const panel = await openSection(page, "편집기");
+  const panel = await openSection(page, "모양");
   const lineNumbers = panel.getByLabel("줄번호 표시");
   const size = panel.getByLabel("글꼴 크기");
   const font = panel.getByLabel("글꼴", { exact: true });
@@ -613,7 +601,7 @@ test("the editor section saves line numbers, font size and font at once", async 
 
 test("a font size with a fraction is saved as the whole number nearest it", async ({ page }) => {
   await start(page);
-  const panel = await openSection(page, "편집기");
+  const panel = await openSection(page, "모양");
   const size = panel.getByLabel("글꼴 크기");
   await size.fill("14.5");
   await size.press("Enter");
@@ -642,7 +630,7 @@ test("a font size or font whose save failed is sent again as it is", async ({ pa
     page.evaluate(() => ((window as unknown as { failures: number }).failures = 1));
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
   const editor = () => page.evaluate(() => window.__tote.backend.data.settings.editor);
-  const panel = await openSection(page, "편집기");
+  const panel = await openSection(page, "모양");
   const error = panel.locator(".modal-error");
   const size = panel.getByLabel("글꼴 크기");
   const font = panel.getByLabel("글꼴", { exact: true });
@@ -713,6 +701,100 @@ test("closing the settings, by Escape or 「닫기」, ends every config subscri
   }
 });
 
+test("the 모양 section holds the theme, editor and sidebar settings, each under its heading", async ({
+  page,
+}) => {
+  await start(page);
+  const panel = await openSection(page, "모양");
+  const shown = panel.getByRole("tabpanel");
+  await expect(shown.getByRole("heading", { level: 2 })).toHaveText(["테마", "편집기", "사이드바"]);
+  // Each setting sits under its own heading, in this order.
+  const tops = await Promise.all(
+    [
+      shown.getByRole("heading", { name: "테마" }),
+      shown.getByRole("radiogroup", { name: "모드" }),
+      shown.getByRole("combobox", { name: "라이트 테마" }),
+      shown.getByRole("combobox", { name: "다크 테마" }),
+      shown.getByRole("heading", { name: "편집기" }),
+      shown.getByRole("checkbox", { name: "줄번호 표시" }),
+      shown.getByRole("spinbutton", { name: "글꼴 크기" }),
+      shown.getByRole("textbox", { name: "글꼴" }),
+      shown.getByRole("heading", { name: "사이드바" }),
+      shown.getByRole("checkbox", { name: "메모 목록에 내용 미리보기" }),
+    ].map(async (control) => (await control.boundingBox())!.y),
+  );
+  expect(tops).toEqual([...tops].sort((a, b) => a - b));
+  const modes = shown.getByRole("radiogroup", { name: "모드" }).getByRole("radio");
+  await expect(modes).toHaveCount(3);
+  for (const [name, checked] of [
+    ["자동", true],
+    ["라이트", false],
+    ["다크", false],
+  ] as const)
+    await expect(shown.getByRole("radio", { name, exact: true })).toBeChecked({ checked });
+});
+
+test("the theme mode keeps the page light or dark whatever the OS, saved at once", async ({
+  page,
+}) => {
+  await start(page);
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const patchSettings = backend.patchSettings.bind(backend);
+    (window as unknown as { patches: object[] }).patches = [];
+    backend.patchSettings = (patch) => {
+      (window as unknown as { patches: object[] }).patches.push(patch);
+      return patchSettings(patch);
+    };
+  });
+  const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
+  const mode = () => page.evaluate(() => window.__tote.backend.data.settings.theme.mode);
+  const drawnAs = () => page.evaluate(() => document.documentElement.dataset.appearance);
+  const panel = await openSection(page, "모양");
+  await expect.poll(drawnAs).toBe("light");
+
+  await panel.getByRole("radio", { name: "다크", exact: true }).check();
+  await expect.poll(mode).toBe("dark");
+  await expect.poll(drawnAs).toBe("dark");
+  expect(await patches()).toEqual([{ themeMode: "dark" }]);
+  // The OS turning dark and back does not take the page with it.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(drawnAs).toBe("dark");
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await panel.getByRole("radio", { name: "라이트", exact: true }).check();
+  await expect.poll(mode).toBe("light");
+  await expect.poll(drawnAs).toBe("light");
+
+  await panel.getByRole("radio", { name: "자동", exact: true }).check();
+  await expect.poll(mode).toBe("auto");
+  await expect.poll(drawnAs).toBe("dark");
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(drawnAs).toBe("light");
+  expect(await patches()).toEqual([
+    { themeMode: "dark" },
+    { themeMode: "light" },
+    { themeMode: "auto" },
+  ]);
+});
+
+test("the theme mode reaches every window, and the screen shows a mode saved elsewhere", async ({
+  context,
+}) => {
+  const first = await startWindows(context);
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  for (const page of [first, second]) await page.emulateMedia({ colorScheme: "light" });
+  const drawnAs = (page: Page) => page.evaluate(() => document.documentElement.dataset.appearance);
+  await menu(second, "settings");
+  await section(second.locator(".modal.settings"), "모양");
+  const panel = await openSection(first, "모양");
+  await panel.getByRole("radio", { name: "다크", exact: true }).check();
+  for (const page of [first, second]) await expect.poll(() => drawnAs(page)).toBe("dark");
+  await expect(second.getByRole("radio", { name: "다크", exact: true })).toBeChecked();
+});
+
 test("the settings dialog is a labelled modal and its sections are tabs", async ({ page }) => {
   await start(page);
   await menu(page, "settings");
@@ -740,9 +822,9 @@ test("the settings dialog is a labelled modal and its sections are tabs", async 
   await page.keyboard.press("ArrowDown");
   await shows("워크스페이스");
   await page.keyboard.press("ArrowDown");
-  await shows("사이드바");
+  await shows("모양");
   await page.keyboard.press("ArrowDown");
-  await shows("편집기");
+  await shows("단축키");
   await page.keyboard.press("End");
   await shows("확장");
   await expect(panel.locator(".extension-row").first()).toBeVisible();
@@ -907,7 +989,7 @@ test("the general section sets the trash retention", async ({ page }) => {
 
 test("a font size under the smallest is brought up to it, 0 included", async ({ page }) => {
   await start(page);
-  const panel = await openSection(page, "편집기");
+  const panel = await openSection(page, "모양");
   const size = panel.getByLabel("글꼴 크기");
   for (const typed of ["5", "0"]) {
     await size.fill("14");

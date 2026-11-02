@@ -84,17 +84,7 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     textContent: "워크스페이스 루트에 워크스페이스가 없습니다.",
     hidden: true,
   });
-  const el = h(
-    "div",
-    { class: "ws-order" },
-    h("p", {
-      class: "settings-note ws-order-note",
-      textContent:
-        "끌어서 순서를 바꿉니다. 고르개와 ⌃1~⌃9 가 이 순서를 따릅니다. 숨긴 워크스페이스는 고르개에 보이지 않습니다.",
-    }),
-    frame,
-    empty,
-  );
+  const el = h("div", { class: "ws-order" }, frame, empty);
 
   const rowEls = () => [...list.querySelectorAll<HTMLElement>(".ws-order-row")];
 

@@ -1,4 +1,10 @@
-import type { Backend, ExtensionRegistry, SettingsPatch, ThemeRef } from "../backend/types";
+import type {
+  Backend,
+  ExtensionRegistry,
+  SettingsPatch,
+  ThemeMode,
+  ThemeRef,
+} from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   EDITOR_FONT_SIZE_MAX,
@@ -14,23 +20,20 @@ import { h } from "./dom";
 import { shortcutsSection } from "./shortcut-settings";
 import { workspacesSection } from "./workspace-settings";
 
-export type SettingsSection =
-  | "general"
-  | "workspaces"
-  | "sidebar"
-  | "editor"
-  | "appearance"
-  | "shortcuts"
-  | "extensions";
+export type SettingsSection = "general" | "workspaces" | "appearance" | "shortcuts" | "extensions";
 
 const SECTIONS: [SettingsSection, string][] = [
   ["general", "일반"],
   ["workspaces", "워크스페이스"],
-  ["sidebar", "사이드바"],
-  ["editor", "편집기"],
   ["appearance", "모양"],
   ["shortcuts", "단축키"],
   ["extensions", "확장"],
+];
+
+const MODES: [ThemeMode, string][] = [
+  ["auto", "자동"],
+  ["light", "라이트"],
+  ["dark", "다크"],
 ];
 
 export interface SettingsOptions {
@@ -189,16 +192,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         { class: "settings-form" },
         label,
         h("div", { class: "settings-row" }, rootInput, pick, apply),
-        h("p", {
-          class: "settings-note root-note",
-          textContent: "루트는 새로 여는 창부터 적용됩니다. 열린 창은 그대로입니다.",
-        }),
         ...field("실행할 때 업데이트 확인", autoCheck),
-        h("p", {
-          class: "settings-note update-note",
-          textContent:
-            "끄면 Tote Notes 는 실행할 때 github.com 에 새 버전을 묻지 않습니다. 메뉴 Tote Notes → 업데이트 확인… 으로 직접 확인할 수 있습니다.",
-        }),
         field("휴지통 자동 비우기", trashDays)[0],
         h(
           "div",
@@ -213,11 +207,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
 
     const preview = h("input", { type: "checkbox", name: "sidebarPreview" });
     preview.addEventListener("change", () => void save({ sidebarPreview: preview.checked }));
-    const sidebarSection = h(
-      "div",
-      { class: "settings-form" },
-      ...field("메모 목록에 내용 미리보기", preview),
-    );
 
     const lineNumbers = h("input", { type: "checkbox", name: "editorLineNumbers" });
     lineNumbers.addEventListener(
@@ -239,13 +228,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     };
     fontFamily.addEventListener("change", commitFontFamily);
     onEnter(fontFamily, commitFontFamily);
-    const editorSection = h(
-      "div",
-      { class: "settings-form" },
-      ...field("줄번호 표시", lineNumbers),
-      ...field("글꼴 크기", fontSize),
-      ...field("글꼴", fontFamily),
-    );
 
     const themeSelect = (name: "light" | "dark") => {
       const select = h("select", { name });
@@ -282,11 +264,34 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const lightSelect = themeSelect("light");
     const darkSelect = themeSelect("dark");
     fillThemes(options.registry());
+    // Auto follows the OS; light and dark keep that slot's theme and the app's appearance.
+    const modeLabel = h("span", { id: "settings-themeMode-label", textContent: "모드" });
+    const modes = h(
+      "div",
+      { class: "settings-row settings-modes", role: "radiogroup" },
+      ...MODES.map(([value, label]) => {
+        const radio = h("input", { type: "radio", name: "themeMode", value });
+        radio.addEventListener("change", () => void save({ themeMode: value }));
+        return h("label", {}, radio, label);
+      }),
+    );
+    modes.setAttribute("aria-labelledby", modeLabel.id);
+    const heading = (text: string) => h("h2", { class: "settings-heading", textContent: text });
+    // One grid for the three groups: their controls line up under one another.
     const appearanceSection = h(
       "div",
       { class: "settings-form" },
+      heading("테마"),
+      modeLabel,
+      modes,
       ...field("라이트 테마", lightSelect),
       ...field("다크 테마", darkSelect),
+      heading("편집기"),
+      ...field("줄번호 표시", lineNumbers),
+      ...field("글꼴 크기", fontSize),
+      ...field("글꼴", fontFamily),
+      heading("사이드바"),
+      ...field("메모 목록에 내용 미리보기", preview),
     );
 
     const list = h("div", { class: "extension-list" });
@@ -406,6 +411,10 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         trashNever.checked = days === null;
         trashDays.disabled = days === null;
         sync(fontFamily, current.editor.fontFamily);
+        // Rust always sends one; an old fake backend seed has none, which is auto.
+        modes.querySelector<HTMLInputElement>(
+          `input[value=${current.theme.mode ?? "auto"}]`,
+        )!.checked = true;
         selectTheme(lightSelect, current.theme.light);
         selectTheme(darkSelect, current.theme.dark);
         panel.querySelector<HTMLInputElement>(
@@ -432,8 +441,6 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     const contents: Record<SettingsSection, HTMLElement> = {
       general: generalSection(),
       workspaces: workspaces.el,
-      sidebar: sidebarSection,
-      editor: editorSection,
       appearance: appearanceSection,
       shortcuts: shortcuts.el,
       extensions: extensionSection,
