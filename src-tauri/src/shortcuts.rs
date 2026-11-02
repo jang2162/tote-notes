@@ -18,7 +18,8 @@ pub struct Command {
     /// Its shortcut when nothing is saved, as a Tauri accelerator.
     pub default: Option<&'static str>,
     /// Whether its default gives way to a key saved for another command (see `resolve`), instead
-    /// of beating it. For a command added after people had saved keys of their own.
+    /// of beating it. For a command added, or whose default changed, after people had saved keys
+    /// of their own.
     pub yields: bool,
 }
 
@@ -126,7 +127,7 @@ pub const COMMANDS: &[Command] = &[
     ),
     command("next-tab", "다음 탭", "보기", Some("CmdOrCtrl+Shift+]")),
     command("prev-tab", "이전 탭", "보기", Some("CmdOrCtrl+Shift+[")),
-    command(
+    yielding(
         "toggle-preview",
         "미리보기 전환",
         "보기",
@@ -515,11 +516,11 @@ mod tests {
         assert_eq!(shortcut_of(&saved, "rename"), None);
         assert!(validate(&saved).unwrap_err().contains("rename"));
         // The default's command comes later in the menu: the default still wins.
-        let saved = overrides(&[("close-window", Some("CmdOrCtrl+Shift+P"))]);
+        let saved = overrides(&[("close-window", Some("CmdOrCtrl+Shift+]"))]);
         assert_eq!(sanitize(&saved), BTreeMap::new());
         assert_eq!(
-            shortcut_of(&saved, "toggle-preview"),
-            Some("CmdOrCtrl+Shift+P".into())
+            shortcut_of(&saved, "next-tab"),
+            Some("CmdOrCtrl+Shift+]".into())
         );
         assert_eq!(
             shortcut_of(&saved, "close-window"),
@@ -825,13 +826,37 @@ mod tests {
     }
 
     #[test]
-    fn only_the_sidebar_toggle_gives_its_default_way() {
-        let yielding: Vec<&str> = COMMANDS.iter().filter(|c| c.yields).map(|c| c.id).collect();
-        assert_eq!(yielding, ["toggle-sidebar"]);
+    fn a_saved_shift_cmd_p_keeps_its_command_and_the_preview_toggle_starts_with_none() {
+        for id in ["close-window", "rename"] {
+            let saved = overrides(&[(id, Some("CmdOrCtrl+Shift+P"))]);
+            assert_eq!(sanitize(&saved), saved, "{id}");
+            assert_eq!(
+                shortcut_of(&saved, id),
+                Some("CmdOrCtrl+Shift+P".into()),
+                "{id}"
+            );
+            assert_eq!(shortcut_of(&saved, "toggle-preview"), None, "{id}");
+            assert_eq!(validate(&saved), Ok(()), "{id}");
+            let json = serde_json::to_value(table(&saved)).unwrap();
+            let gave_way: Vec<&str> = json["commands"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .filter(|row| row.get("yielded").is_some())
+                .filter_map(|row| row["id"].as_str())
+                .collect();
+            assert_eq!(gave_way, ["toggle-preview"], "{id}");
+        }
     }
 
     #[test]
-    fn the_table_marks_only_the_yielding_default() {
+    fn only_the_sidebar_and_preview_toggles_give_their_defaults_way() {
+        let yielding: Vec<&str> = COMMANDS.iter().filter(|c| c.yields).map(|c| c.id).collect();
+        assert_eq!(yielding, ["toggle-sidebar", "toggle-preview"]);
+    }
+
+    #[test]
+    fn the_table_marks_only_the_yielding_defaults() {
         let json = serde_json::to_value(table(&BTreeMap::new())).unwrap();
         let marked: Vec<(&str, &serde_json::Value)> = json["commands"]
             .as_array()
@@ -839,7 +864,8 @@ mod tests {
             .iter()
             .filter_map(|row| Some((row["id"].as_str()?, row.get("yields")?)))
             .collect();
-        assert_eq!(marked, [("toggle-sidebar", &serde_json::Value::Bool(true))]);
+        let yes = serde_json::Value::Bool(true);
+        assert_eq!(marked, [("toggle-sidebar", &yes), ("toggle-preview", &yes)]);
     }
 
     /// `src/backend/fake-shortcuts.test.ts` holds the fake backend's table against this file.

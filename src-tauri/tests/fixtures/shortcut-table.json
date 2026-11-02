@@ -174,7 +174,8 @@
       "label": "미리보기 전환",
       "menu": "보기",
       "default": "CmdOrCtrl+Shift+P",
-      "current": "CmdOrCtrl+Shift+P"
+      "current": "CmdOrCtrl+Shift+P",
+      "yields": true
     },
     {
       "id": "move-tab-to-new-window",

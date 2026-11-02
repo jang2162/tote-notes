@@ -183,7 +183,7 @@ describe("FakeBackend shortcuts", () => {
       [{ rename: "Shift+F5" }, "rename"],
       [{ rename: "CmdOrCtrl+C" }, "rename"],
       [{ rename: "CmdOrCtrl+N" }, "rename"],
-      [{ "close-window": "CmdOrCtrl+Shift+P" }, "close-window"],
+      [{ "close-window": "CmdOrCtrl+Shift+]" }, "close-window"],
       // ⌘Q is fixed, and so is the item it belongs to: no id for it to be saved under.
       [{ quit: "CmdOrCtrl+Shift+Q" }, "quit"],
       [{ quit: null }, "quit"],
@@ -210,6 +210,18 @@ describe("FakeBackend shortcuts", () => {
     expect((await backend.settings()).shortcuts).toEqual(shortcuts);
     const current = (await backend.shortcutTable()).commands.find((c) => c.id === "rename");
     expect(current?.current).toBe("Cmd+N");
+  });
+
+  it("keeps a saved ⇧⌘P and starts 미리보기 전환 with no key, as Rust does", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    const shortcuts = { "close-window": "CmdOrCtrl+Shift+P" };
+    await backend.patchSettings({ shortcuts });
+    expect((await backend.settings()).shortcuts).toEqual(shortcuts);
+    const { commands } = await backend.shortcutTable();
+    expect(commands.find((c) => c.id === "close-window")?.current).toBe("CmdOrCtrl+Shift+P");
+    const preview = commands.find((c) => c.id === "toggle-preview");
+    expect(preview?.current).toBeNull();
+    expect(preview?.yielded).toBe(true);
   });
 
   it("drops a bad saved entry on read and keeps the rest, as Rust does", async () => {

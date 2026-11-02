@@ -39,7 +39,13 @@ export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
   { id: "focus-pane-down", label: "아래쪽 칸으로", menu: "보기", default: "Alt+CmdOrCtrl+Down" },
   { id: "next-tab", label: "다음 탭", menu: "보기", default: "CmdOrCtrl+Shift+]" },
   { id: "prev-tab", label: "이전 탭", menu: "보기", default: "CmdOrCtrl+Shift+[" },
-  { id: "toggle-preview", label: "미리보기 전환", menu: "보기", default: "CmdOrCtrl+Shift+P" },
+  {
+    id: "toggle-preview",
+    label: "미리보기 전환",
+    menu: "보기",
+    default: "CmdOrCtrl+Shift+P",
+    yields: true,
+  },
   { id: "move-tab-to-new-window", label: "탭을 새 창으로 옮기기", menu: "윈도우", default: null },
 ];
 
