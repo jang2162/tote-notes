@@ -177,6 +177,11 @@ impl Workspace {
         same
     }
 
+    /// The files the editor holds something of, for looking at them all again (`Flag::Rescan`).
+    pub fn held_files(&self) -> Vec<String> {
+        self.last_written.keys().cloned().collect()
+    }
+
     /// Renames an automatically titled memo to `<stem>.<its extension>`; memos the person named
     /// are left alone. `stem` comes from the frontend's title rule and is checked again here
     /// because a file name is the one thing that must never leave the workspace folder.

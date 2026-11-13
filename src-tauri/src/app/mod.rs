@@ -1066,13 +1066,20 @@ impl AppCore {
                     return Vec::new();
                 };
                 let name = |path: &PathBuf| path.file_name()?.to_str().map(str::to_string);
-                let touched = batch.touched.iter().filter_map(name).collect();
+                let mut touched: std::collections::BTreeSet<String> =
+                    batch.touched.iter().filter_map(name).collect();
                 let renames: Vec<(String, String)> = batch
                     .renames
                     .iter()
                     .filter_map(|(from, to)| Some((name(from)?, name(to)?)))
                     .collect();
-                let changes = match lock(&workspace).apply_fs_events(&touched, &renames) {
+                let mut workspace = lock(&workspace);
+                // Events were dropped: every file the editor holds something of may have changed.
+                // Files added or removed meanwhile are found by the next listing.
+                if batch.rescan {
+                    touched.extend(workspace.held_files());
+                }
+                let changes = match workspace.apply_fs_events(&touched, &renames) {
                     Ok(changes) => changes,
                     Err(err) => {
                         eprintln!(
@@ -1082,6 +1089,7 @@ impl AppCore {
                         return Vec::new();
                     }
                 };
+                drop(workspace);
                 if changes.is_empty() {
                     return Vec::new();
                 }
@@ -2002,6 +2010,7 @@ mod tests {
         let ours = || Batch {
             touched: [file.clone()].into(),
             renames: vec![],
+            rescan: false,
         };
         let target = WatchTarget::Workspace(AppCore::workspace_key(&core.path_of(&label).unwrap()));
         assert_eq!(core.on_batch(target.clone(), ours()), vec![]);
@@ -2027,6 +2036,7 @@ mod tests {
         let seen = || Batch {
             touched: [path.clone()].into(),
             renames: vec![],
+            rescan: false,
         };
         assert_eq!(
             core.on_batch(outside.clone(), seen()),
@@ -2153,6 +2163,35 @@ mod tests {
     }
 
     #[test]
+    fn dropped_events_have_the_memos_the_editor_holds_looked_at_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let label = open(&core, "가");
+        let workspace = core.workspace(&label).unwrap();
+        let held = lock(&workspace).create_memo("md", b"ours").unwrap();
+        let untouched = lock(&workspace).create_memo("md", b"same").unwrap();
+        let root = core.path_of(&label).unwrap();
+        fs::write(root.join(&held.file), "theirs").unwrap();
+        // No path names the file: the events that would have were dropped.
+        let dropped = || Batch {
+            rescan: true,
+            ..Batch::default()
+        };
+        let target = WatchTarget::Workspace(AppCore::workspace_key(&root));
+        let reached = core.on_batch(target.clone(), dropped());
+        assert_eq!(reached.len(), 1);
+        assert_eq!(
+            serde_json::to_value(&reached[0].1).unwrap(),
+            serde_json::json!({"kind": "workspace", "changes": [{"kind": "modified", "id": held.id}]}),
+            "{} is as tote left it",
+            untouched.file
+        );
+        // And the save that follows is still refused: the editor has not read the change.
+        assert!(lock(&workspace).write_memo(&held.id, b"ours!").is_err());
+        assert_eq!(fs::read_to_string(root.join(&held.file)).unwrap(), "theirs");
+    }
+
+    #[test]
     fn a_watch_batch_reaches_every_window_of_its_workspace() {
         let dir = tempfile::tempdir().unwrap();
         let core = core(dir.path());
@@ -2165,6 +2204,7 @@ mod tests {
         let batch = Batch {
             touched: [file].into(),
             renames: vec![],
+            rescan: false,
         };
         let reached = core.on_batch(WatchTarget::Workspace(AppCore::workspace_key(&path)), batch);
         let labels: Vec<&String> = reached.iter().map(|(label, _)| label).collect();
