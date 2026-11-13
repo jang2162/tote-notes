@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{read_json, read_json_file, write_json, JsonFile};
+use crate::persist::{read_json_file, write_json, JsonFile};
 use crate::shortcuts;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -693,7 +693,17 @@ fn cannot_be_read_now(entry: &Path) -> bool {
 
 impl LaunchState {
     pub fn load(path: &Path) -> io::Result<LaunchState> {
-        Ok(read_json(path)?.unwrap_or_default())
+        LaunchState::load_with_aside(path).map(|(launch, _)| launch)
+    }
+
+    /// `load`, with where a file that did not parse went (`read_json_file`): the windows it listed
+    /// do not come back, so the caller has that to tell the person about.
+    pub fn load_with_aside(path: &Path) -> io::Result<(LaunchState, Option<PathBuf>)> {
+        Ok(match read_json_file(path)? {
+            JsonFile::Read(launch) => (launch, None),
+            JsonFile::Missing => (LaunchState::default(), None),
+            JsonFile::SetAside(aside) => (LaunchState::default(), Some(aside)),
+        })
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {

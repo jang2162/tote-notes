@@ -419,18 +419,18 @@ impl AppCore {
         AppCore::load_at(paths, bundled_dir)
     }
 
-    /// `load` with the data folder given. A `machine.json` or `settings.json` that did not parse
-    /// is set aside and started over, and the first window says so (`set_aside_notice`): the tabs
-    /// forgotten and the workspace root gone back to its default would otherwise have no cause
-    /// the person could find.
+    /// `load` with the data folder given. A `machine.json`, `settings.json` or `state.json` that
+    /// did not parse is set aside and started over, and the first window says so
+    /// (`set_aside_notice`): the tabs forgotten, the workspace root gone back to its default and
+    /// the windows not reopened would otherwise have no cause the person could find.
     fn load_at(paths: AppPaths, bundled_dir: PathBuf) -> Result<AppCore, String> {
         let (machine, machine_aside) =
             Machine::load_or_create_with_aside(&paths.machine_file(), device_name)
                 .map_err(|err| format!("machine.json: {err}"))?;
         let (mut settings, settings_aside) = Settings::load_with_aside(&paths.settings_file())
             .map_err(|err| format!("settings.json: {err}"))?;
-        let mut launch =
-            LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
+        let (mut launch, launch_aside) = LaunchState::load_with_aside(&paths.launch_file())
+            .map_err(|err| format!("state.json: {err}"))?;
         keep_legacy_root(
             &mut settings,
             &mut launch,
@@ -447,6 +447,10 @@ impl AppCore {
             (
                 machine_aside,
                 "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다",
+            ),
+            (
+                launch_aside,
+                "state.json 을 읽지 못해 지난번에 열려 있던 창을 다시 열지 않았습니다",
             ),
         ];
         for (aside, what) in asides {
@@ -2613,7 +2617,7 @@ mod tests {
     }
 
     #[test]
-    fn a_broken_settings_or_machine_file_is_told_to_the_first_window() {
+    fn a_broken_settings_machine_or_state_file_is_told_to_the_first_window() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
         fs::create_dir_all(&paths.data_dir).unwrap();
@@ -2623,6 +2627,7 @@ mod tests {
         )
         .unwrap();
         fs::write(paths.machine_file(), "{ \"deviceId\": ").unwrap();
+        fs::write(paths.launch_file(), "{ \"openWindows\": [").unwrap();
         let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
         // The root went back to the default and the device has a new ID: that is what is told.
         assert_eq!(core.workspace_root(), paths.default_workspace_root);
@@ -2645,6 +2650,10 @@ mod tests {
                 format!(
                     "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다(원래 파일: {})",
                     aside("machine.json")
+                ),
+                format!(
+                    "state.json 을 읽지 못해 지난번에 열려 있던 창을 다시 열지 않았습니다(원래 파일: {})",
+                    aside("state.json")
                 ),
             ]
         );
