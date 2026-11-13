@@ -81,6 +81,8 @@ test("keys typed while a file is imported do not end up unsaved in the memo", as
   await page.keyboard.press("Meta+ArrowDown");
   const release = await holdImports(page);
   await menu(page, "import");
+  // The editor has let go of the tab: there is nothing for the keys to go into.
+  await expect(page.locator(".cm-content")).toBeHidden();
   await page.keyboard.type("xy");
   await release();
   await expect(page.locator(".tab.active")).not.toHaveClass(/external/);
