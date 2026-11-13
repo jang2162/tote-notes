@@ -47,6 +47,20 @@ impl Places {
         self.owners.get(key).map(String::as_str)
     }
 
+    /// The external files every window holds, by path (빠른 열기, spec 2026-11-14).
+    pub fn externals(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self
+            .owners
+            .keys()
+            .filter_map(|key| match key {
+                TabKey::External { path } => Some(path.clone()),
+                TabKey::Memo { .. } => None,
+            })
+            .collect();
+        paths.sort();
+        paths
+    }
+
     /// Frees `key` only when `label` owns it.
     pub fn release(&mut self, label: &str, key: &TabKey) {
         if self.owners.get(key).is_some_and(|owner| owner == label) {
@@ -127,6 +141,21 @@ mod tests {
         );
         places.release("w1", &memo("/w/가", "a"));
         assert_eq!(places.claim("w2", memo("/w/가", "a")), Ok(()));
+    }
+
+    #[test]
+    fn the_external_files_held_are_listed_by_path_whatever_window_holds_them() {
+        let mut places = Places::default();
+        assert!(places.externals().is_empty());
+        places.claim("w2", external("/tmp/b.sh")).unwrap();
+        places.claim("w1", memo("/w/가", "a")).unwrap();
+        places.claim("w1", external("/tmp/a.sh")).unwrap();
+        assert_eq!(
+            places.externals(),
+            [PathBuf::from("/tmp/a.sh"), PathBuf::from("/tmp/b.sh")]
+        );
+        places.release("w2", &external("/tmp/b.sh"));
+        assert_eq!(places.externals(), [PathBuf::from("/tmp/a.sh")]);
     }
 
     #[test]

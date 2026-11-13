@@ -591,6 +591,12 @@ pub fn claim_tabs(
     Ok(claims.iter().map(Result::is_ok).collect())
 }
 
+/// The external files open in a tab of any window, by path: 빠른 열기 lists them with the memos.
+#[tauri::command]
+pub fn list_open_externals(core: State<'_, AppCore>) -> Vec<PathBuf> {
+    core.open_externals()
+}
+
 /// This window closed the tab: another may open it.
 #[tauri::command]
 pub fn release_tab(core: State<'_, AppCore>, window: WebviewWindow, tab: TabRef) {

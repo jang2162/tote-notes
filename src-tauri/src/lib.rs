@@ -114,6 +114,7 @@ pub fn run() {
             commands::write_window_layout,
             commands::claim_tabs,
             commands::release_tab,
+            commands::list_open_externals,
             commands::tear_off_tab,
             commands::show_popup_menu,
             commands::take_pending_opens,

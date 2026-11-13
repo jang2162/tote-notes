@@ -179,6 +179,9 @@ export class TauriBackend implements Backend {
   releaseTab(tab: TabRef) {
     return call<void>("release_tab", { tab });
   }
+  listOpenExternals() {
+    return call<string[]>("list_open_externals");
+  }
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }) {
     return call<"moved" | "window">("tear_off_tab", { tab, tabRef: ref, at: at ?? null });
   }

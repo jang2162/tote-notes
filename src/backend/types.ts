@@ -542,6 +542,8 @@ export interface Backend {
   claimTabs(tabs: TabRef[], reveal: boolean): Promise<boolean[]>;
   /** This window closed the tab: another window may open it. */
   releaseTab(tab: TabRef): Promise<void>;
+  /** The external files open in a tab of any window, by path (빠른 열기, spec 2026-11-14). */
+  listOpenExternals(): Promise<string[]>;
   /** Moves the tab `ref` out of this window: `tab` is its session entry (`SessionTab`, as JSON).
    * Without `at` it goes into a new window of this workspace, which opens with it alone, a little
    * off this one. With `at`, the screen point it was let go on outside this window, it joins the

@@ -1330,6 +1330,11 @@ impl AppCore {
         Ok(inner.places.claim(label, key).map(|()| fresh))
     }
 
+    /// The external files open in a tab of any window, by path (빠른 열기, spec 2026-11-14).
+    pub fn open_externals(&self) -> Vec<PathBuf> {
+        lock(&self.inner).places.externals()
+    }
+
     /// Window `label` closed the tab: another window may open it now. Nothing while the window
     /// switches workspaces: its places went with the workspace it left.
     pub fn release_tab(&self, label: &str, tab: &TabRef) {
