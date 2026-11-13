@@ -1,13 +1,48 @@
 import type { LanguageInfo } from "../backend/types";
 import { h } from "./dom";
 
-/** The backdrops of the modals open now, the last one on top: Escape closes only that one. */
-const openModals: HTMLElement[] = [];
+/** The modals open now, the last one on top — the keys are its alone — each with what had the
+ * focus as it opened. */
+const openModals: { backdrop: HTMLElement; opener: Element | null }[] = [];
+/** What a modal put out of reach, to give back; what was inert already (a collapsed sidebar)
+ * is not in it and stays inert. */
+const heldOff = new Set<HTMLElement>();
 let titles = 0;
+
+/** Whether a dialog has the window: until it is answered, nothing behind it takes a key, a click
+ * or a menu command. */
+export function modalOpen(): boolean {
+  return openModals.length > 0;
+}
+
+/** Everything in the window but the top modal is inert — the page, and a modal under another. */
+function holdOffTheRest(): void {
+  const top = openModals[openModals.length - 1]?.backdrop;
+  for (const each of document.body.children) {
+    if (!(each instanceof HTMLElement)) continue;
+    const off = top !== undefined && each !== top;
+    if (off && !each.inert) {
+      each.inert = true;
+      heldOff.add(each);
+    } else if (!off && heldOff.delete(each)) each.inert = false;
+  }
+}
+
+/** The controls of `dialog` the keys can go to, in order. */
+function stops(dialog: HTMLElement): HTMLElement[] {
+  const all = dialog.querySelectorAll<HTMLElement>(
+    "input, select, textarea, button, summary, a[href], [tabindex]",
+  );
+  return [...all].filter(
+    (each) => each.tabIndex >= 0 && !each.matches(":disabled") && each.getClientRects().length > 0,
+  );
+}
 
 /** A modal over the window. Resolves with what `build` passes to `close`, or `null` on Escape.
  * The dialog is named by its own `aria-labelledby`, else by its first heading or paragraph. The
- * element marked `data-autofocus` takes the focus, else the first input or primary button.
+ * element marked `data-autofocus` takes the focus, else the first input or primary button, else
+ * the dialog itself. While it is open the rest of the window is inert, and Tab past its last
+ * control comes round to its first; closed, the focus is back where it was.
  * While `holdEscape` says so, Escape on top does nothing: the dialog is in the middle of
  * something that cannot be called off. */
 export function modal<T>(
@@ -16,16 +51,39 @@ export function modal<T>(
 ): Promise<T | null> {
   return new Promise((resolve) => {
     const backdrop = h("div", { class: "modal-backdrop" });
+    const self = { backdrop, opener: document.activeElement };
+    const onTop = () => openModals[openModals.length - 1] === self;
     const close = (value: T | null) => {
       document.removeEventListener("keydown", onKey, true);
-      const at = openModals.indexOf(backdrop);
-      if (at >= 0) openModals.splice(at, 1);
-      backdrop.remove();
+      const at = openModals.indexOf(self);
+      if (at >= 0) {
+        openModals.splice(at, 1);
+        const over = openModals[at];
+        backdrop.remove();
+        heldOff.delete(backdrop);
+        holdOffTheRest();
+        // Closed from under another modal, the keys are that one's to keep; opened from this
+        // one, it gives them back to where this one would have.
+        if (over) {
+          if (backdrop.contains(over.opener)) over.opener = self.opener;
+        } else if (self.opener instanceof HTMLElement) self.opener.focus({ preventScroll: true });
+      }
       resolve(value);
     };
     const onKey = (event: KeyboardEvent) => {
+      if (!onTop()) return;
+      if (event.key === "Tab") {
+        // WebKit decides which controls Tab stops at (the system's keyboard navigation setting);
+        // only a Tab that left the dialog is brought back, after it has moved the focus.
+        const back = event.shiftKey;
+        setTimeout(() => {
+          if (!onTop() || backdrop.contains(document.activeElement)) return;
+          const inside = stops(dialog);
+          (back ? inside[inside.length - 1] : inside[0])?.focus();
+        });
+        return;
+      }
       if (event.key !== "Escape" || isCompositionKey(event)) return;
-      if (openModals[openModals.length - 1] !== backdrop) return;
       event.preventDefault();
       event.stopPropagation();
       if (!options.holdEscape?.()) close(null);
@@ -38,13 +96,19 @@ export function modal<T>(
       dialog.setAttribute("aria-labelledby", title.id);
     }
     backdrop.append(dialog);
-    openModals.push(backdrop);
+    openModals.push(self);
     document.addEventListener("keydown", onKey, true);
     document.body.append(backdrop);
+    holdOffTheRest();
     (
       backdrop.querySelector<HTMLElement>("[data-autofocus]") ??
       backdrop.querySelector<HTMLElement>("input, button.primary")
     )?.focus();
+    // Nothing took it (the one primary button is off): the keys still leave the page behind.
+    if (!backdrop.contains(document.activeElement)) {
+      dialog.tabIndex = -1;
+      dialog.focus();
+    }
   });
 }
 

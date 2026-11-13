@@ -58,7 +58,7 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, confirm, pickLanguage, promptText } from "../ui/dialogs";
+import { askUnsaved, confirm, modalOpen, pickLanguage, promptText } from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -694,7 +694,7 @@ export class AppController implements DocHost, PaneHost {
         const item = index === null ? undefined : this.switcherList[index];
         // A window that answered a close or a switch has no tabs left to write; a dialog keeps the
         // window until it is answered.
-        if (!item || this.leaving || document.querySelector(".modal")) return;
+        if (!item || this.leaving || modalOpen()) return;
         event.preventDefault();
         event.stopPropagation();
         void this.switchTo(item.path);
@@ -2039,6 +2039,15 @@ export class AppController implements DocHost, PaneHost {
   }
 
   private async onMenu(id: string): Promise<void> {
+    // The native menu works under a dialog, which has the window until it is answered: a command
+    // on the tabs, the panes or the sidebar behind it, or one that asks something more, is
+    // dropped. 실행 취소·실행 복귀 stay, as WebKit's own — what was typed into the dialog, never the
+    // memo behind it (`historyStaysWithTheKeys`); so does 「백업 폴더 열기」, which leaves the
+    // window alone.
+    if (modalOpen() && id !== "reveal-backups") {
+      if (id === "undo" || id === "redo") document.execCommand(id);
+      return;
+    }
     try {
       switch (id) {
         case "new-memo":
@@ -2307,7 +2316,7 @@ export class AppController implements DocHost, PaneHost {
 
   /** Opens the settings screen at `section`, or at the one seen last. */
   private async showSettings(section?: SettingsSection): Promise<void> {
-    // The native menu works under a modal: a second ⌘, must not pile a second screen on the first.
+    // One screen at a time, whoever asks: a second ⌘, behind it is `onMenu`'s to drop.
     if (this.settingsOpen) return;
     this.settingsOpen = true;
     await openSettings({
@@ -2330,8 +2339,8 @@ export class AppController implements DocHost, PaneHost {
   /** 「이전 버전…」 (spec 「백업」 복원): the active memo's backed-up versions. The one picked
    * replaces the text as a single edit — ⌘Z takes it back — and saves like any edit. */
   async showVersions(): Promise<void> {
-    // The native menu works under a modal: a second pick must not stack a second dialog, nor
-    // start one while the first is still listing.
+    // A second pick while the first is still listing — no dialog is up yet for `onMenu` to
+    // drop it behind — must not stack a second dialog.
     if (this.versionsOpen) return;
     this.versionsOpen = true;
     try {
