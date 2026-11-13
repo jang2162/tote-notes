@@ -104,14 +104,31 @@ impl Workspace {
     }
 
     /// `write_memo` whatever the file holds: the person chose their text over it (「내 버전」,
-    /// 「다시 저장」).
+    /// 「다시 저장」). The file as it is now is held from here on, whether or not the write goes
+    /// through: the choice was about this version of it, so the retry of a write that failed is
+    /// an ordinary save — still over this version, and refused once the file has changed again.
     pub fn overwrite_memo(
         &mut self,
         id: &str,
         contents: &[u8],
     ) -> Result<MemoInfo, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        self.hold_as_it_is(&file);
         self.write_file(id, &file, contents)
+    }
+
+    /// What `file` holds now is what the editor holds of it, whatever its kind: the person has
+    /// answered for it. Nothing is held of a file gone or too large to hold.
+    fn hold_as_it_is(&mut self, file: &str) {
+        let path = self.root.join(file);
+        let held = fs::metadata(&path)
+            .ok()
+            .filter(|meta| meta.len() <= MAX_EDITOR_BYTES)
+            .and_then(|meta| Some(Held::of(&fs::read(&path).ok()?, Some(Stamp::of(&meta)))));
+        match held {
+            Some(held) => self.held.insert(file.to_string(), held),
+            None => self.held.remove(file),
+        };
     }
 
     fn write_file(
@@ -873,6 +890,34 @@ mod tests {
         fs::rename(&temp, ws.root().join(&memo.file)).unwrap();
         assert!(refused(ws.write_memo(&memo.id, b"ours!!!")));
         assert_eq!(on_disk(&ws, &memo.file), "replaced");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_chosen_overwrite_that_failed_is_retried_as_a_plain_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        let path = ws.root().join(&memo.file);
+        let lock = |mode| fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        // 「내 버전」 over another app's text, and the write fails.
+        elsewhere(&ws, &memo.file, "theirs");
+        lock(0o444);
+        assert!(ws.overwrite_memo(&memo.id, b"ours!").is_err());
+        lock(0o644);
+        assert_eq!(on_disk(&ws, &memo.file), "theirs");
+        // The retry is an ordinary save: over the text chosen against it goes through, …
+        ws.write_memo(&memo.id, b"ours!").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours!");
+
+        // … and over a later write it does not.
+        elsewhere(&ws, &memo.file, "theirs");
+        lock(0o444);
+        assert!(ws.overwrite_memo(&memo.id, b"ours!!").is_err());
+        lock(0o644);
+        elsewhere(&ws, &memo.file, "theirs, again");
+        assert!(refused(ws.write_memo(&memo.id, b"ours!!")));
+        assert_eq!(on_disk(&ws, &memo.file), "theirs, again");
     }
 
     #[test]

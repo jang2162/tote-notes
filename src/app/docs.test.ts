@@ -637,6 +637,35 @@ describe("MemoDoc outside changes", () => {
     expect(doc.banner?.kind).toBe("conflict");
   });
 
+  it("내 버전 that could not be written is retried as a plain save", async () => {
+    const chosen = async () => {
+      const ctx = await opened("원래");
+      type(ctx.doc, " 내 글");
+      ctx.backend.data.memos.a.data = fakeFile("다른 앱");
+      await ctx.doc.onOutside({ kind: "modified", id: "a" });
+      // The disk is full for the write 내 버전 asks for and for the second try made at once.
+      ctx.backend.data.failWrites = 2;
+      ctx.doc.banner!.actions[1].run();
+      await vi.advanceTimersByTimeAsync(0);
+      expect(ctx.doc.saveFailed).toBe(true);
+      return ctx;
+    };
+    // The file is as it was when 내 버전 was picked: the retry writes over it, unasked.
+    const same = await chosen();
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(same.backend.memoText("a")).toBe("원래 내 글");
+    expect(same.doc.banner).toBeNull();
+    expect(same.doc.saveFailed).toBe(false);
+
+    // Another app wrote again before the retry, unreported: that was not chosen against.
+    const changed = await chosen();
+    changed.backend.data.memos.a.data = fakeFile("또 다른 앱");
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(changed.backend.memoText("a")).toBe("또 다른 앱");
+    expect(changed.doc.banner?.kind).toBe("conflict");
+    expect(changed.doc.saveFailed).toBe(false);
+  });
+
   it("a retried save that meets another app's text stops retrying and takes its failure along", async () => {
     const { backend, doc, changes } = await opened("원래");
     backend.data.failWrites = 1;

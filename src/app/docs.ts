@@ -456,8 +456,10 @@ export class MemoDoc extends Doc {
   private keptKnown: MemoInfo | undefined;
   private retitling: Promise<void> | null = null;
   private detecting: Promise<void> | null = null;
-  /** The person chose their text over the file's (`resave`): the next save writes whatever the
-   * file holds. Ends with that save, or when the tab takes the file's text instead (`loaded`). */
+  /** The person chose their text over the file's (`resave`): the next write goes over whatever
+   * the file holds — that one write. If it fails, its retry is an ordinary save: the native side
+   * holds the file as it was at the choice (`overwrite_memo`), so the retry still goes over that
+   * version and is refused once another app has written again. */
   private overwrite = false;
 
   constructor(
@@ -510,7 +512,6 @@ export class MemoDoc extends Doc {
 
   protected loaded(): void {
     this.savedText = this.state?.doc ?? null;
-    this.overwrite = false;
   }
 
   protected async read(): Promise<Uint8Array | Problem> {
@@ -545,6 +546,7 @@ export class MemoDoc extends Doc {
     if (this.banner?.kind === "conflict") return;
     const retry = () => this.save();
     const overwrite = this.overwrite;
+    this.overwrite = false;
     try {
       const bytes = this.encode(text);
       this.setInfo(await this.host.backend.writeMemo(this.info.id, bytes, overwrite));
@@ -563,7 +565,6 @@ export class MemoDoc extends Doc {
       this.host.changed(this, "notice");
     }
     this.savedText = text;
-    if (overwrite) this.overwrite = false;
     this.error = null;
     this.clearSaveFailed();
     // The file is there again.
@@ -819,7 +820,6 @@ export class MemoDoc extends Doc {
         return this.failSave(error, this.saveKey, () => this.save());
       }
       this.savedText = text;
-      this.overwrite = false;
       this.keepConflict(original.id, original);
       this.clearSaveFailed();
       // Typed while the new memo was made.

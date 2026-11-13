@@ -818,6 +818,8 @@ export class FakeBackend implements Backend {
     // Looked at before the write is tried, so a refused save is not a failed one.
     if (known && !overwrite && known.data !== this.held[id] && known.data !== data)
       throw new BackendError("conflict", "the file was changed by another app");
+    // As `overwrite_memo`: the memo as it is now is held, whether or not the write goes through.
+    if (known && overwrite) this.held[id] = known.data;
     if (this.data.failWrites) {
       this.data.failWrites -= 1;
       this.commit();
