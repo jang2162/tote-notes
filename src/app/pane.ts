@@ -2,6 +2,7 @@ import { EditorView } from "@codemirror/view";
 
 import { errorCode, type Backend, type FileSource, type ViewerInfo } from "../backend/types";
 import { splitName } from "../core/names";
+import { settleComposition } from "../editor/compose";
 import type { Registry } from "../extensions/registry";
 import type { ThemeManager } from "../theme/manager";
 import { h } from "../ui/dom";
@@ -151,7 +152,22 @@ export class Pane {
     return { doc: open.doc, viewer: open.host, owner: open.owner };
   }
 
+  /** Lands a syllable still being composed in the tab the editor shows, before the editor lets go
+   * of it: only the main cursor is composed, and the others get the syllable as the composition
+   * ends (src/editor/ime.ts) — a tab saved before that holds it at one cursor. Ending it takes
+   * the keys from the editor, which gets them back unless something else took them meanwhile.
+   * False when nothing was being composed: nothing was waited for. */
+  async settle(): Promise<boolean> {
+    if (!this.view.composing) return false;
+    await settleComposition(this.view);
+    if (this.surface.showsEditor && document.activeElement === document.body) this.view.focus();
+    return true;
+  }
+
   async activate(doc: Doc): Promise<void> {
+    if (this.tabs.active === doc) return;
+    // Closed while the composition ended. Another tab picked meanwhile is the one left below.
+    if ((await this.settle()) && !this.tabs.list.includes(doc)) return;
     const previous = this.tabs.active;
     if (previous === doc) return;
     this.host.mark(`open-start:${doc.tabId}`);

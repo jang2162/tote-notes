@@ -1116,6 +1116,9 @@ export class AppController implements DocHost, PaneHost {
   async closeTab(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
+    // The tab on show is saved as it closes: a syllable still being composed lands in it first.
+    const pane = this.paneOf(doc);
+    if (doc === pane.tabs.active && (await pane.settle()) && !this.docs.includes(doc)) return;
     if (await this.closeDoc(doc)) return;
     // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
     if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);

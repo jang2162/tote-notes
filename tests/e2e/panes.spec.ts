@@ -535,6 +535,114 @@ test("a composition in progress lands in its own pane before the focus moves", a
   expect(await page.evaluate(() => window.__tote.backend.memoText("b"))).toBe("둘째");
 });
 
+const twoCursors = {
+  kind: "memo",
+  memoId: "a",
+  selection: {
+    ranges: [
+      { anchor: 2, head: 2 },
+      { anchor: 5, head: 5 },
+    ],
+    main: 0,
+  },
+};
+
+/** Composes 가 at the main cursor of the first pane's editor, sends menu item `item`
+ * mid-composition, then ends the composition as the input method does once the editor loses the
+ * focus. `leftEarly`: the editor had let go of the tab before the composition ended — the end's
+ * events are then not sent, there being no text of the tab's to put them in. */
+function composeThenMenu(
+  page: Page,
+  item: string,
+): Promise<{ composing: boolean; leftEarly: boolean }> {
+  return page.evaluate(async (item) => {
+    const { app, backend } = window.__tote;
+    const view = app.panes[0].view;
+    const doc = app.panes[0].tabs.active;
+    const dom = view.contentDOM;
+    const tick = () => new Promise<void>((resolve) => setTimeout(resolve, 0));
+    const fire = (type: "beforeinput" | "input", inputType: string, data: string | null) =>
+      dom.dispatchEvent(new InputEvent(type, { bubbles: true, cancelable: true, inputType, data }));
+    const composition = (type: string, data: string) =>
+      dom.dispatchEvent(new CompositionEvent(type, { bubbles: true, data }));
+    const write = (from: number, to: number, text: string) => {
+      const at = view.domAtPos(from);
+      let node = at.node;
+      let offset = at.offset;
+      if (node.nodeType !== Node.TEXT_NODE) {
+        const before = node.childNodes[offset - 1];
+        node = before;
+        offset = before.nodeValue!.length;
+      }
+      const value = node.nodeValue!;
+      node.nodeValue = value.slice(0, offset) + text + value.slice(offset + (to - from));
+      document.getSelection()!.collapse(node, offset + text.length);
+    };
+    composition("compositionstart", "");
+    await tick();
+    const from = view.state.selection.main.from;
+    composition("compositionupdate", "가");
+    fire("beforeinput", "insertCompositionText", "가");
+    write(from, from, "가");
+    fire("input", "insertCompositionText", "가");
+    await tick();
+    const composing = view.composing;
+    backend.menu(item);
+    await tick();
+    const leftEarly = app.panes[0].tabs.active !== doc;
+    if (leftEarly) return { composing, leftEarly };
+    fire("beforeinput", "deleteCompositionText", null);
+    write(from, from + 1, "");
+    fire("input", "deleteCompositionText", null);
+    await tick();
+    fire("beforeinput", "insertFromComposition", "가");
+    write(from, from, "가");
+    fire("input", "insertFromComposition", "가");
+    await tick();
+    composition("compositionend", "가");
+    await tick();
+    return { composing, leftEarly };
+  }, item);
+}
+
+const twoLines = {
+  a: fakeMemo("가.md", "첫째\n둘째", { modifiedMs: 4 }),
+  b: fakeMemo("나.md", "다른 글", { modifiedMs: 3 }),
+};
+
+// Only the main cursor is composed; the others get the syllable as the composition ends
+// (src/editor/ime.ts). A tab left before that would be saved with the syllable at one cursor.
+test("a composition at several cursors lands at all of them before the next tab shows", async ({
+  page,
+}) => {
+  await start(page, { memos: twoLines, session: paneSession([[twoCursors, memoTab("b")]]) });
+  await expect(editor(page, 0)).toBeFocused();
+  await expect(page.locator(".cm-line")).toHaveText(["첫째", "둘째"]);
+  expect(await composeThenMenu(page, "next-tab")).toEqual({ composing: true, leftEarly: false });
+  await expect(activeTitle(page, 0)).toHaveText("나");
+  await expect(editor(page, 0)).toHaveText("다른 글");
+  await expect(editor(page, 0)).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("a")))
+    .toBe("첫째가\n둘째가");
+  expect(await page.evaluate(() => window.__tote.backend.memoText("b"))).toBe("다른 글");
+});
+
+test("a composition at several cursors lands at all of them before its tab closes", async ({
+  page,
+}) => {
+  await start(page, { memos: twoLines, session: paneSession([[twoCursors, memoTab("b")]]) });
+  await expect(editor(page, 0)).toBeFocused();
+  await expect(page.locator(".cm-line")).toHaveText(["첫째", "둘째"]);
+  expect(await composeThenMenu(page, "close-tab")).toEqual({ composing: true, leftEarly: false });
+  await expect(titles(page, 0)).toHaveText(["나"]);
+  await expect(editor(page, 0)).toHaveText("다른 글");
+  await expect(editor(page, 0)).toBeFocused();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("a")))
+    .toBe("첫째가\n둘째가");
+});
+
 test("⇧⌘\\ splits the focused pane downwards", async ({ page }) => {
   await start(page, {
     memos,
