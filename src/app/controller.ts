@@ -180,6 +180,16 @@ const sameTab = (a: TabRef, b: TabRef) =>
 const refOf = (tab: SessionTab): TabRef =>
   tab.kind === "memo" ? { kind: "memo", id: tab.memoId } : { kind: "external", path: tab.path };
 
+/** What a flush round is told about `count` tabs whose text is in no file; the native side's
+ * question shows it (`ask_blocked` in src-tauri/src/app/lifecycle.rs). */
+const unsavedMemos = (count: number) => `저장하지 못한 메모 ${count}개`;
+
+/** The tab's text is in no file until a flush writes it: typed since the last write, or kept by
+ * a save that failed. The 「내 버전」 of a conflict nobody answered is among the first: a memo's
+ * conflict is raised only over unsaved text (`MemoDoc.outsideModified`), which no save writes
+ * while it is open. */
+const heldInMemory = (doc: Doc) => doc.unwritten || doc.saveFailed;
+
 /** A pane this near the editing area's left or top edge (a fraction of it) is at that edge. */
 const EDGE = 1e-9;
 
@@ -1848,7 +1858,7 @@ export class AppController implements DocHost, PaneHost {
       // A syllable still being composed goes into its own tab before the tabs are written
       // (closing, quitting, switching the workspace).
       await this.settleCompositions();
-      await this.flushAll(true);
+      await this.writeForRound(id);
       // A tab still being adopted writes the session once it is placed: a window closing over it
       // would take it along. After the tabs are written, which do not wait on it: the round runs
       // out of time, and a window it closes then goes with what it has written.
@@ -1857,17 +1867,32 @@ export class AppController implements DocHost, PaneHost {
       // tabs are written would be lost with it. The editors take keys while the tabs are written:
       // what came in meanwhile is written too before the answer.
       if (goal !== "quit") this.leave();
-      if (this.docs.some((doc) => doc.unwritten)) await this.flushAll(true);
+      if (this.docs.some((doc) => doc.unwritten)) await this.writeForRound(id);
     } finally {
       const failed = this.docs.filter((doc) => doc.saveFailed).length;
-      const leaving = await this.backend.flushDone(
-        id,
-        failed ? `저장하지 못한 메모 ${failed}개` : undefined,
-      );
+      const leaving = await this.backend.flushDone(id, failed ? unsavedMemos(failed) : undefined);
       // The round was settled at its timeout, before this answer, and the window stays: no
       // `tote://stay` comes after it.
       if (!leaving && goal !== "quit") this.stay();
     }
+  }
+
+  /** Writes the tabs for flush round `id`, telling the native side first what is only in memory
+   * until they are written. A write to a volume that stopped answering never ends, and no answer
+   * comes: the round runs out of time, and it must ask before it goes over this text rather than
+   * take the silence for nothing to write. Taken back once the tabs are written. */
+  private async writeForRound(id: number): Promise<void> {
+    const unwritten = this.docs.filter(heldInMemory).length;
+    // Not waited for: the writes start at once.
+    const told = unwritten
+      ? this.backend
+          .flushWriting(id, unsavedMemos(unwritten))
+          .catch((error: unknown) => this.report(error))
+      : null;
+    await this.flushAll(true);
+    if (!told) return;
+    await told;
+    await this.backend.flushWriting(id).catch((error: unknown) => this.report(error));
   }
 
   /** The window wrote its tabs to close or to switch its workspace (`onFlush`): every pane lets go
