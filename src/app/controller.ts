@@ -2139,18 +2139,44 @@ export class AppController implements DocHost, PaneHost {
   }
 
   private async importActive(): Promise<void> {
-    const pane = this.focused;
-    const doc = pane.tabs.active;
-    if (!(doc instanceof ExternalDoc)) return;
-    pane.capture(doc);
-    const memo = await importExternal(doc, this);
-    pane.tabs.replace(doc, memo);
-    this.release(doc);
-    this.hold(memo);
-    this.dropHighlight(doc);
+    await settleComposition(this.focused.view);
+    const doc = this.focused.tabs.active;
+    // On its way already (the menu picked twice): another import would make a second memo.
+    if (!(doc instanceof ExternalDoc) || doc.leaving) return;
+    // The editor lets go of the tab while its text is copied, as it does of one torn off: the memo
+    // counts the text it takes over as saved, so a key typed meanwhile would never be written.
+    const from = this.paneOf(doc);
+    doc.leaving = true;
+    from.capture(doc);
+    from.surface.showNothing();
+    let memo: MemoDoc;
+    try {
+      memo = await importExternal(doc, this, (memo) => {
+        // Closed while it was copied: the memo is in the list, and no tab is left for it.
+        if (!this.docs.includes(doc)) return;
+        this.paneOf(doc).tabs.replace(doc, memo);
+        this.release(doc);
+        this.hold(memo);
+        this.dropHighlight(doc);
+        this.coloured.delete(doc.tabId);
+      });
+    } catch (error) {
+      // The tab stays: it is shown again where it is now, if it is the active tab there.
+      doc.leaving = false;
+      const pane = this.paneOf(doc);
+      if (this.docs.includes(doc) && doc === pane.tabs.active) {
+        pane.show(doc);
+        if (pane === this.focused) pane.takeKeys();
+      }
+      throw error;
+    }
     this.memoList.upsert(memo.info);
-    pane.tabs.active = null;
-    await pane.activate(memo);
+    if (!this.docs.includes(memo)) return;
+    const pane = this.paneOf(memo);
+    if (pane.tabs.active === doc) {
+      pane.tabs.active = null;
+      await pane.activate(memo);
+    } else pane.renderTabs();
     if (memo.error) this.report(memo.error);
     else this.statusBar.setMessage("워크스페이스로 가져왔습니다");
   }

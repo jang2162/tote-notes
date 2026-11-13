@@ -1246,8 +1246,17 @@ function sameBytes(a: Uint8Array, b: Uint8Array): boolean {
 }
 
 /** 「워크스페이스로 가져오기」 (spec 「가져오기」): copies the external file — with its unsaved edits —
- * into the workspace and returns the memo that takes over its tab. The original is left as it is. */
-export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<MemoDoc> {
+ * into the workspace and returns the memo that takes over its tab. The original is left as it is.
+ * The memo takes the text as it was sent, which is what its file holds: the caller keeps the keys
+ * off the tab meanwhile, and what the tab came to hold all the same is not carried over. `place`
+ * puts the memo where the tab is, before it takes the text. */
+export async function importExternal(
+  ext: ExternalDoc,
+  host: DocHost,
+  place: (memo: MemoDoc) => void = () => {},
+): Promise<MemoDoc> {
+  const sent = ext.state;
+  const format = ext.lineFormat;
   const bytes = ext.currentBytes();
   const info = bytes
     ? await host.backend.importMemo(ext.fileName, bytes)
@@ -1257,7 +1266,6 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
   const memo = new MemoDoc(host, info);
   memo.scrollAnchor = ext.scrollAnchor;
   memo.mode = ext.mode;
-  if (ext.state) memo.adopt(ext.state, ext.lineFormat);
   // A language picked for the file stays with the text; as a memo it is kept the memo way. The
   // import has happened by then, so a failure here leaves it standing: `memo.error` says why,
   // for the caller to show once the memo has the tab (another import would make a second memo).
@@ -1269,5 +1277,8 @@ export async function importExternal(ext: ExternalDoc, host: DocHost): Promise<M
       memo.error = error;
     }
   }
+  // Last, with nothing to wait for after it: the tab is the memo's from here.
+  place(memo);
+  if (sent) memo.adopt(sent, format);
   return memo;
 }
