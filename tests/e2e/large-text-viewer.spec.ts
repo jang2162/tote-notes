@@ -230,3 +230,36 @@ test("pages read long ago are let go of and read again when scrolled back to", a
     2,
   );
 });
+
+/** Shows the middle of each of `pages` in turn, waiting for it to be drawn: each visit uses that
+ * page alone (a screen and its margin are well inside 1,000 lines). */
+function visitPages(page: Page, pages: number[]): Promise<void> {
+  return page.evaluate(async (pages) => {
+    for (const index of pages) {
+      const line = index * 1000 + 500;
+      window.largeTextViewer.goToLine(line);
+      while (!document.querySelector(`.large-text-line.current[data-line="${line}"]`))
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }, pages);
+}
+
+const readsOf = (page: Page, index: number) =>
+  page.evaluate(
+    (start) => window.fetchLog.filter(([first]) => first === start).length,
+    index * 1000 * 11,
+  );
+
+// The page let go of is the one used longest ago, not the one read first: a page come back to is
+// kept over pages read since and not looked at again.
+test("a page looked at again outlasts pages read after it", async ({ page }) => {
+  await open(page);
+  // As many pages as are kept, then the first one again.
+  await visitPages(page, [...Array.from({ length: 64 }, (_, index) => index), 0]);
+  expect(await readsOf(page, 0)).toBe(1);
+  // One more page than is kept: one goes — page 1, read after page 0 but not used since.
+  await visitPages(page, [64, 0]);
+  expect(await readsOf(page, 0)).toBe(1);
+  await visitPages(page, [1]);
+  expect(await readsOf(page, 1)).toBe(2);
+});
