@@ -26,7 +26,7 @@ test("a failing save marks the tab and keeps the text", async ({ page }) => {
   await expect(tab.getByRole("tab")).toHaveAttribute("title", new RegExp(WRITE_FAILED));
   await expect(tab.getByRole("tab")).toHaveAccessibleDescription(new RegExp(WRITE_FAILED));
   const message = page.locator(".status-message");
-  await expect(message).toHaveText(`파일을 읽거나 쓰지 못했습니다: ${WRITE_FAILED}`);
+  await expect(message).toHaveText(`작업을 마치지 못했습니다: ${WRITE_FAILED}`);
   await expect(message).toHaveClass(/error/);
   await expect(page.locator(".cm-content")).toHaveText("우유 계란");
   expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("우유");

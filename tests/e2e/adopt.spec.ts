@@ -59,7 +59,7 @@ async function restoreHeld(page: Page, seed: Partial<FakeData>): Promise<() => P
  * brings about. Returns what lets the restore go on. */
 async function holdRestore(page: Page): Promise<() => Promise<void>> {
   await expect(page.locator(".status-message")).toHaveText(
-    `파일을 읽거나 쓰지 못했습니다: ${LISTING_FAILED}`,
+    `작업을 마치지 못했습니다: ${LISTING_FAILED}`,
   );
   const release = await holdLayoutRead(page);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));

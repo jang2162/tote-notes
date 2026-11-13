@@ -23,7 +23,7 @@ test("a failed memo listing at start keeps the session file as it was", async ({
     failListMemos: 1,
   });
   const message = page.locator(".status-message");
-  await expect(message).toHaveText(`파일을 읽거나 쓰지 못했습니다: ${LISTING_FAILED}`);
+  await expect(message).toHaveText(`작업을 마치지 못했습니다: ${LISTING_FAILED}`);
   await expect(message).toHaveClass(/error/);
   // A flush (window close, quit) and hiding the window are what write the session.
   await page.evaluate(() => window.__tote.backend.requestFlush(1));

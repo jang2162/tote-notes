@@ -15,9 +15,11 @@ export const ERROR_TEXT: Partial<Record<BackendErrorCode, string>> = {
 };
 
 /** Codes whose message is the only word on the cause (a full disk, a refused permission): the
- * sentence says what failed and the message follows it, as the system worded it. */
+ * sentence leads and the message follows it, as the system worded it. `io` is the native side's
+ * code for everything it has no other for (`io_code` in src-tauri/src/app/commands.rs) — a tab
+ * another window would not take as much as a write that failed — so its sentence names no file. */
 export const ERROR_LEAD: Partial<Record<BackendErrorCode, string>> = {
-  io: "파일을 읽거나 쓰지 못했습니다",
+  io: "작업을 마치지 못했습니다",
 };
 
 export function describeError(err: unknown): string {

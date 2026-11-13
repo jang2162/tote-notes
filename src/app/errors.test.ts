@@ -12,10 +12,10 @@ describe("describeError", () => {
     expect(describeError("plain")).toBe("오류: plain");
   });
 
-  it("says a failed read or write in Korean and keeps the system's own words after it", () => {
+  it("leads an io failure in Korean and keeps the system's own words after it", () => {
     const full = new BackendError("io", "No space left on device (os error 28)");
     expect(describeError(full)).toBe(
-      "파일을 읽거나 쓰지 못했습니다: No space left on device (os error 28)",
+      "작업을 마치지 못했습니다: No space left on device (os error 28)",
     );
   });
 
