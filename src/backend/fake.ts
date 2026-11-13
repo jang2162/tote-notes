@@ -126,6 +126,10 @@ export interface FakeData {
   /** `writeWindowLayout` calls per window label — lets tests wait for a window's layout to land. */
   layoutWrites: Record<string, number>;
   flushed: { id: number; blocked?: string }[];
+  /** What the page said it holds only in memory as it wrote its tabs for a round
+   * (`flushWriting`), in order; `unwritten` is absent where it took that back. Absent until the
+   * first. */
+  flushWriting?: { id: number; unwritten?: string }[];
   windowClosed: boolean;
   settings: Settings;
   /** Extensions the fake "installed"; they contribute a row in the list, and the themes their
@@ -450,6 +454,9 @@ function searchPattern(query: TextQuery, flags: string): RegExp {
   }
 }
 
+/** `FLUSH_TIMEOUT` in src-tauri/src/app/lifecycle.rs. */
+const FLUSH_TIMEOUT_MS = 3000;
+
 // The limits of src-tauri/src/search/mod.rs.
 const SEARCH_MAX_FILE_BYTES = 5 * 1024 * 1024;
 const SEARCH_MAX_MATCHES = 2000;
@@ -498,6 +505,12 @@ export class FakeBackend implements Backend {
   /** The fake's own flush rounds (`switchWorkspace`), waiting on this window's answer. */
   private readonly flushWaiters = new Map<number, (blocked: string | undefined) => void>();
   private flushRounds = 0;
+  /** What the page said it still holds as it writes for one of the fake's own rounds
+   * (`flushWriting`), by round. */
+  private readonly flushUnwritten = new Map<number, string>();
+  /** The fake's own rounds that ran out of time: a late answer is told its round is over and the
+   * window stays (`flushDone`). */
+  private readonly flushExpired = new Set<number>();
   /** The window the page stands for. */
   private readonly label: string;
   /** Set as a switch reloads the page, as the native side marks the window (`page_started` in
@@ -1287,16 +1300,28 @@ export class FakeBackend implements Backend {
       throw new BackendError("bad-request", `${this.label} is switching workspaces`);
   }
 
-  /** Asks this window to write everything (`onFlush`) and waits for its answer. */
+  /** Asks this window to write everything (`onFlush`) and waits for its answer. As the native
+   * side's round (`FlushCoordinator::expire` in src-tauri/src/app/flush.rs), one that runs out of
+   * time on a window still writing ends with what the window said it holds, as a reason to ask.
+   * A window that said nothing is waited for without end, which the native side does not do. */
   private flushThisWindow(goal: FlushGoal = "switch"): Promise<string | undefined> {
     // Apart from the ids tests hand `requestFlush`.
     const id = 1_000_000 + ++this.flushRounds;
     const answered = new Promise<string | undefined>((resolve) =>
       this.flushWaiters.set(id, resolve),
     );
+    const timeout = setTimeout(() => {
+      const unwritten = this.flushUnwritten.get(id);
+      if (unwritten === undefined) return;
+      this.flushExpired.add(id);
+      this.flushWaiters.get(id)?.(unwritten);
+      this.flushWaiters.delete(id);
+    }, FLUSH_TIMEOUT_MS);
     this.roundOpen = true;
     this.requestFlush(id, goal);
     return answered.finally(() => {
+      clearTimeout(timeout);
+      this.flushUnwritten.delete(id);
       this.roundOpen = false;
     });
   }
@@ -1417,12 +1442,20 @@ export class FakeBackend implements Backend {
     };
   }
 
+  async flushWriting(id: number, unwritten?: string) {
+    (this.data.flushWriting ??= []).push(unwritten === undefined ? { id } : { id, unwritten });
+    this.commit();
+    if (!this.flushWaiters.has(id)) return;
+    if (unwritten === undefined) this.flushUnwritten.delete(id);
+    else this.flushUnwritten.set(id, unwritten);
+  }
+
   async flushDone(id: number, blocked?: string) {
     this.data.flushed.push(blocked === undefined ? { id } : { id, blocked });
     this.commit();
     this.flushWaiters.get(id)?.(blocked);
     this.flushWaiters.delete(id);
-    return !this.staleFlush;
+    return !(this.staleFlush || this.flushExpired.delete(id));
   }
 
   async closeWindow() {

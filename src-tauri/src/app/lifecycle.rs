@@ -1,7 +1,7 @@
 //! Closing a window, switching its workspace and quitting: the affected windows write their
 //! edits first, then the window or tote goes. Writing on close and quit is what bounds the loss
-//! when a hidden window's timers stall (spec 「저장」). A save that keeps failing is the one thing
-//! that asks first (spec 「오류 처리」).
+//! when a hidden window's timers stall (spec 「저장」). A save that keeps failing and one that has
+//! not ended when the round runs out of time are the two things that ask first (spec 「오류 처리」).
 
 use std::path::Path;
 use std::time::Duration;
@@ -14,7 +14,8 @@ use super::flush::{Ack, Begin, FlushGoal};
 use super::{update, windows, AppCore, PendingOpen, RestartBusy, SwitchError};
 
 /// Long enough to write any memo to a local disk; short enough that a hung page cannot keep tote
-/// from closing.
+/// from closing. A window still writing when it runs out is asked about, not closed over
+/// (`FlushCoordinator::expire`).
 const FLUSH_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// What the end of a round or the answer to its question calls for, in order. Kept apart from

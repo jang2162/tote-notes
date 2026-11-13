@@ -2,7 +2,12 @@
 //! affected windows to write their edits (`tote://flush`) and waits until each answers
 //! (`flush_done`) — or until a timeout, so a hung page never keeps tote from closing. A window
 //! that could not write everything says why in its answer, and the round ends with a question
-//! instead of the goal (spec 「오류 처리」: a failed save is the one thing that holds up a quit).
+//! instead of the goal. So does a round that times out on a window still writing: the page says
+//! what is only in memory before it writes (`flush_writing`), and a write that never ends — a
+//! volume that stopped answering — is text that going now would lose. A save that failed and one
+//! that has not ended are the two things that hold up a quit (spec 「오류 처리」). A window that
+//! said nothing by the timeout counts as having nothing to write: macOS all but stops the page of
+//! a hidden window, and it must not hold up every quit.
 //!
 //! Closing a window and switching its workspace are window rounds: one window writes, and a
 //! window runs one window round at a time. A quit never runs beside a window round: a quit that
@@ -78,8 +83,9 @@ pub enum Ack {
     Done(FlushGoal),
     /// The window round a quit joined wrote everything: carry it out, then start the quit.
     DoneThenQuit(FlushGoal),
-    /// Some window could not write everything: ask before carrying the goal out. The round stays
-    /// until `cancel`, so a second ⌘Q while the question is open starts nothing.
+    /// Some window could not write everything, or was still writing at the timeout: ask before
+    /// carrying the goal out. The round stays until `cancel`, so a second ⌘Q while the question
+    /// is open starts nothing.
     Blocked {
         goal: FlushGoal,
         reasons: Vec<String>,
@@ -95,7 +101,11 @@ pub struct FlushCoordinator {
 struct Round {
     goal: FlushGoal,
     waiting: BTreeSet<String>,
-    /// Why windows that answered could not write everything.
+    /// What each window still to answer said it holds only in memory until its tabs are written
+    /// (`writing`).
+    writing: BTreeMap<String, String>,
+    /// Why windows that answered could not write everything, and at the timeout what the ones
+    /// still writing had left.
     reasons: Vec<String>,
     /// Ended as `Ack::Blocked`; the question is open.
     asking: bool,
@@ -141,6 +151,7 @@ impl FlushCoordinator {
         let round = Round {
             goal,
             waiting: windows.iter().cloned().collect(),
+            writing: BTreeMap::new(),
             reasons: Vec::new(),
             asking: false,
             quit_waiting: false,
@@ -159,6 +170,7 @@ impl FlushCoordinator {
         }
         // A second answer from the same window adds nothing.
         if round.waiting.remove(window) {
+            round.writing.remove(window);
             round.reasons.extend(blocked);
         }
         if round.waiting.is_empty() {
@@ -168,11 +180,33 @@ impl FlushCoordinator {
         }
     }
 
-    /// Round `id` ran out of time. A hung window does not hold up the goal, but a reason already
-    /// given still does: the failed save is there whether or not the other windows answered.
+    /// `window` writes its tabs for round `id` (`flush_writing`): `unwritten` says what is only in
+    /// memory until it answers, `None` that all of it is written by now. Counts only while the
+    /// round waits on the window.
+    pub fn writing(&mut self, id: u64, window: &str, unwritten: Option<String>) {
+        let Some(round) = self.rounds.get_mut(&id) else {
+            return;
+        };
+        if !round.waiting.contains(window) {
+            return;
+        }
+        match unwritten {
+            Some(unwritten) => round.writing.insert(window.to_string(), unwritten),
+            None => round.writing.remove(window),
+        };
+    }
+
+    /// Round `id` ran out of time. A window that said nothing does not hold up the goal: its page
+    /// hangs, or is the all-but-stopped one of a hidden window. A reason already given still
+    /// does — the failed save is there whether or not the other windows answered — and so does a
+    /// window still writing: its write may never end, and its text is only in memory.
     pub fn expire(&mut self, id: u64) -> Ack {
-        match self.rounds.get(&id) {
-            Some(round) if !round.asking => self.end(id),
+        match self.rounds.get_mut(&id) {
+            Some(round) if !round.asking => {
+                let writing = std::mem::take(&mut round.writing);
+                round.reasons.extend(writing.into_values());
+                self.end(id)
+            }
             _ => Ack::Pending,
         }
     }
@@ -186,6 +220,7 @@ impl FlushCoordinator {
             .filter(|(_, round)| !round.asking)
             .filter_map(|(id, round)| {
                 round.waiting.remove(window);
+                round.writing.remove(window);
                 round.waiting.is_empty().then_some(*id)
             })
             .collect();
@@ -712,5 +747,125 @@ mod tests {
         // The open question is not asked again by the window that hung going away.
         assert_eq!(f.window_gone("hung"), vec![]);
         assert_eq!(f.expire(id), Ack::Pending);
+    }
+
+    const ONE_UNWRITTEN: &str = "저장하지 못한 메모 1개";
+
+    #[test]
+    fn a_window_still_writing_at_the_timeout_asks() {
+        for goal in [
+            FlushGoal::Quit,
+            FlushGoal::Restart,
+            FlushGoal::CloseWindow("a".into()),
+            switch("a"),
+        ] {
+            let mut f = FlushCoordinator::default();
+            let Begin::Started { id, .. } = f.begin(goal.clone(), labels(&["a"])) else {
+                panic!("expected a round")
+            };
+            f.writing(id, "a", Some(ONE_UNWRITTEN.into()));
+            assert_eq!(
+                f.expire(id),
+                Ack::Blocked {
+                    goal: goal.clone(),
+                    reasons: vec![ONE_UNWRITTEN.into()],
+                },
+                "{goal:?}"
+            );
+            // The question is open: the write ending now does not carry the goal out.
+            assert_eq!(f.ack(id, "a", None), Ack::Pending, "{goal:?}");
+            assert_eq!(f.expire(id), Ack::Pending, "{goal:?}");
+            assert!(!f.is_idle(), "{goal:?}");
+        }
+    }
+
+    #[test]
+    fn a_window_that_wrote_what_it_said_times_out_as_one_that_said_nothing() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::CloseWindow("a".into()), labels(&["a"]))
+        else {
+            panic!("expected a round")
+        };
+        f.writing(id, "a", Some(ONE_UNWRITTEN.into()));
+        // Its tabs are written; what it still waits on (a tab being handed to it) holds no text.
+        f.writing(id, "a", None);
+        assert_eq!(f.expire(id), Ack::Done(FlushGoal::CloseWindow("a".into())));
+    }
+
+    #[test]
+    fn a_window_that_answers_is_no_longer_writing() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Quit, labels(&["a", "hung"])) else {
+            panic!("expected a round")
+        };
+        f.writing(id, "a", Some(ONE_UNWRITTEN.into()));
+        assert_eq!(f.ack(id, "a", None), Ack::Pending);
+        // Said after its answer (the two crossed): the answer stands.
+        f.writing(id, "a", Some(ONE_UNWRITTEN.into()));
+        assert_eq!(f.expire(id), Ack::Done(FlushGoal::Quit));
+    }
+
+    #[test]
+    fn a_closed_window_is_no_longer_writing() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Quit, labels(&["a", "b"])) else {
+            panic!("expected a round")
+        };
+        f.writing(id, "b", Some(ONE_UNWRITTEN.into()));
+        assert_eq!(f.window_gone("b"), vec![]);
+        assert_eq!(f.expire(id), Ack::Done(FlushGoal::Quit));
+    }
+
+    #[test]
+    fn the_timeout_asks_for_failed_saves_and_unfinished_writes_together() {
+        let mut f = FlushCoordinator::default();
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Quit, labels(&["a", "b", "c", "hung"]))
+        else {
+            panic!("expected a round")
+        };
+        f.writing(id, "c", Some("저장하지 못한 메모 3개".into()));
+        f.writing(id, "b", Some("저장하지 못한 메모 2개".into()));
+        assert_eq!(f.ack(id, "a", Some(ONE_FAILED.into())), Ack::Pending);
+        // Answers first, then the windows still writing by label; the one that said nothing adds
+        // nothing.
+        assert_eq!(
+            f.expire(id),
+            Ack::Blocked {
+                goal: FlushGoal::Quit,
+                reasons: vec![
+                    ONE_FAILED.into(),
+                    "저장하지 못한 메모 2개".into(),
+                    "저장하지 못한 메모 3개".into(),
+                ],
+            }
+        );
+    }
+
+    #[test]
+    fn what_a_window_writes_counts_only_for_its_open_round() {
+        let mut f = FlushCoordinator::default();
+        // No such round, and no such window in the round.
+        f.writing(7, "a", Some(ONE_UNWRITTEN.into()));
+        let Begin::Started { id, .. } = f.begin(FlushGoal::Quit, labels(&["a"])) else {
+            panic!("expected a round")
+        };
+        f.writing(id, "b", Some(ONE_UNWRITTEN.into()));
+        assert_eq!(f.expire(id), Ack::Done(FlushGoal::Quit));
+    }
+
+    #[test]
+    fn a_close_still_writing_at_the_timeout_asks_for_the_quit_too() {
+        let mut f = FlushCoordinator::default();
+        let id = writing_close_with_a_quit(&mut f);
+        f.writing(id, "a", Some(ONE_UNWRITTEN.into()));
+        assert_eq!(
+            f.expire(id),
+            Ack::Blocked {
+                goal: FlushGoal::CloseWindow("a".into()),
+                reasons: vec![ONE_UNWRITTEN.into()],
+            }
+        );
+        // One question answers both.
+        assert!(f.cancel(id));
     }
 }

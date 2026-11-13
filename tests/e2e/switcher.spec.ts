@@ -526,6 +526,45 @@ test("a switch the person cancels gives the editor back", async ({ page }) => {
   await expect(page.locator(".cm-content")).toHaveText("안건 셋!");
 });
 
+// A write to a volume that stopped answering does not end, and the round runs out of time
+// (`FLUSH_TIMEOUT` in src-tauri/src/app/lifecycle.rs) without the window's answer. The page said
+// what it still holds, so the native side asks instead of switching over it
+// (`a_window_still_writing_at_the_timeout_asks`, flush.rs); the fake takes 「취소」.
+test("a switch whose write does not end is not carried out when its round times out", async ({
+  page,
+}) => {
+  await page.clock.install();
+  await open(page);
+  await expect(page.locator(".cm-content")).toHaveText("안건");
+  // The round's timeout waits for the test clock.
+  await page.clock.pauseAt(Date.now() + 60_000);
+  await page.evaluate(() => {
+    const { app, backend } = window.__tote;
+    const held = new Promise<void>((resolve) => Object.assign(window, { releaseWrites: resolve }));
+    const writeMemo = backend.writeMemo.bind(backend);
+    backend.writeMemo = async (id, bytes) => {
+      await held;
+      return writeMemo(id, bytes);
+    };
+    app.view.dispatch({ changes: { from: 2, insert: " 셋" }, userEvent: "input.type" });
+  });
+  await pickWorkspace(page, "개인");
+  const said = () => page.evaluate(() => window.__tote.backend.data.flushWriting ?? []);
+  await expect.poll(said).toEqual([{ id: 1_000_001, unwritten: "저장하지 못한 메모 1개" }]);
+  await page.clock.runFor(3000);
+  // Cancelled, and the window never let go of its tab.
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  // The write ends after all. The page lets go of its tab and answers; the round is over and the
+  // window stays, so it takes the tab back.
+  await page.evaluate(() => (window as unknown as { releaseWrites(): void }).releaseWrites());
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.flushed.map((each) => each.id)))
+    .toEqual([1_000_001]);
+  await expect(page).toHaveTitle("업무");
+  await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
+  expect(await page.evaluate(() => window.__tote.backend.memoText("m"))).toBe("안건 셋");
+});
+
 test("a memo opened while the window leaves shows nothing", async ({ page }) => {
   await open(page);
   const release = await hold(page, "switchGate");
