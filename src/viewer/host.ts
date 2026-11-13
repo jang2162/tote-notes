@@ -16,7 +16,8 @@ const MAX_LANG_LENGTH = 64;
 export interface PreviewRequests {
   /** Flip the `index`-th task's box of `drawn`, the text the viewer was last given. */
   toggleTask(index: number, drawn: string): void;
-  highlight(blocks: CodeBlock[]): Promise<CodeColors[]>;
+  /** `stale` turns true once the viewer has been given another text: the colours are not wanted. */
+  highlight(blocks: CodeBlock[], stale: () => boolean): Promise<CodeColors[]>;
   openLink(href: string): void;
 }
 
@@ -128,7 +129,7 @@ export class ViewerHost {
         const blocks = codeBlocks(message.blocks);
         if (!blocks) return;
         void preview
-          .highlight(blocks)
+          .highlight(blocks, () => version !== this.version || this.failed)
           .catch((error: unknown) => {
             console.warn("preview code colours", error);
             return [];

@@ -165,3 +165,14 @@ test("the Markdown viewer asks for a task's box by its number, and not at all fo
   await expect.poll(() => previewCalls(page)).toEqual([["openLink", "https://example.com/"]]);
   await expect(boxes.nth(0)).not.toBeChecked();
 });
+
+test("the Markdown viewer takes messages from its host alone", async ({ page }) => {
+  await page.goto(`/tests/e2e/pages/viewer.html?preview=1&viewer=${MARKDOWN_VIEWER}`);
+  await expect(frame(page).locator("li")).toHaveText("a");
+  await page.evaluate(() => window.forge());
+  await expect(page.locator("body")).toHaveAttribute("data-forged", "sent");
+  // The host's own message after it: drawn means the forged one, sent before, was seen first.
+  await page.evaluate(() => window.viewerHost.update("# 진짜"));
+  await expect(frame(page).locator("h1")).toHaveText("진짜");
+  await expect(frame(page).locator("body")).not.toHaveCSS("background-color", "rgb(9, 9, 9)");
+});

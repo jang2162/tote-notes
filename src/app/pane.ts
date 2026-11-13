@@ -491,7 +491,8 @@ export class Pane {
     const onShow = () => this.panel === panel() && this.tabs.active === doc;
     return {
       toggleTask: (index, drawn) => void this.toggleTask(doc, index, drawn, onShow),
-      highlight: (blocks) => colorCode(this.host.highlight, this.host.registry, blocks),
+      highlight: (blocks, stale) =>
+        colorCode(this.host.highlight, this.host.registry, blocks, stale),
       openLink: (href) => void this.openLink(doc, href, onShow),
     };
   }

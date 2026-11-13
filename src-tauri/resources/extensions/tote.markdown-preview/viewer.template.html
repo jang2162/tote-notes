@@ -294,6 +294,9 @@
       }
 
       addEventListener("message", (event) => {
+        // Only the host speaks: another frame of the page could otherwise draw a text of its own,
+        // whose n-th box the host would then flip in the real one.
+        if (event.source !== parent) return;
         const data = event.data;
         if (!data || typeof data !== "object") return;
         if (data.type === "init") {

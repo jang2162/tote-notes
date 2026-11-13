@@ -1,7 +1,7 @@
-import { marked } from "marked";
+import { Marked, marked } from "marked";
 import { describe, expect, it } from "vitest";
 
-import { boxMark, taskLines, toggleTask } from "./tasks";
+import { taskLines, toggleTask } from "./tasks";
 
 /** How many checkboxes `marked` draws for `text`: what the viewer numbers. */
 function drawn(text: string): number {
@@ -172,26 +172,172 @@ describe("toggleTask", () => {
   });
 });
 
-describe("boxMark", () => {
-  it("finds the box at a list item's head, after quote marks, bullets and spaces", () => {
-    expect(boxMark("- [ ] 하나")).toBe(3);
-    expect(boxMark("  * [x] 둘")).toBe(5);
-    expect(boxMark("> 12. [X] 셋")).toBe(7);
-    expect(boxMark(">> - - [ ] 넷")).toBe(8);
-    expect(boxMark("1)\t[ ] 탭")).toBe(4);
+/** The boxes the preview draws for `text`, in order, `X` checked and `O` not: marked's own
+ * renderer, as the viewer calls it — apart from the token walk `toggleTask` counts with. */
+const renderer = new Marked({
+  renderer: {
+    checkbox: ({ checked }) => (checked ? "\uE000X" : "\uE000O"),
+  },
+});
+function boxes(text: string): string {
+  const html = renderer.parse(text, { async: false, gfm: true });
+  return [...html.matchAll(/\uE000([XO])/g)].map((m) => m[1]).join("");
+}
+
+/** The text after pressing box `index`; null when the press was turned away. */
+function pressed(text: string, index: number): string | null {
+  const change = toggleTask(text, index);
+  return change ? text.slice(0, change.from) + change.insert + text.slice(change.to) : null;
+}
+
+/** The boxes of `before` with box `index` flipped: what pressing it must draw, and nothing else. */
+function flipped(before: string, index: number): string {
+  const states = [...before];
+  states[index] = states[index] === "X" ? "O" : "X";
+  return states.join("");
+}
+
+describe("a press changes the box pressed or nothing", () => {
+  // Marked's tokens do not always add up to the text: a quote split by a line without `>` gains a
+  // line end in its raw, a definition in a quote loses one. Counting lines by them goes wrong there.
+  it("in a quote whose items go on in lines without `>`", () => {
+    const text = [
+      "> - [ ] 우유",
+      "저녁 전에",
+      "> - [ ] 빵",
+      "아침용",
+      "- [ ] 청소",
+      "- [ ] 빨래",
+      "- [ ] 설거지",
+    ].join("\n");
+    const before = boxes(text);
+    for (let i = 0; i < before.length; i++) {
+      const after = pressed(text, i);
+      if (after !== null) expect(boxes(after), `box ${i}`).toBe(flipped(before, i));
+    }
+    expect(boxes(pressed(text, 2) ?? text)).toBe(flipped(before, 2));
   });
 
-  it("turns a line away that does not start as a task does: the count went wrong", () => {
-    for (const line of [
-      "문단 [ ] 아님",
-      "-[ ] 붙음",
-      "- [ ]붙음",
-      "- [] 빈",
-      "```",
-      "",
-      "- [y] 다른",
-    ]) {
-      expect(boxMark(line), line).toBeNull();
+  it("after a definition in a quote", () => {
+    const text = "> [q]: /q\nlazy\n> - [x] a\n> - [ ] b";
+    expect(boxes(text)).toBe("XO");
+    expect(pressed(text, 1)).toBe("> [q]: /q\nlazy\n> - [x] a\n> - [x] b");
+    expect(pressed(text, 0)).toBe("> [q]: /q\nlazy\n> - [ ] a\n> - [ ] b");
+  });
+
+  it("never on a paragraph line that only looks like a box", () => {
+    const text = [
+      "> - [ ] quoted",
+      "  continuation",
+      "> - [ ] quoted",
+      "  continuation",
+      "- [ ] a",
+      "-   [ ] wide",
+      "[ ] bare",
+    ].join("\n");
+    const before = boxes(text);
+    for (let i = 0; i < before.length; i++) {
+      const after = pressed(text, i);
+      if (after !== null) expect(boxes(after), `box ${i}`).toBe(flipped(before, i));
+      expect(after ?? "", `box ${i}`).not.toContain("[x] bare");
     }
   });
+});
+
+/** A small generator with a fixed seed: the same documents every run. */
+function random(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+}
+
+const PIECES = [
+  "- [ ] a",
+  "- [x] b",
+  "* [X] c",
+  "+ [ ] d",
+  "1. [ ] e",
+  "2) [x] f",
+  "  - [ ] nested",
+  "    - [x] deeper",
+  "      - [ ] deepest",
+  "    - [ ] deep or code",
+  "-   [ ] wide",
+  "- [ ]",
+  "- [] not",
+  "- [ ]no space",
+  "[ ] bare",
+  "text with [ ] inside",
+  "> - [ ] quoted",
+  "> - [x] quoted done",
+  "> > - [ ] twice quoted",
+  "> text",
+  ">",
+  "> [q]: /q",
+  "[r]: /r",
+  "lazy line",
+  "  continuation",
+  "",
+  "",
+  "```",
+  "```md",
+  "~~~",
+  "- [ ] in fence?",
+  "    indented code",
+  "# heading",
+  "heading",
+  "===",
+  "---",
+  "| a | b |",
+  "| - | - |",
+  "| [ ] | [x] |",
+  "<div>",
+  "</div>",
+  '<input type="checkbox" checked>',
+  "<!-- - [ ] comment -->",
+  "- item",
+  "  - [ ] under item",
+  "1. one",
+  "   - [x] under one",
+  "> - item",
+  ">   - [ ] under quoted item",
+  "- > - [ ] quote in item",
+  "- - [ ] list in item",
+  "\t- [ ] tab",
+  "- [ ] *em* **strong** `code`",
+  "- [x] [link](a.md)",
+];
+
+describe("pressing every box of many generated documents", () => {
+  it("changes the box pressed and no other, or changes nothing", () => {
+    const next = random(20261114);
+    let presses = 0;
+    let refused = 0;
+    for (let doc = 0; doc < 3000; doc++) {
+      const lines = Array.from(
+        { length: 2 + Math.floor(next() * 12) },
+        () => PIECES[Math.floor(next() * PIECES.length)],
+      );
+      const text = lines.join(next() < 0.1 ? "\r\n" : "\n");
+      const before = boxes(text);
+      for (let i = 0; i < before.length; i++) {
+        presses++;
+        const after = pressed(text, i);
+        if (after === null) {
+          refused++;
+          continue;
+        }
+        expect(boxes(after), JSON.stringify({ text, i })).toBe(flipped(before, i));
+        expect(after.length).toBe(text.length);
+      }
+    }
+    expect(presses).toBeGreaterThan(1000);
+    // Turning a press away is the safe failure, not the usual answer.
+    expect(refused).toBeLessThan(presses / 100);
+    if (process.env.TASKS_FUZZ_REPORT) console.log({ presses, refused });
+    // Synchronous: a time-out here measures the machine, not the presses (docs/guides/development.md
+    // 「부하에서만 실패하는 테스트는 …」).
+  }, 60_000);
 });

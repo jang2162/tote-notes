@@ -1,9 +1,11 @@
-import { Lexer, type Token } from "marked";
+import { Lexer, marked, type Token } from "marked";
 
-/** A list item's own box at the head of its line, after any quote marks, bullets and spaces —
- * what a line has to look like before its box is changed. */
-const TASK_LINE = /^(?:[ \t]*(?:>|(?:[-*+]|\d{1,9}[.)])(?=[ \t])))*[ \t]*\[[ xX]\](?=[ \t])/;
-const LINE_END = /\r\n|\r|\n/g;
+/** A box as a list item's head has it: what a press may change, one character between brackets. */
+const BOX_OR_LINE_END = /\r\n|\r|\n|\[[ xX]\]/g;
+/** How much reading a press may cost when the counted line is not the box's: each box tried is the
+ * whole text read again. */
+const READ_BUDGET_CHARS = 4_000_000;
+const MAX_TRIES = 64;
 
 /** The lines (from 0) of the task list items of `text`, in the order the preview's `marked` draws
  * their checkboxes — the order the viewer numbers them in (spec 2026-11-14 md-preview 「n 번째 할 일
@@ -47,44 +49,64 @@ function count(raw: string): number {
   return n;
 }
 
-/** Where line `line` (from 0) of `text` starts and ends, its line end left out. */
-function lineRange(text: string, line: number): { from: number; to: number } | null {
-  let from = 0;
-  LINE_END.lastIndex = 0;
-  for (let n = 0; n < line; n++) {
-    const end = LINE_END.exec(text);
-    if (!end) return null;
-    from = end.index + end[0].length;
-  }
-  LINE_END.lastIndex = from;
-  const end = LINE_END.exec(text);
-  return { from, to: end ? end.index : text.length };
+/** Whether each box marked draws for `text` is checked, in the order it draws them — the order of
+ * marked's own walk, which is its renderer's. */
+export function boxStates(text: string): boolean[] {
+  const states: boolean[] = [];
+  marked.walkTokens(Lexer.lex(text), (token) => {
+    if (token.type === "checkbox") states.push(token.checked);
+  });
+  return states;
 }
 
-/** Where the box's mark (the character between its brackets) is in `line`, or null when `line`
- * does not start as a task list item does. */
-export function boxMark(line: string): number | null {
-  const head = TASK_LINE.exec(line);
-  return head ? head[0].length - 2 : null;
+/** Every box-like `[ ]`/`[x]`/`[X]` of `text` (the offset of its `[`), those on line `near` first,
+ * then by how far their line is from it. */
+function boxesNear(text: string, near: number): number[] {
+  const found: { at: number; distance: number }[] = [];
+  let line = 0;
+  for (const match of text.matchAll(BOX_OR_LINE_END)) {
+    if (match[0][0] === "[") found.push({ at: match.index, distance: Math.abs(line - near) });
+    else line++;
+  }
+  found.sort((a, b) => a.distance - b.distance || a.at - b.at);
+  return found.map((box) => box.at);
 }
 
 /** The change that flips the box of the `index`-th task of `text` (`[ ]` ↔ `[x]`): one character,
- * at an offset into `text`. Null when there is no such task, when its line does not look like a
- * task (the count went wrong: nothing is changed rather than the wrong line), or when `drawn` — the
- * text the preview was drawn from — is not `text` any more: the `index`-th task of the text on show
- * may be another one now. */
+ * at an offset into `text` (spec 2026-11-14 md-preview 「n 번째 할 일 ↔ 원본 줄」).
+ *
+ * The line `taskLines` counts is where to look first, not the answer: marked's tokens do not always
+ * add up to the text (a quote split by a line without `>` gains a line end in its raw, a definition
+ * in a quote loses one), so the count can land on another task or on a line that only looks like
+ * one. A box is changed only when the text with it changed draws the same boxes with box `index`
+ * alone flipped — the press then changes what was pressed and nothing else. When no box within the
+ * reading budget does, nothing is changed: null, as for an index past the last task or a `drawn`
+ * text — the one the preview was drawn from — that is not `text` any more. */
 export function toggleTask(
   text: string,
   index: number,
   drawn: string = text,
 ): { from: number; to: number; insert: string } | null {
   if (drawn !== text || !Number.isInteger(index) || index < 0) return null;
-  const line = taskLines(text)[index];
-  if (line === undefined) return null;
-  const range = lineRange(text, line);
-  if (!range) return null;
-  const mark = boxMark(text.slice(range.from, range.to));
-  if (mark === null) return null;
-  const at = range.from + mark;
-  return { from: at, to: at + 1, insert: text[at] === " " ? "x" : " " };
+  const before = boxStates(text);
+  if (index >= before.length) return null;
+  const tries = Math.min(MAX_TRIES, Math.max(1, Math.floor(READ_BUDGET_CHARS / (text.length + 1))));
+  for (const box of boxesNear(text, taskLines(text)[index] ?? 0).slice(0, tries)) {
+    const at = box + 1;
+    const insert = text[at] === " " ? "x" : " ";
+    const after = boxStates(text.slice(0, at) + insert + text.slice(at + 1));
+    if (onlyFlipped(before, after, index)) return { from: at, to: at + 1, insert };
+  }
+  return null;
+}
+
+function onlyFlipped(
+  before: readonly boolean[],
+  after: readonly boolean[],
+  index: number,
+): boolean {
+  return (
+    after.length === before.length &&
+    after.every((checked, i) => (i === index ? checked !== before[i] : checked === before[i]))
+  );
 }

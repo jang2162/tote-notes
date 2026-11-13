@@ -59,15 +59,19 @@ export function spansOf(
 
 /** Colours the preview's code blocks with the editor's grammars and theme, one document in the
  * highlight worker per block, each closed when its tokens are in. Blocks in a language with no
- * grammar, or past the limits, are left out of the answer: they stay plain. */
+ * grammar, or past the limits, are left out of the answer: they stay plain. Once `stale` says the
+ * preview has drawn another text, no further block is sent: the worker would colour blocks no one
+ * will see while the editors' requests wait behind them. */
 export async function colorCode(
   client: CodeHighlighter,
   registry: Registry,
   blocks: readonly CodeBlock[],
+  stale: () => boolean = () => false,
 ): Promise<CodeColors[]> {
   const out: CodeColors[] = [];
   let chars = 0;
   for (const block of blocks.slice(0, MAX_CODE_BLOCKS)) {
+    if (stale()) break;
     if (chars + block.code.length > MAX_CODE_CHARS) continue;
     const lang = fenceLanguage(registry, block.lang);
     if (!lang) continue;

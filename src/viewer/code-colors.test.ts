@@ -139,6 +139,16 @@ describe("colorCode", () => {
     expect(client.closed).toEqual([1, 2, 3]);
   });
 
+  it("sends no further block once the preview has drawn another text", async () => {
+    const client = fakeClient();
+    const blocks = [0, 1, 2].map((index) => ({ index, lang: "ts", code: "a" }));
+    // Drawn anew while the first block was being coloured.
+    const result = await colorCode(client, registry, blocks, () => client.opened.length > 0);
+    expect(client.opened).toEqual(["typescript"]);
+    expect(result.map((b) => b.index)).toEqual([0]);
+    expect(client.closed).toEqual([1]);
+  });
+
   it("stops at the block and character limits", async () => {
     const client = fakeClient();
     const many = Array.from({ length: MAX_CODE_BLOCKS + 5 }, (_, index) => ({

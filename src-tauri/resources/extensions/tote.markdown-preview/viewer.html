@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-zkNK3hn7/9t/zAok4UKN1/xXu/xzIparT+glT5LcpRs='"
+      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-mcs57bfygkKtBwAkMYQNYcQ+EsEpI4LlHcL9QBQKRog='"
     />
     <title>미리보기</title>
     <style>
@@ -376,6 +376,9 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       }
 
       addEventListener("message", (event) => {
+        // Only the host speaks: another frame of the page could otherwise draw a text of its own,
+        // whose n-th box the host would then flip in the real one.
+        if (event.source !== parent) return;
         const data = event.data;
         if (!data || typeof data !== "object") return;
         if (data.type === "init") {

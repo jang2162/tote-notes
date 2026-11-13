@@ -46,6 +46,21 @@ host.start(
 Object.assign(window, { previewCalls });
 Object.assign(window, { viewerHost: host });
 
+// `forge()`: another frame posts a theme to the viewer frame, as the host would, then says so.
+function forge(): void {
+  const forger = document.createElement("iframe");
+  forger.setAttribute("sandbox", "allow-scripts");
+  forger.srcdoc = `<script>
+    parent.frames[0].postMessage({ type: "theme", theme: { "--bg": "rgb(9, 9, 9)" } }, "*");
+    parent.postMessage({ type: "forged" }, "*");
+  </script>`;
+  addEventListener("message", (e) => {
+    if (e.source === forger.contentWindow) document.body.dataset.forged = "sent";
+  });
+  document.body.append(forger);
+}
+Object.assign(window, { forge });
+
 // `?intruder=1`: another frame posts an error to this page, as any window could.
 if (params.has("intruder")) {
   const intruder = document.createElement("iframe");
