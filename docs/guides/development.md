@@ -127,10 +127,11 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 - **Why:** pre-push 훅은 포맷·린트·타입 검사·vitest 까지만 돈다. `cargo test` 와 e2e 는 손으로 돌려야만 걸리고, 버전 네 곳이 같은지(`pnpm version:check`)는 릴리스 워크플로에서야 걸린다. CI 가 이 셋을 push·pull request 마다 돈다.
 - **How to apply:**
-  - 단계는 차례로 돌고, 앞 단계가 떨어지면 뒤 단계는 돌지 않는다. 포맷에서 떨어진 실행은 시험이 통과하는지 말해 주지 않는다.
+  - 검사·시험 단계는 앞의 검사·시험이 떨어져도 끝까지 돈다. 그래서 한 실행에서 떨어진 단계가 전부 보이고, 하나라도 떨어지면 실행은 실패다. 준비 단계(`pnpm install`·Rust 툴체인·WebKit 설치)가 떨어지면 그것에 기대는 단계만 건너뛴다.
+  - 단계를 더할 때는 이웃 단계와 같은 `if: ${{ !cancelled() && steps.<준비 단계>.outcome == 'success' }}` 를 단다. `if:` 가 없는 단계는 앞의 아무 단계가 떨어져도 건너뛰어져, 그 실행에서 결과가 경고 없이 빠진다. 준비 단계를 더하면 `id` 를 주고 그것에 기대는 단계의 조건이 그 `id` 를 보게 한다.
   - 같은 ref 에 새 커밋이 오면 앞선 실행은 취소된다. 취소된 실행은 실패가 아니다.
   - e2e 가 떨어지면 `test-results/` 가 그 실행의 산출물(`e2e-test-results`)로 올라간다. 러너에서만 떨어지는 e2e 는 「부하에서만 실패하는 테스트는 시간 대신 완료 신호를 기다리게 고친다」 절의 순서로 본다.
-  - `src-tauri/tests` 의 시험 셋(`menu_key_equivalents`·`menu_keypad`·`traffic_lights_resize`)은 실제 AppKit 메뉴 막대와 창을 만든다. 로컬에서는 통과하는데 러너에서 이 셋만 떨어지면 코드보다 러너의 세션(창을 만들 수 있는가)을 먼저 본다.
+  - `src-tauri/tests` 의 시험 셋(`menu_key_equivalents`·`menu_keypad`·`traffic_lights_resize`)은 실제 AppKit 메뉴 막대와 창을 만든다. `macos-latest` 러너의 세션은 그것을 허락한다. 시험 하네스가 없어 `test result` 줄을 내지 않으므로, 통과는 로그의 `Running tests/<이름>.rs` 다음 줄 `<이름>: ok`(모든 단언 뒤에 찍는다)로 본다. 러너 이미지가 바뀐 뒤 이 셋만 떨어지면 코드보다 러너의 세션(창을 만들 수 있는가)을 먼저 본다.
   - CI 는 비밀을 쓰지 않고 저장소를 읽기만 한다. 서명·공증·릴리스는 `release-macos.yml` 이 한다(`docs/guides/release-macos.md`).
 
 ## 파일을 되돌리면 post-checkout 훅이 돈다
@@ -162,6 +163,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
   - 목록·메뉴처럼 포커스를 가져가는 오버레이가 있는 화면에서는 포커스 이동의 부수 효과(조합 확정 등)가 구분력 시험을 조용히 약하게 만들 수 있다. 시험이 정말 보호 대상 코드 때문에 통과하는지 그 코드를 지워 실패하는지 본다.
   - 개발 서버에서 받는 것(`readExtensionFile` 이 받는 언어 설정 등)은 부하에서 늦게 도착한다. 늦은 응답의 효과를 시험하려면 `page.route` 로 그 요청을 붙잡았다가 풀어 준다. 실제 앱에서는 같은 데이터가 IPC 로 와서 이 방법이 닿지 않는다.
+  - 파일 감시 시험(`src-tauri/src/watch/mod.rs`)은 감시를 걸기 전에 쓴 파일의 이벤트가 감시를 건 뒤에 올 수 있다고 보고 짠다. FSEvents 는 스트림을 열기 직전에 쓴 것(그 파일의 `Create`·`Modify`)을 부하에서 연 뒤에 전한다. 이벤트는 쓴 순서대로 오므로, 표식 파일을 쓰고 그 묶음을 기다리는 것(시험의 `through`)이 「그 앞에 쓴 것은 다 왔다」 는 완료 신호다. 「아무것도 오지 않음」 도 같은 표식으로 단언한다. 앱에서는 이 늦은 이벤트가 무해하다 — 외부 파일은 지금 디스크 내용의 해시를 기준과 비교해 같으면 알리지 않는다(`ExternalFiles::outside_state`).
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
   - e2e 를 에이전트가 돌리면 Vite 가 에이전트를 감지해(`AI_AGENT` 같은 환경 변수) `server.forwardConsole` 을 켠다. 페이지의 `console` 이 개발 서버로 전달되는 래퍼를 지나므로 사람이 돌릴 때와 경로가 다르다. 사람과 에이전트에서 결과가 갈리면 이것부터 의심한다. `quietErrors` 가 이 래퍼와 서로를 불러 `RangeError` 를 내던 것이 그 예다(`tests/e2e/quiet-errors.spec.ts`, 에이전트 실행에서만 구분력이 있다).

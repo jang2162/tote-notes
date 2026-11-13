@@ -1,4 +1,4 @@
-import type { Backend, ThemeInfo, ThemeMode } from "../backend/types";
+import type { Backend, ThemeChoice, ThemeInfo } from "../backend/types";
 import type { Registry } from "../extensions/registry";
 import {
   DEFAULT_VARIABLES,
@@ -26,8 +26,8 @@ type Media = {
   addEventListener(type: "change", fn: (e: { matches: boolean }) => void): void;
 };
 
-/** Which theme is on (spec 「테마」): the default one of the mode's appearance (the OS's in auto),
- * re-read when the appearance or the settings change. `apply` puts the variables on the page;
+/** Which theme is on (spec 「테마」): the picked one, else the default one of the mode's appearance
+ * (the OS's in auto), re-read when the appearance or the settings change. `apply` puts the variables on the page;
  * viewers and the highlighter follow through `onChange`. */
 export class ThemeManager {
   active: ActiveTheme = {
@@ -70,10 +70,13 @@ export class ThemeManager {
       const settings = await this.backend.settings();
       // Read when the settings come: the OS may have changed meanwhile. Its change event brings
       // another refresh in every mode, which in light and dark lands on the same theme.
-      appearance = appearanceOf(settings.theme.mode, this.media.matches);
-      // The bundled default of the appearance: a user extension's theme the precedence puts first
-      // is not drawn, nor is a theme per appearance an older build saved.
-      info = this.registry().defaultTheme(appearance) ?? null;
+      const mode = settings.theme.mode;
+      appearance = appearanceOf(mode, this.media.matches);
+      // A picked theme the registry no longer has draws as auto (theme picker spec 「그리기」).
+      const picked = typeof mode === "object" && mode ? this.registry().theme(mode) : undefined;
+      // Else the bundled default of the appearance: a user extension's theme the precedence puts
+      // first is not drawn, nor is a theme per appearance an older build saved.
+      info = picked ?? this.registry().defaultTheme(appearance) ?? null;
       if (info) {
         const found = info;
         theme = await loadTheme(
@@ -95,10 +98,11 @@ export class ThemeManager {
   }
 }
 
-/** The appearance `mode` picks: the OS appearance (`dark`, from `prefers-color-scheme`) in auto. Rust
- * forces the app's appearance in light and dark (src-tauri/src/app/appearance.rs), so there the
- * OS's would agree; the mode is read anyway, as the page may hear of the change first. */
-export function appearanceOf(mode: ThemeMode | undefined, dark: boolean): Appearance {
+/** The appearance `mode` picks: the OS appearance (`dark`, from `prefers-color-scheme`) in auto and
+ * with a theme picked, whose own kind draws the page. Rust forces the app's appearance in light and
+ * dark (src-tauri/src/app/appearance.rs), so there the OS's would agree; the mode is read anyway, as
+ * the page may hear of the change first. */
+export function appearanceOf(mode: ThemeChoice | undefined, dark: boolean): Appearance {
   return mode === "light" || mode === "dark" ? mode : dark ? "dark" : "light";
 }
 

@@ -1032,8 +1032,11 @@ impl From<InstallError> for CommandError {
     }
 }
 
-/// Settings or the extension set changed: every window re-reads both.
+/// Settings or the extension set changed: every window re-reads both. The native appearance is put
+/// again as well, as a picked theme comes and goes with its extension (theme picker spec 「네이티브
+/// 모양」); the same appearance put again changes nothing.
 fn broadcast_config(app: &AppHandle) {
+    appearance::follow_settings(app);
     let _ = app.emit("tote://config", ());
 }
 
@@ -1138,14 +1141,10 @@ pub async fn patch_settings(
     patch: SettingsPatch,
 ) -> CmdResult<()> {
     let shortcuts_changed = patch.shortcuts.is_some();
-    let mode_changed = patch.theme_mode.is_some();
     let root_changed = patch.workspace_root.is_some();
     core.patch_settings(patch)?;
     if shortcuts_changed {
         menu::follow_settings(&app);
-    }
-    if mode_changed {
-        appearance::follow_settings(&app);
     }
     broadcast_config(&app);
     if root_changed {
