@@ -38,8 +38,8 @@ test("the settings button sits at the window's bottom left with no update, and o
 });
 
 // ⌥Tab, not Tab: whether Tab stops at buttons is the system's keyboard navigation setting, off on
-// CI's runner. ⌥Tab stops at them with it on or off — docs/guides/development.md 「e2e 가 키로 버튼에
-// 닿게 할 때는 Tab 이 아니라 ⌥Tab 을 누른다」.
+// CI's runner. ⌥Tab stops at them with it on or off — docs/guides/development.md
+// 「e2e 가 키로 버튼에 닿게 할 때는 Tab 이 아니라 ⌥Tab 을 누른다」.
 test("the settings button is reached with ⌥Tab and pressed with Enter", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
   await page.locator(".memo-filter").focus();
