@@ -560,6 +560,9 @@ export class AppController implements DocHost, PaneHost {
       let width = from;
       root.classList.add("sidebar-resizing");
       const move = (event: PointerEvent) => {
+        // A dialog opened under the drag (a menu command, the update window): the rest of the
+        // window is the dialog's to hold off, the sidebar's inert with it, so the drag is over.
+        if (modalOpen()) return this.endSidebarDrag?.();
         const dragged = draggedSidebar(from + event.clientX - down.clientX, window.innerWidth);
         if (dragged.collapsed) {
           if (this.sidebarCollapsed) return;

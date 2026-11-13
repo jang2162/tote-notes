@@ -1,7 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { defaultFakeData, fakeFile, fakeMemo, type FakeTrashed } from "../../src/backend/fake";
-import { menu, start } from "./helpers";
+import { dragSidebarTo, menu, start } from "./helpers";
 
 // A dialog has the window until it is answered: what `modal()` itself does (inert, Tab, the focus
 // given back) is in dialogs.spec.ts; these check it against the app behind it.
@@ -238,4 +238,60 @@ test("a dialog whose opener has left the page gives the keys to the editor", asy
   await page.keyboard.press("Escape");
   await expect(page.locator(".modal")).toHaveCount(0);
   await expect(page.locator(".cm-content")).toBeFocused();
+});
+
+/** An external file with edits in its tab: closing it asks 「저장할까요?」. */
+async function editedFile(page: Page): Promise<void> {
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await start(page, { files: { "/x/a.sh": fakeFile("echo hi\n") }, picks: ["/x/a.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toContainText("echo hi");
+  await page.keyboard.type("more ");
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+}
+
+const collapsed = (page: Page) =>
+  page.evaluate(() => document.documentElement.classList.contains("sidebar-collapsed"));
+const sidebarInert = (page: Page) =>
+  page.locator(".sidebar").evaluate((el) => (el as HTMLElement).inert);
+
+test("a drag of the sidebar's grip ends as a dialog opens, so it cannot collapse the sidebar behind it", async ({
+  page,
+}) => {
+  await editedFile(page);
+  await dragSidebarTo(page, 300, { release: false });
+  await menu(page, "close-tab");
+  await expect(page.locator(".modal")).toHaveCount(1);
+  // On below 150px, where the drag would collapse the sidebar.
+  await page.mouse.move(100, 360, { steps: 4 });
+  await page.mouse.up();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  expect({ collapsed: await collapsed(page), inert: await sidebarInert(page) }).toEqual({
+    collapsed: false,
+    inert: false,
+  });
+});
+
+test("a drag of the sidebar's grip that collapsed it ends as a dialog opens, and cannot bring it back behind it", async ({
+  page,
+}) => {
+  await editedFile(page);
+  await dragSidebarTo(page, 100, { release: false });
+  await expect.poll(() => collapsed(page)).toBe(true);
+  await menu(page, "close-tab");
+  await expect(page.locator(".modal")).toHaveCount(1);
+  // Back over 150px, where the drag would bring the sidebar back.
+  await page.mouse.move(300, 360, { steps: 4 });
+  expect({ collapsed: await collapsed(page), inert: await sidebarInert(page) }).toEqual({
+    collapsed: true,
+    inert: true,
+  });
+  await page.mouse.up();
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  expect({ collapsed: await collapsed(page), inert: await sidebarInert(page) }).toEqual({
+    collapsed: true,
+    inert: true,
+  });
 });
