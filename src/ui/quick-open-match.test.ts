@@ -156,17 +156,17 @@ describe("FileIndex at each keystroke (spec 「성능」)", () => {
     const memos = [memo("가계부.md"), memo("회의록.md"), memo("회의 메모.md"), memo("장보기.md")];
     const index = new FileIndex(memos, ["/x/회의.sh"]);
     index.rank("회");
-    expect(index.counts).toEqual({ walked: 5, scored: 3 });
+    expect(index.counts).toEqual({ walked: 5, scored: 3, traced: 3 });
     // A space typed after it changes nothing; the next letter looks only at those three.
     index.rank("회 ");
-    expect(index.counts).toEqual({ walked: 3, scored: 3 });
+    expect(index.counts).toEqual({ walked: 3, scored: 3, traced: 3 });
     index.rank("회의록");
-    expect(index.counts).toEqual({ walked: 3, scored: 1 });
+    expect(index.counts).toEqual({ walked: 3, scored: 1, traced: 1 });
     // Not going on from the last query: a letter taken back, or another one.
     index.rank("회의");
-    expect(index.counts).toEqual({ walked: 5, scored: 3 });
+    expect(index.counts).toEqual({ walked: 5, scored: 3, traced: 3 });
     index.rank("장");
-    expect(index.counts).toEqual({ walked: 5, scored: 1 });
+    expect(index.counts).toEqual({ walked: 5, scored: 1, traced: 1 });
     // The empty query starts over.
     index.rank("");
     index.rank("장보");
@@ -186,7 +186,7 @@ describe("FileIndex at each keystroke (spec 「성능」)", () => {
     const index = new FileIndex(many);
     const ranked = index.rank("memo");
     expect(ranked).toHaveLength(MAX_RESULTS);
-    expect(index.counts).toEqual({ walked: 10_000, scored: 10_000 });
+    expect(index.counts).toEqual({ walked: 10_000, scored: 10_000, traced: MAX_RESULTS });
     expect(ranked.every((row) => row.indices.join() === "0,1,2,3")).toBe(true);
   });
 

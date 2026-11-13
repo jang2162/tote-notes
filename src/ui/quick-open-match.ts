@@ -141,6 +141,9 @@ function scoreOf(wanted: readonly number[], name: Prepared): number {
   return rounded(best);
 }
 
+/** How many times `matchOf` has run: it allocates, and should for the rows shown only. */
+let traces = 0;
+
 export interface Match {
   score: number;
   /** The characters of the composed name that matched, as code point indices. */
@@ -150,6 +153,7 @@ export interface Match {
 /** The best place of `wanted` in `name` (which `holds` it) and its score, which is `scoreOf`'s:
  * best[i][j] is the best score with wanted[i] matched at j, back[i][j] where wanted[i - 1] was. */
 function matchOf(wanted: readonly number[], name: Prepared): Match {
+  traces++;
   const { folded, heads } = name;
   const n = folded.length;
   const best: Float64Array[] = [];
@@ -292,8 +296,9 @@ export class FileIndex {
   /** The last query's letters and every entry they matched: a query that goes on from it can only
    * match among those. */
   private last: { key: string; matched: Entry[] } | null = null;
-  /** What the last `rank` did, for the tests: the entries it walked and the ones it scored. */
-  readonly counts = { walked: 0, scored: 0 };
+  /** What the last `rank` did, for the tests: the entries it walked, the ones it scored and the
+   * ones whose letters it found the places of. */
+  readonly counts = { walked: 0, scored: 0, traced: 0 };
 
   constructor(memos: readonly MemoInfo[], externals: readonly string[] = []) {
     this.memos = memos.map(memoEntry);
@@ -310,7 +315,7 @@ export class FileIndex {
    * open file. */
   rank(query: string): FileResult[] {
     const wanted = queryCodes(query);
-    this.counts.walked = this.counts.scored = 0;
+    this.counts.walked = this.counts.scored = this.counts.traced = 0;
     if (wanted.length === 0) {
       this.last = null;
       const top = new Top();
@@ -332,7 +337,13 @@ export class FileIndex {
       top.offer(entry, scoreOf(wanted, entry.prepared));
     }
     this.last = { key, matched };
-    return top.kept.map(({ entry }) => ({ ...entry.result, ...matchOf(wanted, entry.prepared) }));
+    const tracesBefore = traces;
+    const results = top.kept.map(({ entry }) => ({
+      ...entry.result,
+      ...matchOf(wanted, entry.prepared),
+    }));
+    this.counts.traced = traces - tracesBefore;
+    return results;
   }
 }
 
