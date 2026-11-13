@@ -493,7 +493,7 @@ pub async fn import_file(
 fn backup_dir(core: &AppCore, window: &WebviewWindow) -> CmdResult<BackupDir> {
     let workspace = workspace_of(core, window)?;
     let id = lock(&workspace).id().to_string();
-    Ok(BackupDir::new(&core.paths.backups_dir(), &id))
+    Ok(BackupDir::for_workspace(&core.paths.backups_dir(), &id)?)
 }
 
 #[tauri::command]

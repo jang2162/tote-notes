@@ -16,6 +16,8 @@ use time::format_description::FormatItem;
 use time::macros::format_description;
 use time::{Date, OffsetDateTime, PrimitiveDateTime, UtcOffset};
 
+use crate::workspace::id::is_safe_segment;
+
 /// Snapshots are taken this often, and only when something changed.
 pub const INTERVAL: Duration = Duration::from_secs(600);
 /// Every snapshot this young is kept.
@@ -36,10 +38,24 @@ pub struct BackupDir {
 }
 
 impl BackupDir {
-    pub fn new(backups_dir: &Path, workspace_id: &str) -> BackupDir {
-        BackupDir {
-            root: backups_dir.join(workspace_id),
+    /// Refuses an ID that is not one plain path segment: it would name a folder somewhere else,
+    /// where snapshots are made and folders named like them are pruned (`workspace::id`).
+    pub fn for_workspace(backups_dir: &Path, workspace_id: &str) -> io::Result<BackupDir> {
+        if !is_safe_segment(workspace_id) {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                format!("not a workspace ID: {workspace_id:?}"),
+            ));
         }
+        Ok(BackupDir {
+            root: backups_dir.join(workspace_id),
+        })
+    }
+
+    /// `for_workspace` an ID a test made up.
+    #[cfg(test)]
+    pub fn new(backups_dir: &Path, workspace_id: &str) -> BackupDir {
+        Self::for_workspace(backups_dir, workspace_id).expect("a test's ID is one path segment")
     }
 
     pub fn path_of(&self, name: SnapshotName) -> PathBuf {
@@ -127,6 +143,22 @@ impl SnapshotName {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_id_that_is_not_one_path_segment_has_no_backup_folder() {
+        let dir = tempfile::tempdir().unwrap();
+        let backups = dir.path().join("backups");
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        let found = BackupDir::for_workspace(&backups, id).unwrap();
+        assert_eq!(found.root, backups.join(id));
+        let outside = dir.path().join("outside").to_string_lossy().into_owned();
+        for bad in ["../outside", "..", ".", "", "a/b", ".tmp-x", &outside] {
+            let err = BackupDir::for_workspace(&backups, bad)
+                .map(|dir| dir.root)
+                .unwrap_err();
+            assert_eq!(err.kind(), io::ErrorKind::InvalidInput, "{bad:?}");
+        }
+    }
 
     #[test]
     fn snapshot_names_round_trip_and_sort() {
