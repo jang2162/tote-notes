@@ -382,7 +382,7 @@ export interface WorkspaceListItem {
   /** Its place in the set order, from 0, the hidden ones counted too, so not its ⌃ number.
    * `null` when `missing`. */
   order: number | null;
-  /** Left out of the switcher; 「워크스페이스 열기…」 (the 파일 menu's) still lists it. */
+  /** Left out of the switcher; the settings' 워크스페이스 section lists it and shows it again. */
   hidden: boolean;
   /** Its ID can be read, so the order file can name it. */
   orderable: boolean;
