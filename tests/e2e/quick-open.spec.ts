@@ -161,10 +161,13 @@ test("> lists the app commands with their keys, and Enter runs one as its menu i
   await start(page, { memos, session: paneSession([[memoTab("a")]]) });
   await openQuick(page);
   await input(page).fill(">");
-  const all = await rows(page).locator(".quick-open-name").allTextContents();
-  expect(all).toContain("새 메모");
-  expect(all).toContain("탭을 새 창으로 옮기기");
-  expect(all).not.toContain("빠른 열기…");
+  // Every app command but quick open itself; only the rows in view are drawn.
+  await expect(rows(page).first()).toHaveAttribute("aria-setsize", "26");
+  await expect(rows(page).first().locator(".quick-open-name")).toHaveText("업데이트 확인…");
+  await input(page).fill(">탭을새창");
+  await expect(rows(page).first().locator(".quick-open-name")).toHaveText("탭을 새 창으로 옮기기");
+  await input(page).fill(">빠른열기");
+  await expect(rows(page)).toHaveCount(0);
   await input(page).fill("> 새메모");
   const first = rows(page).first();
   await expect(first.locator(".quick-open-name")).toHaveText("새 메모");
@@ -185,4 +188,56 @@ test("the menu item again while it is open does nothing", async ({ page }) => {
   await menu(page, "quick-open");
   await expect(box(page)).toHaveCount(1);
   await expect(input(page)).toHaveValue("회의");
+});
+
+test("only the rows in view are drawn; the one picked is scrolled to and drawn", async ({
+  page,
+}) => {
+  const many = Object.fromEntries(
+    Array.from({ length: 120 }, (_, i) => [
+      `m${i}`,
+      { ...fakeMemo(`메모 ${String(i).padStart(3, "0")}.md`, ""), viewedMs: 1000 - i },
+    ]),
+  );
+  await start(page, { memos: many });
+  await openQuick(page);
+  await expect(rows(page).first()).toHaveText("메모 000.md");
+  await expect(rows(page).first()).toHaveAttribute("aria-setsize", "50");
+  // Ten in view and a few on either side: well under the fifty found.
+  expect(await rows(page).count()).toBeLessThan(30);
+  for (let i = 0; i < 45; i++) await input(page).press("ArrowDown");
+  const picked = box(page).locator(".quick-open-row.selected");
+  await expect(picked).toHaveText("메모 045.md");
+  await expect(picked).toBeInViewport();
+  await expect(input(page)).toHaveAttribute(
+    "aria-activedescendant",
+    (await picked.getAttribute("id"))!,
+  );
+  await expect(rows(page).filter({ hasText: "메모 000.md" })).toHaveCount(0);
+  await input(page).press("Enter");
+  await expect(activeTitle(page, 0)).toHaveText("메모 045");
+});
+
+test("a press outside the box closes it and gives the keys back", async ({ page }) => {
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
+  await page.locator(".cm-content").click();
+  await openQuick(page);
+  await input(page).fill("회의");
+  // Inside the box: it stays.
+  await box(page).click({ position: { x: 4, y: 4 } });
+  await expect(box(page)).toHaveCount(1);
+  const area = (await pane(page, 0).boundingBox())!;
+  await page.mouse.click(area.x + area.width / 2, area.y + area.height - 20);
+  await expect(box(page)).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가계부"]);
+});
+
+test("a window leaving its workspace opens no box", async ({ page }) => {
+  await start(page, { memos, session: paneSession([[memoTab("a")]]) });
+  await page.evaluate(() => window.__tote.backend.requestFlush(77, "switch"));
+  await expect.poll(() => page.evaluate(() => window.__tote.app.leaving)).toBe(true);
+  await menu(page, "quick-open");
+  // Not a wait for nothing: the box is put up in the menu's own call, before it returns.
+  expect(await page.locator(".modal").count()).toBe(0);
 });

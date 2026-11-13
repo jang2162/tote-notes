@@ -147,15 +147,19 @@ mod tests {
     fn the_external_files_held_are_listed_by_path_whatever_window_holds_them() {
         let mut places = Places::default();
         assert!(places.externals().is_empty());
-        places.claim("w2", external("/tmp/b.sh")).unwrap();
+        // Ten, claimed out of order: a map's own order would come out sorted once in 10! runs.
+        let paths: Vec<String> = (0..10).map(|n| format!("/tmp/{n}.sh")).collect();
+        for (n, path) in paths.iter().enumerate().rev() {
+            places
+                .claim(&format!("w{}", n % 3), external(path))
+                .unwrap();
+        }
         places.claim("w1", memo("/w/가", "a")).unwrap();
-        places.claim("w1", external("/tmp/a.sh")).unwrap();
-        assert_eq!(
-            places.externals(),
-            [PathBuf::from("/tmp/a.sh"), PathBuf::from("/tmp/b.sh")]
-        );
-        places.release("w2", &external("/tmp/b.sh"));
-        assert_eq!(places.externals(), [PathBuf::from("/tmp/a.sh")]);
+        let sorted: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        assert_eq!(places.externals(), sorted);
+        places.release("w1", &external("/tmp/1.sh"));
+        assert_eq!(places.externals().len(), 9);
+        assert!(!places.externals().contains(&PathBuf::from("/tmp/1.sh")));
     }
 
     #[test]

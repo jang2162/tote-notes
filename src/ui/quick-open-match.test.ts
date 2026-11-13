@@ -4,7 +4,9 @@ import table from "../../src-tauri/tests/fixtures/shortcut-table.json";
 import type { MemoInfo, ShortcutTable } from "../backend/types";
 import { conflict } from "../shortcuts/keys";
 import {
+  boldRuns,
   commandItems,
+  FileIndex,
   fuzzyMatch,
   MAX_RESULTS,
   rankCommands,
@@ -141,6 +143,90 @@ describe("rankFiles", () => {
 
   it("finds nothing when no name holds the letters", () => {
     expect(rankFiles([memo("장보기.md")], ["/x/a.sh"], "회의")).toEqual([]);
+  });
+});
+
+describe("FileIndex at each keystroke (spec 「성능」)", () => {
+  // 10,000 memos, as `pnpm perf:fixtures` makes them, viewed in no order.
+  const many = Array.from({ length: 10_000 }, (_, i) =>
+    memo(`memo-${String(i).padStart(5, "0")}.md`, { viewedMs: (i * 7919) % 10_007 }),
+  );
+
+  it("searches only what the last query matched when the new one goes on from it", () => {
+    const memos = [memo("가계부.md"), memo("회의록.md"), memo("회의 메모.md"), memo("장보기.md")];
+    const index = new FileIndex(memos, ["/x/회의.sh"]);
+    index.rank("회");
+    expect(index.counts).toEqual({ walked: 5, scored: 3 });
+    // A space typed after it changes nothing; the next letter looks only at those three.
+    index.rank("회 ");
+    expect(index.counts).toEqual({ walked: 3, scored: 3 });
+    index.rank("회의록");
+    expect(index.counts).toEqual({ walked: 3, scored: 1 });
+    // Not going on from the last query: a letter taken back, or another one.
+    index.rank("회의");
+    expect(index.counts).toEqual({ walked: 5, scored: 3 });
+    index.rank("장");
+    expect(index.counts).toEqual({ walked: 5, scored: 1 });
+    // The empty query starts over.
+    index.rank("");
+    index.rank("장보");
+    expect(index.counts.walked).toBe(5);
+  });
+
+  it("answers each keystroke as a fresh search of every name would", () => {
+    const index = new FileIndex(many, ["/x/memo-a.sh"]);
+    const typed = "memo-0 1";
+    for (let k = 1; k <= typed.length; k++) {
+      const query = typed.slice(0, k);
+      expect(index.rank(query), query).toEqual(rankFiles(many, ["/x/memo-a.sh"], query));
+    }
+  });
+
+  it("finds the letters' places only for the rows it gives", () => {
+    const index = new FileIndex(many);
+    const ranked = index.rank("memo");
+    expect(ranked).toHaveLength(MAX_RESULTS);
+    expect(index.counts).toEqual({ walked: 10_000, scored: 10_000 });
+    expect(ranked.every((row) => row.indices.join() === "0,1,2,3")).toBe(true);
+  });
+
+  // A bound for a search gone slow by a different order, not a measure: the machines that run it
+  // carry other loads (development.md 「부하에서만 실패하는 테스트는 …」). Each keystroke over
+  // 10,000 memos took 1–5ms here (median, load 50–90); the search this replaced took 100–280ms.
+  it("types a query over 10,000 memos in well under a second", () => {
+    const start = performance.now();
+    const index = new FileIndex(many, []);
+    for (const query of ["m", "me", "mem", "memo", "memo-", "memo-0"]) index.rank(query);
+    expect(performance.now() - start).toBeLessThan(1000);
+  });
+});
+
+describe("boldRuns", () => {
+  it("bolds the characters matched, in runs", () => {
+    expect(boldRuns("meeting notes.md", [0, 8])).toEqual([
+      { text: "m", bold: true },
+      { text: "eeting ", bold: false },
+      { text: "n", bold: true },
+      { text: "otes.md", bold: false },
+    ]);
+  });
+
+  it("bolds the whole of a character a match falls inside", () => {
+    const family = "👨\u200d👩\u200d👧";
+    expect(boldRuns(`${family} 가족.md`, [0])).toEqual([
+      { text: family, bold: true },
+      { text: " 가족.md", bold: false },
+    ]);
+    expect(boldRuns("❤\ufe0f 메모", [0])).toEqual([
+      { text: "❤\ufe0f", bold: true },
+      { text: " 메모", bold: false },
+    ]);
+    // A composed syllable is one code point: its own run, nothing widened.
+    expect(boldRuns("회의록", [1])).toEqual([
+      { text: "회", bold: false },
+      { text: "의", bold: true },
+      { text: "록", bold: false },
+    ]);
   });
 });
 

@@ -1831,20 +1831,27 @@ select {
   padding: 8px;
 }
 
-/* Ten rows in view; more scroll. */
-.quick-open-list {
+/* Ten rows of 28px in view (`ROWS_IN_VIEW`, src/ui/quick-open.ts); more scroll. Only the rows in
+ * view are drawn, each placed by its own top. */
+.quick-open-scroll {
+  position: relative;
   max-height: 280px;
-  margin: 6px 0 0;
-  padding: 0;
+  margin-top: 6px;
   overflow: auto;
+}
+
+.quick-open-list {
+  position: relative;
+  margin: 0;
+  padding: 0;
   list-style: none;
 }
 
-.quick-open-list:empty {
-  display: none;
-}
-
 .quick-open-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
   display: flex;
   align-items: baseline;
   gap: 8px;

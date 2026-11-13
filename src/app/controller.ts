@@ -2360,6 +2360,8 @@ export class AppController implements DocHost, PaneHost {
   /** 「빠른 열기…」 (spec 2026-11-14): what is picked opens where 「한 메모는 한 자리에」 says, as
    * from the memo list; a command runs as its menu item. */
   private async quickOpen(): Promise<void> {
+    // The window answered a close or a switch: what it lists is the workspace it leaves.
+    if (this.leaving) return;
     const choice = await quickOpen({
       memos: this.memoList.all,
       externals: this.backend.listOpenExternals(),
