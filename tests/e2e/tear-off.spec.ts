@@ -295,6 +295,11 @@ test("the tab's context menu offers 탭을 새 창으로 옮기기", async ({ pa
         { id: "split-tab-top", text: "위로 나누기" },
         { id: "split-tab-bottom", text: "아래로 나누기" },
         { id: MOVE, text: "탭을 새 창으로 옮기기" },
+        // The file's (conveniences spec 「메뉴」).
+        { id: "", text: "", separator: true },
+        { id: "duplicate", text: "복제" },
+        { id: "reveal-in-finder", text: "Finder 에서 보기" },
+        { id: "copy-path", text: "경로 복사" },
       ],
     ]);
   await expect(page.locator(".tab")).toHaveCount(2);

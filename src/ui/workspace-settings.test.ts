@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { landing, moveItem } from "./workspace-settings";
+import { landing, moveItem, trashWorkspaceQuestion } from "./workspace-settings";
 
 describe("moveItem", () => {
   const list = ["a", "b", "c", "d"] as const;
@@ -45,5 +45,16 @@ describe("landing", () => {
 
   it("stays before the rows that cannot move", () => {
     expect(landing(rows, 0, 2, 1000)).toBe(1);
+  });
+});
+
+describe("trashWorkspaceQuestion", () => {
+  it("names the workspace and how many memos go along, none said when there are none", () => {
+    expect(trashWorkspaceQuestion("업무", 3)).toBe(
+      "「업무」 워크스페이스를 휴지통으로 옮길까요? 메모 3개가 함께 옮겨집니다.",
+    );
+    expect(trashWorkspaceQuestion("업무".normalize("NFD"), 0)).toBe(
+      "「업무」 워크스페이스를 휴지통으로 옮길까요?",
+    );
   });
 });

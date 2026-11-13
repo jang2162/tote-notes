@@ -493,6 +493,12 @@ export class MemoDoc extends Doc {
     return `${this.tabId}:save`;
   }
 
+  /** The text as it stands, unsaved edits and all, encoded as a save writes it; `null` when it is
+   * not open as text (not read yet, or shown by a viewer). */
+  currentBytes(): Uint8Array | null {
+    return this.state ? this.encode(this.state.doc) : null;
+  }
+
   /** A memo created empty skips the read. */
   startEmpty(): void {
     this.fetchLanguageData();

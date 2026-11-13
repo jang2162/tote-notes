@@ -17,6 +17,7 @@ export type HubEvent =
   | { type: "memos" }
   | { type: "trash" }
   | { type: "trash-memo"; id: string }
+  | { type: "move-memo"; id: string; workspace: string }
   | { type: "reveal"; tab: TabRef }
   | { type: "adopt"; tab: string; x: number; y: number }
   | { type: "workspaces" }
