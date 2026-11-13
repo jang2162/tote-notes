@@ -97,8 +97,26 @@ export interface TabDrag {
   cancel(): void;
 }
 
+/** Makes `wanted` the children of `parent`, in that order, touching only what is out of place.
+ * An element made anew under a press — or taken out and put back — gets no `click` when the press
+ * is let go: the browser sends it only when the element pressed is still where it was. */
+export function placeChildren(parent: HTMLElement, wanted: readonly HTMLElement[]): void {
+  let at = parent.firstChild;
+  for (const el of wanted) {
+    if (el === at) at = at.nextSibling;
+    else parent.insertBefore(el, at);
+  }
+  while (at) {
+    const next = at.nextSibling;
+    at.remove();
+    at = next;
+  }
+}
+
 export class TabBar {
   readonly el = h("div", { class: "tabbar", role: "tablist" });
+  /** The tabs as last drawn, by id: one that would be drawn the same keeps its element. */
+  private drawn = new Map<string, { look: string; el: HTMLElement }>();
   /** The tab dragged away from this bar, dimmed while it is (`markOut`). */
   private out: string | null = null;
   /** The tab of this bar being dragged and how far right of its left edge it was pressed: over this
@@ -125,9 +143,22 @@ export class TabBar {
     });
   }
 
+  /** Draws the bar for `tabs`. It is drawn again whenever anything about a tab may have changed —
+   * a save's answer among them, at any moment — so a tab that looks the same keeps its element
+   * (`placeChildren`): a press on its close mark must still be a click when it is let go. */
   render(tabs: TabView[]): void {
-    this.el.replaceChildren(...tabs.map((tab) => this.tab(tab)));
-    // Before the preview: the active tab is scrolled to where it is laid out, not where it is shown.
+    const drawn = new Map<string, { look: string; el: HTMLElement }>();
+    for (const tab of tabs) {
+      const look = JSON.stringify([tab, tab.id === this.out]);
+      const had = this.drawn.get(tab.id);
+      drawn.set(tab.id, had?.look === look ? had : { look, el: this.tab(tab) });
+    }
+    this.drawn = drawn;
+    const els = [...drawn.values()].map(({ el }) => el);
+    placeChildren(this.el, els);
+    // Before the preview: the active tab is scrolled to where it is laid out, not where it is
+    // shown — and a tab kept from the last draw is still where the preview moved it.
+    if (this.shown) for (const el of els) el.style.transform = "";
     this.el.querySelector(".tab.active")?.scrollIntoView({ block: "nearest", inline: "nearest" });
     if (this.shown) this.show();
   }

@@ -1,7 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
-import { menu, openWindow, paneSession, start, startWindows } from "./helpers";
+import {
+  holdSaveAnswers,
+  memoWrites,
+  menu,
+  openWindow,
+  paneSession,
+  start,
+  startWindows,
+} from "./helpers";
 
 // The sidebar's memo list (spec 2026-10-30 「메모 목록 기능 묶음」): renaming from a row's context
 // menu, pins, the sort, previews and the filter that finds memos by their content.
@@ -554,4 +562,30 @@ test("a listing that answers after a later one does not undo it", async ({ page 
   await expect(names(page)).toHaveText(["가", "나"]);
   await release();
   await expect(names(page)).toHaveText(["가", "나"]);
+});
+
+// A save answers on its own time, and its answer puts the memo's new info in the list: the rows
+// must not be made anew under a press, or the release finds another element and no click comes.
+test("a row pressed as a save's answer comes in still opens when it is let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "하나", { modifiedMs: 5 }),
+      b: fakeMemo("나.md", "둘", { modifiedMs: 3 }),
+    },
+  });
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toHaveText("하나");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  // Written, its answer held: the window has not heard of it.
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  const box = (await row(page, "나").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
+  await expect(page.locator(".cm-content")).toHaveText("둘");
 });

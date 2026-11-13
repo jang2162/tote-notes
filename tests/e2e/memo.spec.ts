@@ -2,7 +2,16 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT, RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, quietErrors, ready, sessionPane, start } from "./helpers";
+import {
+  holdSaveAnswers,
+  memoWrites,
+  menu,
+  paneSession,
+  quietErrors,
+  ready,
+  sessionPane,
+  start,
+} from "./helpers";
 
 test("a new memo is named after its first line once the cursor leaves it", async ({ page }) => {
   await start(page);
@@ -633,4 +642,32 @@ test("a tab closed before its language's data arrives is not kept for the highli
     await new Promise((resolve) => setTimeout(resolve, 0));
   });
   expect(await strayHighlights(page)).toBe(0);
+});
+
+// A save's answer draws the tab bar again: the close mark must not be made anew under a press, or
+// the release finds another element and no click comes.
+test("a close mark pressed as a save's answer comes in still closes its tab when let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "하나"), b: fakeMemo("나.md", "둘") },
+    session: paneSession([
+      [
+        { kind: "memo", memoId: "a" },
+        { kind: "memo", memoId: "b" },
+      ],
+    ]),
+  });
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("하나");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  // Written, its answer held: the window has not heard of it.
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  const box = (await page.locator(".tab", { hasText: "나" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
 });
