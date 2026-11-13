@@ -143,7 +143,7 @@ macOS 는 제목 표시줄을 내용 위에 겹친다(Overlay). 그래서 사이
 ```
 
 - **`machine.json` 이나 `settings.json` 이 깨졌을 때:** 깨진 파일을 같은 폴더의 `<이름>.corrupt-<시각>` 으로 옮기고 새로 시작한다. 기기 ID 가 새로 만들어지면 이 기기는 모든 워크스페이스의 탭 배치를 잊고, 설정이 기본값이 되면 워크스페이스 루트가 기본 루트로 돌아간다. 그래서 그 실행의 **첫 창이 상태 표시줄에 한 번 알린다** — 무엇을 읽지 못했는지와 옮긴 파일의 이름(`AppCore::load_at`, `src-tauri/src/app/mod.rs`). `tote` 명령은 깨진 설정을 옮기지 않고 경고만 찍는다(`settings_for_cli`).
-- **`settings.json` 의 모르는 필드는 보존한다.** 이 판이 모르는 필드(더 새 판이 쓴 것)는 해석하지 않고 들고 있다가 저장할 때 그대로 다시 쓴다(`Unknown`, `src-tauri/src/appdata.rs`) — 그러지 않으면 옛 판의 저장 한 번에 새 판의 설정이 파일에서 사라진다. 최상위와 `theme`·`editor`·`updates`·`sidebar`·`trash` 안의 필드가 그렇다. `extensions` 안의 모르는 필드는 저장할 때 사라진다.
+- **`settings.json` 의 모르는 필드는 보존한다.** 이 판이 모르는 필드(더 새 판이 쓴 것)는 해석하지 않고 들고 있다가 저장할 때 그대로 다시 쓴다(`Unknown`, `src-tauri/src/appdata.rs`) — 그러지 않으면 옛 판의 저장 한 번에 새 판의 설정이 파일에서 사라진다. 최상위와 `theme`·`extensions`·`editor`·`updates`·`sidebar`·`trash` 안의 필드가 그렇다.
 
 ### 워크스페이스
 

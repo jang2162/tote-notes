@@ -187,7 +187,6 @@ pub struct Settings {
 /// The fields of a settings object this build does not know — a newer build's — held as written
 /// and written again, the way `ThemeSettings::light` is: a save here would otherwise take them from
 /// the file. Each object keeps its own, so `editor.ligatures` survives as `sync` does.
-/// `ExtensionSettings` has none: what a newer build adds under `extensions` goes with a save.
 pub type Unknown = BTreeMap<String, serde_json::Value>;
 
 /// A field whose value has the wrong shape (a hand-edit typo) falls back to its default instead of
@@ -257,6 +256,8 @@ pub struct ExtensionSettings {
     /// Which side wins when two extensions claim one file extension (spec 「설치와 로딩」).
     #[serde(default, deserialize_with = "lenient")]
     pub precedence: Precedence,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -1080,6 +1081,7 @@ mod tests {
             "updates": {"autoCheck": false, "channel": "beta"},
             "sidebar": {"preview": false, "width": 280},
             "trash": {"retentionDays": 30, "confirm": false},
+            "extensions": {"disabled": ["a.b"], "precedence": "bundled", "pinned": ["c.d"]},
         });
         fs::write(&file, written.to_string()).unwrap();
         let mut settings = Settings::load(&file).unwrap();
@@ -1090,6 +1092,8 @@ mod tests {
         assert!(!settings.updates.auto_check);
         assert!(!settings.sidebar.preview);
         assert_eq!(settings.trash.retention_days, Some(30));
+        assert_eq!(settings.extensions.disabled, ["a.b"]);
+        assert_eq!(settings.extensions.precedence, Precedence::Bundled);
         // A save from the settings screen: one field changes, the unknown ones stay as written.
         let patch: SettingsPatch = serde_json::from_str(r#"{"editorFontSize": 18}"#).unwrap();
         patch.apply(&mut settings).unwrap();
@@ -1104,6 +1108,10 @@ mod tests {
         assert_eq!(saved["updates"]["channel"], "beta");
         assert_eq!(saved["sidebar"]["width"], 280);
         assert_eq!(saved["trash"]["confirm"], false);
+        assert_eq!(
+            saved["extensions"]["pinned"],
+            written["extensions"]["pinned"]
+        );
         // And through another load and save.
         Settings::load(&file).unwrap().save(&file).unwrap();
         assert_eq!(
@@ -1144,6 +1152,7 @@ mod tests {
             extensions: ExtensionSettings {
                 disabled: vec!["someone.ext".into()],
                 precedence: Precedence::Bundled,
+                unknown: Unknown::new(),
             },
             editor: EditorSettings {
                 line_numbers: false,
@@ -1637,6 +1646,7 @@ mod tests {
             extensions: ExtensionSettings {
                 disabled: vec!["e".into()],
                 precedence: Precedence::User,
+                unknown: Unknown::new(),
             },
             editor: EditorSettings {
                 line_numbers: false,
