@@ -534,6 +534,10 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("나", false), ("다", true)]
         );
+        // By its new name in the file too, not only through the ID matching alone.
+        let saved = order::load(&root);
+        assert_eq!(saved.order[1], entry(&id, "다"));
+        assert_eq!(saved.hidden, vec![entry(&id, "다")]);
         assert!(core.recent().contains(&renamed));
         assert!(!core.recent().contains(&a));
         let saved = LaunchState::load(&core.paths.launch_file()).unwrap();
