@@ -1,9 +1,8 @@
 import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
 import { splitName } from "../core/names";
-import { h } from "./dom";
+import { h, placeChildren } from "./dom";
 import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
 import { SEARCH_DEBOUNCE_MS } from "./search-panel";
-import { placeChildren } from "./tab-bar";
 
 export const ROW_HEIGHT = 28;
 /** A row with its preview line under the name (spec 2026-10-30 「미리보기」). */
