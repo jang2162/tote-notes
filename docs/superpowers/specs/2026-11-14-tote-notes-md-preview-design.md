@@ -89,10 +89,10 @@ settings.json·세션에 더하는 것은 없다. 체크박스는 편집기 문�
 
 ## 시험
 
-- vitest `src/viewer/tasks.test.ts`: n 번째 할 일 ↔ 원본 줄 — 코드 블록·인용·중첩 목록·느슨한 목록·번호 목록·CRLF·HTML 블록의 체크박스·이미 바뀐 원본·줄 확인 실패.
-- vitest `src/viewer/links.test.ts`: 링크 분류(외부·앵커·상대·거절 스킴·`//`·절대 경로), 메모 이름 풀기(퍼센트 인코딩, `./`, `..`, 하위 폴더, 외부 파일의 폴더), 앵커 slug.
+- vitest `src/viewer/tasks.test.ts`: n 번째 할 일 ↔ 원본 줄 — 코드 블록·인용·중첩 목록·느슨한 목록·번호 목록·CRLF·HTML 블록의 체크박스·이미 바뀐 원본, 줄 확인(`boxMark`)이 할 일 꼴이 아닌 줄을 거절하는 것.
+- vitest `src/viewer/links.test.ts`: 링크 분류(외부·앵커·상대·거절 스킴·`//`·절대 경로), 메모 이름 풀기(퍼센트 인코딩, `./`, `..`, 하위 폴더, 외부 파일의 폴더), 열 수 있는 URL 검사(`isOpenableLink`, Rust 와 같은 규칙). 제목 앵커(slug)는 뷰어 안의 코드라 e2e(`#제목` 스크롤)로만 본다.
 - vitest `src/viewer/code-colors.test.ts`: 펜스 언어 → 언어, 워커 토큰 → 조각, 색 검사, 한도.
 - Rust `app::links` 단위 시험: 스킴 허용·거절, 공백·제어 문자, 길이.
 - vitest `src/backend/tauri.test.ts` 명령 표에 `open_link`.
 - e2e `tests/e2e/markdown.spec.ts`: 체크박스가 보이고 누르면 원본이 바뀌며 ⌘Z 로 돌아간다, 읽기 전용(휴지통) 탭에는 체크박스가 없다, HTML 의 손으로 쓴 체크박스는 남지 않는다, 코드 블록에 색 span 이 생긴다, 메모 링크가 탭을 연다, 외부 링크는 백엔드 명령을 그 URL 로 부른다, `javascript:` 는 아무것도 부르지 않는다, `#제목` 이 스크롤한다, 바뀐 원본에서는 아무 줄도 바뀌지 않는다.
-- e2e `tests/e2e/viewer.spec.ts`: 다른 창에서 온 새 메시지(`toggleTask`·`openLink`·`highlight`)는 무시된다, 꼴이 틀린 메시지는 무시된다.
+- e2e `tests/e2e/viewer.spec.ts`: 다른 창에서 온 새 메시지(`toggleTask`·`openLink`·`highlight`)는 무시된다, 꼴이 틀리거나 옛 판의 메시지는 무시된다, 미리보기 처리기를 받지 않은 뷰어의 요청은 버려진다, 실제 마크다운 뷰어가 체크박스의 번호를 보내고 읽기 전용이면 보내지 않는다(체크박스 비활성).
