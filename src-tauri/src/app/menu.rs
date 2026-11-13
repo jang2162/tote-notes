@@ -12,7 +12,8 @@ use std::thread::ThreadId;
 
 use serde::Deserialize;
 use tauri::menu::{
-    CheckMenuItemBuilder, Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder, SubmenuBuilder,
+    CheckMenuItemBuilder, IsMenuItem, Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder,
+    PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
@@ -628,7 +629,7 @@ fn new_window(app: &AppHandle, window: Option<WebviewWindow>) {
 
 /// An item of a pop-up menu (`show_popup_menu`). With `checked` it is a check item, ticked or
 /// not; without, a plain one. With `separator` it is a dividing line, and `id` and `text` are not
-/// looked at.
+/// looked at. With `items` it is a submenu named `text`, whose items answer with their own ids.
 #[derive(Debug, Deserialize)]
 pub struct PopupMenuItem {
     #[serde(default)]
@@ -639,6 +640,8 @@ pub struct PopupMenuItem {
     pub checked: Option<bool>,
     #[serde(default)]
     pub separator: bool,
+    #[serde(default)]
+    pub items: Option<Vec<PopupMenuItem>>,
 }
 
 /// The item picked in the pop-up menu on show. One at a time: macOS shows one context menu at once.
@@ -672,24 +675,10 @@ pub fn show_popup_menu(
 ) -> tauri::Result<Option<String>> {
     let picks = app.state::<PopupMenu>();
     picks.begin();
-    let mut menu = MenuBuilder::new(app);
-    for each in items {
-        if each.separator {
-            menu = menu.separator();
-            continue;
-        }
-        let id = format!("{POPUP_MENU}{}", each.id);
-        menu = match each.checked {
-            Some(checked) => menu.item(
-                &CheckMenuItemBuilder::with_id(id, &each.text)
-                    .checked(checked)
-                    .build(app)?,
-            ),
-            None => menu.item(&item(app, &id, &each.text, None)?),
-        };
-    }
+    let built = popup_items(app, items)?;
+    let refs: Vec<&dyn IsMenuItem<Wry>> = built.iter().map(Box::as_ref).collect();
     // Returns once the menu has closed.
-    window.popup_menu(&menu.build()?)?;
+    window.popup_menu(&Menu::with_items(app, &refs)?)?;
     // The pick's event was queued on the event loop while the menu was open, ahead of this task:
     // once the task has run, `on_event` has recorded it.
     let (done, ran) = mpsc::channel();
@@ -698,6 +687,36 @@ pub fn show_popup_menu(
     })?;
     let _ = ran.recv();
     Ok(picks.take())
+}
+
+/// The menu items of `items`, a submenu's built in turn.
+fn popup_items(
+    app: &AppHandle,
+    items: &[PopupMenuItem],
+) -> tauri::Result<Vec<Box<dyn IsMenuItem<Wry>>>> {
+    let mut built: Vec<Box<dyn IsMenuItem<Wry>>> = Vec::new();
+    for each in items {
+        if each.separator {
+            built.push(Box::new(PredefinedMenuItem::separator(app)?));
+            continue;
+        }
+        if let Some(children) = &each.items {
+            let children = popup_items(app, children)?;
+            let refs: Vec<&dyn IsMenuItem<Wry>> = children.iter().map(Box::as_ref).collect();
+            built.push(Box::new(Submenu::with_items(app, &each.text, true, &refs)?));
+            continue;
+        }
+        let id = format!("{POPUP_MENU}{}", each.id);
+        match each.checked {
+            Some(checked) => built.push(Box::new(
+                CheckMenuItemBuilder::with_id(id, &each.text)
+                    .checked(checked)
+                    .build(app)?,
+            )),
+            None => built.push(Box::new(item(app, &id, &each.text, None)?)),
+        }
+    }
+    Ok(built)
 }
 
 /// The window a menu item acts in: the focused one, else the one focused last — with every
@@ -801,6 +820,26 @@ mod tests {
         .unwrap();
         assert_eq!(items[0].checked, None);
         assert_eq!(items[1].checked, Some(true));
+    }
+
+    #[test]
+    fn a_popup_item_with_items_is_a_submenu_whose_items_answer_with_their_ids() {
+        let items: Vec<PopupMenuItem> = serde_json::from_str(
+            r#"[{"id":"move-to","text":"다른 워크스페이스로 옮기기","items":[
+                {"id":"move-to:/w/가","text":"가"},{"separator":true},{"id":"move-to:/w/나","text":"나"}
+            ]},{"id":"reveal","text":"Finder 에서 보기"}]"#,
+        )
+        .unwrap();
+        let children = items[0].items.as_ref().unwrap();
+        assert_eq!(children.len(), 3);
+        assert_eq!(children[0].id, "move-to:/w/가");
+        assert!(children[1].separator);
+        assert!(items[1].items.is_none());
+        // A pick in the submenu comes back as any pop-up pick does.
+        assert_eq!(
+            route("popup-menu:move-to:/w/가"),
+            Route::PopupMenu("move-to:/w/가")
+        );
     }
 
     #[test]

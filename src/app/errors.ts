@@ -12,6 +12,7 @@ export const ERROR_TEXT: Partial<Record<BackendErrorCode, string>> = {
   "not-a-workspace": "워크스페이스가 아닌 폴더입니다",
   "invalid-extension": "확장 패키지를 읽을 수 없습니다",
   "window-busy": "창을 닫거나 바꾸는 중이라 탭을 옮기지 못했습니다",
+  "workspace-open": "열린 창을 닫거나 다른 워크스페이스로 바꾼 뒤 바꿀 수 있습니다",
 };
 
 /** Codes whose message is the only word on the cause (a full disk, a refused permission): the

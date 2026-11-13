@@ -234,6 +234,7 @@ test("a trashed row's menu restores it into the memo list", async ({ page }) => 
   await expect(trashButton(page)).toHaveAttribute("title", "휴지통 (0개)");
   expect(await page.evaluate(() => window.__tote.backend.data.popupMenus?.at(-1))).toMatchObject([
     { id: "restore", text: "복구" },
+    { id: "reveal-in-finder", text: "Finder 에서 보기" },
     { separator: true },
     { id: "purge", text: "영구 삭제" },
   ]);
@@ -567,7 +568,16 @@ test("the menu leaves a trashed tab alone", async ({ page }) => {
   await page.locator(".tab", { hasText: "회의록" }).click({ button: "right" });
   await expect
     .poll(async () => (await lastMenu(page))?.map((item: { id: string }) => item.id))
-    .toEqual(["split-tab-left", "split-tab-right", "split-tab-top", "split-tab-bottom"]);
+    .toEqual([
+      "split-tab-left",
+      "split-tab-right",
+      "split-tab-top",
+      "split-tab-bottom",
+      // The file in the trash (conveniences spec 「메뉴」); no copy of a trashed memo.
+      "",
+      "reveal-in-finder",
+      "copy-path",
+    ]);
   expect(await trashedText(page, "t")).toBe("# 옛것");
   expect(await page.evaluate(() => window.__tote.backend.data.memos)).toEqual({});
 });

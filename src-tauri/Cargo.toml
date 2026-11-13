@@ -47,7 +47,9 @@ muda = { version = "0.20", default-features = false }
 
 # Answers macOS's 「may tote quit?」 (src/app/lifecycle.rs), takes a shortcut off a menu bar item
 # muda leaves it on (src/app/key_equivalents.rs), and places the traffic lights
-# (src/app/traffic_lights.rs). The versions tao already pulls in.
+# (src/app/traffic_lights.rs). The versions tao already pulls in. The pasteboard and the file
+# manager's trash take a path to the clipboard and a workspace to the macOS trash
+# (src/app/conveniences.rs).
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
 objc2-app-kit = { version = "0.3", default-features = false, features = [
@@ -61,12 +63,16 @@ objc2-app-kit = { version = "0.3", default-features = false, features = [
   "NSView",
   "NSControl",
   "NSButton",
+  "NSPasteboard",
 ] }
 objc2-foundation = { version = "0.3", default-features = false, features = [
   "std",
   "NSString",
   "NSGeometry",
   "NSNotification",
+  "NSFileManager",
+  "NSURL",
+  "NSError",
 ] }
 
 [dev-dependencies]

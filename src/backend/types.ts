@@ -66,12 +66,14 @@ export type UpdateProgress =
   | { kind: "installing" };
 
 /** An item of `showPopupMenu`; with `checked` it is a check item, ticked or not. With
- * `separator` it is a line between items, whose `id` and `text` are not read. */
+ * `separator` it is a line between items, whose `id` and `text` are not read. With `items` it is a
+ * submenu named `text`: picking one of them answers with that item's `id`. */
 export interface PopupMenuItem {
   id: string;
   text: string;
   checked?: boolean;
   separator?: boolean;
+  items?: PopupMenuItem[];
 }
 
 /** The line between a pop-up menu's items. */
@@ -93,6 +95,20 @@ export interface TrashedInfo {
  * because another window has it open — that window was asked to save, close and trash it
  * (`onTrashRequest`). */
 export type TrashOutcome = { kind: "trashed"; item: TrashedInfo } | { kind: "elsewhere" };
+
+/** What `moveMemoTo` did (`MoveOutcome` in src-tauri/src/app/conveniences.rs): moved it — `info`
+ * as the target lists it, `workspace` the target's name — or left it because another window has it
+ * open, which was asked to save, close and move it (`onMoveRequest`). */
+export type MoveOutcome =
+  | { kind: "moved"; info: MemoInfo; workspace: string }
+  | { kind: "elsewhere" };
+
+/** A file Finder and the clipboard are asked about (`FileTarget` in
+ * src-tauri/src/app/conveniences.rs): the native side makes its path. */
+export type FileTarget =
+  | { kind: "memo"; id: string }
+  | { kind: "external"; path: string }
+  | { kind: "trashed"; id: string };
 
 /** A tab as every window names it (src-tauri/src/app/places.rs): a memo of this window's
  * workspace, or an external file. */
@@ -457,6 +473,8 @@ export const BACKEND_ERROR_CODES = [
   "not-installed",
   "busy",
   "installing",
+  // A workspace a window shows or is opening is not renamed or trashed (src-tauri/src/app/conveniences.rs).
+  "workspace-open",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 
@@ -533,6 +551,18 @@ export interface Backend {
   emptyTrash(): Promise<number>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;
+  /** A copy of the memo beside it, `<name> 2.<ext>`: a new ID, no automatic titles, its language
+   * and not its pin. `bytes` is the text of its tab, unsaved edits and all; without it the file is
+   * copied. Every window's memo list follows. */
+  duplicateMemo(id: string, bytes?: Uint8Array): Promise<MemoInfo>;
+  /** Moves the memo to the workspace at `workspace` under a new ID. A memo another window has open
+   * stays where it is: `elsewhere`, and that window hears `onMoveRequest`. The memo lists of both
+   * workspaces' windows follow. */
+  moveMemoTo(id: string, workspace: string): Promise<MoveOutcome>;
+  /** Shows the file in Finder, selected; `not-found` when it is not there. */
+  revealInFinder(target: FileTarget): Promise<void>;
+  /** Puts the file's absolute path on the clipboard and returns it. */
+  copyFilePath(target: FileTarget): Promise<string>;
 
   /** This window's layout in the session (`WindowSession`), `null` when it has none. */
   readWindowLayout(): Promise<string | null>;
@@ -589,6 +619,14 @@ export interface Backend {
    * window showing it came forward (this window stays), `"switching"` when this window writes its
    * tabs (`onFlush`) and then reloads on it. `not-a-workspace` when `path` is not one. */
   switchWorkspace(path: string): Promise<"focused" | "switching">;
+  /** Renames the folder of a workspace no window shows and returns its new path; every window's
+   * switcher follows. `workspace-open` while a window shows it or is opening it. */
+  renameWorkspace(path: string, name: string): Promise<string>;
+  /** The memos directly in the workspace at `path`, for the question before trashing it. */
+  workspaceMemoCount(path: string): Promise<number>;
+  /** Moves a workspace no window shows to the macOS trash; its backups stay. `workspace-open`
+   * while a window shows it or is opening it. */
+  trashWorkspace(path: string): Promise<void>;
 
   /** The memo's earlier versions in this workspace's backups, newest first, only where the text
    * differs from the next older one (spec 「백업」 복원). */
@@ -710,6 +748,9 @@ export interface Backend {
   /** Another window trashes a memo this window has open: save it, close its tab, then trash it
    * from here (`tote://trash-memo`). */
   onTrashRequest(handler: (id: string) => void): void;
+  /** Another window moves a memo this window has open to the workspace at `workspace`: save it,
+   * close its tab, then move it from here (`tote://move-memo`). */
+  onMoveRequest(handler: (id: string, workspace: string) => void): void;
   /** Another window asked for a tab this window holds: show it. */
   onReveal(handler: (tab: TabRef) => void): void;
   /** Another window of this workspace let its tab go on this one (`tearOffTab`): its session entry

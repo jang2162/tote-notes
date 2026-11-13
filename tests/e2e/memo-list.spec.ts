@@ -114,6 +114,11 @@ test("pinning a memo moves it to the zone above the list", async ({ page }) => {
   expect((await lastMenu(page))?.map((item) => [item.id, item.text])).toEqual([
     ["rename", "이름 바꾸기…"],
     ["pin", "맨 위에 고정"],
+    // The conveniences spec's 「메뉴」: with one workspace there is nowhere to move a memo to.
+    ["duplicate", "복제"],
+    ["", ""],
+    ["reveal-in-finder", "Finder 에서 보기"],
+    ["copy-path", "경로 복사"],
     // The trash's, below a line (memo trash spec 「휴지통으로 옮기기」).
     ["", ""],
     ["trash", "휴지통으로 이동"],

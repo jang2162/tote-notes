@@ -9,6 +9,7 @@ pub mod names;
 mod ops;
 pub mod order;
 pub mod preview;
+mod transfer;
 mod trash;
 pub mod viewed;
 
@@ -26,6 +27,7 @@ use names::is_valid_file_name;
 use viewed::ViewedTimes;
 
 pub use memo::{kind_for, FileKind, MemoInfo};
+pub use transfer::FileOps;
 pub use trash::{TrashedInfo, DAY_MS, TRASH_DIR};
 
 pub const TOTE_DIR: &str = ".tote";

@@ -1683,6 +1683,27 @@ button.danger {
   margin: 0;
 }
 
+/* A workspace a window shows: marked, its rename and trash buttons off (conveniences spec). */
+.ws-order-open {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ws-order-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ws-order-actions button {
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: default;
+}
+
+.ws-order-actions button:disabled {
+  opacity: 0.45;
+}
+
 .shortcut-settings {
   display: flex;
   flex-direction: column;

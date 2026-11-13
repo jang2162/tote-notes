@@ -1,4 +1,5 @@
 import type { Backend, WorkspaceListItem } from "../backend/types";
+import { confirm, promptText } from "./dialogs";
 import { h } from "./dom";
 import { DRAG_START_PX } from "./tab-bar";
 import { shortcutHint } from "./workspace-switcher";
@@ -12,6 +13,17 @@ export interface WorkspacesSectionOptions {
   fail: (error: unknown) => void;
   /** A save went through: the reason a failed one gave is old news. */
   saved: () => void;
+}
+
+/** Why a workspace a window shows has its rename and trash buttons off (conveniences spec
+ * 「워크스페이스 이름 바꾸기·지우기」). */
+export const OPEN_WORKSPACE_NOTE =
+  "열린 워크스페이스는 그 창을 닫거나 다른 워크스페이스로 바꾼 뒤 이름을 바꾸거나 지울 수 있습니다.";
+
+/** The question before a workspace goes to the macOS trash, with the memos going along. */
+export function trashWorkspaceQuestion(name: string, memos: number): string {
+  const asked = `「${name.normalize("NFC")}」 워크스페이스를 휴지통으로 옮길까요?`;
+  return memos > 0 ? `${asked} 메모 ${memos}개가 함께 옮겨집니다.` : asked;
 }
 
 /** `list` with the item at `from` moved to `to`, the index it has once moved. */
@@ -55,8 +67,9 @@ const arranged = (list: WorkspaceListItem[]) =>
     .sort((a, b) => (a.order ?? Infinity) - (b.order ?? Infinity));
 
 /** The 워크스페이스 section (spec 「설정 화면 『워크스페이스』 구역」): the workspaces under the root in
- * the order the switcher and ⌃1 – ⌃9 follow, each with the ⌃ key that picks it and a 「숨김」 box.
- * A row is dragged to its new place, and each change is saved as it is made. */
+ * the order the switcher and ⌃1 – ⌃9 follow, each with the ⌃ key that picks it, a 「숨김」 box and
+ * its rename and trash buttons. A row is dragged to its new place, and each change is saved as it
+ * is made. */
 export function workspacesSection(options: WorkspacesSectionOptions): {
   el: HTMLElement;
   /** Stops listening and calls off a drag. */
@@ -84,7 +97,12 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     textContent: "워크스페이스 루트에 워크스페이스가 없습니다.",
     hidden: true,
   });
-  const el = h("div", { class: "ws-order" }, frame, empty);
+  const openNote = h("p", {
+    class: "settings-note ws-order-open-note",
+    textContent: OPEN_WORKSPACE_NOTE,
+    hidden: true,
+  });
+  const el = h("div", { class: "ws-order" }, frame, openNote, empty);
 
   const rowEls = () => [...list.querySelectorAll<HTMLElement>(".ws-order-row")];
 
@@ -118,8 +136,10 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
           { class: classes.join(" "), data: { path: item.path } },
           h("span", { class: "ws-order-grip", textContent: "⋮⋮", ariaHidden: "true" }),
           h("span", { class: "ws-order-name", textContent: name }),
+          item.open ? h("span", { class: "ws-order-open", textContent: "열림" }) : null,
           h("span", { class: "ws-order-key", textContent: keys[index] ?? "" }),
           h("label", {}, box, "숨김"),
+          manageButtons(item, name),
         );
         row.addEventListener("pointerdown", (event) => press(index, event));
         return row;
@@ -127,6 +147,7 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     );
     frame.hidden = items.length === 0;
     empty.hidden = !loaded || items.length > 0;
+    openNote.hidden = !items.some((item) => item.open);
     if (focusedPath !== undefined) {
       const row = rowEls().find((each) => each.dataset.path === focusedPath);
       row?.querySelector<HTMLInputElement>("input")?.focus();
@@ -167,6 +188,56 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
     }
   };
 
+  /** A row's 「이름 바꾸기…」 and 「휴지통으로 이동…」, off for a workspace a window shows. */
+  const manageButtons = (item: WorkspaceListItem, name: string) => {
+    const rename = h("button", {
+      type: "button",
+      class: "ws-order-rename",
+      textContent: "이름 바꾸기…",
+      ariaLabel: `${name} 이름 바꾸기`,
+    });
+    const trash = h("button", {
+      type: "button",
+      class: "ws-order-trash",
+      textContent: "휴지통으로 이동…",
+      ariaLabel: `${name} 휴지통으로 이동`,
+    });
+    for (const button of [rename, trash]) {
+      button.disabled = item.open;
+      if (item.open) button.title = OPEN_WORKSPACE_NOTE;
+    }
+    rename.addEventListener("click", () => void renameWorkspace(item, name));
+    trash.addEventListener("click", () => void trashWorkspace(item, name));
+    return h("span", { class: "ws-order-actions" }, rename, trash);
+  };
+
+  const renameWorkspace = async (item: WorkspaceListItem, name: string) => {
+    const typed = await promptText("새 워크스페이스 이름", name);
+    if (disposed || typed === null || typed.trim() === "" || typed.trim() === name) return;
+    try {
+      await backend.renameWorkspace(item.path, typed);
+      if (!disposed) options.saved();
+    } catch (error) {
+      if (!disposed) options.fail(error);
+    }
+    // Heard as any change is (`onWorkspacesChanged`); read here too for a refusal's sake.
+    if (!disposed) await load();
+  };
+
+  const trashWorkspace = async (item: WorkspaceListItem, name: string) => {
+    try {
+      const memos = await backend.workspaceMemoCount(item.path);
+      if (disposed) return;
+      const sure = await confirm(trashWorkspaceQuestion(name, memos), "휴지통으로 이동", "danger");
+      if (!sure || disposed) return;
+      await backend.trashWorkspace(item.path);
+      if (!disposed) options.saved();
+    } catch (error) {
+      if (!disposed) options.fail(error);
+    }
+    if (!disposed) await load();
+  };
+
   const hide = async (path: string, hidden: boolean) => {
     items = items.map((item) => (item.path === path ? { ...item, hidden } : item));
     render();
@@ -179,7 +250,7 @@ export function workspacesSection(options: WorkspacesSectionOptions): {
    * their ⌃ keys with them; let go, that order is the one saved. */
   const press = (from: number, down: PointerEvent) => {
     if (down.button !== 0) return;
-    if ((down.target as Element).closest("label, input")) return;
+    if ((down.target as Element).closest("label, input, button")) return;
     // The backend leaves a row with no ID out of the order it saves: it stays last.
     if (!items[from]?.orderable) return;
     // A press whose release never came (let go out of the window, no move since) is over.
