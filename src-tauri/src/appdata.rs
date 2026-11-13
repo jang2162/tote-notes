@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{read_json, write_json};
+use crate::persist::{read_json, read_json_file, write_json, JsonFile};
 use crate::shortcuts;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,16 +112,27 @@ impl Machine {
         path: &Path,
         device_name: impl FnOnce() -> String,
     ) -> io::Result<Machine> {
-        if let Some(machine) = read_json::<Machine>(path)? {
-            return Ok(machine);
-        }
+        Machine::load_or_create_with_aside(path, device_name).map(|(machine, _)| machine)
+    }
+
+    /// `load_or_create`, with where a file that did not parse went (`read_json_file`): the ID made
+    /// in its place is a new one, so the caller has the tabs forgotten to tell the person about.
+    pub fn load_or_create_with_aside(
+        path: &Path,
+        device_name: impl FnOnce() -> String,
+    ) -> io::Result<(Machine, Option<PathBuf>)> {
+        let aside = match read_json_file::<Machine>(path)? {
+            JsonFile::Read(machine) => return Ok((machine, None)),
+            JsonFile::Missing => None,
+            JsonFile::SetAside(aside) => Some(aside),
+        };
         let machine = Machine {
             version: 1,
             device_id: uuid::Uuid::new_v4().to_string(),
             device_name: device_name(),
         };
         write_json(path, &machine)?;
-        Ok(machine)
+        Ok((machine, aside))
     }
 }
 
@@ -504,7 +515,17 @@ impl SettingsPatch {
 
 impl Settings {
     pub fn load(path: &Path) -> io::Result<Settings> {
-        Ok(read_json(path)?.unwrap_or_default())
+        Settings::load_with_aside(path).map(|(settings, _)| settings)
+    }
+
+    /// `load`, with where a file that did not parse went (`read_json_file`): the defaults in its
+    /// place move the workspace root, so the caller has that to tell the person about.
+    pub fn load_with_aside(path: &Path) -> io::Result<(Settings, Option<PathBuf>)> {
+        Ok(match read_json_file(path)? {
+            JsonFile::Read(settings) => (settings, None),
+            JsonFile::Missing => (Settings::default(), None),
+            JsonFile::SetAside(aside) => (Settings::default(), Some(aside)),
+        })
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {

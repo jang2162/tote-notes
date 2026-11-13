@@ -68,7 +68,8 @@ pub enum PendingOpen {
     External {
         path: PathBuf,
     },
-    /// Why a `tote` request failed, for the status bar.
+    /// Words for the status bar: why a `tote` request failed, or what went wrong behind the
+    /// window (a backup, the watcher, a file of this device set aside at launch).
     Notice {
         message: String,
     },
@@ -179,6 +180,9 @@ struct Inner {
     /// The version of the update found last: every window shows its button, the ones registered
     /// later and the page a switch reloads too.
     update_found: Option<String>,
+    /// What went wrong while no window was there to say it (`AppCore::tell_next_window`): the next
+    /// window registered says it in its status bar.
+    waiting_notices: Vec<String>,
 }
 
 struct OpenWorkspace {
@@ -330,10 +334,16 @@ impl Inner {
         self.serials += 1;
         let serial = self.serials;
         // Its page takes these with its first `take_pending_opens`.
+        let notices = std::mem::take(&mut self.waiting_notices);
         let pending = self
             .update_button()
             .into_iter()
             .chain(self.waiting_offer.take().map(PendingOpen::Update))
+            .chain(
+                notices
+                    .into_iter()
+                    .map(|message| PendingOpen::Notice { message }),
+            )
             .collect();
         self.windows.insert(
             label.to_string(),
@@ -366,6 +376,13 @@ fn save_viewed_now(workspace: &Mutex<Workspace>) {
     }
 }
 
+/// `what` happened to a file of this device, and the name the file was set aside under (next to
+/// where it was), so the person can take what it held from there.
+fn set_aside_notice(what: &str, aside: &Path) -> String {
+    let name = aside.file_name().unwrap_or_default().to_string_lossy();
+    format!("{what}(원래 파일: {name})")
+}
+
 /// `pin_legacy_root`, saved: the mark goes into `state.json` only once the settings it decided on
 /// are written, so a launch that could not write them tries again next time.
 fn keep_legacy_root(
@@ -393,9 +410,18 @@ impl AppCore {
     /// `bundled_dir`: the extensions folder inside the app bundle's resources.
     pub fn load(bundled_dir: PathBuf) -> Result<AppCore, String> {
         let paths = AppPaths::resolve().ok_or("could not find the app data folder")?;
-        let machine = Machine::load_or_create(&paths.machine_file(), device_name)
-            .map_err(|err| format!("machine.json: {err}"))?;
-        let mut settings = Settings::load(&paths.settings_file())
+        AppCore::load_at(paths, bundled_dir)
+    }
+
+    /// `load` with the data folder given. A `machine.json` or `settings.json` that did not parse
+    /// is set aside and started over, and the first window says so (`set_aside_notice`): the tabs
+    /// forgotten and the workspace root gone back to its default would otherwise have no cause
+    /// the person could find.
+    fn load_at(paths: AppPaths, bundled_dir: PathBuf) -> Result<AppCore, String> {
+        let (machine, machine_aside) =
+            Machine::load_or_create_with_aside(&paths.machine_file(), device_name)
+                .map_err(|err| format!("machine.json: {err}"))?;
+        let (mut settings, settings_aside) = Settings::load_with_aside(&paths.settings_file())
             .map_err(|err| format!("settings.json: {err}"))?;
         let mut launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
@@ -407,6 +433,23 @@ impl AppCore {
         );
         let core = AppCore::new(paths, machine, settings, launch, bundled_dir);
         core.extensions.remove_leftovers();
+        let asides = [
+            (
+                settings_aside,
+                "settings.json 을 읽지 못해 기본 설정으로 시작했습니다",
+            ),
+            (
+                machine_aside,
+                "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다",
+            ),
+        ];
+        for (aside, what) in asides {
+            if let Some(aside) = aside {
+                let message = set_aside_notice(what, &aside);
+                eprintln!("tote: {message}");
+                core.tell_next_window(message);
+            }
+        }
         Ok(core)
     }
 
@@ -453,6 +496,7 @@ impl AppCore {
                 held: HashMap::new(),
                 waiting_offer: None,
                 update_found: None,
+                waiting_notices: Vec::new(),
             }),
         }
     }
@@ -1363,6 +1407,12 @@ impl AppCore {
         if let Some(window) = lock(&self.inner).windows.get_mut(label) {
             window.pending.push(open);
         }
+    }
+
+    /// `message` goes to the status bar of the next window registered: for what goes wrong while
+    /// no window is there to say it — at launch, before the first one.
+    pub fn tell_next_window(&self, message: String) {
+        lock(&self.inner).waiting_notices.push(message);
     }
 
     /// What the window should open now. Nothing while it switches (`in_switch`, `switching`): the
@@ -2484,6 +2534,67 @@ mod tests {
         core.closed(&w2);
         core.release(&w3);
         assert!(!core.is_open_path(&path));
+    }
+
+    /// The words of the notices among `opens`.
+    fn notices(opens: Vec<PendingOpen>) -> Vec<String> {
+        opens
+            .into_iter()
+            .filter_map(|open| match open {
+                PendingOpen::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_broken_settings_or_machine_file_is_told_to_the_first_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
+        fs::create_dir_all(&paths.data_dir).unwrap();
+        fs::write(
+            paths.settings_file(),
+            "{ \"workspaceRoot\": \"/elsewhere\", ",
+        )
+        .unwrap();
+        fs::write(paths.machine_file(), "{ \"deviceId\": ").unwrap();
+        let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
+        // The root went back to the default and the device has a new ID: that is what is told.
+        assert_eq!(core.workspace_root(), paths.default_workspace_root);
+        let a = open(&core, "가");
+        let told = notices(core.take_pending(&a));
+        let aside = |file: &str| {
+            let name = fs::read_dir(&paths.data_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .find(|name| name.starts_with(&format!("{file}.corrupt-")));
+            name.unwrap_or_else(|| panic!("{file} was not set aside"))
+        };
+        assert_eq!(
+            told,
+            vec![
+                format!(
+                    "settings.json 을 읽지 못해 기본 설정으로 시작했습니다(원래 파일: {})",
+                    aside("settings.json")
+                ),
+                format!(
+                    "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다(원래 파일: {})",
+                    aside("machine.json")
+                ),
+            ]
+        );
+        // Once, in one window.
+        let b = open(&core, "나");
+        assert!(notices(core.take_pending(&b)).is_empty());
+
+        // Files that read, or are not there yet, say nothing.
+        let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
+        let a = open(&core, "다");
+        assert!(notices(core.take_pending(&a)).is_empty());
+        let fresh = AppPaths::from_parts(Some(dir.path().join("새")), None, None, false).unwrap();
+        let core = AppCore::load_at(fresh, dir.path().join("bundled")).unwrap();
+        let a = open(&core, "가");
+        assert!(notices(core.take_pending(&a)).is_empty());
     }
 
     #[test]
