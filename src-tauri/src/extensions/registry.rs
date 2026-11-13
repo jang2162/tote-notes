@@ -250,6 +250,7 @@ mod tests {
         let settings = ExtensionSettings {
             disabled: vec![],
             precedence: Precedence::Bundled,
+            unknown: Default::default(),
         };
         let registry = build(&scan(), &settings);
         let order: Vec<&str> = registry
@@ -268,6 +269,7 @@ mod tests {
         let settings = ExtensionSettings {
             disabled: vec!["someone.better-md".into(), "tote.languages".into()],
             precedence: Precedence::User,
+            unknown: Default::default(),
         };
         let registry = build(&scan(), &settings);
         assert_eq!(registry.languages.len(), 2);

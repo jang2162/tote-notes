@@ -8,6 +8,15 @@ const openModals: { backdrop: HTMLElement; opener: Element | null }[] = [];
  * is not in it and stays inert. */
 const heldOff = new Set<HTMLElement>();
 let titles = 0;
+/** Where the keys go when a closed dialog has nowhere to give them back to — set by the app. */
+let keysHome: (() => void) | null = null;
+
+/** `home` takes the keys when a dialog closes with nothing to give them back to: nothing had them
+ * as it opened (a press on a button takes them off whatever had them, in WebKit), or what had them
+ * has left the page or gone inert since. A dialog still open under it takes them first. */
+export function giveKeysHomeWith(home: () => void): void {
+  keysHome = home;
+}
 
 /** Whether a dialog has the window: until it is answered, nothing behind it takes a key, a click
  * or a menu command. */
@@ -28,6 +37,24 @@ function holdOffTheRest(): void {
   }
 }
 
+/** Gives the keys back to `opener` when it can still take them; else to the dialog left on top,
+ * else to `keysHome`. */
+function giveKeysBack(opener: Element | null): void {
+  if (opener instanceof HTMLElement && opener !== document.body) {
+    opener.focus({ preventScroll: true });
+    // Not taken when it has left the page or is inert now.
+    if (document.activeElement === opener) return;
+  }
+  const under = openModals[openModals.length - 1]?.backdrop;
+  if (!under) return keysHome?.();
+  const dialog = under.firstElementChild;
+  if (!(dialog instanceof HTMLElement)) return;
+  const first = stops(dialog)[0];
+  if (first) return first.focus();
+  dialog.tabIndex = -1;
+  dialog.focus();
+}
+
 /** The controls of `dialog` the keys can go to, in order. */
 function stops(dialog: HTMLElement): HTMLElement[] {
   const all = dialog.querySelectorAll<HTMLElement>(
@@ -42,7 +69,8 @@ function stops(dialog: HTMLElement): HTMLElement[] {
  * The dialog is named by its own `aria-labelledby`, else by its first heading or paragraph. The
  * element marked `data-autofocus` takes the focus, else the first input or primary button, else
  * the dialog itself. While it is open the rest of the window is inert, and Tab past its last
- * control comes round to its first; closed, the focus is back where it was.
+ * control comes round to its first; closed, the focus is back where it was (`giveKeysHomeWith`
+ * says where it goes when that is gone).
  * While `holdEscape` says so, Escape on top does nothing: the dialog is in the middle of
  * something that cannot be called off. */
 export function modal<T>(
@@ -66,7 +94,7 @@ export function modal<T>(
         // one, it gives them back to where this one would have.
         if (over) {
           if (backdrop.contains(over.opener)) over.opener = self.opener;
-        } else if (self.opener instanceof HTMLElement) self.opener.focus({ preventScroll: true });
+        } else giveKeysBack(self.opener);
       }
       resolve(value);
     };

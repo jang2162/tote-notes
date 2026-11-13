@@ -36,8 +36,10 @@ class Parent {
     return this.children[0] ?? null;
   }
 
+  /** Live, as a DOM's is: a child taken out leaves it at once, so a loop over it that takes
+   * children out skips the one after each. */
   get childNodes(): Child[] {
-    return [...this.children];
+    return this.children;
   }
 
   insertBefore(child: Child, before: Child | null): Child {
@@ -84,6 +86,12 @@ describe("placeChildren", () => {
     expect(place("ab", "abC")).toEqual({ order: "abC", touched: "C" });
     expect(place("", "AB")).toEqual({ order: "AB", touched: "AB" });
     expect(place("ab", "")).toEqual({ order: "", touched: "ab" });
+  });
+
+  it("takes out every child no longer wanted, however many stand together", () => {
+    expect(place("abcd", "")).toEqual({ order: "", touched: "abcd" });
+    expect(place("abcd", "d")).toEqual({ order: "d", touched: "abc" });
+    expect(place("abcde", "ae")).toEqual({ order: "ae", touched: "bcd" });
   });
 
   it("moves only the child that comes forward", () => {

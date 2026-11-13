@@ -61,8 +61,8 @@ async function holdImports(page: Page): Promise<() => Promise<void>> {
     const backend = window.__tote.backend;
     const importMemo = backend.importMemo.bind(backend);
     const held = new Promise<void>((resolve) => Object.assign(window, { releaseImports: resolve }));
-    backend.importMemo = async (name, bytes) => {
-      const info = await importMemo(name, bytes);
+    backend.importMemo = async (...args) => {
+      const info = await importMemo(...args);
       await held;
       return info;
     };
@@ -180,8 +180,8 @@ test("a video named .ts sent by a tote command says it is not text, its bytes ne
     const backend = window.__tote.backend;
     const read = backend.readExternal.bind(backend);
     (window as unknown as { sent: number[] }).sent = [];
-    backend.readExternal = async (path) => {
-      const bytes = await read(path);
+    backend.readExternal = async (...args) => {
+      const bytes = await read(...args);
       (window as unknown as { sent: number[] }).sent.push(bytes.length);
       return bytes;
     };
@@ -210,7 +210,10 @@ test("a video named .ts over 100MB says it is not text instead of being scanned"
     const backend = window.__tote.backend;
     const open = backend.openExternal.bind(backend);
     // Over the editor's limit: the tab goes to the large text viewer, whose scan refuses it.
-    backend.openExternal = async (path) => ({ ...(await open(path)), size: 200 * 1024 * 1024 });
+    backend.openExternal = async (...args) => ({
+      ...(await open(...args)),
+      size: 200 * 1024 * 1024,
+    });
     backend.data.pending = [{ kind: "external", path: "/x/큰녹화.ts" }];
     backend.poke();
   });

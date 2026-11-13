@@ -141,10 +141,11 @@ test("installing an extension makes the next file read its language files again"
     const backend = window.__tote.backend;
     const read = backend.readExtensionFile.bind(backend);
     (window as unknown as { configReads: string[] }).configReads = [];
-    backend.readExtensionFile = (extensionId: string, path: string) => {
+    backend.readExtensionFile = (...args) => {
+      const [, path] = args;
       if (path.startsWith("language-configuration/"))
         (window as unknown as { configReads: string[] }).configReads.push(path);
-      return read(extensionId, path);
+      return read(...args);
     };
   });
   const reads = () =>
@@ -175,8 +176,8 @@ for (const leaving of [false, true]) {
       const backend = window.__tote.backend;
       const read = backend.readExtensionFile.bind(backend);
       (window as unknown as { cut: number }).cut = 0;
-      backend.readExtensionFile = (extensionId: string, path: string) => {
-        if (!path.startsWith("language-configuration/")) return read(extensionId, path);
+      backend.readExtensionFile = (...args) => {
+        if (!args[1].startsWith("language-configuration/")) return read(...args);
         (window as unknown as { cut: number }).cut++;
         return Promise.reject(new TypeError("Load failed"));
       };
@@ -267,8 +268,8 @@ test("two settings screens do not undo each other", async ({ page }) => {
     const backend = window.__tote.backend;
     const read = backend.settings.bind(backend);
     let otherWindowSaved = false;
-    backend.settings = async () => {
-      const current = await read();
+    backend.settings = async (...args) => {
+      const current = await read(...args);
       if (!otherWindowSaved) {
         otherWindowSaved = true;
         backend.data.settings.workspaceRoot = "~/다른 창";
@@ -419,10 +420,11 @@ test("replacing an extension with the same version makes the next file read agai
     const backend = window.__tote.backend;
     const read = backend.readExtensionFile.bind(backend);
     (window as unknown as { configReads: string[] }).configReads = [];
-    backend.readExtensionFile = (extensionId: string, path: string) => {
+    backend.readExtensionFile = (...args) => {
+      const [, path] = args;
       if (path.startsWith("language-configuration/"))
         (window as unknown as { configReads: string[] }).configReads.push(path);
-      return read(extensionId, path);
+      return read(...args);
     };
   });
   const reads = () =>
@@ -611,9 +613,9 @@ test("the editor section saves line numbers, font size and font at once", async 
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
     (window as unknown as { patches: object[] }).patches = [];
-    backend.patchSettings = (change) => {
-      (window as unknown as { patches: object[] }).patches.push(change);
-      return patchSettings(change);
+    backend.patchSettings = (...args) => {
+      (window as unknown as { patches: object[] }).patches.push(...args);
+      return patchSettings(...args);
     };
   });
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
@@ -682,11 +684,11 @@ test("a font size or font whose save failed is sent again as it is", async ({ pa
     const w = window as unknown as { patches: object[]; failures: number };
     w.patches = [];
     w.failures = 0;
-    backend.patchSettings = (change) => {
-      w.patches.push(change);
+    backend.patchSettings = (...args) => {
+      w.patches.push(...args);
       return w.failures-- > 0
         ? Promise.reject(new Error("디스크가 가득 찼습니다"))
-        : patchSettings(change);
+        : patchSettings(...args);
     };
   });
   const failOnce = () =>
@@ -802,9 +804,9 @@ test("the theme mode keeps the page light or dark whatever the OS, saved at once
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
     (window as unknown as { patches: object[] }).patches = [];
-    backend.patchSettings = (patch) => {
-      (window as unknown as { patches: object[] }).patches.push(patch);
-      return patchSettings(patch);
+    backend.patchSettings = (...args) => {
+      (window as unknown as { patches: object[] }).patches.push(...args);
+      return patchSettings(...args);
     };
   });
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
@@ -989,9 +991,9 @@ test("the general section sets the trash retention", async ({ page }) => {
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
     (window as unknown as { patches: object[] }).patches = [];
-    backend.patchSettings = (change) => {
-      (window as unknown as { patches: object[] }).patches.push(change);
-      return patchSettings(change);
+    backend.patchSettings = (...args) => {
+      (window as unknown as { patches: object[] }).patches.push(...args);
+      return patchSettings(...args);
     };
   });
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);

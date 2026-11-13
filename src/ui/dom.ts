@@ -26,7 +26,8 @@ export function h<K extends keyof HTMLElementTagNameMap>(
  * its stead. */
 export function placeChildren(parent: HTMLElement, wanted: readonly HTMLElement[]): void {
   const kept = new Set<Node>(wanted);
-  for (const child of [...parent.childNodes]) if (!kept.has(child)) child.remove();
+  // A copy: `childNodes` is live, and a loop over it that takes children out skips the next one.
+  for (const child of Array.from(parent.childNodes)) if (!kept.has(child)) child.remove();
   let at = parent.firstChild;
   for (const el of wanted) {
     if (el === at) at = at.nextSibling;

@@ -13,20 +13,29 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 
 use crate::persist::{read_json, write_json};
+use crate::workspace::id::is_safe_segment;
 use crate::workspace::TOTE_DIR;
 
 pub const SESSION_VERSION: u64 = 2;
 
-pub fn session_file(root: &Path, device_id: &str) -> PathBuf {
-    root.join(TOTE_DIR)
-        .join("sessions")
-        .join(format!("{device_id}.json"))
+/// The device's session file in the workspace, named after its ID. `machine.json`, where the ID
+/// is read, makes a new one for anything but a UUID (`Machine::load_or_create_with_aside`); an ID
+/// that is not one plain name makes no path here all the same (`workspace::id`).
+pub fn session_file(root: &Path, device_id: &str) -> Option<PathBuf> {
+    is_safe_segment(device_id).then(|| {
+        root.join(TOTE_DIR)
+            .join("sessions")
+            .join(format!("{device_id}.json"))
+    })
 }
 
 /// The window layouts of the file, oldest-opened first; a version 1 file is one window. No file,
 /// or one of neither shape, is no windows. An unreadable file is set aside.
 pub fn read_layouts(root: &Path, device_id: &str) -> io::Result<Vec<Value>> {
-    let Some(file) = read_json::<Map<String, Value>>(&session_file(root, device_id))? else {
+    let Some(path) = session_file(root, device_id) else {
+        return Ok(Vec::new());
+    };
+    let Some(file) = read_json::<Map<String, Value>>(&path)? else {
         return Ok(Vec::new());
     };
     if let Some(Value::Array(windows)) = file.get("windows") {
@@ -52,8 +61,14 @@ pub fn read_layouts(root: &Path, device_id: &str) -> io::Result<Vec<Value>> {
 }
 
 pub fn write_layouts(root: &Path, device_id: &str, layouts: &[Value]) -> io::Result<()> {
+    let path = session_file(root, device_id).ok_or_else(|| {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            format!("the device ID {device_id:?} is not a file name"),
+        )
+    })?;
     write_json(
-        &session_file(root, device_id),
+        &path,
         &json!({ "version": SESSION_VERSION, "windows": layouts }),
     )
 }
@@ -113,7 +128,7 @@ mod tests {
     }
 
     fn put(root: &Path, device_id: &str, text: &str) {
-        let file = session_file(root, device_id);
+        let file = session_file(root, device_id).unwrap();
         fs::create_dir_all(file.parent().unwrap()).unwrap();
         fs::write(&file, text).unwrap();
     }
@@ -156,9 +171,10 @@ mod tests {
         let l1 = json!({"panes": [{"tabs": [], "activeTab": -1, "width": 1.0}], "focusedPane": 0});
         let l2 = json!({"frame": {"x": 1, "y": 2, "width": 800, "height": 600}, "panes": []});
         write_layouts(root.path(), "d1", &[l1.clone(), l2.clone()]).unwrap();
-        let file: Value =
-            serde_json::from_str(&fs::read_to_string(session_file(root.path(), "d1")).unwrap())
-                .unwrap();
+        let file: Value = serde_json::from_str(
+            &fs::read_to_string(session_file(root.path(), "d1").unwrap()).unwrap(),
+        )
+        .unwrap();
         assert_eq!(file["version"], 2);
         assert_eq!(read_layouts(root.path(), "d1").unwrap(), vec![l1, l2]);
         // Each device has its own file.
@@ -166,7 +182,49 @@ mod tests {
             read_layouts(root.path(), "d2").unwrap(),
             Vec::<Value>::new()
         );
-        assert!(session_file(root.path(), "d1").ends_with(".tote/sessions/d1.json"));
+        assert!(session_file(root.path(), "d1")
+            .unwrap()
+            .ends_with(".tote/sessions/d1.json"));
+    }
+
+    #[test]
+    fn a_device_id_that_is_not_one_path_segment_has_no_session_file() {
+        let dir = tempfile::tempdir().unwrap();
+        // Deep enough that even unchecked the climbs here stay in the temporary folder.
+        let root = dir.path().join("a/b/c/workspace");
+        fs::create_dir_all(&root).unwrap();
+        let outside = dir.path().join("outside").display().to_string();
+        let layout = json!({"panes": [], "focusedPane": 0});
+        for bad in [
+            "../../x",
+            "../../../../x",
+            "a/b",
+            "",
+            ".",
+            "..",
+            ".x",
+            outside.as_str(),
+        ] {
+            assert_eq!(session_file(&root, bad), None, "{bad:?}");
+            assert!(
+                write_layouts(&root, bad, std::slice::from_ref(&layout)).is_err(),
+                "{bad:?}"
+            );
+            assert_eq!(read_layouts(&root, bad).unwrap(), Vec::<Value>::new());
+        }
+        // Nothing was written, inside the workspace or out of it.
+        let mut files = Vec::new();
+        let mut folders = vec![dir.path().to_path_buf()];
+        while let Some(folder) = folders.pop() {
+            for entry in fs::read_dir(folder).unwrap().flatten() {
+                if entry.file_type().unwrap().is_dir() {
+                    folders.push(entry.path());
+                } else {
+                    files.push(entry.path());
+                }
+            }
+        }
+        assert_eq!(files, Vec::<std::path::PathBuf>::new());
     }
 
     #[test]
@@ -181,7 +239,7 @@ mod tests {
     #[test]
     fn an_unreadable_session_starts_empty_and_is_set_aside() {
         let root = tempfile::tempdir().unwrap();
-        let file = session_file(root.path(), "d");
+        let file = session_file(root.path(), "d").unwrap();
         put(root.path(), "d", "{ broken");
         assert_eq!(read_layouts(root.path(), "d").unwrap(), Vec::<Value>::new());
         assert!(!file.exists());

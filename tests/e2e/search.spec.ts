@@ -158,9 +158,9 @@ test("a result in a memo the large text viewer shows opens at its line", async (
   await page.evaluate(() => {
     const backend = window.__tote.backend;
     const scan = backend.scanText.bind(backend);
-    backend.scanText = async (source) => {
+    backend.scanText = async (...args) => {
       await new Promise((resolve) => setTimeout(resolve, 150));
-      return scan(source);
+      return scan(...args);
     };
   });
   await result.click();
@@ -258,9 +258,9 @@ test("a found line opens in the pane the tab lands in", async ({ page }) => {
   await page.evaluate(() => {
     const backend = window.__tote.backend;
     const claim = backend.claimTabs.bind(backend);
-    backend.claimTabs = async (tabs, reveal) => {
+    backend.claimTabs = async (...args) => {
       await new Promise<void>((resolve) => Object.assign(window, { releaseClaim: resolve }));
-      return claim(tabs, reveal);
+      return claim(...args);
     };
   });
   await result.click();

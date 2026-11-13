@@ -7,6 +7,7 @@
 - **Why:** 설치가 없으면 브라우저를 찾지 못해 테스트가 시작도 못 한다. 캐시는 사용자 단위라 워크트리마다 다시 받지 않는다.
 - E2E 의 Vite 서버 포트는 `TOTE_E2E_PORT` 다(기본 1430, `strictPort`). 포트가 잡혀 있으면 다른 서버에 붙지 않고 실패한다. 워크트리를 여럿 동시에 돌리면 워크트리마다 다른 값을 준다.
 - 전체 `pnpm test:e2e` 를 여러 worker 로 돌리면 `[WebServer] … [Unhandled error] Error: Script error.` 줄이 섞일 수 있다. base 에서도 나오는, 시험 결과와 무관한 알려진 잡음이다(단독 파일 실행에서는 나오지 않는다). 시험이 통과했는데 이 줄만 있으면 실패로 보지 않는다. `Cross-origin script load denied …` 줄은 base 와의 관계를 아직 가르지 못했다(안정화 후속 보고 이월 행). 보이면 그 행에 부하·실행 방식과 함께 표본을 더한다.
+- 전체 실행에서 `page.goto: Test timeout of 30000ms exceeded` 같은 30초 시간 초과가 여러 파일에 걸쳐 한꺼번에 나오면 개발 서버가 응답하지 못한 것이다(높은 부하, 기기 잠자기, 네트워크 끊김). 시험이 아니라 실행이 실패한 것이므로 떨어진 파일만 다시 돌려 가른다(`pnpm exec playwright test --last-failed`). 그중 단언 실패가 섞여 있으면 그것은 「부하에서만 실패하는 테스트는 …」 절의 순서로 따로 본다.
 - `switcher.spec.ts` 처럼 워크스페이스 전환이 페이지를 다시 읽는 시험에서는 `[console.error] highlight worker undefined`(또는 `highlight worker: TypeError: Importing a module script is canceled.`) 줄이 단독 실행에서도 섞일 수 있다. 다시 읽기가 불러오던 하이라이트 워커 모듈을 끊어서 나는 것으로 base 에서도 나온다. 시험이 통과했으면 실패로 보지 않는다.
 
 ## 디버그 앱은 언제나 `TOTE_DATA_DIR` 을 주고 띄운다
@@ -40,10 +41,10 @@
 - 웹 인스펙터는 페이지에 포커스를 두고 ⌥⌘I 로 연다(창 안에 붙는다. 포커스가 미리보기 iframe 에 있으면 iframe 쪽으로 가서 열리지 않는다). 콘솔에 글을 넣을 때 `orca computer paste-text` 를 쓰지 않는다 — 넣은 글 뒤에 사람의 클립보드 내용이 따라 들어간 일이 있다. System Events 로 콘솔 입력칸에 `AXFocused` 를 준 뒤 값을 넣고 Return 을 보낸다.
 - 좌표 끌기·클릭 도구가 「맨 위 창이 tote 가 아니다」 로 거부하면 알림 센터 배너부터 의심한다. 배너는 몇 초 뒤 사라지므로 창 목록을 다시 보고 한 번 더 보낸다.
 - `orca computer type-text` 는 입력칸에 `AXReplaceSelection` 으로 값을 넣는다(키 입력이 아니다). WebKit 의 되돌리기 기록에 남는 입력이 필요한 확인(메뉴 실행 취소 등)은 CGEvent 키 코드로 친다.
-- 시험 워크스페이스 폴더를 손으로 만들 때는 `.tote/workspace.json`(`{"version":1,"id":"<uuid>"}`)도 만든다. 없으면 `state.json` 에 적어도 열리지 않고(stderr 「not a tote workspace」) `$TOTE_DATA_DIR/workspaces/메모` 가 새로 생긴다.
+- 시험 워크스페이스 폴더를 손으로 만들 때는 `.tote/workspace.json`(`{"version":1,"id":"<uuid>"}`)도 만든다. 없으면 `state.json` 에 적어도 열리지 않고(stderr 「not a tote workspace」) `$TOTE_DATA_DIR/workspaces/메모` 가 새로 생긴다. `id` 는 하이픈 든 UUID 여야 한다(`uuidgen` 의 대문자도 된다). 아니면 열 때 새 ID 로 바뀌어 `workspace.json` 이 다시 쓰이고, 그 워크스페이스의 고르개 순서·숨김·백업은 새 ID 로 시작한다.
 - 파일 열기 같은 시트의 검색칸은 요소 누르기로 포커스가 가지 않는다. System Events 로 `sheet 1 of window "<제목>"` 안 `AXSearchField` 에 `AXFocused` 를 준다.
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
-- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다. 열린 탭이 없을 때와 확인 창(영구 삭제·휴지통 비우기, 설정 화면 안의 질문)은 연 자리로 돌아간다 — 버튼을 마우스로 눌러 열었으면 WebKit 이 누를 때 포커스를 비우므로 닫은 뒤에도 포커스는 아무 데도 없다.
+- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다. 열린 탭이 없을 때와 확인 창(영구 삭제·휴지통 비우기, 설정 화면 안의 질문)은 연 자리로 돌아간다. 연 자리가 없으면 — 버튼을 마우스로 눌러 열어 WebKit 이 누를 때 포커스를 비웠거나, 연 자리가 그사이 문서에서 빠졌으면 — 아래에 깔린 대화상자가 있으면 그 첫 컨트롤로, 없으면 포커스된 칸으로 간다(편집기, 열린 탭이 없으면 칸 자신. `giveKeysHomeWith`, `src/ui/dialogs.ts`).
 - tote 창이 둘 이상일 때는 `orca computer` 의 요소 번호로 누르지 않는다. `--window-id` 를 줘도 다른 창의 트리와 요소가 잡힐 수 있다(질문 창의 「업데이트하고 다시 시작」 에 포커스가 간 적이 있다). 창 제목으로 `AXWindows` 를 골라 AXUIElement 로 직접 누른다.
 - 설치본과 디버그 번들의 프로세스 이름은 둘 다 `tote` 다(`mainBinaryName`). System Events 로 `process "tote"` 나 `first process whose unix id is <pid>` 를 잡으면 이름으로 다시 찾아 먼저 뜬 쪽(대개 사람의 설치본)을 다룬다. 디버그 앱의 메뉴·창은 pid 로 만든 `AXUIElementCreateApplication(pid)` 나 `orca computer --app com.develma.totenotes.dev` 로 다룬다. 2026-10-26 화면 확인에서 이렇게 설치본의 메뉴를 읽었다.
 - 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「Tote Notes 종료」(0.1.0 은 「tote 종료」) 를 누른다.
@@ -79,6 +80,20 @@
 
 - **Why:** zsh 는 따옴표 없는 `$VAR` 를 공백으로 쪼개지 않는다. 문자열 하나로 담으면 엉뚱한 경로 하나가 넘어가고, oxfmt 는 「1 files」, oxlint 는 「No files found」 라고 하면서 둘 다 exit 0 으로 끝난다. 실패가 없어서 포맷·린트가 돈 것으로 읽힌다.
 - **How to apply:** 출력의 파일 개수가 넘긴 개수와 같은지 본다.
+
+## 에이전트가 돌린 oxlint 는 몇 개를 봤는지 찍지 않는다 — `--format default` 로 본다
+
+에이전트가 돌리면(`AI_AGENT` 같은 환경 변수) `pnpm lint` 의 oxlint 는 문제가 없을 때 요약 줄도 찍지 않고 exit 0 으로 끝난다. 경고만 있을 때도 exit 0 이다.
+
+- **Why:** 출력이 비어 있으면 0개를 본 실행, 아무 문제 없는 실행, 경고가 있는 실행이 구별되지 않는다. 경고는 `pnpm lint` 를 떨어뜨리지 않으므로 「통과」 로 보고된 브랜치에 경고가 남는다.
+- **How to apply:** 파일 수와 경고 수는 `pnpm exec oxlint --no-error-on-unmatched-pattern --format default` 의 `Found N warnings and N errors.`·`Finished in … on N files` 줄로 본다. 보고에는 그 두 수를 적는다.
+
+## 명령의 성패는 파이프에 넘기지 않고 본다
+
+`pnpm typecheck | tail -1 && git commit …` 처럼 출력을 파이프로 줄인 명령의 성패에 다음 명령을 걸지 않는다.
+
+- **Why:** zsh 의 `&&` 는 파이프 **마지막** 명령(`tail`)의 종료 코드를 본다. 앞 명령이 실패해도 `tail` 이 성공하므로 다음 명령이 돈다 — 타입 오류가 든 커밋이 그렇게 만들어진다.
+- **How to apply:** 출력을 파일로 보내고(`pnpm typecheck > "$S/tsc.log" 2>&1; echo "exit=$?"`) 종료 코드를 따로 찍은 뒤 파일을 줄여 읽는다. 파이프를 꼭 써야 하면 `setopt pipefail` 을 먼저 켠다.
 
 ## 소스를 grep 할 때는 `-a` 를 준다
 
@@ -122,6 +137,8 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 되돌리기 실증으로 `git restore`·`git checkout -- <파일>` 을 하면 post-checkout 훅(`pnpm install`·`ruler apply`)이 매번 돈다. 생성물만 다시 만들고 추적 파일은 바꾸지 않으므로 그대로 둔다.
 
+되돌리기 실증은 고친 것을 **커밋한 뒤에** 한다. `git checkout -- <파일>` 은 되돌린 줄과 함께 아직 커밋하지 않은 수정도 지운다.
+
 ## `mise.toml` 의 rust `components` 를 바꾸면 따로 설치한다
 
 바꾼 뒤에는 이미 설치된 툴체인에 `rustup component add <컴포넌트> --toolchain <버전>` 을 따로 돌린다.
@@ -139,7 +156,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - 원인을 찾을 때는 바뀌는 상태에 계측을 건다. 메모 목록이면 `window.__tote.app.memoList` 의 `upsert`·`setMemos`·`remove` 를 감싸 시각과 스택을 남기면 누가 늦게 무엇을 넣는지 보인다. 이 계측은 그 창의 메모 목록 하나만 본다. 다른 창이나 다른 상태(탭·배너)가 늦게 바뀌는 것은 그 객체를 따로 감싸야 보인다.
   - 편집기 상태가 늦게 되돌아가면 `EditorView` 의 갱신을 감싸 본다. 편집기의 레이아웃을 읽는 호출(`lineBlockAtHeight`·`coordsAtPos` 등)은 밀린 measure 를 그 자리에서 돌리고, 그 measure 의 갱신은 update listener 로 탭(`Doc.update`)에 간다. 그래서 탭이 state 를 바꾼 뒤(다시 읽기) 레이아웃을 읽으면 옛 state 의 갱신이 새 state 를 덮을 수 있다. `AppController.onUpdate` 는 탭이 지금 들고 있는 state 에서 시작하지 않은 갱신을 버린다.
   - 시간 자체를 다루는 시험(타이머로 미룬 갱신, 이어 세기)은 `waitForTimeout` 대신 `page.clock` 을 쓴다. `page.clock.install({ time })` 을 로드 전에 부르고, `pauseAt` 으로 시계를 세운 뒤 `runFor(n)` 으로 옮긴다. 150ms 로 미룬 갱신이면 `runFor(149)` 에서 옛 값, `runFor(1)` 에서 새 값을 단언한다. 시계를 세워 두면 저장 타이머(`SESSION_DELAY_MS` 등)도 돌지 않으므로 「즉시 쓰기」 와 「타이머 쓰기」 를 가를 수 있다. `performance.now` 를 읽는 예산(검색 개수의 30ms)은 페이지 안에서 `performance.now` 를 감싸 「볼 때마다 n ms」 로 만든다(`search-bar.spec.ts` 의 `slowLooks`).
-  - 「일어나지 않음」 은 지연으로 증명하지 않는다. 가짜 백엔드의 쓰기 기록(`FakeData.memoWrites`·`layoutWrites`: 메모 id·창 라벨별로 성공한 쓰기 횟수)과 창의 `WriteScheduler.pending()`(대기·실행 중인 쓰기 키 수)을 쓴다. 대기 쓰기가 0 이 될 때까지 poll(`writesSettled`, `tests/e2e/helpers.ts`)한 뒤 `memoWrites` 가 늘지 않았음을 단언한다. 대기 중인 쓰기가 아직 예약 전이면 첫 poll 이 0 을 볼 수 있으므로 쓰기를 일으킨 쪽의 횟수(`layoutWrites` 등)가 늘 때까지 먼저 기다린다. `pending()` 은 세션 쓰기도 세어 판정이 늦어질 뿐 틀리지는 않는다.
+  - 「일어나지 않음」 은 지연으로 증명하지 않는다. 가짜 백엔드의 쓰기 기록(`FakeData.memoWrites`·`layoutWrites`: 메모 id·창 라벨별로 성공한 쓰기 횟수)과 창의 `WriteScheduler.pending()`(대기·실행 중인 쓰기 키 수)을 쓴다. 대기 쓰기가 0 이 될 때까지 poll(`writesSettled`, `tests/e2e/helpers.ts`)한 뒤 `memoWrites` 가 늘지 않았음을 단언한다. 대기 중인 쓰기가 아직 예약 전이면 첫 poll 이 0 을 볼 수 있으므로 쓰기를 일으킨 쪽의 횟수(`layoutWrites` 등)가 늘 때까지 먼저 기다린다. `pending()` 은 세션 쓰기도 세어 판정이 늦어질 뿐 틀리지는 않는다. flush 라운드에서 페이지가 쓰기 전에 알린 것은 `FakeData.flushWriting` 에 순서대로 남는다(라운드 id 와 「저장하지 못한 메모 N개」 문구, 거둔 것은 문구 없이). 가짜가 스스로 여는 라운드(전환)는 알림이 남은 채 3초가 지나면(`page.clock.runFor(3000)`, `FLUSH_TIMEOUT_MS`) 그 문구를 이유로 답해 전환이 거둬진다. 아무 알림도 없는 창은 끝없이 기다린다 — 앱(백엔드)은 그 창을 쓸 것이 없는 창으로 치고 끝내므로, 「말 없는 창의 시간 제한」 은 Rust 시험(`src-tauri/src/app/flush.rs`)이 본다.
   - 다른 앱의 변경을 흉내 내는 시험(충돌 배너 등)은 입력·다른 앱의 쓰기·변경 알림을 한 `page.evaluate` 안에서 동기로 한다(`typeWhileChangedElsewhere`, `tests/e2e/helpers.ts`). 단계 사이에 저장 타이머(500ms)가 끝나면 저장이 먼저 거절돼 배너를 띄운다 — 덮어쓰지는 않지만 「알림이 먼저 온 경우」 를 보려던 시험이 「저장이 먼저 만난 경우」 를 보게 된다. 알림 없이 저장이 먼저 만나는 경우는 `typeWhileChangedElsewhere(page, { heard: false })` 로 만든다.
   - 가짜 백엔드의 「불러오는 중」 은 타이머(`setTimeout`) 대신 테스트가 풀어 줄 때까지 붙잡아 만든다(`tests/e2e/memo.spec.ts` 의 `holdReads`). 타이머는 혼자 끝나서, 느린 실행에서는 그 상태가 이미 지나간 뒤에 키가 들어간다. `holdReads` 는 `readMemo`·`openExternal` 만 붙잡는다. 다른 읽기로 불러오는 중을 만들려면 그 호출을 더한다.
   - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
@@ -150,6 +167,9 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - e2e 를 에이전트가 돌리면 Vite 가 에이전트를 감지해(`AI_AGENT` 같은 환경 변수) `server.forwardConsole` 을 켠다. 페이지의 `console` 이 개발 서버로 전달되는 래퍼를 지나므로 사람이 돌릴 때와 경로가 다르다. 사람과 에이전트에서 결과가 갈리면 이것부터 의심한다. `quietErrors` 가 이 래퍼와 서로를 불러 `RangeError` 를 내던 것이 그 예다(`tests/e2e/quiet-errors.spec.ts`, 에이전트 실행에서만 구분력이 있다).
   - 가짜 백엔드의 두 창 시험(`startWindows`·`openWindow`)에서 한 창이 쓴 값이 가끔 옛 값으로 보이면 다른 창의 덮어쓰기부터 의심한다. 창들은 가짜의 데이터를 `localStorage` 한 덩어리로 나누는데, 한 페이지의 쓰기는 다른 페이지에 늦게 닿는다. 그래서 옛 사본을 든 창이 `commit()` 하면(창이 뜰 때 생성자가 하는 `commit` 도 쓰기다) 그사이 다른 창이 쓴 것이 통째로 지워진다. 앱(Rust 한 곳이 원천)에는 없는 경쟁이라 앱을 고칠 일이 아니고, 단언할 쓰기가 다른 창의 마지막 쓰기 뒤에 일어나게 순서를 짠다: 둘째 창을 먼저 띄우고, `page.clock` 으로 저장 타이머를 붙잡는다. 이 시계는 context 의 것이라 두 페이지가 함께 멈춘다 — 다른 창의 모으기 타이머(`MEMOS_GATHER_MS`)도 `runFor` 로 옮겨야 돈다. 다른 창에서 읽는 값은 `expect.poll` 로 그 페이지에 닿기를 기다린다(`tests/e2e/trash.spec.ts` 「trashing a memo open in another window …」). 누가 언제 썼는지는 init script 에서 `Storage.prototype.setItem` 을 감싸 창 라벨·시각·스택을 남기면 보인다.
   - 「일어나지 않음」 단언이 가짜 백엔드가 **동기로 던지거나 동기로 그리는 덕에** 구분력을 갖고 있으면(뷰어가 열리지 않음 등) 가짜의 호출 기록으로 바꾼다. 가짜가 고쳐지거나 비동기가 되면 그 단언은 경고 없이 아무것도 증명하지 않는다. 기록은 호출을 받은 첫 줄에서 남긴다 — 인자를 들여다보다 던지기 전에(`FakeData.fileTokenRequests`: `issueFileToken` 이 받은 source, `tests/e2e/trash.spec.ts` 「a trashed picture is not handed to a viewer」). 기록이 없는 것(미리보기 iframe 처럼 백엔드를 거치지 않는 것)은 명령 여럿을 보낸 뒤 **마지막 명령의 완료 신호**(상태 문구 등)를 기다리고 그 뒤에 단언한다(같은 파일 「the menu leaves a trashed tab alone」).
+  - 「다시 그려도 클릭이 살아남는다」 를 지키는 시험은 **앞의 요소가 바뀌는 경우**를 따로 둔다. 요소를 재사용해도, 앞의 요소 하나가 새로 만들어지거나 빠지면서 뒤의 요소가 옮겨질 수 있다(`tests/e2e/memo-list.spec.ts` 「a row under one a save's answer makes anew …」). 누른 채(`page.mouse.down()`) DOM 이 바뀌는 시험에서는 같은 요소를 빼고 다시 넣는 것(`replaceChildren` 등)도 「바뀐 것」 이다 — WebKit 은 누른 요소가 한 번이라도 문서에서 빠지면 `click` 을 내지 않는다(`tests/e2e/memo.spec.ts` 「a close mark pressed as a save's answer comes in …」).
+  - 가짜 백엔드의 호출을 시험에서 감쌀 때는 인자를 그대로 넘긴다(`backend.writeMemo = async (...args) => { …; return writeMemo(...args); }`). 인자를 이름으로 받아 넘기면 나중에 더해진 인자(`writeMemo` 의 `overwrite`)가 경고 없이 떨어진다 — 인자를 덜 받는 함수도 타입 검사를 통과한다. 인자를 들여다봐야 하면 `const [path] = args` 로 꺼낸다.
+  - 움직임(전환·애니메이션)에 기대는 동작은 `reducedMotion` 을 양쪽으로 본다. `reduce` 만 쓰는 파일은 「놓은 뒤 옆에서 미끄러져 온다」 같은 결함을 보지 못한다. 놓는 순간은 이벤트 뒤 첫 `requestAnimationFrame` 에서 `getAnimations().length` 와 위치를 읽어 본다(`tests/e2e/tab-drag-preview.spec.ts` 의 `with motion on`).
 
 ## `@codemirror/view` 는 패치해서 쓴다 — 포커스 직후 커서가 줄 머리로 가지 않게
 

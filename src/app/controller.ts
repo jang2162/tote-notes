@@ -58,7 +58,14 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, confirm, modalOpen, pickLanguage, promptText } from "../ui/dialogs";
+import {
+  askUnsaved,
+  confirm,
+  giveKeysHomeWith,
+  modalOpen,
+  pickLanguage,
+  promptText,
+} from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -478,6 +485,8 @@ export class AppController implements DocHost, PaneHost {
     });
     this.focused = this.makePane();
     this.panes = [this.focused];
+    // A dialog with nothing to give the keys back to: the focused pane's editor, or the pane.
+    giveKeysHomeWith(() => this.focused.takeKeys());
     this.layout = leaf(this.focused.id);
     this.panesEl.append(this.focused.el);
     this.syncPanes();
@@ -551,6 +560,9 @@ export class AppController implements DocHost, PaneHost {
       let width = from;
       root.classList.add("sidebar-resizing");
       const move = (event: PointerEvent) => {
+        // A dialog opened under the drag (a menu command, the update window): the rest of the
+        // window is the dialog's to hold off, the sidebar's inert with it, so the drag is over.
+        if (modalOpen()) return this.endSidebarDrag?.();
         const dragged = draggedSidebar(from + event.clientX - down.clientX, window.innerWidth);
         if (dragged.collapsed) {
           if (this.sidebarCollapsed) return;

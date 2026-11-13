@@ -12,9 +12,9 @@ async function trackPatches(page: Page): Promise<void> {
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
     (window as unknown as Patches).patches = [];
-    backend.patchSettings = (change) => {
-      (window as unknown as Patches).patches.push(change);
-      return patchSettings(change);
+    backend.patchSettings = (...args) => {
+      (window as unknown as Patches).patches.push(...args);
+      return patchSettings(...args);
     };
   });
 }
@@ -244,8 +244,8 @@ test("an editor key is saved with a warning", async ({ page }) => {
   await page.evaluate(() => {
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
-    backend.patchSettings = async (change) => {
-      await patchSettings(change);
+    backend.patchSettings = async (...args) => {
+      await patchSettings(...args);
       await new Promise((done) => setTimeout(done, 100));
     };
   });
@@ -471,8 +471,8 @@ test("a save that fails says so under the row and the same key can be tried agai
     const backend = window.__tote.backend;
     const patchSettings = backend.patchSettings.bind(backend);
     let failures = 1;
-    backend.patchSettings = (change) =>
-      failures-- > 0 ? Promise.reject(new Error("디스크가 가득 찼습니다")) : patchSettings(change);
+    backend.patchSettings = (...args) =>
+      failures-- > 0 ? Promise.reject(new Error("디스크가 가득 찼습니다")) : patchSettings(...args);
   });
   await record(panel, "new-memo");
   await page.keyboard.press("Meta+Shift+M");
@@ -598,10 +598,10 @@ test("the stale note stays when a read that began later ends after the refusal",
     (window as unknown as { __gates: typeof gates }).__gates = gates;
     // The refusal's read (1) answers at once with the old table, so its continuation has run
     // before the test lets the next one end.
-    backend.shortcutTable = () =>
+    backend.shortcutTable = (...args) =>
       new Promise((resolve, reject) => {
         const at = gates.length;
-        const end = () => (at === 1 ? resolve(old) : void real().then(resolve, reject));
+        const end = () => (at === 1 ? resolve(old) : void real(...args).then(resolve, reject));
         gates.push(end);
         // Only the first four are held; a read after them ends as it begins.
         if (at > 3) end();

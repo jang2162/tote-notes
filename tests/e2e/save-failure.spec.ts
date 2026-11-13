@@ -183,8 +183,8 @@ test("an external draft kept on a retry takes its error off the status bar", asy
   await page.evaluate((message) => {
     const backend = window.__tote.backend;
     const keep = backend.keepExternalDraft.bind(backend);
-    backend.keepExternalDraft = (path, bytes) =>
-      window.__toteBroken ? Promise.reject(new Error(message)) : keep(path, bytes);
+    backend.keepExternalDraft = (...args) =>
+      window.__toteBroken ? Promise.reject(new Error(message)) : keep(...args);
     window.__toteBroken = true;
   }, WRITE_FAILED);
   await page.keyboard.press("Meta+ArrowDown");

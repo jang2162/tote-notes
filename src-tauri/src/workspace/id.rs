@@ -1,6 +1,7 @@
-//! What counts as a workspace or memo ID. tote names folders and files after them
-//! (`backups/<workspace id>/`, `viewed/<workspace id>.json`, `.trash/<memo id>/`), and they are
-//! read from files anyone can edit (`workspace.json`, `index.json`). So an ID is checked twice:
+//! What counts as a workspace, memo or device ID. tote names folders and files after them
+//! (`backups/<workspace id>/`, `viewed/<workspace id>.json`, `.trash/<memo id>/`,
+//! `.tote/sessions/<device id>.json`), and they are read from files anyone can edit
+//! (`workspace.json`, `index.json`, `machine.json`). So an ID is checked twice:
 //! where it is read, anything that is not a UUID is replaced by a new one (`is_id`); where it
 //! becomes part of a path, anything that is not one plain segment makes no path
 //! (`is_safe_segment`). The second holds even if a reader forgets the first.
