@@ -11,9 +11,10 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde::{Deserialize, Serialize};
 
+use super::id::{is_id, is_safe_segment};
 use super::index::MemoEntry;
 use super::names::split_name;
-use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
+use super::{kind_for, new_id, FileKind, MemoInfo, Workspace, WorkspaceError};
 use crate::persist::{read_editable_text, read_json, write_json};
 
 pub const TRASH_DIR: &str = ".trash";
@@ -64,7 +65,9 @@ impl Workspace {
     /// watcher's event for its old name finds nothing to report.
     pub fn trash_memo(&mut self, id: &str, now_ms: u64) -> Result<TrashedInfo, WorkspaceError> {
         let entry = self.entry(id)?.clone();
-        let folder = self.trash_dir().join(id);
+        let folder = self
+            .trash_folder(id)
+            .ok_or_else(|| WorkspaceError::InvalidName(id.to_string()))?;
         if fs::read_dir(&folder).is_ok_and(|mut entries| entries.next().is_some()) {
             return Err(WorkspaceError::AlreadyExists(folder));
         }
@@ -112,32 +115,35 @@ impl Workspace {
     /// it is over the editor's limit: the trash list carries no size for the page to check first,
     /// as a memo tab does. The folder is the original, so `trash.json` is not needed to find it.
     pub fn read_trashed(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
-        let file = self
-            .trashed_file(id, None)
+        let found = self
+            .trash_folder(id)
+            .and_then(|folder| Some(folder.join(self.trashed_file(id, None)?)))
             .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
-        Ok(read_editable_text(&self.trash_dir().join(id).join(file))?)
+        Ok(read_editable_text(&found)?)
     }
 
     /// Puts the memo back under its ID with its automatic titles, language and pin. A name another
     /// file took since gets a number as a new memo's would (`free_name`); nothing is written over.
+    ///
+    /// A folder someone put in the trash is known there by its name; the memo gets a new ID, as
+    /// any ID read from disk that tote did not make does (`id`).
     pub fn restore_memo(&mut self, id: &str) -> Result<MemoInfo, WorkspaceError> {
         let mut items = self.load_trash(system_now_ms())?;
-        let item = items
-            .get(id)
-            .cloned()
-            .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
-        if self.index.get(id).is_some() {
+        let unknown = || WorkspaceError::UnknownMemo(id.to_string());
+        let item = items.get(id).cloned().ok_or_else(unknown)?;
+        let folder = self.trash_folder(id).ok_or_else(unknown)?;
+        let memo_id = if is_id(id) { id.to_string() } else { new_id() };
+        if self.index.get(&memo_id).is_some() {
             return Err(WorkspaceError::AlreadyExists(self.root.join(&item.file)));
         }
         let (stem, ext) = split_name(&item.file);
         let file = self.free_name(stem, ext, None);
-        let folder = self.trash_dir().join(id);
         self.mark_changed();
         fs::rename(folder.join(&item.file), self.root.join(&file))?;
         // Recorded as tote's own before the watcher hears of it.
         self.came_in(&file);
         self.index.insert(
-            id.to_string(),
+            memo_id.clone(),
             MemoEntry {
                 file,
                 auto_title: item.auto_title,
@@ -149,17 +155,15 @@ impl Workspace {
         items.remove(id);
         self.save_trash(&items)?;
         remove_folder(&folder)?;
-        self.memo_info(id)
+        self.memo_info(&memo_id)
     }
 
     /// Removes the trashed memo for good: its folder first, so dying before `trash.json` is
     /// written leaves nothing to find again.
     pub fn purge_trashed(&mut self, id: &str) -> Result<(), WorkspaceError> {
         let mut items = self.load_trash(system_now_ms())?;
-        if items.remove(id).is_none() {
-            return Err(WorkspaceError::UnknownMemo(id.to_string()));
-        }
-        remove_folder(&self.trash_dir().join(id))?;
+        let folder = self.trash_folder(id).filter(|_| items.remove(id).is_some());
+        remove_folder(&folder.ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?)?;
         self.save_trash(&items)?;
         Ok(())
     }
@@ -205,7 +209,9 @@ impl Workspace {
         ids: &[String],
     ) -> Result<(), WorkspaceError> {
         for id in ids {
-            remove_folder(&self.trash_dir().join(id))?;
+            if let Some(folder) = self.trash_folder(id) {
+                remove_folder(&folder)?;
+            }
             items.remove(id);
         }
         self.save_trash(&items)?;
@@ -214,6 +220,12 @@ impl Workspace {
 
     fn trash_dir(&self) -> PathBuf {
         self.root.join(TRASH_DIR)
+    }
+
+    /// `.trash/<id>/`. None for an ID that is not one plain path segment: it would name a folder
+    /// somewhere else, for a memo to be moved into or to be removed (`id`).
+    fn trash_folder(&self, id: &str) -> Option<PathBuf> {
+        is_safe_segment(id).then(|| self.trash_dir().join(id))
     }
 
     /// `trash.json` brought in line with the folders: an item whose folder (or file) is gone is
@@ -278,13 +290,9 @@ impl Workspace {
 
     /// The file in `.trash/<id>/`: `known` when it is there, else the first by name. Dot files
     /// (Finder's, tote's temporary ones) are not memos. `None` for an ID that is not a folder
-    /// directly in the trash, which also keeps a path in `id` from reaching out of it.
+    /// directly in the trash (`trash_folder`).
     fn trashed_file(&self, id: &str, known: Option<&str>) -> Option<String> {
-        if id.is_empty() || id.starts_with('.') || id.contains(['/', '\\']) {
-            return None;
-        }
-        let folder = self.trash_dir().join(id);
-        let mut files: Vec<String> = fs::read_dir(&folder)
+        let mut files: Vec<String> = fs::read_dir(self.trash_folder(id)?)
             .ok()?
             .filter_map(Result::ok)
             .filter_map(|entry| {
@@ -717,6 +725,57 @@ mod tests {
         assert!(ws.trash_memo(&memo.id, NOW).is_err());
         assert!(trash_folders_of(&ws).is_empty());
         assert!(ws.list_trash(NOW).unwrap().is_empty());
+    }
+
+    /// Opening a workspace replaces such an ID (`MemoIndex::load`); this holds without it.
+    #[test]
+    fn a_memo_id_that_is_not_one_path_segment_is_not_trashed() {
+        for bad in ["../../outside/conf.d", "..", ".", "", "a/b", ".hidden"] {
+            let (root, mut ws) = workspace();
+            let outside = root.path().join("outside");
+            fs::create_dir(&outside).unwrap();
+            let memo = ws.import_memo("a.md", b"text").unwrap();
+            let entry = ws.index.remove(&memo.id).unwrap();
+            ws.index.insert(bad.to_string(), entry);
+            assert!(
+                matches!(ws.trash_memo(bad, NOW), Err(WorkspaceError::InvalidName(_))),
+                "{bad:?}"
+            );
+            assert_eq!(fs::read(ws.root().join("a.md")).unwrap(), b"text");
+            assert_eq!(ws.memo_info(bad).unwrap().file, "a.md", "still a memo");
+            assert_eq!(fs::read_dir(&outside).unwrap().count(), 0, "{bad:?}");
+            assert_eq!(fs::read_dir(root.path()).unwrap().count(), 2, "{bad:?}");
+            assert!(!ws.root().join(TRASH_DIR).exists(), "{bad:?}");
+            for refused in [ws.read_trashed(bad).map(|_| ()), ws.purge_trashed(bad)] {
+                assert!(
+                    matches!(refused, Err(WorkspaceError::UnknownMemo(_))),
+                    "{bad:?}"
+                );
+            }
+            assert!(matches!(
+                ws.restore_memo(bad),
+                Err(WorkspaceError::UnknownMemo(_))
+            ));
+        }
+    }
+
+    /// A folder someone put in the trash by hand is found under its name; back in the memo list
+    /// it gets an ID, as any ID read from disk that is not one does.
+    #[test]
+    fn restoring_a_folder_that_is_not_named_by_an_id_gives_the_memo_one() {
+        let (_root, mut ws) = workspace();
+        let folder = ws.root().join(TRASH_DIR).join("orphan-id");
+        fs::create_dir_all(&folder).unwrap();
+        fs::write(folder.join("x.md"), "x").unwrap();
+        assert_eq!(ws.list_trash(NOW).unwrap()[0].id, "orphan-id");
+        let restored = ws.restore_memo("orphan-id").unwrap();
+        assert!(crate::workspace::id::is_id(&restored.id), "{restored:?}");
+        assert_eq!(restored.file, "x.md");
+        assert_eq!(ws.read_memo(&restored.id).unwrap(), b"x");
+        assert!(!folder.exists());
+        assert!(ws.list_trash(NOW).unwrap().is_empty());
+        let reopened = Workspace::open(ws.root()).unwrap();
+        assert_eq!(reopened.memo_info(&restored.id).unwrap().file, "x.md");
     }
 
     #[test]

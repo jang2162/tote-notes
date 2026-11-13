@@ -10,6 +10,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use super::id::is_safe_segment;
 use crate::persist::{read_json, write_json};
 
 /// How long after the last view the file is written.
@@ -37,9 +38,18 @@ pub struct ViewedTimes {
 }
 
 impl ViewedTimes {
-    /// `<data dir>/viewed/<workspace id>.json`.
+    /// `<data dir>/viewed/<workspace id>.json`. None for an ID that is not one plain path segment:
+    /// it would name a file somewhere else, which loading sets aside and saving writes over
+    /// (`workspace::id`).
+    pub fn file_for(data_dir: &Path, workspace_id: &str) -> Option<PathBuf> {
+        is_safe_segment(workspace_id)
+            .then(|| data_dir.join("viewed").join(format!("{workspace_id}.json")))
+    }
+
+    /// `file_for` an ID a test made up.
+    #[cfg(test)]
     pub fn file(data_dir: &Path, workspace_id: &str) -> PathBuf {
-        data_dir.join("viewed").join(format!("{workspace_id}.json"))
+        Self::file_for(data_dir, workspace_id).expect("a test's ID is one path segment")
     }
 
     /// The times in `path`; none when there is no file or it cannot be read (it is set aside).
@@ -115,6 +125,20 @@ mod tests {
 
     fn times(dir: &Path) -> ViewedTimes {
         ViewedTimes::load(ViewedTimes::file(dir, "w"))
+    }
+
+    #[test]
+    fn an_id_that_is_not_one_path_segment_has_no_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let id = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        assert_eq!(
+            ViewedTimes::file_for(dir.path(), id),
+            Some(dir.path().join("viewed").join(format!("{id}.json")))
+        );
+        let outside = dir.path().join("outside").to_string_lossy().into_owned();
+        for bad in ["../../project/package", "..", ".", "", "a/b", &outside] {
+            assert_eq!(ViewedTimes::file_for(dir.path(), bad), None, "{bad:?}");
+        }
     }
 
     #[test]

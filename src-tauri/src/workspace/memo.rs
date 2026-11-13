@@ -1,12 +1,13 @@
 //! What the memo list shows about each memo.
 
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::io;
 use std::time::UNIX_EPOCH;
 
 use serde::Serialize;
 
-use super::index::MemoEntry;
+use super::index::{self, MemoEntry};
 use super::names::split_name;
 use super::preview::read_preview;
 use super::{CachedPreview, Workspace, WorkspaceError};
@@ -60,12 +61,18 @@ pub struct MemoInfo {
 }
 
 impl Workspace {
-    /// Every memo, most recently modified first. Picks up files other apps added or removed.
+    /// Every memo, most recently modified first. Picks up files other apps added, removed or
+    /// renamed.
     pub fn list_memos(&mut self) -> Result<Vec<MemoInfo>, WorkspaceError> {
-        if self.index.reconcile(&self.root)? {
+        let files = index::memo_files(&self.root)?;
+        let followed = self.follow_renames(&files);
+        let reconciled = self.index.reconcile(&files);
+        if reconciled {
             // Before saving: a file found here must be followable through a rename even if the
             // save fails.
             self.resync_files();
+        }
+        if followed || reconciled {
             self.index.save()?;
         }
         // Memos gone from the index keep no preview.
@@ -83,6 +90,45 @@ impl Workspace {
                 .then_with(|| a.file.cmp(&b.file))
         });
         Ok(list)
+    }
+
+    /// A memo whose file is gone and a file the index does not know, with the inode that file
+    /// had, are one memo another app renamed. It is followed here as the watcher follows it
+    /// (`apply_fs_events`), because the memo list can ask before the watcher's batch arrives:
+    /// dropping the memo and indexing the file as new would lose its ID, pin and language.
+    /// Returns whether any was followed.
+    fn follow_renames(&mut self, files: &BTreeSet<String>) -> bool {
+        let gone: Vec<(String, String, (u64, u64))> = self
+            .index
+            .iter()
+            .filter(|(_, entry)| !files.contains(&entry.file))
+            .filter_map(|(id, entry)| {
+                let inode = *self.inodes.get(&entry.file)?;
+                Some((id.clone(), entry.file.clone(), inode))
+            })
+            .collect();
+        // Nearly always: the new files are looked at only when a memo's file is gone.
+        if gone.is_empty() {
+            return false;
+        }
+        let indexed: BTreeSet<&String> = self.index.iter().map(|(_, entry)| &entry.file).collect();
+        let mut new: BTreeMap<(u64, u64), &String> = BTreeMap::new();
+        for file in files.iter().filter(|file| !indexed.contains(file)) {
+            if let Some(inode) = index::file_id(&self.root.join(file)) {
+                new.entry(inode).or_insert(file);
+            }
+        }
+        let renamed: Vec<(String, String, String)> = gone
+            .into_iter()
+            .filter_map(|(id, from, inode)| Some((id, from, new.remove(&inode)?.clone())))
+            .collect();
+        for (id, from, to) in &renamed {
+            self.follow_rename(id, from, to);
+        }
+        if !renamed.is_empty() {
+            self.mark_changed();
+        }
+        !renamed.is_empty()
     }
 
     pub fn memo_info(&self, id: &str) -> Result<MemoInfo, WorkspaceError> {
@@ -193,6 +239,78 @@ mod tests {
             .map(|m| m.file)
             .collect();
         assert_eq!(files, vec!["새것.md"]);
+    }
+
+    /// The memo list can ask before the watcher's batch arrives; both must tell the same story.
+    #[cfg(unix)]
+    #[test]
+    fn a_rename_by_another_app_found_by_listing_keeps_the_memo() {
+        use crate::workspace::Change;
+        use std::collections::BTreeSet;
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(root.path(), "w").unwrap();
+        let dir = ws.root().to_path_buf();
+        let memo = ws.create_memo("md", b"# x").unwrap();
+        ws.set_language(&memo.id, "markdown", "md", false).unwrap();
+        ws.set_pinned(&memo.id, true).unwrap();
+        ws.write_memo(&memo.id, b"# saved").unwrap();
+        // Never written since the workspace opened: known by the inode opening recorded.
+        fs::write(dir.join("옛.py"), "old").unwrap();
+        let mut ws = Workspace::open(&dir).unwrap();
+        ws.write_memo(&memo.id, b"# saved").unwrap();
+        let old = ws
+            .list_memos()
+            .unwrap()
+            .into_iter()
+            .find(|m| m.file == "옛.py")
+            .unwrap();
+        ws.set_language(&old.id, "python", "py", false).unwrap();
+        ws.take_changed();
+
+        fs::rename(dir.join("untitled.md"), dir.join("회의.md")).unwrap();
+        fs::rename(dir.join("옛.py"), dir.join("새.txt")).unwrap();
+        let list = ws.list_memos().unwrap();
+        assert_eq!(list.len(), 2, "{list:?}");
+        let renamed = list.iter().find(|m| m.id == memo.id).expect("the same ID");
+        assert_eq!(renamed.file, "회의.md");
+        assert!(renamed.pinned);
+        assert_eq!(renamed.language.as_deref(), Some("markdown"));
+        assert!(
+            !renamed.auto_title,
+            "a name given elsewhere is the person's"
+        );
+        // Another extension: the language chosen for the old one goes, as the watcher has it.
+        let other = list.iter().find(|m| m.id == old.id).expect("the same ID");
+        assert_eq!((other.file.as_str(), &other.language), ("새.txt", &None));
+        assert!(ws.take_changed(), "the next backup takes the new names");
+        assert_eq!(
+            ws.inodes().keys().collect::<Vec<_>>(),
+            vec!["새.txt", "회의.md"]
+        );
+        let reopened = Workspace::open(&dir).unwrap();
+        assert_eq!(reopened.memo_info(&memo.id).unwrap().file, "회의.md");
+
+        // The watcher's batch comes after: nothing more to say of the memo tote wrote, and the
+        // write that follows goes to the new name.
+        let seen: BTreeSet<String> = ["untitled.md", "회의.md"]
+            .iter()
+            .map(|name| name.to_string())
+            .collect();
+        assert_eq!(
+            ws.apply_fs_events(&seen, &[]).unwrap(),
+            Vec::<Change>::new()
+        );
+        ws.write_memo(&memo.id, b"# on").unwrap();
+        assert_eq!(fs::read(dir.join("회의.md")).unwrap(), b"# on");
+        assert!(!dir.join("untitled.md").exists());
+
+        // A copy made and the original removed is not a rename: the inode is another.
+        fs::copy(dir.join("회의.md"), dir.join("사본.md")).unwrap();
+        fs::remove_file(dir.join("회의.md")).unwrap();
+        let list = ws.list_memos().unwrap();
+        let copy = list.iter().find(|m| m.file == "사본.md").unwrap();
+        assert_ne!(copy.id, memo.id);
+        assert!(!copy.pinned);
     }
 
     #[test]

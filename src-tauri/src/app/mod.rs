@@ -1100,8 +1100,9 @@ impl AppCore {
 
     /// `workspace` with its memos' viewed times on this device (`workspace::viewed`).
     fn with_viewed(&self, mut workspace: Workspace) -> Workspace {
-        let file = ViewedTimes::file(&self.paths.data_dir, workspace.id());
-        workspace.attach_viewed(ViewedTimes::load(file));
+        if let Some(file) = ViewedTimes::file_for(&self.paths.data_dir, workspace.id()) {
+            workspace.attach_viewed(ViewedTimes::load(file));
+        }
         workspace
     }
 
@@ -1687,7 +1688,14 @@ impl AppCore {
                 }
                 (workspace.root().to_path_buf(), workspace.id().to_string())
             };
-            let dir = BackupDir::new(&self.paths.backups_dir(), &id);
+            let dir = match BackupDir::for_workspace(&self.paths.backups_dir(), &id) {
+                Ok(dir) => dir,
+                // Not marked again: the ID will be no better next round.
+                Err(err) => {
+                    ticked.push((labels, Err(err)));
+                    continue;
+                }
+            };
             // Left by an app that died mid-snapshot; this thread is the only one making them.
             if let Err(err) = dir.remove_leftovers() {
                 eprintln!("tote: could not remove a half-made snapshot of {id}: {err}");
