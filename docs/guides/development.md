@@ -43,7 +43,7 @@
 - 시험 워크스페이스 폴더를 손으로 만들 때는 `.tote/workspace.json`(`{"version":1,"id":"<uuid>"}`)도 만든다. 없으면 `state.json` 에 적어도 열리지 않고(stderr 「not a tote workspace」) `$TOTE_DATA_DIR/workspaces/메모` 가 새로 생긴다.
 - 파일 열기 같은 시트의 검색칸은 요소 누르기로 포커스가 가지 않는다. System Events 로 `sheet 1 of window "<제목>"` 안 `AXSearchField` 에 `AXFocused` 를 준다.
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
-- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
+- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다. 열린 탭이 없을 때와 확인 창(영구 삭제·휴지통 비우기, 설정 화면 안의 질문)은 연 자리로 돌아간다 — 버튼을 마우스로 눌러 열었으면 WebKit 이 누를 때 포커스를 비우므로 닫은 뒤에도 포커스는 아무 데도 없다.
 - tote 창이 둘 이상일 때는 `orca computer` 의 요소 번호로 누르지 않는다. `--window-id` 를 줘도 다른 창의 트리와 요소가 잡힐 수 있다(질문 창의 「업데이트하고 다시 시작」 에 포커스가 간 적이 있다). 창 제목으로 `AXWindows` 를 골라 AXUIElement 로 직접 누른다.
 - 설치본과 디버그 번들의 프로세스 이름은 둘 다 `tote` 다(`mainBinaryName`). System Events 로 `process "tote"` 나 `first process whose unix id is <pid>` 를 잡으면 이름으로 다시 찾아 먼저 뜬 쪽(대개 사람의 설치본)을 다룬다. 디버그 앱의 메뉴·창은 pid 로 만든 `AXUIElementCreateApplication(pid)` 나 `orca computer --app com.develma.totenotes.dev` 로 다룬다. 2026-10-26 화면 확인에서 이렇게 설치본의 메뉴를 읽었다.
 - 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「Tote Notes 종료」(0.1.0 은 「tote 종료」) 를 누른다.
