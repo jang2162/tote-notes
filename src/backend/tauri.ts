@@ -67,6 +67,9 @@ async function call<T>(
 const bytesOf = (buffer: ArrayBuffer) => new Uint8Array(buffer);
 // Header values must be ASCII; names and paths are Korean as often as not.
 const enc = encodeURIComponent;
+/** The header of a save that goes over whatever the file holds (`overwrites` in commands.rs). */
+const overwriting = (overwrite: boolean): Record<string, string> =>
+  overwrite ? { "x-overwrite": "1" } : {};
 
 declare global {
   interface Window {
@@ -112,8 +115,11 @@ export class TauriBackend implements Backend {
   async readMemo(id: string) {
     return bytesOf(await call<ArrayBuffer>("read_memo", { id }));
   }
-  writeMemo(id: string, bytes: Uint8Array) {
-    return call<MemoInfo>("write_memo", bytes, { "x-memo-id": enc(id) });
+  writeMemo(id: string, bytes: Uint8Array, overwrite = false) {
+    return call<MemoInfo>("write_memo", bytes, {
+      "x-memo-id": enc(id),
+      ...overwriting(overwrite),
+    });
   }
   retitleMemo(id: string, stem: string) {
     return call<MemoInfo>("retitle_memo", { id, stem });
@@ -195,8 +201,8 @@ export class TauriBackend implements Backend {
   discardExternalDraft(path: string) {
     return call<void>("discard_external_draft", { path });
   }
-  async saveExternal(path: string, bytes: Uint8Array) {
-    await call<number>("save_external", bytes, { "x-path": enc(path) });
+  async saveExternal(path: string, bytes: Uint8Array, overwrite = false) {
+    await call<number>("save_external", bytes, { "x-path": enc(path), ...overwriting(overwrite) });
   }
   watchExternal(path: string) {
     return call<void>("watch_external", { path });

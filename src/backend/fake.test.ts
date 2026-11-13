@@ -5,6 +5,7 @@ import {
   FAKE_LABEL,
   FAKE_STORAGE_KEY,
   FakeBackend,
+  fakeFile,
   fakeMemo,
   memoryStorage,
 } from "./fake";
@@ -40,10 +41,67 @@ describe("FakeBackend write counts", () => {
     delete data.memoWrites;
     delete data.layoutWrites;
     const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    await backend.readMemo("a");
     await backend.writeMemo("a", new TextEncoder().encode("b"));
     await backend.writeWindowLayout(JSON.stringify({ panes: [], focusedPane: 0 }));
     expect(backend.data.memoWrites).toEqual({ a: 1 });
     expect(Object.values(backend.data.layoutWrites)).toEqual([1]);
+  });
+});
+
+describe("FakeBackend saves over another app's text", () => {
+  const bytes = (text: string) => new TextEncoder().encode(text);
+  const conflict = { code: "conflict" };
+
+  it("refuses a memo save until the text is read or the person's is chosen, as write_memo does", async () => {
+    const backend = new FakeBackend(
+      memoryStorage(JSON.stringify({ ...defaultFakeData(), memos: { a: fakeMemo("a.md", "a") } })),
+    );
+    // Never read: a save of it is an edit of nothing.
+    await expect(backend.writeMemo("a", bytes("blind"))).rejects.toMatchObject(conflict);
+    await backend.readMemo("a");
+    await backend.writeMemo("a", bytes("mine"));
+    // Another app's write, the watcher silent.
+    backend.data.memos.a.data = fakeFile("theirs");
+    await expect(backend.writeMemo("a", bytes("mine!"))).rejects.toMatchObject(conflict);
+    expect(backend.memoText("a")).toBe("theirs");
+    expect(backend.data.memoWrites).toEqual({ a: 1 });
+    // The very text about to be saved is nothing to lose.
+    await backend.writeMemo("a", bytes("theirs"));
+    backend.data.memos.a.data = fakeFile("theirs again");
+    await backend.writeMemo("a", bytes("mine!"), true);
+    expect(backend.memoText("a")).toBe("mine!");
+    await backend.writeMemo("a", bytes("mine!!"));
+    // A new memo and one back from the trash are held as they are.
+    const fresh = await backend.createMemo();
+    await backend.writeMemo(fresh.id, bytes("new"));
+    await backend.trashMemo(fresh.id);
+    await backend.restoreMemo(fresh.id);
+    await backend.writeMemo(fresh.id, bytes("back"));
+  });
+
+  it("a refused save is not a failed one: the failure waits for a write that is tried", async () => {
+    const seed = { ...defaultFakeData(), memos: { a: fakeMemo("a.md", "a") }, failWrites: 1 };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(seed)));
+    await backend.readMemo("a");
+    backend.data.memos.a.data = fakeFile("theirs");
+    await expect(backend.writeMemo("a", bytes("mine"))).rejects.toMatchObject(conflict);
+    expect(backend.data.failWrites).toBe(1);
+  });
+
+  it("refuses an external save over a file changed since it was opened, as ExternalFiles::save does", async () => {
+    const seed = { ...defaultFakeData(), files: { "/x/a.sh": fakeFile("v1") } };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(seed)));
+    await backend.openExternal("/x/a.sh");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    await expect(backend.saveExternal("/x/a.sh", bytes("mine"))).rejects.toMatchObject(conflict);
+    expect(backend.fileText("/x/a.sh")).toBe("v2");
+    await backend.saveExternal("/x/a.sh", bytes("mine"), true);
+    expect(backend.fileText("/x/a.sh")).toBe("mine");
+    // Gone: written again.
+    delete backend.data.files["/x/a.sh"];
+    await backend.saveExternal("/x/a.sh", bytes("back"));
+    expect(backend.fileText("/x/a.sh")).toBe("back");
   });
 });
 

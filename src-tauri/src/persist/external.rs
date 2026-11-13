@@ -10,7 +10,7 @@ use std::sync::Mutex;
 
 use serde::Serialize;
 
-use super::{atomic_write, content_hash, is_not_text, read_text};
+use super::{atomic_write, conflict, content_hash, is_not_text, read_text};
 use crate::session::drafts::DraftStore;
 use crate::workspace::{kind_for, FileKind};
 
@@ -155,8 +155,17 @@ impl ExternalFiles {
     }
 
     /// ⌘S: writes the file (creating it if needed), drops the draft, and makes the saved contents
-    /// the new base.
+    /// the new base — unless the file holds something the editor has not seen (`holds_another`):
+    /// refused then as `persist::Conflict`, with the file and the draft left as they are.
     pub fn save(&self, path: &Path, contents: &[u8]) -> io::Result<u64> {
+        if self.holds_another(path, contents) {
+            return Err(conflict());
+        }
+        self.overwrite(path, contents)
+    }
+
+    /// `save` whatever the file holds: the person chose their text over it (「내 버전」).
+    pub fn overwrite(&self, path: &Path, contents: &[u8]) -> io::Result<u64> {
         atomic_write(path, contents)?;
         // The file already has the new contents; failing here would send the caller into the
         // retry-and-block-quit path for a save that worked.
@@ -166,6 +175,28 @@ impl ExternalFiles {
         self.bases_lock()
             .insert(path.to_path_buf(), Some(content_hash(contents)));
         Ok(contents.len() as u64)
+    }
+
+    /// Whether saving `contents` to `path` would write over text the editor has not seen: the file
+    /// is there and holds neither its base — what it held when editing started, or what tote last
+    /// read or saved — nor `contents` itself. The watcher would report the same edit, but up to
+    /// `watch::BATCH_DELAY` later. A file gone is written again. One without a base (not opened as
+    /// text by its kind) has nothing to be measured against and is not guarded.
+    fn holds_another(&self, path: &Path, contents: &[u8]) -> bool {
+        let Some(base) = self.bases_lock().get(path).cloned() else {
+            return false;
+        };
+        // Gone, or not to be looked at: the write goes on and reports what it meets.
+        let Ok(meta) = fs::metadata(path) else {
+            return false;
+        };
+        if meta.len() > MAX_EDITOR_BYTES {
+            return true;
+        }
+        let Ok(disk) = fs::read(path).map(|bytes| content_hash(&bytes)) else {
+            return false;
+        };
+        base.as_ref() != Some(&disk) && disk != content_hash(contents)
     }
 
     /// The file at `path` changed on disk: whether that is news. Contents hashing like the base —
@@ -327,6 +358,58 @@ mod tests {
         ext.discard_draft(&path).unwrap();
         assert_eq!(ext.open(&path).unwrap().draft, None);
         assert_eq!(fs::read_to_string(&path).unwrap(), "edited");
+    }
+
+    #[test]
+    fn a_save_over_another_apps_edit_is_refused() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "disk").unwrap();
+        let ext = files(dir.path());
+        ext.open(&path).unwrap();
+        ext.keep_draft(&path, b"mine").unwrap();
+        // Another app's write the watcher has not reported yet.
+        fs::write(&path, "theirs").unwrap();
+        let err = ext.save(&path, b"mine").unwrap_err();
+        assert!(crate::persist::is_conflict(&err), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs");
+        assert_eq!(ext.read_draft(&path).unwrap(), b"mine", "the edits stay");
+        // 「내 버전」 writes over it, and the saves after that are tote's own again.
+        ext.overwrite(&path, b"mine").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "mine");
+        ext.save(&path, b"mine!").unwrap();
+        // 「디스크 버전」: the file is read again, and the save after it is an edit of that.
+        fs::write(&path, "theirs again").unwrap();
+        assert!(ext.save(&path, b"mine!!").is_err());
+        ext.read(&path).unwrap();
+        ext.save(&path, b"theirs again!").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "theirs again!");
+    }
+
+    #[test]
+    fn a_save_goes_through_when_nothing_would_be_lost() {
+        let dir = tempfile::tempdir().unwrap();
+        let ext = files(dir.path());
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "disk").unwrap();
+        ext.open(&path).unwrap();
+        // The file went away: it is written again.
+        fs::remove_file(&path).unwrap();
+        ext.save(&path, b"back").unwrap();
+        // Written again with the same bytes, or with the very text being saved.
+        fs::write(&path, "back").unwrap();
+        ext.save(&path, b"on").unwrap();
+        fs::write(&path, "the same").unwrap();
+        ext.save(&path, b"the same").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "the same");
+
+        // A path that was free when editing started and another app has taken since.
+        let new = dir.path().join("새 파일.txt");
+        ext.open(&new).unwrap();
+        fs::write(&new, "theirs").unwrap();
+        let err = ext.save(&new, b"mine").unwrap_err();
+        assert!(crate::persist::is_conflict(&err), "{err}");
+        assert_eq!(fs::read_to_string(&new).unwrap(), "theirs");
     }
 
     #[cfg(unix)]

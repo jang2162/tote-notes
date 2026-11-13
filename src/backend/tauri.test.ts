@@ -231,6 +231,27 @@ describe("TauriBackend", () => {
     });
   });
 
+  it("marks a save that goes over whatever the file holds, and only that one", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    await backend.writeMemo("m", bytes, true);
+    expect(invoke).toHaveBeenLastCalledWith("write_memo", bytes, {
+      headers: { "x-memo-id": "m", "x-overwrite": "1" },
+    });
+    await backend.saveExternal("/a.sh", bytes, true);
+    expect(invoke).toHaveBeenLastCalledWith("save_external", bytes, {
+      headers: { "x-path": "%2Fa.sh", "x-overwrite": "1" },
+    });
+    await backend.writeMemo("m", bytes, false);
+    expect(invoke).toHaveBeenLastCalledWith("write_memo", bytes, { headers: { "x-memo-id": "m" } });
+  });
+
+  it("keeps the code of a save refused over another app's text", async () => {
+    invoke.mockRejectedValueOnce({ code: "conflict", message: "changed by another app" });
+    await expect(backend.writeMemo("m", new Uint8Array())).rejects.toMatchObject({
+      code: "conflict",
+    });
+  });
+
   it("turns a rejection into a BackendError that keeps the code", async () => {
     invoke.mockRejectedValueOnce({ code: "unknown-memo", message: "no memo with id m" });
     const error = await backend.readMemo("m").catch((err: unknown) => err);

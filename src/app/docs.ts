@@ -182,6 +182,9 @@ export abstract class Doc {
   protected eol: Eol = "\n";
   protected bom = false;
   private loading: Promise<void> | null = null;
+  /** A read of the file after another app changed it, until the tab has taken its answer or asked
+   * about it (`rereadThen`). */
+  private rereading: Promise<void> | null = null;
   private retryTimer: ReturnType<typeof setTimeout> | null = null;
   /** Counts `refreshLanguage` calls: only the latest one's answer is applied. */
   private languageRequest = 0;
@@ -364,6 +367,25 @@ export abstract class Doc {
     this.host.changed(this, "reloaded");
   }
 
+  /** Runs `reread` — a read of the file and what the tab makes of the answer — as the one a save
+   * waits for (`rereadSettled`). */
+  protected async rereadThen(reread: () => Promise<void>): Promise<void> {
+    const reading = reread();
+    this.rereading = reading;
+    try {
+      await reading;
+    } finally {
+      if (this.rereading === reading) this.rereading = null;
+    }
+  }
+
+  /** Resolves once no reread is out. The native side counts the editor as holding a file's text
+   * from the moment it reads it, so a save sent before the tab has the answer would pass as an
+   * edit of text the tab never showed, and write over it. A save waits here first. */
+  protected async rereadSettled(): Promise<void> {
+    while (this.rereading) await this.rereading.catch(() => {});
+  }
+
   /** A read for `reload` was refused because the file is no longer text (`not-text`): the tab
    * shows that, as `reload` would have from the bytes. `false` for any other failure. */
   protected reloadRefused(error: unknown): boolean {
@@ -434,6 +456,9 @@ export class MemoDoc extends Doc {
   private keptKnown: MemoInfo | undefined;
   private retitling: Promise<void> | null = null;
   private detecting: Promise<void> | null = null;
+  /** The person chose their text over the file's (`resave`): the next save writes whatever the
+   * file holds. Ends with that save, or when the tab takes the file's text instead (`loaded`). */
+  private overwrite = false;
 
   constructor(
     host: DocHost,
@@ -485,6 +510,7 @@ export class MemoDoc extends Doc {
 
   protected loaded(): void {
     this.savedText = this.state?.doc ?? null;
+    this.overwrite = false;
   }
 
   protected async read(): Promise<Uint8Array | Problem> {
@@ -510,6 +536,7 @@ export class MemoDoc extends Doc {
   }
 
   async save(): Promise<void> {
+    await this.rereadSettled();
     const text = this.state?.doc;
     // Undone back to what is saved: a failed save has nothing left to write.
     if (!text || text === this.savedText) return this.clearSaveFailed();
@@ -517,10 +544,14 @@ export class MemoDoc extends Doc {
     // (or for the window to close, `flush`).
     if (this.banner?.kind === "conflict") return;
     const retry = () => this.save();
+    const overwrite = this.overwrite;
     try {
-      this.setInfo(await this.host.backend.writeMemo(this.info.id, this.encode(text)));
+      const bytes = this.encode(text);
+      this.setInfo(await this.host.backend.writeMemo(this.info.id, bytes, overwrite));
     } catch (error) {
-      if (errorCode(error) !== "unknown-memo") return this.failSave(error, this.saveKey, retry);
+      const code = errorCode(error);
+      if (code === "conflict") return this.saveRefused();
+      if (code !== "unknown-memo") return this.failSave(error, this.saveKey, retry);
       // The file went away under us (renamed or deleted in Finder). Typed text must survive, so
       // it becomes a new memo instead of failing every save from here on.
       try {
@@ -532,11 +563,25 @@ export class MemoDoc extends Doc {
       this.host.changed(this, "notice");
     }
     this.savedText = text;
+    if (overwrite) this.overwrite = false;
     this.error = null;
     this.clearSaveFailed();
     // The file is there again.
     if (this.banner?.kind === "deleted") this.setBanner(null);
     this.host.changed(this, "saved");
+  }
+
+  /** The save was refused: the file holds another app's text, written since the tab last read or
+   * wrote it and not reported by the watcher yet (spec 「외부 변경」). The banner asks, as it does
+   * when the watcher is first. Not a failed save: nothing retries, and a failure this save was the
+   * retry of goes with its message. */
+  private saveRefused(): void {
+    if (this.saveFailed) {
+      this.error = null;
+      this.clearSaveFailed();
+      this.host.changed(this, "recovered");
+    }
+    this.raiseConflict();
   }
 
   /** One call per name, under the old name first: a create-then-write pair would leave an empty
@@ -566,10 +611,12 @@ export class MemoDoc extends Doc {
     }
   }
 
-  /** Writes the text whatever tote last saved: the file is gone (「다시 저장」) or holds another
-   * app's text (「내 버전」), so text equal to the last save must still go. */
+  /** Writes the text whatever tote last saved and whatever the file holds: the file is gone
+   * (「다시 저장」) or holds another app's text (「내 버전」), so text equal to the last save must
+   * still go, and must go over what is there. */
   async resave(): Promise<void> {
     this.savedText = null;
+    this.overwrite = true;
     await this.saveNow();
   }
 
@@ -605,18 +652,25 @@ export class MemoDoc extends Doc {
     // Not read yet, or not shown as text: it reads the file as it is when it is shown.
     if (!this.state) return this.retryProblem();
     if (this.unsaved) return this.raiseConflict();
-    let bytes: Uint8Array;
-    try {
-      bytes = await this.host.backend.readMemo(this.info.id);
-    } catch (error) {
-      if (this.reloadRefused(error)) return;
-      return this.fail(error);
-    }
-    // Typed while it was read: that text must not be replaced.
-    if (this.unsaved) return this.raiseConflict();
-    this.reload(bytes);
-    // The kept-conflict banner is about another memo; only a question about this file is answered.
-    if (this.banner && this.banner.kind !== "info") this.setBanner(null);
+    const shown = this.state.doc;
+    return this.rereadThen(async () => {
+      let bytes: Uint8Array | null = null;
+      let refused: unknown = null;
+      try {
+        bytes = await this.host.backend.readMemo(this.info.id);
+      } catch (error) {
+        refused = error;
+      }
+      // Typed while it was read: that text must not be replaced, whatever the answer. Measured
+      // against the text the read set out from, not `unsaved` — a save may have gone through
+      // meanwhile and made the typed text the saved one.
+      if (!this.state?.doc.eq(shown)) return this.raiseConflict();
+      if (!bytes) return this.reloadRefused(refused) ? undefined : this.fail(refused);
+      this.reload(bytes);
+      // The kept-conflict banner is about another memo; only a question about this file is
+      // answered.
+      if (this.banner && this.banner.kind !== "info") this.setBanner(null);
+    });
   }
 
   private raiseConflict(): void {
@@ -752,8 +806,10 @@ export class MemoDoc extends Doc {
    * The file keeps the other app's text and 「내 버전」 becomes a new memo, as a save into a
    * vanished file does (`recover`) — one write, so the flush round stays quick. Also when the text
    * was undone back to the last save: the file no longer holds it. When the write fails the save
-   * counts as failed, which makes the quit ask first. */
+   * counts as failed, which makes the quit ask first. The conflict may be met only here, by the
+   * save this starts with (`saveRefused`). */
   async flush(): Promise<void> {
+    await this.saveNow();
     if (this.banner?.kind === "conflict" && this.state) {
       const text = this.state.doc;
       const original = this.info;
@@ -763,10 +819,14 @@ export class MemoDoc extends Doc {
         return this.failSave(error, this.saveKey, () => this.save());
       }
       this.savedText = text;
+      this.overwrite = false;
       this.keepConflict(original.id, original);
       this.clearSaveFailed();
+      // Typed while the new memo was made.
+      await this.saveNow();
     }
-    return this.leave();
+    await this.retitle();
+    await this.detect();
   }
 
   /** The info banner of a kept conflict. `known` names the original when the listing does not. */
@@ -873,6 +933,10 @@ export class ExternalDoc extends Doc {
   size = 0;
   /** `watchExternal` was asked for this tab and not yet undone. */
   private watching = false;
+  /** The person chose 「내 버전」 over a draft's changed file and has not saved since
+   * (`draftOverChangedFile`): the next ⌘S writes whatever the file holds. Ends with that save, or
+   * with the edits (`discard`). */
+  private keepsMine = false;
 
   constructor(
     host: DocHost,
@@ -945,7 +1009,10 @@ export class ExternalDoc extends Doc {
     if (!exists) return this.deletedBanner(() => this.save());
     this.conflictBanner(
       () => this.takeDisk(),
-      async () => this.setBanner(null),
+      async () => {
+        this.keepsMine = true;
+        this.setBanner(null);
+      },
     );
   }
 
@@ -959,18 +1026,23 @@ export class ExternalDoc extends Doc {
       return this.deletedBanner(() => this.save());
     }
     if (this.modified) return this.raiseConflict();
-    let bytes: Uint8Array;
-    try {
-      bytes = await this.host.backend.readExternal(this.path);
-    } catch (error) {
-      if (this.reloadRefused(error)) return;
-      return this.fail(error);
-    }
-    if (this.modified) return this.raiseConflict();
-    this.exists = true;
-    this.size = bytes.length;
-    this.reload(bytes);
-    if (this.banner) this.setBanner(null);
+    return this.rereadThen(async () => {
+      let bytes: Uint8Array | null = null;
+      let refused: unknown = null;
+      try {
+        bytes = await this.host.backend.readExternal(this.path);
+      } catch (error) {
+        refused = error;
+      }
+      // Typed while it was read: that text must not be replaced, whatever the answer. `modified`
+      // tells: a ⌘S, which would clear it, waits for this answer (`save`).
+      if (this.modified) return this.raiseConflict();
+      if (!bytes) return this.reloadRefused(refused) ? undefined : this.fail(refused);
+      this.exists = true;
+      this.size = bytes.length;
+      this.reload(bytes);
+      if (this.banner) this.setBanner(null);
+    });
   }
 
   private raiseConflict(): void {
@@ -1056,19 +1128,31 @@ export class ExternalDoc extends Doc {
     }
   }
 
-  /** ⌘S. Returns whether the file was written. */
+  /** ⌘S. Returns whether the file was written. A file holding another app's text the tab has not
+   * read is left alone and asked about (spec 「외부 변경」) — unless the person has answered: the
+   * conflict banner is in sight (its 「내 버전」 is this save, and so is a ⌘S over it), or 「내 버전」
+   * was picked earlier for a draft (`keepsMine`). */
   async save(): Promise<boolean> {
     if (!this.state) return true;
+    const asked = this.banner?.kind === "conflict";
+    await this.rereadSettled();
+    // The reread this save waited for found typed text and asked: the ⌘S came before the question.
+    if (!asked && this.banner?.kind === "conflict") return false;
+    if (!this.state) return true;
+    const mine = asked || this.keepsMine;
     await this.settleDraft();
     const text = this.state.doc;
     try {
-      await this.host.backend.saveExternal(this.path, this.encode(text));
+      await this.host.backend.saveExternal(this.path, this.encode(text), mine);
     } catch (error) {
       // Settling dropped a draft retry; the edits still need their draft.
       if (this.saveFailed) this.retryLater(this.draftKey, () => this.keepDraft());
-      this.fail(error);
+      // Not a failed save: the banner asks.
+      if (errorCode(error) === "conflict") this.raiseConflict();
+      else this.fail(error);
       return false;
     }
+    this.keepsMine = false;
     this.exists = true;
     this.notice = null;
     this.error = null;
@@ -1085,6 +1169,7 @@ export class ExternalDoc extends Doc {
   /** 「저장하지 않음」: the file stays as it is on disk and the draft goes. */
   async discard(): Promise<void> {
     await this.settleDraft();
+    this.keepsMine = false;
     this.modified = false;
     this.clearSaveFailed();
     await this.host.backend.discardExternalDraft(this.path);

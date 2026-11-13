@@ -19,7 +19,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{content_hash, is_temp_file, read_json, write_json};
+use crate::persist::{is_temp_file, read_json, write_json};
 use index::MemoIndex;
 use names::is_valid_file_name;
 use viewed::ViewedTimes;
@@ -59,9 +59,10 @@ pub struct Workspace {
     index: MemoIndex,
     /// A write since the last backup took it (`take_changed`).
     changed: bool,
-    /// File name → hash of the bytes tote last wrote there. A change the watcher sees with that
-    /// hash is tote's own write (spec 「외부 변경」).
-    last_written: BTreeMap<String, String>,
+    /// File name → what the editor holds of the file: the bytes tote last wrote there or read from
+    /// there (`ops::Held`). A change the watcher sees with their hash is no news, and a save over
+    /// anything else is refused (spec 「외부 변경」).
+    last_written: BTreeMap<String, ops::Held>,
     /// File name → `index::file_id`, kept through tote's own writes and renames, so a rename by
     /// another app is told apart from a removal and a new file.
     inodes: BTreeMap<String, (u64, u64)>,
@@ -248,9 +249,10 @@ impl Workspace {
         std::mem::take(&mut self.changed)
     }
 
-    /// The hash of what tote last wrote to `file`, if it wrote it since the workspace opened.
+    /// The hash of what the editor holds of `file`: what tote last wrote there or read from
+    /// there, if it did since the workspace opened.
     pub fn last_written(&self, file: &str) -> Option<&str> {
-        self.last_written.get(file).map(String::as_str)
+        self.last_written.get(file).map(|held| held.hash.as_str())
     }
 
     pub fn inodes(&self) -> &BTreeMap<String, (u64, u64)> {
@@ -261,7 +263,7 @@ impl Workspace {
     /// batch, `renames` the from → to pairs the watcher paired itself. In order: those pairs; a
     /// file gone and a new one with its inode are a rename; what is left gone is removed and new
     /// is added (`autoTitle: false`, spec 「rename 을 놓치면 새 메모」); a file still there changed
-    /// unless it hashes like tote's last write to it.
+    /// unless it hashes like what the editor holds of it.
     ///
     /// Whether a name is there is read from the folder listing, not by looking the name up: APFS
     /// finds `memo.md` when the file is `Memo.md`, which would hide a case-only rename.
@@ -358,16 +360,10 @@ impl Workspace {
         let index_changed = !changes.is_empty();
         for (id, file) in stayed {
             self.track_inode(&file);
-            // Only what tote wrote is worth reading to compare; anything else changed.
-            let ours = match self.last_written.get(&file) {
-                Some(hash) => {
-                    fs::read(self.root.join(&file)).is_ok_and(|bytes| content_hash(&bytes) == *hash)
-                }
-                None => false,
-            };
-            if !ours {
-                // No longer what tote wrote: tote's next write there sets it again.
-                self.last_written.remove(&file);
+            // Only what the editor holds is worth reading to compare; anything else changed. What
+            // it holds stays as it was: the editor has not read the change yet, and a save from it
+            // meanwhile must not go over the change (`write_memo`).
+            if !self.still_held(&file) {
                 changes.push(Change::Modified { id });
             }
         }

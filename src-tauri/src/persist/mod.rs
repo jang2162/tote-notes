@@ -150,6 +150,28 @@ pub fn read_editable_text(path: &Path) -> io::Result<Vec<u8>> {
     read_text_from(file, size)
 }
 
+/// What a save is refused with: the file holds something the editor has not seen, which the save
+/// would write over (spec 「외부 변경」). Not a failed write — nothing was tried.
+#[derive(Debug)]
+pub struct Conflict;
+
+impl std::fmt::Display for Conflict {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "the file was changed by another app")
+    }
+}
+
+impl std::error::Error for Conflict {}
+
+pub fn conflict() -> io::Error {
+    io::Error::other(Conflict)
+}
+
+/// Whether `err` is a save refused over another app's change (`Conflict`).
+pub fn is_conflict(err: &io::Error) -> bool {
+    err.get_ref().is_some_and(|inner| inner.is::<Conflict>())
+}
+
 fn read_text_from(mut reader: impl Read, size: u64) -> io::Result<Vec<u8>> {
     let mut bytes = Vec::with_capacity(usize::try_from(size).unwrap_or(0));
     (&mut reader)

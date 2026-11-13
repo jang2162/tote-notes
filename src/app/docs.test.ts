@@ -561,6 +561,162 @@ describe("MemoDoc outside changes", () => {
     expect(backend.memoText("a")).toBe("다른 앱");
   });
 
+  it("a save that meets another app's text the watcher has not reported asks instead of writing", async () => {
+    const { backend, doc, changes } = await opened("원래");
+    type(doc, " 내 글");
+    // Written elsewhere inside the save's half second: no `onOutside` yet.
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(backend.memoText("a")).toBe("다른 앱");
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.state!.doc.toString()).toBe("원래 내 글");
+    // Not a failed save: nothing is reported, and nothing tries again.
+    expect(doc.saveFailed).toBe(false);
+    expect(doc.error).toBeNull();
+    expect(changes).not.toContain("error");
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS * 2);
+    expect(backend.memoText("a")).toBe("다른 앱");
+    // The watcher's report, late, changes nothing.
+    await doc.onOutside({ kind: "modified", id: "a" });
+    expect(doc.state!.doc.toString()).toBe("원래 내 글");
+    expect(backend.memoText("a")).toBe("다른 앱");
+    doc.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(backend.memoText("a")).toBe("원래 내 글");
+    expect(doc.banner).toBeNull();
+
+    // 내 버전 was for that one write: the next change elsewhere asks again.
+    type(doc, "!");
+    backend.data.memos.a.data = fakeFile("또 다른 앱");
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(backend.memoText("a")).toBe("또 다른 앱");
+    expect(doc.banner?.kind).toBe("conflict");
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("또 다른 앱");
+    // From the disk's text on, saves are plain saves again.
+    type(doc, "?");
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(backend.memoText("a")).toBe("또 다른 앱?");
+    expect(doc.banner).toBeNull();
+  });
+
+  it("내 버전 that could not be written does not outlive 디스크 버전", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    // The disk is full when 내 버전 is picked — for the write and for the second try a save makes
+    // at once: it waits for its retry.
+    backend.data.failWrites = 2;
+    doc.banner!.actions[1].run();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(doc.saveFailed).toBe(true);
+    // Changed again before the retry, and this time the disk's text is taken.
+    backend.data.memos.a.data = fakeFile("또 다른 앱");
+    await doc.onOutside({ kind: "modified", id: "a" });
+    doc.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("또 다른 앱");
+    // The earlier answer is spent: a later change is asked about, not written over.
+    type(doc, "!");
+    backend.data.memos.a.data = fakeFile("세 번째");
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(backend.memoText("a")).toBe("세 번째");
+    expect(doc.banner?.kind).toBe("conflict");
+  });
+
+  it("a retried save that meets another app's text stops retrying and takes its failure along", async () => {
+    const { backend, doc, changes } = await opened("원래");
+    backend.data.failWrites = 1;
+    type(doc, " 내 글");
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(doc.saveFailed).toBe(true);
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS);
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.saveFailed).toBe(false);
+    expect(doc.error).toBeNull();
+    expect(changes).toContain("recovered");
+    await vi.advanceTimersByTimeAsync(SAVE_RETRY_MS * 2);
+    expect(backend.memoText("a")).toBe("다른 앱");
+  });
+
+  /** Holds the next `read` of `backend` until the returned function is called. The fake has
+   * served it by then, as the native side has while its answer is on the way. */
+  function holdRead(backend: FakeBackend, read: "readMemo" | "readExternal"): () => void {
+    const real = backend[read].bind(backend);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(backend, read).mockImplementationOnce(async (target) => {
+      const bytes = await real(target);
+      await held;
+      return bytes;
+    });
+    return release;
+  }
+
+  it("a reread answered late does not replace what was typed meanwhile, nor does its save go out", async () => {
+    const { backend, doc } = await opened("원래");
+    const release = holdRead(backend, "readMemo");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    const heard = doc.onOutside({ kind: "modified", id: "a" });
+    type(doc, " 내 글");
+    // The save's time comes while the read is out. The native side already counts the tab as
+    // holding what it read, so a save now would pass as an edit of text the tab never showed.
+    await vi.advanceTimersByTimeAsync(MEMO_SAVE_DELAY_MS);
+    expect(backend.memoText("a")).toBe("다른 앱");
+    release();
+    await heard;
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("원래 내 글");
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(backend.memoText("a")).toBe("다른 앱");
+  });
+
+  it("a cursor moved while a reread is out is not an edit: the reread is taken", async () => {
+    const { backend, doc } = await opened("첫 줄\n둘째 줄");
+    const release = holdRead(backend, "readMemo");
+    backend.data.memos.a.data = fakeFile("다른 앱이 고친 첫 줄\n둘째 줄");
+    const heard = doc.onOutside({ kind: "modified", id: "a" });
+    const start = doc.state!;
+    const moved = start.update({ selection: { anchor: 4 } }).state;
+    doc.update({ state: moved, startState: start, docChanged: false, selectionSet: true });
+    release();
+    await heard;
+    expect(doc.state!.doc.toString()).toBe("다른 앱이 고친 첫 줄\n둘째 줄");
+    expect(doc.state!.selection.main.head).toBe(4);
+    expect(doc.banner).toBeNull();
+  });
+
+  it("text typed and taken back while a reread is out is not an edit either", async () => {
+    const { backend, doc } = await opened("원래");
+    const release = holdRead(backend, "readMemo");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    const heard = doc.onOutside({ kind: "modified", id: "a" });
+    type(doc, "!");
+    const typed = doc.state!;
+    const back = typed.update({ changes: { from: typed.doc.length - 1, to: typed.doc.length } });
+    doc.update({ state: back.state, startState: typed, docChanged: true, selectionSet: true });
+    release();
+    await heard;
+    await vi.runAllTimersAsync();
+    expect(doc.state!.doc.toString()).toBe("다른 앱");
+    expect(doc.banner).toBeNull();
+    expect(backend.memoText("a")).toBe("다른 앱");
+  });
+
+  it("a window close or quit whose save meets another app's text keeps both", async () => {
+    const { backend, doc } = await opened("원래");
+    type(doc, " 내 글");
+    backend.data.memos.a.data = fakeFile("다른 앱");
+    await doc.flush();
+    expect(backend.memoText("a")).toBe("다른 앱");
+    expect(doc.info.id).not.toBe("a");
+    expect(backend.memoText(doc.info.id)).toBe("원래 내 글");
+    expect(doc.saveFailed).toBe(false);
+  });
+
   it("a window close or quit with the conflict open keeps both: the file and 내 버전 as a new memo", async () => {
     const { backend, doc } = await opened("원래");
     type(doc, " 내 글");
@@ -816,6 +972,104 @@ describe("ExternalDoc", () => {
     expect(backend.fileText("/x/a.sh")).toBe("v1!");
     expect(doc.dirty).toBe(false);
     expect(doc.banner).toBeNull();
+  });
+
+  it("⌘S over another app's text the watcher has not reported asks instead of writing; 내 버전 writes", async () => {
+    const { backend, host, changes } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    expect(await doc.save()).toBe(false);
+    expect(backend.fileText("/x/a.sh")).toBe("v2");
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(doc.dirty).toBe(true);
+    // Not a failed save.
+    expect(doc.error).toBeNull();
+    expect(changes).not.toContain("error");
+    doc.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(backend.fileText("/x/a.sh")).toBe("v1!");
+    expect(doc.banner).toBeNull();
+    expect(doc.dirty).toBe(false);
+    // 내 버전 was for that one write.
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v3");
+    expect(await doc.save()).toBe(false);
+    expect(backend.fileText("/x/a.sh")).toBe("v3");
+  });
+
+  it("내 버전 picked for a restored draft covers one ⌘S, and none once the edits are dropped", async () => {
+    const seed = {
+      files: { "/x/a.sh": fakeFile("v1") },
+      drafts: { "/x/a.sh": { base: fakeFile("v0"), data: fakeFile("mine") } },
+    };
+    const { backend, host } = setup(seed);
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    doc.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    expect(await doc.save()).toBe(true);
+    expect(backend.fileText("/x/a.sh")).toBe("mine");
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    expect(await doc.save()).toBe(false);
+    expect(backend.fileText("/x/a.sh")).toBe("v2");
+
+    // Picked, then the edits dropped for the disk's text before any ⌘S.
+    const other = setup(seed);
+    const dropped = new ExternalDoc(other.host, "/x/a.sh");
+    await dropped.ensureLoaded();
+    dropped.banner!.actions[1].run();
+    await vi.runAllTimersAsync();
+    other.backend.data.files["/x/a.sh"] = fakeFile("v2");
+    await dropped.onOutside("modified");
+    dropped.banner!.actions[0].run();
+    await vi.runAllTimersAsync();
+    expect(dropped.state!.doc.toString()).toBe("v2");
+    type(dropped, "!");
+    other.backend.data.files["/x/a.sh"] = fakeFile("v3");
+    expect(await dropped.save()).toBe(false);
+    expect(other.backend.fileText("/x/a.sh")).toBe("v3");
+  });
+
+  it("⌘S with the conflict banner in sight is the answer 내 버전", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    await doc.onOutside("modified");
+    expect(doc.banner?.kind).toBe("conflict");
+    expect(await doc.save()).toBe(true);
+    expect(backend.fileText("/x/a.sh")).toBe("v1!");
+    expect(doc.banner).toBeNull();
+  });
+
+  it("⌘S pressed while a reread is out waits, and does not write over what the reread found", async () => {
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    const real = backend.readExternal.bind(backend);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => (release = resolve));
+    vi.spyOn(backend, "readExternal").mockImplementationOnce(async (path) => {
+      const bytes = await real(path);
+      await held;
+      return bytes;
+    });
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    const heard = doc.onOutside("modified");
+    type(doc, "!");
+    const saving = doc.save();
+    await vi.advanceTimersByTimeAsync(0);
+    expect(backend.fileText("/x/a.sh")).toBe("v2");
+    release();
+    await heard;
+    expect(await saving).toBe(false);
+    expect(backend.fileText("/x/a.sh")).toBe("v2");
+    expect(doc.state!.doc.toString()).toBe("v1!");
+    expect(doc.banner?.kind).toBe("conflict");
   });
 
   it("an external file removed elsewhere raises the deleted banner; 다시 저장 writes it back", async () => {
