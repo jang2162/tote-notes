@@ -130,6 +130,7 @@ pub fn run() {
             commands::create_workspace,
             commands::switch_workspace,
             commands::flush_done,
+            commands::flush_writing,
             commands::current_update,
             commands::install_update,
             commands::restart_for_update,

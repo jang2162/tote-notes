@@ -891,6 +891,20 @@ pub async fn switch_workspace(
     })
 }
 
+/// The window writes its tabs for flush round `id`: `unwritten` says what is only in memory until
+/// it answers (`flush_done`), and is absent once all of it is written. Not async: it is heard on
+/// the main thread even while the async runtime's threads wait on a volume that stopped
+/// answering — the very case it is for.
+#[tauri::command]
+pub fn flush_writing(
+    core: State<'_, AppCore>,
+    window: WebviewWindow,
+    id: u64,
+    unwritten: Option<String>,
+) {
+    core.flush_writing(id, window.label(), unwritten);
+}
+
 #[tauri::command]
 pub async fn flush_done(
     app: AppHandle,

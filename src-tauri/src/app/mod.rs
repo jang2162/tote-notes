@@ -1541,6 +1541,12 @@ impl AppCore {
         lock(&self.inner).flush.ack(id, label, blocked)
     }
 
+    /// Window `label` writes its tabs for round `id`; `unwritten` says what is only in memory
+    /// until it answers (`FlushCoordinator::writing`).
+    pub fn flush_writing(&self, id: u64, label: &str, unwritten: Option<String>) {
+        lock(&self.inner).flush.writing(id, label, unwritten);
+    }
+
     /// Round `id` ran out of time. A window it ends as a switch or a close is marked going under
     /// the same lock: an answer coming before `lifecycle::finish` marks it would find the window
     /// staying and take its panes back, just before it reloads or goes (`lifecycle::ack`).
@@ -3919,6 +3925,58 @@ mod tests {
         assert!(core.window_is_leaving(&a));
         core.close_failed(&a);
         assert!(!core.window_is_leaving(&a));
+    }
+
+    #[test]
+    fn a_round_that_times_out_on_a_window_still_writing_asks_and_keeps_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        let unwritten = "저장하지 못한 메모 1개".to_string();
+        let goals = [
+            FlushGoal::CloseWindow(a.clone()),
+            FlushGoal::SwitchWorkspace {
+                label: a.clone(),
+                to: na,
+            },
+            FlushGoal::Quit,
+            FlushGoal::Restart,
+        ];
+        for goal in goals {
+            let round = match goal {
+                FlushGoal::Restart => core.begin_restart().unwrap(),
+                _ => core.begin_flush(goal.clone()),
+            };
+            let Begin::Started { id, .. } = round else {
+                panic!("expected a round for {goal:?}")
+            };
+            // The page said what it holds before it wrote, and the write never ended.
+            core.flush_writing(id, &a, Some(unwritten.clone()));
+            assert_eq!(
+                core.expire_flush(id),
+                Ack::Blocked {
+                    goal: goal.clone(),
+                    reasons: vec![unwritten.clone()],
+                }
+            );
+            // Not going until the question is answered: should the write end after 「취소」, the
+            // page's late answer finds the window staying and takes its panes back.
+            assert!(!core.window_is_leaving(&a), "{goal:?}");
+            assert!(!core.is_quitting(), "{goal:?}");
+            core.cancel_flush(id);
+            assert_eq!(core.ack_flush(id, &a, None), Ack::Stale, "{goal:?}");
+        }
+
+        // All of it written by the timeout: the round ends as for a window that said nothing.
+        let close = FlushGoal::CloseWindow(a.clone());
+        let Begin::Started { id, .. } = core.begin_flush(close.clone()) else {
+            panic!("expected a round")
+        };
+        core.flush_writing(id, &a, Some(unwritten));
+        core.flush_writing(id, &a, None);
+        assert_eq!(core.expire_flush(id), Ack::Done(close));
+        assert!(core.window_is_leaving(&a));
     }
 
     #[test]
