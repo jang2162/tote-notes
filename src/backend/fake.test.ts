@@ -21,6 +21,28 @@ describe("FakeBackend settings", () => {
     expect((await backend.settings()).extensions.disabled).toEqual([]);
   });
 
+  it("takes a theme as the mode's patch and refuses one of the wrong shape, as Rust does", async () => {
+    const data = defaultFakeData();
+    (data.settings.theme as { mode: unknown }).mode = { extension: "a" };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    // A seed is the file: a wrong shape there reads as auto.
+    expect((await backend.settings()).theme.mode).toBe("auto");
+    const night = { extension: "someone.night", label: "Night" };
+    await backend.patchSettings({ themeMode: night });
+    expect((await backend.settings()).theme.mode).toEqual(night);
+    for (const bad of [{ extension: "a" }, { extension: "a", label: 3 }, "dim", []]) {
+      await expect(
+        backend.patchSettings({ themeMode: bad as never, sidebarPreview: false }),
+      ).rejects.toMatchObject({ code: "bad-request" });
+    }
+    // Refused whole: the other field in it stays as it was.
+    expect((await backend.settings()).sidebar.preview).toBe(true);
+    expect((await backend.settings()).theme.mode).toEqual(night);
+    // `null` is no change, as Rust's `Option` reads it.
+    await backend.patchSettings({ themeMode: null as never });
+    expect((await backend.settings()).theme.mode).toEqual(night);
+  });
+
   it("keeps a bundled extension enabled even when its id is listed as disabled", async () => {
     const data = defaultFakeData();
     data.settings.extensions.disabled = ["tote.themes"];

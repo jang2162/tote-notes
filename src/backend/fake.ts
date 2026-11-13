@@ -34,6 +34,7 @@ import {
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
+  type ThemeChoice,
   type ThemeInfo,
   type TrashedInfo,
   type TrashOutcome,
@@ -367,6 +368,14 @@ export function fakeFile(contents: string | Uint8Array): string {
 }
 
 /** A stand-in for Rust's preview rule: the text after the first line, its spaces folded. */
+/** A mode, or a theme by extension and label: what Rust's `ThemeChoice` takes. */
+function isThemeChoice(value: unknown): value is ThemeChoice {
+  if (value === "auto" || value === "light" || value === "dark") return true;
+  if (typeof value !== "object" || value === null || Array.isArray(value)) return false;
+  const ref = value as Record<string, unknown>;
+  return typeof ref.extension === "string" && typeof ref.label === "string";
+}
+
 function roughPreview(data: string): string {
   const text = new TextDecoder().decode(fromBase64(data));
   return text.split("\n").slice(1).join(" ").replace(/\s+/g, " ").trim().slice(0, 100);
@@ -1587,6 +1596,8 @@ export class FakeBackend implements Backend {
     settings.sidebar ??= { preview: true, sort: "modified-desc" };
     // An old seed has no `trash`; Rust reads a missing one as the default.
     settings.trash ??= { retentionDays: 60 };
+    // Rust reads a theme of the wrong shape, or none, as auto (`lenient`).
+    if (settings.theme && !isThemeChoice(settings.theme.mode)) settings.theme.mode = "auto";
     // Rust drops a bad entry as it reads the file (`shortcut_overrides`); a seed is that file.
     if (settings.shortcuts) {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
@@ -1606,10 +1617,14 @@ export class FakeBackend implements Backend {
     const refused = patch.shortcuts === undefined ? null : refusedShortcut(patch.shortcuts);
     if (refused !== null)
       throw new BackendError("bad-request", `단축키를 저장할 수 없습니다: ${refused}`);
+    // Rust refuses a patch whose theme is neither a mode nor an extension and label (`ThemeChoice`).
+    if (patch.themeMode != null && !isThemeChoice(patch.themeMode))
+      throw new BackendError("bad-request", "themeMode: data did not match any variant");
     const settings = this.data.settings;
     // `undefined` is what JSON leaves out on the way to Rust: such a field is kept.
     if (patch.workspaceRoot !== undefined) settings.workspaceRoot = patch.workspaceRoot;
-    if (patch.themeMode !== undefined) settings.theme.mode = patch.themeMode;
+    // Rust reads `null` here as no change (`Option`).
+    if (patch.themeMode != null) settings.theme.mode = patch.themeMode;
     if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
     // An old seed has no `editor`.
     settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };

@@ -69,6 +69,11 @@ export class Registry {
     );
   }
 
+  /** The theme `ref` names, if an enabled extension gives it. */
+  theme(ref: ThemeRef): ThemeInfo | undefined {
+    return this.data.themes.find((t) => t.extension === ref.extension && t.label === ref.label);
+  }
+
   /** The referenced theme when it is installed, else the first theme of the appearance. */
   themeFor(ref: ThemeRef | null, appearance: "light" | "dark"): ThemeInfo | undefined {
     const wanted =

@@ -224,12 +224,11 @@ where
     Ok(shortcuts::sanitize(&shortcuts::from_keypad(&saved)))
 }
 
-/// Which appearance the app takes (spec 「테마」); each draws with the bundled default theme of
-/// that appearance.
+/// Which theme the app draws with (spec 「테마」): a mode's bundled default, or one theme picked.
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub struct ThemeSettings {
     #[serde(default, deserialize_with = "lenient")]
-    pub mode: ThemeMode,
+    pub mode: ThemeChoice,
     /// The theme an older build let each appearance pick. Nothing reads them;
     /// they are kept as written, so a save does not take them from the file.
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -249,6 +248,29 @@ pub enum ThemeMode {
     Auto,
     Light,
     Dark,
+}
+
+/// What the 「테마」 picker holds (`ThemeChoice` in src/backend/types.ts): a mode, or one theme of
+/// the registry drawn whatever the OS appearance (theme picker spec 「데이터·저장」). A picked theme
+/// the registry no longer has draws as auto, and stays saved for when its extension is back.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(untagged)]
+pub enum ThemeChoice {
+    Mode(ThemeMode),
+    Theme(ThemeRef),
+}
+
+impl Default for ThemeChoice {
+    fn default() -> Self {
+        Self::Mode(ThemeMode::Auto)
+    }
+}
+
+/// A theme by its extension's id and its own label: a manifest's themes have no id of their own.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct ThemeRef {
+    pub extension: String,
+    pub label: String,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
@@ -451,7 +473,7 @@ pub struct SettingsPatch {
     #[serde(default, deserialize_with = "double_option")]
     pub workspace_root: Option<Option<PathBuf>>,
     #[serde(default)]
-    pub theme_mode: Option<ThemeMode>,
+    pub theme_mode: Option<ThemeChoice>,
     #[serde(default)]
     pub precedence: Option<Precedence>,
     #[serde(default)]
@@ -509,8 +531,8 @@ impl SettingsPatch {
         if let Some(root) = &self.workspace_root {
             settings.workspace_root = root.clone();
         }
-        if let Some(mode) = self.theme_mode {
-            settings.theme.mode = mode;
+        if let Some(mode) = &self.theme_mode {
+            settings.theme.mode = mode.clone();
         }
         if let Some(precedence) = self.precedence {
             settings.extensions.precedence = precedence;
@@ -1139,7 +1161,7 @@ mod tests {
         let mut settings = Settings::load(&file).unwrap();
         // What this build knows reads as before.
         assert_eq!(settings.workspace_root, Some("/x".into()));
-        assert_eq!(settings.theme.mode, ThemeMode::Dark);
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Dark));
         assert_eq!(settings.editor.font_size, 16);
         assert!(!settings.updates.auto_check);
         assert!(!settings.sidebar.preview);
@@ -1196,7 +1218,7 @@ mod tests {
         let settings = Settings {
             workspace_root: None,
             theme: ThemeSettings {
-                mode: ThemeMode::Light,
+                mode: ThemeChoice::Mode(ThemeMode::Light),
                 light: Some(serde_json::json!({"extension": "tote.themes", "label": "Light+"})),
                 dark: None,
                 unknown: Unknown::new(),
@@ -1430,27 +1452,30 @@ mod tests {
     #[test]
     fn theme_mode_is_auto_by_default_and_survives_a_bad_value() {
         let read = |text: &str| serde_json::from_str::<Settings>(text).unwrap();
-        assert_eq!(read("{}").theme.mode, ThemeMode::Auto);
-        assert_eq!(read(r#"{"theme": {}}"#).theme.mode, ThemeMode::Auto);
+        assert_eq!(read("{}").theme.mode, ThemeChoice::Mode(ThemeMode::Auto));
+        assert_eq!(
+            read(r#"{"theme": {}}"#).theme.mode,
+            ThemeChoice::Mode(ThemeMode::Auto)
+        );
         assert_eq!(
             read(r#"{"theme": {"mode": "light"}}"#).theme.mode,
-            ThemeMode::Light
+            ThemeChoice::Mode(ThemeMode::Light)
         );
         assert_eq!(
             read(r#"{"theme": {"mode": "dark"}}"#).theme.mode,
-            ThemeMode::Dark
+            ThemeChoice::Mode(ThemeMode::Dark)
         );
         // A bad mode goes alone: the slots and the rest of the file stay.
         let bad = read(
             r#"{"workspaceRoot": "/x",
                 "theme": {"mode": "Dark", "dark": {"extension": "a", "label": "b"}}}"#,
         );
-        assert_eq!(bad.theme.mode, ThemeMode::Auto);
+        assert_eq!(bad.theme.mode, ThemeChoice::Mode(ThemeMode::Auto));
         assert_eq!(bad.theme.dark.unwrap()["label"], "b");
         assert_eq!(bad.workspace_root, Some(PathBuf::from("/x")));
         assert_eq!(
             read(r#"{"theme": {"mode": 1}}"#).theme.mode,
-            ThemeMode::Auto
+            ThemeChoice::Mode(ThemeMode::Auto)
         );
 
         let mut settings = Settings::default();
@@ -1458,7 +1483,7 @@ mod tests {
             .unwrap()
             .apply(&mut settings)
             .unwrap();
-        assert_eq!(settings.theme.mode, ThemeMode::Dark);
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Dark));
         assert_eq!(settings.theme.light, None);
         let text = serde_json::to_string(&settings).unwrap();
         assert!(text.contains(r#""theme":{"mode":"dark"}"#), "{text}");
@@ -1467,8 +1492,66 @@ mod tests {
             .unwrap()
             .apply(&mut settings)
             .unwrap();
-        assert_eq!(settings.theme.mode, ThemeMode::Dark);
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Dark));
         assert!(serde_json::from_str::<SettingsPatch>(r#"{"themeMode": "dim"}"#).is_err());
+    }
+
+    #[test]
+    fn a_theme_picked_by_name_is_kept_as_its_extension_and_label() {
+        let read = |text: &str| serde_json::from_str::<Settings>(text).unwrap();
+        let night = ThemeChoice::Theme(ThemeRef {
+            extension: "someone.night".into(),
+            label: "Night".into(),
+        });
+        let settings =
+            read(r#"{"theme": {"mode": {"extension": "someone.night", "label": "Night"}}}"#);
+        assert_eq!(settings.theme.mode, night);
+        let text = serde_json::to_string(&settings).unwrap();
+        assert!(
+            text.contains(r#""theme":{"mode":{"extension":"someone.night","label":"Night"}}"#),
+            "{text}"
+        );
+        // A reference missing a part, or with a part not text, goes back to auto alone.
+        for bad in [
+            r#"{"extension": "someone.night"}"#,
+            r#"{"label": "Night"}"#,
+            r#"{"extension": "someone.night", "label": 3}"#,
+            r#"[]"#,
+        ] {
+            let settings = read(&format!(
+                r#"{{"workspaceRoot": "/x", "theme": {{"mode": {bad}}}}}"#
+            ));
+            assert_eq!(settings.theme.mode, ThemeChoice::default(), "{bad}");
+            assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")), "{bad}");
+        }
+
+        // The mode's patch takes a theme too, and a mode again after it.
+        let mut settings = Settings::default();
+        serde_json::from_str::<SettingsPatch>(
+            r#"{"themeMode": {"extension": "someone.night", "label": "Night"}}"#,
+        )
+        .unwrap()
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(settings.theme.mode, night);
+        serde_json::from_str::<SettingsPatch>(r#"{"themeMode": "light"}"#)
+            .unwrap()
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Light));
+        // `null` is no change.
+        serde_json::from_str::<SettingsPatch>(r#"{"themeMode": null}"#)
+            .unwrap()
+            .apply(&mut settings)
+            .unwrap();
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Light));
+        assert!(
+            serde_json::from_str::<SettingsPatch>(r#"{"themeMode": {"extension": "a"}}"#).is_err()
+        );
+        assert!(serde_json::from_str::<SettingsPatch>(
+            r#"{"themeMode": {"extension": "a", "label": null}}"#
+        )
+        .is_err());
     }
 
     #[test]
@@ -1690,7 +1773,7 @@ mod tests {
         let mut settings = Settings {
             workspace_root: Some("/x".into()),
             theme: ThemeSettings {
-                mode: ThemeMode::Dark,
+                mode: ThemeChoice::Mode(ThemeMode::Dark),
                 light: None,
                 dark: Some(night.clone()),
                 unknown: Unknown::new(),
@@ -1719,12 +1802,12 @@ mod tests {
             unknown: Unknown::new(),
         };
         SettingsPatch {
-            theme_mode: Some(ThemeMode::Light),
+            theme_mode: Some(ThemeChoice::Mode(ThemeMode::Light)),
             ..Default::default()
         }
         .apply(&mut settings)
         .unwrap();
-        assert_eq!(settings.theme.mode, ThemeMode::Light);
+        assert_eq!(settings.theme.mode, ThemeChoice::Mode(ThemeMode::Light));
         assert_eq!(settings.theme.light, None);
         assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
         assert_eq!(settings.theme.dark, Some(night));
