@@ -186,7 +186,7 @@ pub fn run() {
 
 /// Outside changes go to the windows they concern as `tote://outside`: a workspace's to every
 /// window showing it. Before any window opens, so every workspace is watched; without a watcher
-/// tote still works, it only misses those changes.
+/// tote still works, it only misses those changes, and the first window says so.
 fn start_watching(app: AppHandle) {
     let handle = app.clone();
     let watching = app.state::<AppCore>().start_watching(move |target, batch| {
@@ -205,6 +205,8 @@ fn start_watching(app: AppHandle) {
     });
     if let Err(err) = watching {
         eprintln!("tote: cannot watch for outside changes: {err}");
+        app.state::<AppCore>()
+            .tell_next_window(app::unwatched_notice(&err));
     }
 }
 

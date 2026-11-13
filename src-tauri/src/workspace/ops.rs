@@ -1,8 +1,8 @@
 //! Creating, saving, renaming and removing memo files. Every operation goes through the memo ID,
 //! so a save that lands right after a title rename still finds the file.
 
-use std::fs;
-use std::io;
+use std::fs::{self, File};
+use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 
 use super::index::{file_id, MemoEntry};
@@ -153,13 +153,58 @@ impl Workspace {
     }
 
     /// `import_memo` with the bytes and the name of a file on disk; the file itself is not touched.
+    /// The bytes go from file to file (`copy_in`), so `tote --import` of a file of gigabytes holds
+    /// a buffer of it and never the whole.
     pub fn import_file(&mut self, path: &Path) -> Result<MemoInfo, WorkspaceError> {
-        let contents = fs::read(path)?;
+        let mut source = File::open(path)?;
         let name = path
             .file_name()
             .and_then(|n| n.to_str())
             .ok_or_else(|| WorkspaceError::InvalidName(path.display().to_string()))?;
-        self.import_memo(name, &contents)
+        if !is_valid_file_name(name) {
+            return Err(WorkspaceError::InvalidName(name.to_string()));
+        }
+        let (stem, ext) = split_name(name);
+        let file = self.free_name(stem, ext, None);
+        self.add_copy(file, false, &mut source)
+    }
+
+    /// `create_memo` with the bytes of a file on disk — the text `tote -` parked — copied as
+    /// `import_file` copies; the file itself is not touched.
+    pub fn create_memo_from_file(
+        &mut self,
+        ext: &str,
+        path: &Path,
+    ) -> Result<MemoInfo, WorkspaceError> {
+        let mut source = File::open(path)?;
+        let file = self.free_name("untitled", ext, None);
+        self.add_copy(file, true, &mut source)
+    }
+
+    /// `add_memo` for bytes that are read as they are written. What counts as tote's own write
+    /// is hashed from the new file once it is there, as for a memo back from the trash
+    /// (`came_in`): a copy the editor would not open is not read again at all.
+    fn add_copy(
+        &mut self,
+        file: String,
+        auto_title: bool,
+        source: &mut impl Read,
+    ) -> Result<MemoInfo, WorkspaceError> {
+        self.mark_changed();
+        copy_in(source, &self.root.join(&file))?;
+        self.came_in(&file);
+        let id = uuid::Uuid::new_v4().to_string();
+        self.index.insert(
+            id.clone(),
+            MemoEntry {
+                file,
+                auto_title,
+                language: None,
+                pinned: false,
+            },
+        );
+        self.index.save()?;
+        self.memo_info(&id)
     }
 
     fn add_memo(
@@ -286,6 +331,25 @@ impl Workspace {
                 && own.as_deref().is_none_or(|own| !same_file(own, &path))
         })
     }
+}
+
+/// Copies what is left of `source` into a new file at `to` a buffer at a time, the way
+/// `atomic_write` puts bytes there: into a temporary file beside it (one `is_temp_file` knows, so
+/// no listing takes it for a memo and the next open of the workspace removes one left behind),
+/// renamed in once it is whole and on disk. A copy cut short leaves nothing. The new file has a
+/// new file's permissions, not the source's: a locked original imports as a memo that saves.
+fn copy_in(source: &mut impl Read, to: &Path) -> io::Result<()> {
+    let temp = to.with_file_name(format!(".tote-tmp-{}", uuid::Uuid::new_v4().simple()));
+    let copied = File::create_new(&temp)
+        .and_then(|mut file| {
+            io::copy(source, &mut file)?;
+            file.sync_all()
+        })
+        .and_then(|()| fs::rename(&temp, to));
+    if copied.is_err() {
+        let _ = fs::remove_file(&temp);
+    }
+    copied
 }
 
 #[cfg(unix)]
@@ -619,6 +683,117 @@ mod tests {
             ws.write_memo(&memo.id, b"y").unwrap();
             assert_eq!(ws.read_memo(&memo.id).unwrap(), b"y");
         }
+    }
+
+    #[test]
+    fn a_file_is_copied_in_as_it_is_read_not_held_whole() {
+        /// 4 MiB that, once half is handed out, looks at what the copy has put in the folder so
+        /// far: nothing when the source is read to its end before anything is written.
+        struct Source<'a> {
+            left: usize,
+            folder: &'a Path,
+            halfway: Option<Vec<(String, u64)>>,
+        }
+        const TOTAL: usize = 4 << 20;
+        fn entries(folder: &Path) -> Vec<(String, u64)> {
+            fs::read_dir(folder)
+                .unwrap()
+                .map(|entry| {
+                    let entry = entry.unwrap();
+                    let name = entry.file_name().into_string().unwrap();
+                    (name, entry.metadata().unwrap().len())
+                })
+                .collect()
+        }
+        impl Read for Source<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.left <= TOTAL / 2 && self.halfway.is_none() {
+                    self.halfway = Some(entries(self.folder));
+                }
+                let n = buf.len().min(self.left).min(64 << 10);
+                buf[..n].fill(b'a');
+                self.left -= n;
+                Ok(n)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let to = dir.path().join("큰 파일.log");
+        let mut source = Source {
+            left: TOTAL,
+            folder: dir.path(),
+            halfway: None,
+        };
+        copy_in(&mut source, &to).unwrap();
+        assert_eq!(
+            entries(dir.path()),
+            vec![("큰 파일.log".to_string(), TOTAL as u64)]
+        );
+        // Halfway there was one file, a temporary one no listing shows, with what had come so far.
+        let halfway = source.halfway.unwrap();
+        assert_eq!(halfway.len(), 1, "{halfway:?}");
+        let (name, size) = &halfway[0];
+        assert!(crate::persist::is_temp_file(name), "{name}");
+        assert!(
+            *size >= (TOTAL / 4) as u64,
+            "{size} bytes were on disk halfway"
+        );
+
+        // A source that fails leaves nothing behind, and no memo.
+        struct Broken(bool);
+        impl Read for Broken {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if std::mem::replace(&mut self.0, true) {
+                    return Err(io::Error::other("the disk went"));
+                }
+                buf.fill(b'b');
+                Ok(buf.len())
+            }
+        }
+        let (_root, mut ws) = workspace();
+        assert!(matches!(
+            ws.add_copy("깨진.txt".into(), false, &mut Broken(false)),
+            Err(WorkspaceError::Io(_))
+        ));
+        assert!(listed(&ws).is_empty());
+        assert!(ws.list_memos().unwrap().is_empty());
+        let hidden: Vec<String> = entries(ws.root())
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| name != ".tote")
+            .collect();
+        assert!(hidden.is_empty(), "{hidden:?}");
+    }
+
+    #[test]
+    fn a_file_copied_in_counts_as_totes_own_write() {
+        let (root, mut ws) = workspace();
+        let outside = root.path().join("deploy.sh");
+        let text = "echo hi\n".repeat(20_000); // more than one buffer of the copy
+        fs::write(&outside, &text).unwrap();
+        let memo = ws.import_file(&outside).unwrap();
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), text.as_bytes());
+        assert_eq!(
+            ws.last_written("deploy.sh"),
+            Some(content_hash(text.as_bytes()).as_str())
+        );
+        // The watcher's event for the copy is not taken for another app's change.
+        let touched = std::collections::BTreeSet::from(["deploy.sh".to_string()]);
+        assert_eq!(ws.apply_fs_events(&touched, &[]).unwrap(), vec![]);
+
+        // Text parked by `tote -` becomes an untitled memo the same way, and stays where it was.
+        let parked = root.path().join("0123abcd.txt");
+        fs::write(&parked, "# 파이프한 글\n").unwrap();
+        let memo = ws.create_memo_from_file("md", &parked).unwrap();
+        assert_eq!((memo.file.as_str(), memo.auto_title), ("untitled.md", true));
+        assert_eq!(
+            ws.read_memo(&memo.id).unwrap(),
+            "# 파이프한 글\n".as_bytes()
+        );
+        assert!(parked.exists());
+        assert!(matches!(
+            ws.create_memo_from_file("md", Path::new("/nonexistent/a.txt")),
+            Err(WorkspaceError::Io(_))
+        ));
     }
 
     #[test]
