@@ -26,6 +26,14 @@ const TEMP_PREFIX: &str = ".tote-tmp-";
 /// rename would replace it anyway, so the caller shows a save failure instead. A symlink whose
 /// target is missing fails with `NotFound` rather than turning the link into a plain file.
 pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
+    atomic_write_seen(path, bytes).map(drop)
+}
+
+/// `atomic_write`, giving the written file's metadata as read from the temporary file before it
+/// was renamed in. Which file it is, its length and its modification time are the same after the
+/// rename, so they are the file as tote left it — a look at `path` afterwards could already be at
+/// another app's write.
+pub fn atomic_write_seen(path: &Path, bytes: &[u8]) -> io::Result<fs::Metadata> {
     let target = follow_link(path)?;
     // Not `?`: a missing target is a new file, which is fine.
     if let Ok(meta) = fs::metadata(&target) {
@@ -49,15 +57,17 @@ pub fn atomic_write(path: &Path, bytes: &[u8]) -> io::Result<()> {
     result
 }
 
-fn write_and_rename(temp: &Path, target: &Path, bytes: &[u8]) -> io::Result<()> {
+fn write_and_rename(temp: &Path, target: &Path, bytes: &[u8]) -> io::Result<fs::Metadata> {
     let mut file = File::create(temp)?;
     file.write_all(bytes)?;
     file.sync_all()?;
+    let written = file.metadata()?;
     drop(file);
     if let Ok(meta) = fs::metadata(target) {
         fs::set_permissions(temp, meta.permissions())?;
     }
-    fs::rename(temp, target)
+    fs::rename(temp, target)?;
+    Ok(written)
 }
 
 fn follow_link(path: &Path) -> io::Result<PathBuf> {
@@ -252,6 +262,26 @@ mod tests {
             .collect();
         names.sort();
         names
+    }
+
+    /// `Workspace` takes this metadata for how the file looks after the write (`ops::Stamp`). If
+    /// it stopped matching, every save would read the file again to compare instead of trusting
+    /// its looks — slower, never wrong.
+    #[cfg(unix)]
+    #[test]
+    fn the_metadata_of_a_write_is_the_files_after_the_rename() {
+        use std::os::unix::fs::MetadataExt;
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("메모.md");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, std::os::unix::fs::PermissionsExt::from_mode(0o600)).unwrap();
+        let written = atomic_write_seen(&path, "새 내용".as_bytes()).unwrap();
+        let there = fs::metadata(&path).unwrap();
+        assert_eq!(
+            (written.dev(), written.ino(), written.len()),
+            (there.dev(), there.ino(), there.len())
+        );
+        assert_eq!(written.modified().unwrap(), there.modified().unwrap());
     }
 
     #[test]

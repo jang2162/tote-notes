@@ -10,7 +10,7 @@ use super::index::{file_id, MemoEntry};
 use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
 use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
 use crate::persist::external::MAX_EDITOR_BYTES;
-use crate::persist::{atomic_write, conflict, content_hash, read_text};
+use crate::persist::{atomic_write_seen, conflict, content_hash, read_text};
 
 /// What the editor holds of a memo file: the bytes tote last read for it or wrote from it. A save
 /// goes through only while the file still holds them (spec 「외부 변경」), and a change the watcher
@@ -138,8 +138,8 @@ impl Workspace {
         contents: &[u8],
     ) -> Result<MemoInfo, WorkspaceError> {
         self.mark_changed();
-        atomic_write(&self.root.join(file), contents)?;
-        self.wrote(file, contents);
+        let written = atomic_write_seen(&self.root.join(file), contents)?;
+        self.wrote(file, contents, &written);
         self.memo_info(id)
     }
 
@@ -381,8 +381,8 @@ impl Workspace {
         contents: &[u8],
     ) -> Result<MemoInfo, WorkspaceError> {
         self.mark_changed();
-        atomic_write(&self.root.join(&file), contents)?;
-        self.wrote(&file, contents);
+        let written = atomic_write_seen(&self.root.join(&file), contents)?;
+        self.wrote(&file, contents, &written);
         let id = uuid::Uuid::new_v4().to_string();
         self.index.insert(
             id.clone(),
@@ -432,9 +432,10 @@ impl Workspace {
     }
 
     /// tote wrote `contents` to `file`: the editor holds them, and the watcher's next event there
-    /// is this write.
-    fn wrote(&mut self, file: &str, contents: &[u8]) {
-        let seen = self.stamp(file);
+    /// is this write. `written` is the file as the write left it (`atomic_write_seen`), not as a
+    /// look at it now finds it: another app's write in between must not pass for tote's.
+    fn wrote(&mut self, file: &str, contents: &[u8], written: &fs::Metadata) {
+        let seen = Some(Stamp::of(written));
         self.held.insert(file.to_string(), Held::of(contents, seen));
         self.track_inode(file);
     }
@@ -957,6 +958,25 @@ mod tests {
         assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap().len(), 1);
         assert!(refused(ws.write_memo(&memo.id, b"ours!")));
         assert_eq!(on_disk(&ws, &memo.file), "them");
+    }
+
+    #[test]
+    fn a_save_after_totes_own_write_trusts_the_files_looks_and_does_not_read_it() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.write_memo(&memo.id, b"ours").unwrap();
+        let path = ws.root().join(&memo.file);
+        // The same edit no look can show (see the test above), with no watcher to read it: the
+        // save goes through, which it only can when the file was not read — when the looks tote
+        // kept from its own write are the ones the file has. (This is the gap the spec names, and
+        // what keeps a large memo from being hashed at every save.)
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut &file, b"them").unwrap();
+        file.set_modified(before).unwrap();
+        drop(file);
+        ws.write_memo(&memo.id, b"ours, on").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours, on");
     }
 
     #[test]
