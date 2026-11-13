@@ -9,6 +9,13 @@ export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
   { id: "new-memo", label: "새 메모", menu: "파일", default: "CmdOrCtrl+N" },
   { id: "new-window", label: "새 창", menu: "파일", default: "Alt+CmdOrCtrl+N" },
   { id: "open-file", label: "파일 열기…", menu: "파일", default: "CmdOrCtrl+O" },
+  {
+    id: "quick-open",
+    label: "빠른 열기…",
+    menu: "파일",
+    default: "CmdOrCtrl+P",
+    yields: true,
+  },
   { id: "save", label: "저장", menu: "파일", default: "CmdOrCtrl+S" },
   { id: "import", label: "워크스페이스로 가져오기", menu: "파일", default: null },
   { id: "rename", label: "이름 바꾸기…", menu: "파일", default: null },

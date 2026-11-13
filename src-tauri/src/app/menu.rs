@@ -137,6 +137,7 @@ const MENUS: &[(&str, &[Slot])] = &[
             Slot::Command("new-memo"),
             Slot::Command("new-window"),
             Slot::Command("open-file"),
+            Slot::Command("quick-open"),
             Slot::Separator,
             Slot::Command("save"),
             Slot::Command("import"),
@@ -947,6 +948,23 @@ mod tests {
         assert!(menu.all().iter().all(Option::is_none));
         menu.shortcuts.resume_if("ws-2");
         assert_eq!(menu.all(), before);
+    }
+
+    #[test]
+    fn quick_open_sits_under_open_file_in_the_file_menu() {
+        let (_, slots) = MENUS.iter().find(|(title, _)| *title == "파일").unwrap();
+        let at = slots
+            .iter()
+            .position(|slot| *slot == Slot::Command("open-file"))
+            .unwrap();
+        assert_eq!(slots[at + 1], Slot::Command("quick-open"));
+        let item = shortcut_items()
+            .into_iter()
+            .find(|item| item.id == "quick-open")
+            .unwrap();
+        assert_eq!((item.label, item.menu), ("빠른 열기…", "파일"));
+        let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
+        assert!(keys.contains(&("quick-open", Some("CmdOrCtrl+P".into()))));
     }
 
     #[test]

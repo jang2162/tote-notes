@@ -58,6 +58,8 @@ pub const COMMANDS: &[Command] = &[
     command("new-memo", "새 메모", "파일", Some("CmdOrCtrl+N")),
     command("new-window", "새 창", "파일", Some("Alt+CmdOrCtrl+N")),
     command("open-file", "파일 열기…", "파일", Some("CmdOrCtrl+O")),
+    // Came after people could save keys: a ⌘P saved for another command stays its own.
+    yielding("quick-open", "빠른 열기…", "파일", Some("CmdOrCtrl+P")),
     command("save", "저장", "파일", Some("CmdOrCtrl+S")),
     command("import", "워크스페이스로 가져오기", "파일", None),
     command("rename", "이름 바꾸기…", "파일", None),
@@ -714,6 +716,7 @@ mod tests {
             ("new-memo", Some("CmdOrCtrl+N")),
             ("new-window", Some("Alt+CmdOrCtrl+N")),
             ("open-file", Some("CmdOrCtrl+O")),
+            ("quick-open", Some("CmdOrCtrl+P")),
             ("save", Some("CmdOrCtrl+S")),
             ("import", None),
             ("rename", None),
@@ -850,9 +853,45 @@ mod tests {
     }
 
     #[test]
-    fn only_the_sidebar_and_preview_toggles_give_their_defaults_way() {
+    fn quick_open_is_cmd_p_in_the_file_menu_and_gives_its_default_way() {
+        let quick = COMMANDS.iter().find(|c| c.id == "quick-open").unwrap();
+        assert_eq!(quick.label, "빠른 열기…");
+        assert_eq!(quick.menu, "파일");
+        assert_eq!(quick.default, Some("CmdOrCtrl+P"));
+        assert!(quick.yields);
+        assert_eq!(
+            shortcut_of(&BTreeMap::new(), "quick-open"),
+            Some("CmdOrCtrl+P".into())
+        );
+    }
+
+    /// A ⌘P saved for another command before this build had 빠른 열기… stays that command's.
+    #[test]
+    fn a_saved_cmd_p_keeps_its_command_and_quick_open_starts_with_none() {
+        for id in ["rename", "toggle-preview"] {
+            let saved = overrides(&[(id, Some("CmdOrCtrl+P"))]);
+            assert_eq!(sanitize(&saved), saved, "{id}");
+            assert_eq!(validate(&saved), Ok(()), "{id}");
+            assert_eq!(shortcut_of(&saved, id), Some("CmdOrCtrl+P".into()), "{id}");
+            assert_eq!(shortcut_of(&saved, "quick-open"), None, "{id}");
+        }
+        // Its own entry, or another key elsewhere: no reason to give way.
+        let saved = overrides(&[("quick-open", Some("CmdOrCtrl+Shift+K"))]);
+        assert_eq!(
+            shortcut_of(&saved, "quick-open"),
+            Some("CmdOrCtrl+Shift+K".into())
+        );
+        let saved = overrides(&[("rename", Some("CmdOrCtrl+Shift+P"))]);
+        assert_eq!(
+            shortcut_of(&saved, "quick-open"),
+            Some("CmdOrCtrl+P".into())
+        );
+    }
+
+    #[test]
+    fn only_the_commands_that_came_after_saved_keys_give_their_defaults_way() {
         let yielding: Vec<&str> = COMMANDS.iter().filter(|c| c.yields).map(|c| c.id).collect();
-        assert_eq!(yielding, ["toggle-sidebar", "toggle-preview"]);
+        assert_eq!(yielding, ["quick-open", "toggle-sidebar", "toggle-preview"]);
     }
 
     #[test]
@@ -865,7 +904,14 @@ mod tests {
             .filter_map(|row| Some((row["id"].as_str()?, row.get("yields")?)))
             .collect();
         let yes = serde_json::Value::Bool(true);
-        assert_eq!(marked, [("toggle-sidebar", &yes), ("toggle-preview", &yes)]);
+        assert_eq!(
+            marked,
+            [
+                ("quick-open", &yes),
+                ("toggle-sidebar", &yes),
+                ("toggle-preview", &yes)
+            ]
+        );
     }
 
     /// `src/backend/fake-shortcuts.test.ts` holds the fake backend's table against this file.

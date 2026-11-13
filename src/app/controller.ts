@@ -69,6 +69,8 @@ import {
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
+import { quickOpen } from "../ui/quick-open";
+import { commandItems } from "../ui/quick-open-match";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
 import { SettingsButton } from "../ui/settings-button";
@@ -2105,6 +2107,8 @@ export class AppController implements DocHost, PaneHost {
           return await this.cycleTab(-1);
         case "toggle-preview":
           return await this.togglePreview();
+        case "quick-open":
+          return await this.quickOpen();
         case "open-workspace":
           return this.openSwitcher();
         case "new-workspace":
@@ -2351,6 +2355,21 @@ export class AppController implements DocHost, PaneHost {
     } catch (error) {
       this.report(error);
     }
+  }
+
+  /** 「빠른 열기…」 (spec 2026-11-14): what is picked opens where 「한 메모는 한 자리에」 says, as
+   * from the memo list; a command runs as its menu item. */
+  private async quickOpen(): Promise<void> {
+    // The window answered a close or a switch: what it lists is the workspace it leaves.
+    if (this.leaving) return;
+    const choice = await quickOpen({
+      memos: this.memoList.all,
+      externals: this.backend.listOpenExternals(),
+      commands: this.shortcuts ? commandItems(this.shortcuts) : [],
+    });
+    if (choice?.kind === "memo") await this.openMemo(choice.id);
+    else if (choice?.kind === "external") await this.openExternal(choice.path);
+    else if (choice?.kind === "command") await this.runMenuCommand(choice.id);
   }
 
   /** 「워크스페이스 열기…」: the switcher's list, in a sidebar expanded for it if it was collapsed. */

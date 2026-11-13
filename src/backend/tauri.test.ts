@@ -83,6 +83,7 @@ describe("TauriBackend", () => {
         "release_tab",
         { tab: { kind: "external", path: "/a.sh" } },
       ],
+      [() => backend.listOpenExternals(), "list_open_externals", undefined],
       [
         () => backend.tearOffTab("{}", { kind: "memo", id: "m" }),
         "tear_off_tab",

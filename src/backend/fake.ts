@@ -1093,6 +1093,15 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
+  /** As `Places::externals`: every window's, by path. */
+  async listOpenExternals() {
+    const prefix = placeKey({ kind: "external", path: "" });
+    return Object.keys(this.data.places ?? {})
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length))
+      .sort();
+  }
+
   /** A tab let go at `at` goes to the window of `dropTargets` there when it is another open window
    * of this workspace (with a hub), else to a new window, as the Rust side's does. */
   async tearOffTab(
