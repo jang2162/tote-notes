@@ -177,6 +177,29 @@ impl ExternalFiles {
         Ok(contents.len() as u64)
     }
 
+    /// 「내 버전」 picked for a draft whose file changed (spec 「외부 변경」): the person keeps their
+    /// edits over the file as it is now, so that is what they are measured against from here on —
+    /// the base here and the one the draft carries. The ⌘S that follows is an ordinary save: it
+    /// goes over the file the choice was about, and is refused if another app writes again before
+    /// it. Letting that ⌘S through whatever it met would cover the later write too.
+    pub fn rebase(&self, path: &Path) -> io::Result<()> {
+        let base = match fs::metadata(path) {
+            Ok(meta) if meta.len() <= MAX_EDITOR_BYTES => Some(content_hash(&fs::read(path)?)),
+            // Too large to hold: nothing of it to be measured against, as when it was opened.
+            Ok(_) => {
+                self.bases_lock().remove(path);
+                return Ok(());
+            }
+            Err(err) if err.kind() == io::ErrorKind::NotFound => None,
+            Err(err) => return Err(err),
+        };
+        if let Some((_, contents)) = self.drafts.get(path)? {
+            self.drafts.put(path, base.as_deref(), &contents)?;
+        }
+        self.bases_lock().insert(path.to_path_buf(), base);
+        Ok(())
+    }
+
     /// Whether saving `contents` to `path` would write over text the editor has not seen: the file
     /// is there and holds neither its base — what it held when editing started, or what tote last
     /// read or saved — nor `contents` itself. The watcher would report the same edit, but up to
@@ -384,6 +407,42 @@ mod tests {
         ext.read(&path).unwrap();
         ext.save(&path, b"theirs again!").unwrap();
         assert_eq!(fs::read_to_string(&path).unwrap(), "theirs again!");
+    }
+
+    #[test]
+    fn keeping_a_draft_over_a_changed_file_is_about_the_file_as_it_is_then() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("a.txt");
+        fs::write(&path, "v0").unwrap();
+        let before = files(dir.path());
+        before.open(&path).unwrap();
+        before.keep_draft(&path, b"mine").unwrap();
+        // The app is gone while another app writes; the draft opens over a changed file.
+        fs::write(&path, "v1").unwrap();
+        let ext = files(dir.path());
+        assert_eq!(
+            ext.open(&path).unwrap().draft,
+            Some(DraftInfo { disk_changed: true })
+        );
+        // 「내 버전」: over v1. A write after that is another matter, and is not gone over.
+        ext.rebase(&path).unwrap();
+        fs::write(&path, "v2").unwrap();
+        let err = ext.save(&path, b"mine").unwrap_err();
+        assert!(crate::persist::is_conflict(&err), "{err}");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "v2");
+        // The draft carries the choice: opened again over v1, it has nothing to ask.
+        fs::write(&path, "v1").unwrap();
+        let again = files(dir.path());
+        assert_eq!(
+            again.open(&path).unwrap().draft,
+            Some(DraftInfo {
+                disk_changed: false
+            })
+        );
+        assert_eq!(again.read_draft(&path).unwrap(), b"mine");
+        // And where the choice was made, ⌘S goes over the file it was about.
+        ext.save(&path, b"mine").unwrap();
+        assert_eq!(fs::read_to_string(&path).unwrap(), "mine");
     }
 
     #[test]

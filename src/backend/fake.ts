@@ -1164,6 +1164,15 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
+  /** As `ExternalFiles::rebase`: the base, and the draft's, become what the file holds now. */
+  async rebaseExternal(path: string) {
+    const base = this.data.files[path] ?? null;
+    this.bases[path] = base;
+    const draft = this.data.drafts[path];
+    if (draft) draft.base = base;
+    this.commit();
+  }
+
   /** As `ExternalFiles::save`: refused when the file holds neither its base nor `bytes`. */
   async saveExternal(path: string, bytes: Uint8Array, overwrite = false) {
     const data = toBase64(bytes);

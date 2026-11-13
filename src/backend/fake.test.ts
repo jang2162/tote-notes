@@ -109,6 +109,13 @@ describe("FakeBackend saves over another app's text", () => {
     expect(backend.fileText("/x/a.sh")).toBe("v2");
     await backend.saveExternal("/x/a.sh", bytes("mine"), true);
     expect(backend.fileText("/x/a.sh")).toBe("mine");
+    // 「내 버전」 for a draft: the file as it is then is the base, here and in the draft.
+    await backend.keepExternalDraft("/x/a.sh", bytes("draft"));
+    backend.data.files["/x/a.sh"] = fakeFile("v3");
+    await backend.rebaseExternal("/x/a.sh");
+    expect(backend.data.drafts["/x/a.sh"].base).toBe(fakeFile("v3"));
+    await backend.saveExternal("/x/a.sh", bytes("draft"));
+    expect(backend.fileText("/x/a.sh")).toBe("draft");
     // Gone: written again.
     delete backend.data.files["/x/a.sh"];
     await backend.saveExternal("/x/a.sh", bytes("back"));

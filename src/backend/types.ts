@@ -558,6 +558,10 @@ export interface Backend {
   readExternalDraft(path: string): Promise<Uint8Array>;
   keepExternalDraft(path: string, bytes: Uint8Array): Promise<void>;
   discardExternalDraft(path: string): Promise<void>;
+  /** 「내 버전」 picked for a draft whose file changed: the file as it is now becomes what the
+   * edits are measured against — for the ⌘S that follows, which is then refused only if the file
+   * changes again, and for the draft, which no longer opens with the question. */
+  rebaseExternal(path: string): Promise<void>;
   /** ⌘S. `conflict`, with the file and the draft left alone, when the file holds anything but
    * what editing started from or tote last read or saved; `overwrite` writes whatever it holds. */
   saveExternal(path: string, bytes: Uint8Array, overwrite?: boolean): Promise<void>;

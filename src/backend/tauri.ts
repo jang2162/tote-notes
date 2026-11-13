@@ -201,6 +201,9 @@ export class TauriBackend implements Backend {
   discardExternalDraft(path: string) {
     return call<void>("discard_external_draft", { path });
   }
+  rebaseExternal(path: string) {
+    return call<void>("rebase_external", { path });
+  }
   async saveExternal(path: string, bytes: Uint8Array, overwrite = false) {
     await call<number>("save_external", bytes, { "x-path": enc(path), ...overwriting(overwrite) });
   }

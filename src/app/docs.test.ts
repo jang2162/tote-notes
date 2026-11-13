@@ -1010,38 +1010,44 @@ describe("ExternalDoc", () => {
     expect(backend.fileText("/x/a.sh")).toBe("v3");
   });
 
-  it("내 버전 picked for a restored draft covers one ⌘S, and none once the edits are dropped", async () => {
+  it("내 버전 picked for a restored draft is about the file as it was then, not a later change", async () => {
     const seed = {
       files: { "/x/a.sh": fakeFile("v1") },
       drafts: { "/x/a.sh": { base: fakeFile("v0"), data: fakeFile("mine") } },
     };
+    // Another app writes again after the choice, and the watcher has not said so by the ⌘S.
     const { backend, host } = setup(seed);
     const doc = new ExternalDoc(host, "/x/a.sh");
     await doc.ensureLoaded();
     doc.banner!.actions[1].run();
     await vi.runAllTimersAsync();
-    expect(await doc.save()).toBe(true);
-    expect(backend.fileText("/x/a.sh")).toBe("mine");
-    type(doc, "!");
+    expect(doc.banner).toBeNull();
     backend.data.files["/x/a.sh"] = fakeFile("v2");
     expect(await doc.save()).toBe(false);
     expect(backend.fileText("/x/a.sh")).toBe("v2");
+    expect(doc.banner?.kind).toBe("conflict");
 
-    // Picked, then the edits dropped for the disk's text before any ⌘S.
-    const other = setup(seed);
-    const dropped = new ExternalDoc(other.host, "/x/a.sh");
-    await dropped.ensureLoaded();
-    dropped.banner!.actions[1].run();
+    // The file as it was when the choice was made is written over, as chosen.
+    const same = setup(seed);
+    const kept = new ExternalDoc(same.host, "/x/a.sh");
+    await kept.ensureLoaded();
+    kept.banner!.actions[1].run();
     await vi.runAllTimersAsync();
-    other.backend.data.files["/x/a.sh"] = fakeFile("v2");
-    await dropped.onOutside("modified");
-    dropped.banner!.actions[0].run();
+    expect(await kept.save()).toBe(true);
+    expect(same.backend.fileText("/x/a.sh")).toBe("mine");
+
+    // The choice is kept with the draft: after a restart there is nothing to ask again.
+    const unsaved = setup(seed);
+    const before = new ExternalDoc(unsaved.host, "/x/a.sh");
+    await before.ensureLoaded();
+    before.banner!.actions[1].run();
     await vi.runAllTimersAsync();
-    expect(dropped.state!.doc.toString()).toBe("v2");
-    type(dropped, "!");
-    other.backend.data.files["/x/a.sh"] = fakeFile("v3");
-    expect(await dropped.save()).toBe(false);
-    expect(other.backend.fileText("/x/a.sh")).toBe("v3");
+    const restarted = setup({ ...unsaved.backend.data });
+    const again = new ExternalDoc(restarted.host, "/x/a.sh");
+    await again.ensureLoaded();
+    expect(again.state!.doc.toString()).toBe("mine");
+    expect(again.banner).toBeNull();
+    expect(again.dirty).toBe(true);
   });
 
   it("a ⌘S that did not write leaves the edits their draft, whether it was refused or failed", async () => {

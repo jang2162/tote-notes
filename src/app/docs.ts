@@ -934,10 +934,6 @@ export class ExternalDoc extends Doc {
   size = 0;
   /** `watchExternal` was asked for this tab and not yet undone. */
   private watching = false;
-  /** The person chose 「내 버전」 over a draft's changed file and has not saved since
-   * (`draftOverChangedFile`): the next ⌘S writes whatever the file holds. Ends with that save, or
-   * with the edits (`discard`). */
-  private keepsMine = false;
 
   constructor(
     host: DocHost,
@@ -1004,14 +1000,16 @@ export class ExternalDoc extends Doc {
   }
 
   /** Spec 「외부 변경」: a draft over a file that changed since asks which to keep. 「내 버전」
-   * leaves the edits unsaved, for ⌘S — a draft is written only when the person saves. A file
-   * gone since has no disk version to take: the deleted banner offers to write it back. */
+   * leaves the edits unsaved, for ⌘S — a draft is written only when the person saves — and makes
+   * the file as it is now what that ⌘S is measured against (`rebaseExternal`): the choice is
+   * about this version of the file, and a later one is asked about again. A file gone since has
+   * no disk version to take: the deleted banner offers to write it back. */
   private draftOverChangedFile(exists: boolean): void {
     if (!exists) return this.deletedBanner(() => this.save());
     this.conflictBanner(
       () => this.takeDisk(),
       async () => {
-        this.keepsMine = true;
+        await this.host.backend.rebaseExternal(this.path);
         this.setBanner(null);
       },
     );
@@ -1130,9 +1128,8 @@ export class ExternalDoc extends Doc {
   }
 
   /** ⌘S. Returns whether the file was written. A file holding another app's text the tab has not
-   * read is left alone and asked about (spec 「외부 변경」) — unless the person has answered: the
-   * conflict banner is in sight (its 「내 버전」 is this save, and so is a ⌘S over it), or 「내 버전」
-   * was picked earlier for a draft (`keepsMine`). */
+   * read is left alone and asked about (spec 「외부 변경」) — unless the conflict banner is in
+   * sight: its 「내 버전」 is this save, and so is a ⌘S over it. */
   async save(): Promise<boolean> {
     if (!this.state) return true;
     const asked = this.banner?.kind === "conflict";
@@ -1140,11 +1137,10 @@ export class ExternalDoc extends Doc {
     // The reread this save waited for found typed text and asked: the ⌘S came before the question.
     if (!asked && this.banner?.kind === "conflict") return false;
     if (!this.state) return true;
-    const mine = asked || this.keepsMine;
     await this.settleDraft();
     const text = this.state.doc;
     try {
-      await this.host.backend.saveExternal(this.path, this.encode(text), mine);
+      await this.host.backend.saveExternal(this.path, this.encode(text), asked);
     } catch (error) {
       // Settling dropped the draft's write, or its retry; the edits still need their draft — a
       // quit right after would otherwise go with them in no file at all.
@@ -1155,7 +1151,6 @@ export class ExternalDoc extends Doc {
       else this.fail(error);
       return false;
     }
-    this.keepsMine = false;
     this.exists = true;
     this.notice = null;
     this.error = null;
@@ -1172,7 +1167,6 @@ export class ExternalDoc extends Doc {
   /** 「저장하지 않음」: the file stays as it is on disk and the draft goes. */
   async discard(): Promise<void> {
     await this.settleDraft();
-    this.keepsMine = false;
     this.modified = false;
     this.clearSaveFailed();
     await this.host.backend.discardExternalDraft(this.path);

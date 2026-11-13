@@ -730,6 +730,14 @@ pub async fn discard_external_draft(core: State<'_, AppCore>, path: String) -> C
     Ok(())
 }
 
+/// 「내 버전」 picked for a draft whose file changed: the file as it is now is what the edits are
+/// measured against from here on (`ExternalFiles::rebase`).
+#[tauri::command]
+pub async fn rebase_external(core: State<'_, AppCore>, path: String) -> CmdResult<()> {
+    core.external.rebase(&absolute_path(&path)?)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_external(core: State<'_, AppCore>, request: Request<'_>) -> CmdResult<u64> {
     let path = absolute_path(&header(&request, "x-path")?)?;
