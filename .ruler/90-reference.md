@@ -39,5 +39,6 @@
 | tote-notes 메모 휴지통(휴지통으로 옮기기·휴지통 목록·읽기 전용 탭·복구·영구 삭제·자동 비우기)이나 줄번호 글자 크기를 고치거나 그 설계를 바꿀 때           | `docs/superpowers/specs/2026-11-01-tote-notes-memo-trash-design.md`                       |
 | tote-notes 메모 휴지통 계획을 실행할 때                                                                                                                   | `docs/superpowers/plans/2026-11-01-tote-notes-memo-trash.md`                              |
 | tote-notes 메모 휴지통·줄번호 글자 크기를 실기기(WKWebView)에서 확인할 때                                                                                 | `docs/superpowers/reports/2026-11-01-tote-notes-memo-trash-smoke.md`                      |
+| tote-notes 2026-11-13 점검 수정의 이월 항목·사람 확인·알려진 불안정 시험을 보거나, 그 다음 계획을 쓸 때                                                   | `docs/superpowers/reports/2026-11-13-tote-notes-audit-fixes-report.md`                    |
 | macOS 앱을 릴리스하거나 릴리스 워크플로·업데이트 키·서명 비밀을 다룰 때                                                                                   | `docs/guides/release-macos.md`                                                            |
 | 테스트를 쓰거나 돌릴 때, 디버그 앱을 띄울 때, 새 워크트리에서 훅·툴체인이 실패할 때, CI 워크플로(`.github/workflows/ci.yml`)를 고치거나 CI 가 떨어졌을 때 | `docs/guides/development.md`                                                              |
