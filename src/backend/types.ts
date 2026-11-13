@@ -258,13 +258,17 @@ export interface ThemeRef {
  * each appearance draws with its bundled default theme. */
 export type ThemeMode = "auto" | "light" | "dark";
 
+/** What the 「테마」 picker holds (`ThemeChoice` in src-tauri/src/appdata.rs): a mode, or one theme
+ * of the registry drawn whatever the OS appearance. One the registry does not have draws as auto. */
+export type ThemeChoice = ThemeMode | ThemeRef;
+
 /** `settings.json` (src-tauri/src/appdata.rs). The Rust side leaves `workspaceRoot` out of the
  * JSON when it is unset, so it arrives as `undefined` rather than `null`. */
 export interface Settings {
   workspaceRoot?: string | null;
   /** Rust also keeps a theme per appearance an older build saved (`light`, `dark`); nothing reads
    * them (spec 「테마」). */
-  theme: { mode: ThemeMode };
+  theme: { mode: ThemeChoice };
   extensions: { disabled: string[]; precedence: "user" | "bundled" };
   editor: EditorSettings;
   /** The check for a new version at launch (src-tauri/src/app/update.rs). */
@@ -323,7 +327,7 @@ export interface WorkspaceRoots {
  * out is kept as it is; `null` clears it. */
 export interface SettingsPatch {
   workspaceRoot?: string | null;
-  themeMode?: ThemeMode;
+  themeMode?: ThemeChoice;
   precedence?: "user" | "bundled";
   editorLineNumbers?: boolean;
   editorFontSize?: number;
