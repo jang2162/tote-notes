@@ -29,7 +29,36 @@ export function scanBytes(bytes: Uint8Array): TextScan {
   return { size: bytes.length, lineCount: lines + 1, checkpoints, longestLine: longest };
 }
 
+/** The pages kept once read: the 64 used last (64,000 lines to scroll back through), or fewer when
+ * they are more than 32 MB of the file — a file of very long lines. Not measured: a page let go
+ * of costs one Range request to show again, the request that first read it, while a log of
+ * gigabytes read to its end would otherwise stay in memory whole. The pages on screen are kept
+ * whatever they weigh (`pagesToDrop`). */
+export const PAGE_CACHE_PAGES = 64;
+export const PAGE_CACHE_BYTES = 32 * 1024 * 1024;
+
 export const pageOf = (line: number): number => Math.floor(line / CHECKPOINT_LINES);
+
+/** The pages to let go of, of those kept in `used` (the one used longest ago first): from the
+ * oldest on, until what is left is within both limits. A page in `shown` — on screen now — stays:
+ * dropped, every scroll of a line would read it again. */
+export function pagesToDrop(
+  used: readonly number[],
+  bytesOf: (page: number) => number,
+  shown: ReadonlySet<number>,
+): number[] {
+  let count = used.length;
+  let bytes = used.reduce((sum, page) => sum + bytesOf(page), 0);
+  const dropped: number[] = [];
+  for (const page of used) {
+    if (count <= PAGE_CACHE_PAGES && bytes <= PAGE_CACHE_BYTES) break;
+    if (shown.has(page)) continue;
+    dropped.push(page);
+    count--;
+    bytes -= bytesOf(page);
+  }
+  return dropped;
+}
 
 /** Byte range [start, end) of the lines of `page`. */
 export function pageRange(scan: TextScan, page: number): [number, number] {
@@ -111,6 +140,7 @@ export class LargeTextViewer {
   private readonly caseBox = h("input", { type: "checkbox" });
   private readonly regexBox = h("input", { type: "checkbox" });
   private readonly resize = new ResizeObserver(() => this.moveTo(this.top));
+  /** The pages read, or being read, the one used longest ago first (`page`, `trimPages`). */
   private readonly pages = new Map<number, Promise<string[]>>();
   /** Where the viewport's top is in the whole file, in pixels with every line at LINE_HEIGHT.
    * On a scaled file the scroll position only approximates it, so the viewer keeps it. */
@@ -236,6 +266,8 @@ export class LargeTextViewer {
 
   private page(index: number): Promise<string[]> {
     let pending = this.pages.get(index);
+    // Used again: the last to go.
+    if (pending) this.pages.delete(index);
     if (!pending) {
       const [start, end] = pageRange(this.options.scan, index);
       // A file ending in a newline after a whole page of lines has an empty last page: its
@@ -250,12 +282,25 @@ export class LargeTextViewer {
           return lines;
         })
         .catch((error: unknown) => {
-          this.pages.delete(index);
+          // Not a later read of the page, begun after this one was let go of.
+          if (this.pages.get(index) === pending) this.pages.delete(index);
           throw error;
         });
-      this.pages.set(index, pending);
     }
+    this.pages.set(index, pending);
     return pending;
+  }
+
+  /** Lets go of the pages used longest ago (`pagesToDrop`), keeping those `shown` on screen.
+   * Nothing else reads a page: a search runs in the backend and keeps line numbers, and the
+   * scroll position is the viewer's own. */
+  private trimPages(shown: ReadonlySet<number>): void {
+    const bytesOf = (index: number) => {
+      const [start, end] = pageRange(this.options.scan, index);
+      return end - start;
+    };
+    for (const index of pagesToDrop([...this.pages.keys()], bytesOf, shown))
+      this.pages.delete(index);
   }
 
   /** Bytes [start, end) of the file, in as many Range requests as the server's answers take. */
@@ -301,6 +346,8 @@ export class LargeTextViewer {
       }
     }
     if (this.destroyed || ticket !== this.renders) return;
+    // By the latest render only: an older one would let go of pages this one is still reading.
+    this.trimPages(needed);
     const rows: HTMLElement[] = [];
     for (let line = from; line < to; line++) {
       const text = pages.get(pageOf(line))?.[line % CHECKPOINT_LINES] ?? "";

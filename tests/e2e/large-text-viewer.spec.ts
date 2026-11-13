@@ -200,3 +200,33 @@ test("a page longer than one range answer is fetched in pieces", async ({ page }
     [6000, 10_999],
   ]);
 });
+
+// Six million lines are 6,000 pages: read to the end, they must not all stay in memory.
+test("pages read long ago are let go of and read again when scrolled back to", async ({ page }) => {
+  await open(page);
+  const PAGES = 100;
+  const kept = await page.evaluate(async (pages) => {
+    const viewer = window.largeTextViewer;
+    for (let index = 0; index < pages; index++) {
+      const line = index * 1000 + 500;
+      viewer.goToLine(line);
+      // Drawn: the page is read and its render is the latest.
+      while (!document.querySelector(`.large-text-line[data-line="${line}"]`))
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return (viewer as unknown as { pages: Map<number, unknown> }).pages.size;
+  }, PAGES);
+  expect(await page.evaluate(() => window.fetchLog.length)).toBeGreaterThanOrEqual(PAGES);
+  expect(kept).toBeLessThanOrEqual(64);
+  // The latest pages are still there: going back a little reads nothing.
+  const before = await page.evaluate(() => window.fetchLog.length);
+  await page.evaluate(() => window.largeTextViewer.goToLine(98_500));
+  await expect(page.locator(".large-text-line.current")).toHaveText("L000098500");
+  expect(await page.evaluate(() => window.fetchLog.length)).toBe(before);
+  // The first page went long ago: it is read again, and shows what it did.
+  await page.evaluate(() => window.largeTextViewer.goToLine(500));
+  await expect(page.locator(".large-text-line.current")).toHaveText("L000000500");
+  expect(await page.evaluate(() => window.fetchLog.filter(([start]) => start === 0).length)).toBe(
+    2,
+  );
+});
