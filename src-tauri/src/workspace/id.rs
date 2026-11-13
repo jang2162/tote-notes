@@ -33,6 +33,7 @@ mod tests {
     /// workspace and the app data folder, by its absolute path. `Scene` is nested deeper than
     /// the longest climb here, so that even unchecked they stay in the temporary folder.
     const BAD_IDS: &[&str] = &[
+        "../outside/conf.d",
         "../outside/package",
         "../../outside/package",
         "../../../outside/package",
