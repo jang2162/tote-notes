@@ -391,7 +391,7 @@ mod tests {
         let trashed = ws.trash_memo(&memo.id, 1000).unwrap();
         assert!(!ws.root().join("회의록.md").exists());
         // Nothing of it is tote's own in the folder any more, as after `delete_memo`.
-        assert_eq!(ws.last_written("회의록.md"), None);
+        assert_eq!(ws.held_hash("회의록.md"), None);
         assert!(!ws.inodes().contains_key("회의록.md"));
         assert_eq!(
             fs::read(ws.root().join(TRASH_DIR).join(&memo.id).join("회의록.md")).unwrap(),

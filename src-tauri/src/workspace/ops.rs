@@ -88,7 +88,7 @@ impl Workspace {
         // fits, and the next save reads the file to compare instead of trusting it.
         let seen = self.stamp(&file);
         let bytes = read_text(&self.root.join(&file))?;
-        self.last_written.insert(file, Held::of(&bytes, seen));
+        self.held.insert(file, Held::of(&bytes, seen));
         Ok(bytes)
     }
 
@@ -140,7 +140,7 @@ impl Workspace {
             return false;
         };
         let now = Stamp::of(&meta);
-        let held = self.last_written.get_mut(file);
+        let held = self.held.get_mut(file);
         if held.as_ref().is_some_and(|held| held.seen == Some(now)) {
             return false;
         }
@@ -167,7 +167,7 @@ impl Workspace {
     /// file is not trusted by its looks again.
     pub(super) fn still_held(&mut self, file: &str) -> bool {
         let path = self.root.join(file);
-        let Some(held) = self.last_written.get_mut(file) else {
+        let Some(held) = self.held.get_mut(file) else {
             return false;
         };
         let meta = fs::metadata(&path).ok();
@@ -179,7 +179,7 @@ impl Workspace {
 
     /// The files the editor holds something of, for looking at them all again (`Flag::Rescan`).
     pub fn held_files(&self) -> Vec<String> {
-        self.last_written.keys().cloned().collect()
+        self.held.keys().cloned().collect()
     }
 
     /// Renames an automatically titled memo to `<stem>.<its extension>`; memos the person named
@@ -418,8 +418,7 @@ impl Workspace {
     /// is this write.
     fn wrote(&mut self, file: &str, contents: &[u8]) {
         let seen = self.stamp(file);
-        self.last_written
-            .insert(file.to_string(), Held::of(contents, seen));
+        self.held.insert(file.to_string(), Held::of(contents, seen));
         self.track_inode(file);
     }
 
@@ -427,9 +426,9 @@ impl Workspace {
     /// holds. A file tote has neither read nor written since opening is hashed now, or the rename
     /// would look like another app's edit — unless the editor would not open it anyway.
     fn moved(&mut self, from: &str, to: &str) {
-        let held = self.last_written.remove(from).or_else(|| self.held_now(to));
+        let held = self.held.remove(from).or_else(|| self.held_now(to));
         if let Some(held) = held {
-            self.last_written.insert(to.to_string(), held);
+            self.held.insert(to.to_string(), held);
         }
         self.inodes.remove(from);
         self.track_inode(to);
@@ -439,8 +438,8 @@ impl Workspace {
     /// trash): its next event there is this move, as for `moved`.
     pub(super) fn came_in(&mut self, file: &str) {
         match self.held_now(file) {
-            Some(held) => self.last_written.insert(file.to_string(), held),
-            None => self.last_written.remove(file),
+            Some(held) => self.held.insert(file.to_string(), held),
+            None => self.held.remove(file),
         };
         self.track_inode(file);
     }
@@ -448,7 +447,7 @@ impl Workspace {
     /// `file` left the workspace by tote's hand (removed, or moved to the trash): nothing of it is
     /// tote's own any more.
     pub(super) fn went_out(&mut self, file: &str) {
-        self.last_written.remove(file);
+        self.held.remove(file);
         self.inodes.remove(file);
     }
 
@@ -978,7 +977,7 @@ mod tests {
         let picture = root.path().join("그림.png");
         fs::write(&picture, "not really a picture").unwrap();
         let unread = ws.import_file(&picture).unwrap();
-        assert_eq!(ws.last_written(&unread.file), None);
+        assert_eq!(ws.held_hash(&unread.file), None);
         assert!(refused(ws.write_memo(&unread.id, b"blind")));
         assert_eq!(on_disk(&ws, &unread.file), "not really a picture");
         assert_eq!(ws.read_memo(&unread.id).unwrap(), b"not really a picture");
@@ -1168,7 +1167,7 @@ mod tests {
         let memo = ws.import_file(&outside).unwrap();
         // Before any read: reading the memo would make it the editor's just as well.
         assert_eq!(
-            ws.last_written("deploy.sh"),
+            ws.held_hash("deploy.sh"),
             Some(content_hash(text.as_bytes()).as_str())
         );
         // The watcher's event for the copy is not taken for another app's change.
