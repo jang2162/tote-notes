@@ -959,6 +959,67 @@ mod tests {
     }
 
     #[test]
+    fn a_memo_copied_in_is_saved_without_being_read_first() {
+        let (root, mut ws) = workspace();
+        // Imported from a file, and the text `tote -` parked: the tab that takes one over may
+        // save before it ever reads the memo.
+        let outside = root.path().join("deploy.sh");
+        fs::write(&outside, "echo hi\n").unwrap();
+        let imported = ws.import_file(&outside).unwrap();
+        ws.write_memo(&imported.id, b"echo hi\necho more\n")
+            .unwrap();
+        let piped = ws.create_memo_from_file("md", &outside).unwrap();
+        ws.write_memo(&piped.id, b"# piped\n").unwrap();
+        assert_eq!(on_disk(&ws, &piped.file), "# piped\n");
+
+        // A copy the editor would not open (by its kind here; one over the editor's limit goes
+        // the same way) is not hashed, so the editor holds nothing of it: a save is refused until
+        // it is read — 「텍스트로 열기」 — and the watcher still reports a change to it.
+        let picture = root.path().join("그림.png");
+        fs::write(&picture, "not really a picture").unwrap();
+        let unread = ws.import_file(&picture).unwrap();
+        assert_eq!(ws.last_written(&unread.file), None);
+        assert!(refused(ws.write_memo(&unread.id, b"blind")));
+        assert_eq!(on_disk(&ws, &unread.file), "not really a picture");
+        assert_eq!(ws.read_memo(&unread.id).unwrap(), b"not really a picture");
+        ws.write_memo(&unread.id, b"read, then edited").unwrap();
+    }
+
+    #[test]
+    fn a_save_follows_a_rename_the_memo_list_found_before_the_watcher() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        fs::rename(ws.root().join(&memo.file), ws.root().join("이름.md")).unwrap();
+        // The listing pairs the rename by inode; what the editor holds goes with the name.
+        let listed_as = ws.list_memos().unwrap();
+        assert_eq!(listed_as[0].file, "이름.md");
+        ws.write_memo(&memo.id, b"ours, edited").unwrap();
+        assert_eq!(on_disk(&ws, "이름.md"), "ours, edited");
+        assert_eq!(listed(&ws), vec!["이름.md"]);
+        // The watcher's batch for the rename, late, has nothing left to say.
+        let seen = ["untitled.md".to_string(), "이름.md".to_string()].into();
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_memo_whose_id_the_index_replaced_is_saved_once_read() {
+        let (_root, ws) = workspace();
+        fs::write(ws.root().join("옛.md"), "old").unwrap();
+        fs::write(
+            ws.root().join(".tote/index.json"),
+            r#"{"version":1,"memos":{"../밖":{"file":"옛.md","autoTitle":false}}}"#,
+        )
+        .unwrap();
+        // Opening gives the entry an ID tote makes; nothing is held of any file yet.
+        let mut ws = Workspace::open(ws.root()).unwrap();
+        let memo = ws.list_memos().unwrap().remove(0);
+        assert_ne!(memo.id, "../밖");
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), b"old");
+        ws.write_memo(&memo.id, b"old, edited").unwrap();
+        assert_eq!(on_disk(&ws, "옛.md"), "old, edited");
+    }
+
+    #[test]
     fn a_memo_there_before_the_workspace_opened_is_saved_once_read() {
         let (_root, ws) = workspace();
         fs::write(ws.root().join("옛.md"), "old").unwrap();
@@ -1105,7 +1166,7 @@ mod tests {
         let text = "echo hi\n".repeat(20_000); // more than one buffer of the copy
         fs::write(&outside, &text).unwrap();
         let memo = ws.import_file(&outside).unwrap();
-        assert_eq!(ws.read_memo(&memo.id).unwrap(), text.as_bytes());
+        // Before any read: reading the memo would make it the editor's just as well.
         assert_eq!(
             ws.last_written("deploy.sh"),
             Some(content_hash(text.as_bytes()).as_str())
@@ -1113,6 +1174,7 @@ mod tests {
         // The watcher's event for the copy is not taken for another app's change.
         let touched = std::collections::BTreeSet::from(["deploy.sh".to_string()]);
         assert_eq!(ws.apply_fs_events(&touched, &[]).unwrap(), vec![]);
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), text.as_bytes());
 
         // Text parked by `tote -` becomes an untitled memo the same way, and stays where it was.
         let parked = root.path().join("0123abcd.txt");
