@@ -115,11 +115,14 @@ impl Workspace {
     /// it is over the editor's limit: the trash list carries no size for the page to check first,
     /// as a memo tab does. The folder is the original, so `trash.json` is not needed to find it.
     pub fn read_trashed(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
-        let found = self
-            .trash_folder(id)
+        Ok(read_editable_text(&self.trashed_path(id)?)?)
+    }
+
+    /// Where the trashed memo's file is (`.trash/<id>/<file>`), for Finder and the clipboard.
+    pub fn trashed_path(&self, id: &str) -> Result<PathBuf, WorkspaceError> {
+        self.trash_folder(id)
             .and_then(|folder| Some(folder.join(self.trashed_file(id, None)?)))
-            .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))?;
-        Ok(read_editable_text(&found)?)
+            .ok_or_else(|| WorkspaceError::UnknownMemo(id.to_string()))
     }
 
     /// Puts the memo back under its ID with its automatic titles, language and pin. A name another

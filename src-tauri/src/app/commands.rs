@@ -105,9 +105,12 @@ fn io_code(err: &io::Error) -> &'static str {
     }
 }
 
-type CmdResult<T> = Result<T, CommandError>;
+pub(super) type CmdResult<T> = Result<T, CommandError>;
 
-fn workspace_of(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<Workspace>>> {
+pub(super) fn workspace_of(
+    core: &AppCore,
+    window: &WebviewWindow,
+) -> CmdResult<Arc<Mutex<Workspace>>> {
     core.workspace(window.label()).ok_or_else(|| {
         CommandError::new(
             "no-workspace",
@@ -118,7 +121,10 @@ fn workspace_of(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<W
 
 /// `workspace_of` for a command that changes the workspace: `bad-request` while the window switches
 /// workspaces and its page is still the old one (`AppCore::page_started`).
-fn workspace_to_change(core: &AppCore, window: &WebviewWindow) -> CmdResult<Arc<Mutex<Workspace>>> {
+pub(super) fn workspace_to_change(
+    core: &AppCore,
+    window: &WebviewWindow,
+) -> CmdResult<Arc<Mutex<Workspace>>> {
     core.workspace_to_change(window.label())
         .map_err(|err| match err.kind() {
             io::ErrorKind::NotFound => CommandError::new("no-workspace", err.to_string()),
@@ -142,7 +148,7 @@ pub fn trash_changed(app: &AppHandle, label: &str) {
     }
 }
 
-fn header(request: &Request<'_>, name: &str) -> CmdResult<String> {
+pub(super) fn header(request: &Request<'_>, name: &str) -> CmdResult<String> {
     let raw = request
         .headers()
         .get(name)
@@ -160,7 +166,7 @@ fn overwrites(request: &Request<'_>) -> bool {
     request.headers().contains_key("x-overwrite")
 }
 
-fn body<'a>(request: &'a Request<'_>) -> CmdResult<&'a [u8]> {
+pub(super) fn body<'a>(request: &'a Request<'_>) -> CmdResult<&'a [u8]> {
     match request.body() {
         InvokeBody::Raw(bytes) => Ok(bytes),
         // An empty Uint8Array may arrive as an empty JSON payload.
@@ -174,7 +180,7 @@ fn body<'a>(request: &'a Request<'_>) -> CmdResult<&'a [u8]> {
 }
 
 /// External paths come from the person (dialog, drop, `tote`); a relative one is a bug.
-fn absolute_path(path: &str) -> CmdResult<PathBuf> {
+pub(super) fn absolute_path(path: &str) -> CmdResult<PathBuf> {
     let path = PathBuf::from(path);
     if path.is_absolute() {
         Ok(path)

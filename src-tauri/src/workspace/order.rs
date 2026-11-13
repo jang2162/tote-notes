@@ -79,6 +79,42 @@ pub fn save(root: &Path, order: &WorkspaceOrder) -> io::Result<()> {
     )
 }
 
+/// The workspace `id` named `from` is now named `to` (conveniences spec 「이름 바꾸기」): its
+/// entries say so, so a folder duplicated in Finder, which shares the ID, does not take its place.
+/// A file with no such entry — missing or unreadable among them — is left as it is.
+pub fn renamed(root: &Path, id: &str, from: &str, to: &str) -> io::Result<()> {
+    change(root, |entries| {
+        let mut changed = false;
+        for entry in entries.iter_mut().filter(|e| e.id == id && e.name == from) {
+            entry.name = to.to_string();
+            changed = true;
+        }
+        changed
+    })
+}
+
+/// The workspace `id` named `name` is gone (moved to the macOS trash): its place and its hiding
+/// go. A file with no such entry is left as it is.
+pub fn forget(root: &Path, id: &str, name: &str) -> io::Result<()> {
+    change(root, |entries| {
+        let before = entries.len();
+        entries.retain(|e| !(e.id == id && e.name == name));
+        entries.len() != before
+    })
+}
+
+/// Applies `edit` to both lists and saves when it changed either: an order file this build cannot
+/// read stays untouched (`load`).
+fn change(root: &Path, mut edit: impl FnMut(&mut Vec<Entry>) -> bool) -> io::Result<()> {
+    let mut order = load(root);
+    let in_order = edit(&mut order.order);
+    let in_hidden = edit(&mut order.hidden);
+    if in_order || in_hidden {
+        save(root, &order)?;
+    }
+    Ok(())
+}
+
 /// `summaries` in `Workspace::list` order (by name) with each one's ID. Those `order` places come
 /// first in its order; then the rest with an ID, by name; then those without one, by name. The
 /// returned order is the place.
@@ -392,5 +428,60 @@ mod tests {
         let json: serde_json::Value =
             serde_json::from_slice(&fs::read(r.join(ORDER_FILE)).unwrap()).unwrap();
         assert_eq!(json["version"], 1);
+    }
+
+    #[test]
+    fn a_renamed_workspace_keeps_its_place_and_its_hiding_by_its_new_name() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        let ab = |id: &str, name: &str| Entry {
+            id: id.into(),
+            name: name.into(),
+        };
+        save(
+            r,
+            &WorkspaceOrder {
+                order: vec![ab("b", "나"), ab("a", "가"), ab("a", "가 복사본")],
+                hidden: vec![ab("a", "가")],
+            },
+        )
+        .unwrap();
+        renamed(r, "a", "가", "다").unwrap();
+        assert_eq!(
+            load(r),
+            WorkspaceOrder {
+                order: vec![ab("b", "나"), ab("a", "다"), ab("a", "가 복사본")],
+                hidden: vec![ab("a", "다")],
+            }
+        );
+        forget(r, "a", "다").unwrap();
+        assert_eq!(
+            load(r),
+            WorkspaceOrder {
+                order: vec![ab("b", "나"), ab("a", "가 복사본")],
+                hidden: vec![],
+            }
+        );
+    }
+
+    #[test]
+    fn an_order_file_without_the_workspace_is_not_written() {
+        let root = tempfile::tempdir().unwrap();
+        let r = root.path();
+        renamed(r, "a", "가", "다").unwrap();
+        forget(r, "a", "가").unwrap();
+        assert!(!r.join(ORDER_FILE).exists());
+        // One a newer build wrote stays as it is.
+        fs::write(
+            r.join(ORDER_FILE),
+            r#"{"version":2,"order":[{"id":"a","name":"가"}]}"#,
+        )
+        .unwrap();
+        renamed(r, "a", "가", "다").unwrap();
+        forget(r, "a", "가").unwrap();
+        assert_eq!(
+            fs::read_to_string(r.join(ORDER_FILE)).unwrap(),
+            r#"{"version":2,"order":[{"id":"a","name":"가"}]}"#
+        );
     }
 }
