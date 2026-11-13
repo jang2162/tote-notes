@@ -1,13 +1,13 @@
 //! What runs when the `tote` script starts the app binary.
 
 use std::ffi::OsStr;
+use std::fs::File;
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use super::{parse_args, resolve, CliRequest, Parsed, USAGE};
 use crate::appdata::{legacy_root_to_pin, AppPaths, LaunchState, Settings};
-use crate::persist::atomic_write;
 
 /// Runs the command line when the `tote` script started this binary (`TOTE_CLI=1`). Returns the
 /// exit code, or `None` to start the app as usual.
@@ -130,11 +130,23 @@ fn settings_warning(err: &dyn std::fmt::Display) -> String {
 }
 
 fn park_stdin(dir: &Path) -> io::Result<PathBuf> {
-    let mut text = Vec::new();
-    io::stdin().read_to_end(&mut text)?;
+    park(&mut io::stdin().lock(), dir)
+}
+
+/// Copies `source` into a new file in `dir` as it comes, so `big-command | tote -` holds a
+/// buffer of it and never the whole. Written in place, not through a temporary file: nobody
+/// knows the name until this returns it, and a copy cut short is removed.
+fn park(source: &mut impl Read, dir: &Path) -> io::Result<PathBuf> {
     std::fs::create_dir_all(dir)?;
     let file = dir.join(format!("{}.txt", uuid::Uuid::new_v4().simple()));
-    atomic_write(&file, &text)?;
+    let copied = File::create_new(&file).and_then(|mut parked| {
+        io::copy(source, &mut parked)?;
+        parked.sync_all()
+    });
+    if let Err(err) = copied {
+        let _ = std::fs::remove_file(&file);
+        return Err(err);
+    }
     Ok(file)
 }
 
@@ -236,6 +248,67 @@ mod tests {
             ..Settings::default()
         };
         assert_eq!(root(&set), PathBuf::from("/w"));
+    }
+
+    /// The files in `dir` and their sizes.
+    fn sizes(dir: &Path) -> Vec<u64> {
+        std::fs::read_dir(dir).map_or(Vec::new(), |entries| {
+            entries
+                .map(|entry| entry.unwrap().metadata().unwrap().len())
+                .collect()
+        })
+    }
+
+    #[test]
+    fn piped_text_is_parked_as_it_comes_not_held_whole() {
+        /// 4 MiB of text that, once half of it is handed out, looks at how much has reached the
+        /// inbox: none of it when the reader is drained before anything is written.
+        struct Piped<'a> {
+            left: usize,
+            inbox: &'a Path,
+            on_disk_halfway: Option<u64>,
+        }
+        const TOTAL: usize = 4 << 20;
+        impl Read for Piped<'_> {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if self.left <= TOTAL / 2 && self.on_disk_halfway.is_none() {
+                    self.on_disk_halfway = Some(sizes(self.inbox).iter().sum());
+                }
+                let n = buf.len().min(self.left).min(64 << 10);
+                buf[..n].fill(b'a');
+                self.left -= n;
+                Ok(n)
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let inbox = dir.path().join("inbox");
+        let mut piped = Piped {
+            left: TOTAL,
+            inbox: &inbox,
+            on_disk_halfway: None,
+        };
+        let file = park(&mut piped, &inbox).unwrap();
+        assert_eq!(file.parent(), Some(inbox.as_path()));
+        assert_eq!(file.extension().unwrap(), "txt");
+        assert_eq!(sizes(&inbox), vec![TOTAL as u64]);
+        let halfway = piped.on_disk_halfway.unwrap();
+        assert!(
+            halfway >= (TOTAL / 4) as u64,
+            "{halfway} bytes were on disk when half the text had been read"
+        );
+        // Text that stops coming with an error leaves no half of itself behind.
+        struct Broken(bool);
+        impl Read for Broken {
+            fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+                if std::mem::replace(&mut self.0, true) {
+                    return Err(io::Error::other("the pipe broke"));
+                }
+                buf.fill(b'b');
+                Ok(buf.len())
+            }
+        }
+        assert!(park(&mut Broken(false), &inbox).is_err());
+        assert_eq!(sizes(&inbox), vec![TOTAL as u64]);
     }
 
     #[test]
