@@ -376,6 +376,12 @@ fn save_viewed_now(workspace: &Mutex<Workspace>) {
     }
 }
 
+/// What a window says when outside changes will not reach it (spec 「외부 변경」): its workspace
+/// could not be watched, or the watcher did not start at all.
+pub fn unwatched_notice(err: &dyn std::fmt::Display) -> String {
+    format!("외부 변경을 감시하지 못해 다른 앱에서 바꾼 내용이 반영되지 않습니다: {err}")
+}
+
 /// `what` happened to a file of this device, and the name the file was set aside under (next to
 /// where it was), so the person can take what it held from there.
 fn set_aside_notice(what: &str, aside: &Path) -> String {
@@ -699,10 +705,13 @@ impl AppCore {
             inner.add_window(label, path, layout);
             watch
         };
-        // An unwatched workspace still works; it only misses outside changes until reopened.
+        // An unwatched workspace still works; it only misses outside changes until reopened. The
+        // window says so once its page is up: stderr is not seen in an app opened from Finder.
         if let (true, Some(watcher)) = (watch, self.watcher.get()) {
             if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(path), path) {
                 eprintln!("tote: cannot watch {} for changes: {err}", path.display());
+                let message = unwatched_notice(&err);
+                self.push_pending(label, PendingOpen::Notice { message });
             }
         }
         true
@@ -998,10 +1007,12 @@ impl AppCore {
             if let Some(key) = closed {
                 watcher.unwatch_workspace(&key);
             }
-            // An unwatched workspace still works; it only misses outside changes until reopened.
+            // As in `register_window`; the page the switch loads takes the notice.
             if fresh {
                 if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(to), to) {
                     eprintln!("tote: cannot watch {} for changes: {err}", to.display());
+                    let message = unwatched_notice(&err);
+                    self.push_pending(label, PendingOpen::Notice { message });
                 }
             }
         }
@@ -2595,6 +2606,45 @@ mod tests {
         let core = AppCore::load_at(fresh, dir.path().join("bundled")).unwrap();
         let a = open(&core, "가");
         assert!(notices(core.take_pending(&a)).is_empty());
+    }
+
+    #[test]
+    fn a_workspace_that_cannot_be_watched_says_so_in_its_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.start_watching(|_, _| {}).unwrap();
+        let unwatched = |told: Vec<String>| {
+            assert_eq!(told.len(), 1, "{told:?}");
+            assert!(
+                told[0].starts_with(
+                    "외부 변경을 감시하지 못해 다른 앱에서 바꾼 내용이 반영되지 않습니다: "
+                ),
+                "{told:?}"
+            );
+        };
+        // A folder that goes between being opened and being watched: the watch fails.
+        let gone = |name: &str| {
+            let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
+            let path = workspace.root().to_path_buf();
+            fs::remove_dir_all(&path).unwrap();
+            (path, workspace)
+        };
+        let (path, workspace) = gone("가");
+        let a = core.next_label();
+        assert!(core.register_window(&a, &path, Some(workspace), None));
+        unwatched(notices(core.take_pending(&a)));
+        // Once: the workspace's next window does not watch it again.
+        let again = attach(&core, &path);
+        assert!(notices(core.take_pending(&again)).is_empty());
+
+        // A workspace that is watched says nothing, and a switch to one that is not says it in
+        // the page the switch loads.
+        let b = open(&core, "나");
+        assert!(notices(core.take_pending(&b)).is_empty());
+        let (to, opened) = gone("다");
+        core.switch_window(&b, &to, opened).unwrap();
+        core.page_started(&b);
+        unwatched(notices(core.take_pending(&b)));
     }
 
     #[test]
