@@ -1,7 +1,15 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
-import { menu, openWindow, paneSession, start, startWindows } from "./helpers";
+import {
+  holdSaveAnswers,
+  memoWrites,
+  menu,
+  openWindow,
+  paneSession,
+  start,
+  startWindows,
+} from "./helpers";
 
 // The sidebar's memo list (spec 2026-10-30 「메모 목록 기능 묶음」): renaming from a row's context
 // menu, pins, the sort, previews and the filter that finds memos by their content.
@@ -487,4 +495,184 @@ test("the pinned zone filters by content too", async ({ page }) => {
   await filter(page).fill("청소");
   await expect(page.locator(".memo-pinned .memo-row .memo-name")).toHaveText(["할 일"]);
   await expect(page.locator(".memo-pinned .memo-preview mark")).toHaveText("청소");
+});
+
+/** Holds the answer of the next `listMemos` — read at once, as the native side lists the folder
+ * when it is asked — until the returned function is called. Later listings answer as usual. The
+ * returned function comes back a task later: whatever the answer set off has run by then. */
+async function holdListing(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const list = backend.listMemos.bind(backend);
+    let held = false;
+    backend.listMemos = async () => {
+      const answer = list();
+      if (held) return answer;
+      held = true;
+      await new Promise<void>((resolve) => Object.assign(window, { releaseListing: resolve }));
+      return answer;
+    };
+  });
+  return () =>
+    page.evaluate(() => {
+      (window as unknown as { releaseListing(): void }).releaseListing();
+      return new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+}
+
+const windowFocused = (page: Page) =>
+  page.evaluate(() => void window.dispatchEvent(new Event("focus")));
+
+test("a memo made while a listing is on its way stays in the list", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  await menu(page, "new-memo");
+  await expect(names(page)).toHaveCount(2);
+  await release();
+  await expect(names(page)).toHaveCount(2);
+});
+
+test("a memo trashed while a listing is on its way stays out of the list", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나"), b: fakeMemo("나.md", "둘") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  await page.evaluate(() => window.__tote.app.trashMemo("b"));
+  await expect(names(page)).toHaveText(["가"]);
+  await release();
+  await expect(names(page)).toHaveText(["가"]);
+});
+
+test("a listing that answers after a later one does not undo it", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  // Another app adds 나: the listing that follows answers first.
+  await page.evaluate(
+    (memo) => {
+      const { backend } = window.__tote;
+      backend.data.memos.b = memo;
+      backend.outside({
+        kind: "workspace",
+        changes: [{ kind: "added", id: "b", file: memo.file }],
+      });
+    },
+    fakeMemo("나.md", "둘"),
+  );
+  await expect(names(page)).toHaveText(["가", "나"]);
+  await release();
+  await expect(names(page)).toHaveText(["가", "나"]);
+});
+
+// A save answers on its own time, and its answer puts the memo's new info in the list: the rows
+// must not be made anew under a press, or the release finds another element and no click comes.
+test("a row pressed as a save's answer comes in still opens when it is let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "하나", { modifiedMs: 5 }),
+      b: fakeMemo("나.md", "둘", { modifiedMs: 3 }),
+    },
+  });
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toHaveText("하나");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  // Written, its answer held: the window has not heard of it.
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  const box = (await row(page, "나").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
+  await expect(page.locator(".cm-content")).toHaveText("둘");
+});
+
+/** Presses on `target`'s middle, lets the held save answers in (`release`), and lets go. */
+async function pressThroughRedraw(
+  page: Page,
+  target: ReturnType<typeof row>,
+  release: () => Promise<void>,
+): Promise<void> {
+  const box = (await target.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+}
+
+// The memo typed in is the top row, and typing past its first line changes its preview: its row
+// is made anew by every save. The rows under it are the ones a person presses meanwhile.
+test("a row under one a save's answer makes anew still opens when it is let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "하나\n둘째 줄", { modifiedMs: 5 }),
+      b: fakeMemo("나.md", "둘", { modifiedMs: 3 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 1 }),
+    },
+  });
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(row(page, "가").locator(".memo-preview")).toHaveText("둘째 줄");
+  await page.keyboard.press("Meta+ArrowDown");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  await pressThroughRedraw(page, row(page, "다"), release);
+  // The save's answer is in: 가's row shows the new line.
+  await expect(row(page, "가").locator(".memo-preview")).toHaveText("둘째 줄x");
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+  await expect(page.locator(".cm-content")).toHaveText("셋");
+});
+
+// A save moves its memo to the top of the list (the newest first). A row that keeps its place
+// under that is still pressed; one pushed down from under the pointer is not — and the row that
+// comes under the pointer in its place was never pressed, so nothing opens.
+test("a row that keeps its place as the list is put in a new order still opens", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      b: fakeMemo("나.md", "둘", { modifiedMs: 5 }),
+      a: fakeMemo("가.md", "하나", { modifiedMs: 3 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 1 }),
+    },
+  });
+  await expect(names(page)).toHaveText(["나", "가", "다"]);
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  await pressThroughRedraw(page, row(page, "다"), release);
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+});
+
+test("a row pushed from under a press opens nothing, nor does the row that takes its place", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      b: fakeMemo("나.md", "둘", { modifiedMs: 5 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 4 }),
+      a: fakeMemo("가.md", "하나", { modifiedMs: 3 }),
+    },
+  });
+  await expect(names(page)).toHaveText(["나", "다", "가"]);
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  // 다 is the second row; the save puts 가 first and 나 second, under the pointer.
+  await pressThroughRedraw(page, row(page, "다"), release);
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  // A click that was coming has come by the next task.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
 });

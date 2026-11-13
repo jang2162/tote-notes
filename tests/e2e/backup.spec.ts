@@ -39,6 +39,58 @@ test("previous versions list, preview and restore undoably", async ({ page }) =>
   await expect.poll(saved).toBe("v3");
 });
 
+// A preview come back to from another tab is not in the editor: the restore goes into the tab's
+// state alone, and the highlighter's copy of the text must follow it all the same — else the
+// editor, shown again, paints the old text's colours over the new lines.
+test("a version restored under a preview is coloured as the new text once the editor is back", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("회의.md", "# 제목\n본문"), b: fakeMemo("다른.md", "다른 글") },
+    backups: { a: [{ snapshot: "20261012-100000", file: "회의.md", text: "본문\n\n# 제목" }] },
+  });
+  const lines = page.locator(".cm-line");
+  const colourOf = (line: number, text: string) =>
+    lines
+      .nth(line)
+      .locator("span[class*='tm-c']", { hasText: text })
+      .first()
+      .evaluate((el) => getComputedStyle(el).color);
+  await page.locator(".memo-row", { hasText: "회의" }).click();
+  await expect(lines.nth(0).locator("span[class*='tm-c']", { hasText: "제목" })).toBeVisible();
+  const heading = await colourOf(0, "제목");
+  await expect(lines.nth(1).locator("span[class*='tm-c']", { hasText: "본문" })).toBeVisible();
+  const body = await colourOf(1, "본문");
+  expect(heading).not.toBe(body);
+
+  await menu(page, "toggle-preview");
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+  // Away and back: the editor now holds the other tab's text, not this one's.
+  await page.locator(".memo-row", { hasText: "다른" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("다른 글");
+  await page.locator(".memo-row", { hasText: "회의" }).click();
+  await expect(page.locator("iframe.viewer-frame")).toHaveCount(1);
+
+  await menu(page, "versions");
+  await page.getByRole("button", { name: "이 버전으로 되돌리기" }).click();
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await menu(page, "toggle-preview");
+  await expect(lines).toHaveText(["본문", "", "# 제목"]);
+  await expect(lines.nth(2).locator("span[class*='tm-c']", { hasText: "제목" })).toHaveCSS(
+    "color",
+    heading,
+  );
+  await expect(lines.nth(0).locator("span[class*='tm-c']", { hasText: "본문" })).toHaveCSS(
+    "color",
+    body,
+  );
+  // And it saves as typing does: the restore is an edit of the text the tab held.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("a")))
+    .toBe("본문\n\n# 제목");
+  await expect(page.locator(".banner")).toBeHidden();
+});
+
 test("a memo without versions says so", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("장보기.md", "우유") } });
   const message = page.locator(".status-message");

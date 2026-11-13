@@ -1,7 +1,7 @@
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page } from "@playwright/test";
 
 import { fakeFile } from "../../src/backend/fake";
-import { menu, ready, sessionPane, start } from "./helpers";
+import { menu, quietErrors, ready, sessionPane, start, writesSettled } from "./helpers";
 
 test("an external file keeps a draft across a restart and is written only on ⌘S", async ({
   page,
@@ -52,6 +52,93 @@ test("closing an edited external file asks first", async ({ page }) => {
   await expect(page.locator(".tab")).toHaveCount(0);
   expect(await page.evaluate(() => window.__tote.backend.fileText("/x/a.sh"))).toBe("old");
   expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});
+});
+
+/** Holds the answers of `importMemo` — the copy is made at once, as the native side makes it when
+ * it is asked — until the returned function is called. */
+async function holdImports(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const importMemo = backend.importMemo.bind(backend);
+    const held = new Promise<void>((resolve) => Object.assign(window, { releaseImports: resolve }));
+    backend.importMemo = async (name, bytes) => {
+      const info = await importMemo(name, bytes);
+      await held;
+      return info;
+    };
+  });
+  return () =>
+    page.evaluate(() => (window as unknown as { releaseImports(): void }).releaseImports());
+}
+
+// The memo counts the text it takes over as saved, so it must be what the import wrote: keys
+// typed while the copy is made are dropped, as those typed while a tab loads are.
+test("keys typed while a file is imported do not end up unsaved in the memo", async ({ page }) => {
+  await start(page, { files: { "/x/deploy.sh": fakeFile("echo hi") }, picks: ["/x/deploy.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("echo hi");
+  await page.keyboard.press("Meta+ArrowDown");
+  const release = await holdImports(page);
+  await menu(page, "import");
+  // The editor has let go of the tab: there is nothing for the keys to go into.
+  await expect(page.locator(".cm-content")).toBeHidden();
+  await page.keyboard.type("xy");
+  await release();
+  await expect(page.locator(".tab.active")).not.toHaveClass(/external/);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await writesSettled(page);
+  const saved = await page.evaluate(() => window.__tote.backend.memoTextByFile("deploy.sh"));
+  await expect(page.locator(".cm-content")).toHaveText(saved ?? "");
+  expect(saved).toBe("echo hi");
+  expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});
+  // The memo takes the keys once it is there, and what is typed is saved: the memo holds the text
+  // the import wrote, so its first save is no other app's change to ask about.
+  await page.keyboard.type("!");
+  await expect(page.locator(".cm-content")).toHaveText("echo hi!");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoTextByFile("deploy.sh")))
+    .toBe("echo hi!");
+  await expect(page.locator(".banner")).toBeHidden();
+  // And its colours: only a tab the window has is kept a highlighter document, and the memo is
+  // one. (That it is in the tab's place before it takes the text is docs.test.ts's to show: here
+  // the language data arriving later would give it one all the same.)
+  const kept = await page.evaluate(
+    () => (window.__tote.app as unknown as { highlights: Map<unknown, unknown> }).highlights.size,
+  );
+  expect(kept).toBe(1);
+});
+
+test("picking 가져오기 twice while the first is on its way makes one memo", async ({ page }) => {
+  await start(page, { files: { "/x/deploy.sh": fakeFile("echo hi") }, picks: ["/x/deploy.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("echo hi");
+  const release = await holdImports(page);
+  await menu(page, "import");
+  await menu(page, "import");
+  await release();
+  await expect(page.locator(".tab.active")).not.toHaveClass(/external/);
+  await expect(page.locator(".memo-row")).toHaveCount(1);
+  await expect(page.locator(".tab")).toHaveCount(1);
+  expect(await page.evaluate(() => Object.keys(window.__tote.backend.data.memos).length)).toBe(1);
+});
+
+test("an import that fails gives the file's tab back, still editable", async ({ page }) => {
+  const refused = "the import broke";
+  await quietErrors(page, refused);
+  await start(page, { files: { "/x/deploy.sh": fakeFile("echo hi") }, picks: ["/x/deploy.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("echo hi");
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.evaluate((message) => {
+    window.__tote.backend.importMemo = () => Promise.reject(new Error(message));
+  }, refused);
+  await menu(page, "import");
+  await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
+  await expect(page.locator(".tab.active")).toHaveClass(/external/);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("!");
+  await expect(page.locator(".cm-content")).toHaveText("echo hi!");
 });
 
 test("importing turns the tab into a memo and leaves the original alone", async ({ page }) => {

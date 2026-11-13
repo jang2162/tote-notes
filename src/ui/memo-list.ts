@@ -1,6 +1,6 @@
 import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
 import { splitName } from "../core/names";
-import { h } from "./dom";
+import { h, placeChildren } from "./dom";
 import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
 import { SEARCH_DEBOUNCE_MS } from "./search-panel";
 
@@ -77,15 +77,22 @@ function sortMark(): SVGElement {
   return svg;
 }
 
-/** One run of rows in a scroller of its own; only the rows in view are in the DOM. */
+/** One run of rows in a scroller of its own; only the rows in view are in the DOM. A row that
+ * would be drawn the same (`look`) keeps its element from one render to the next: the list is
+ * drawn again at any moment — a save's answer, a scroll — and a row made anew under a press gets
+ * no click when the press is let go (`placeChildren`). */
 class RowSection {
   private readonly rows = h("div", { class: "memo-rows" });
   readonly el: HTMLElement;
   items: MemoInfo[] = [];
+  /** The rows in the DOM, by memo ID. */
+  private drawn = new Map<string, { look: string; el: HTMLElement }>();
 
   constructor(
     className: string,
-    private readonly draw: (memo: MemoInfo, index: number) => HTMLElement,
+    private readonly draw: (memo: MemoInfo) => HTMLElement,
+    /** Everything `draw` shows of a memo, but where its row is. */
+    private readonly look: (memo: MemoInfo) => string,
     private readonly rowHeight: () => number,
   ) {
     this.el = h("div", { class: className }, this.rows);
@@ -102,8 +109,18 @@ class RowSection {
       this.items.length,
       rowHeight,
     );
-    this.rows.replaceChildren(
-      ...this.items.slice(start, end).map((memo, i) => this.draw(memo, start + i)),
+    const drawn = new Map<string, { look: string; el: HTMLElement }>();
+    this.items.slice(start, end).forEach((memo, i) => {
+      const look = this.look(memo);
+      const had = this.drawn.get(memo.id);
+      const row = had?.look === look ? had : { look, el: this.draw(memo) };
+      row.el.style.top = `${(start + i) * rowHeight}px`;
+      drawn.set(memo.id, row);
+    });
+    this.drawn = drawn;
+    placeChildren(
+      this.rows,
+      [...drawn.values()].map(({ el }) => el),
     );
   }
 }
@@ -120,13 +137,15 @@ export class MemoList {
   private readonly sortButton = h("button", { class: "memo-sort", type: "button" }, sortMark());
   private readonly pinned = new RowSection(
     "memo-pinned",
-    (memo, i) => this.row(memo, i),
+    (memo) => this.row(memo),
+    (memo) => this.rowLook(memo),
     () => this.rowHeight,
   );
   private readonly divider = h("div", { class: "memo-pinned-divider" });
   private readonly list = new RowSection(
     "memo-scroller",
-    (memo, i) => this.row(memo, i),
+    (memo) => this.row(memo),
+    (memo) => this.rowLook(memo),
     () => this.rowHeight,
   );
   readonly el = h(
@@ -195,8 +214,17 @@ export class MemoList {
     this.refilter();
   }
 
+  /** How many times the window put a memo in or took one out itself (`upsert`, `remove`): a
+   * listing asked for before the latest of them is older than what the list holds. */
+  get edits(): number {
+    return this.editCount;
+  }
+
+  private editCount = 0;
+
   /** A viewed time only moves on: an info a tab kept from before its last view keeps the list's. */
   upsert(info: MemoInfo): void {
+    this.editCount++;
     const listed = this.get(info.id)?.viewedMs;
     const viewedMs = Math.max(listed ?? -Infinity, info.viewedMs ?? -Infinity);
     const memo = Number.isFinite(viewedMs) ? { ...info, viewedMs } : info;
@@ -204,6 +232,7 @@ export class MemoList {
   }
 
   remove(id: string): void {
+    this.editCount++;
     this.memos = this.memos.filter((memo) => memo.id !== id);
     this.refilter();
   }
@@ -287,7 +316,20 @@ export class MemoList {
     this.list.render();
   }
 
-  private row(memo: MemoInfo, index: number): HTMLElement {
+  /** Everything `row` draws of `memo`. Its listeners go by the memo's ID alone, so a row kept
+   * for a memo whose other fields changed (its size, its times) still acts on the right one. */
+  private rowLook(memo: MemoInfo): string {
+    const hit = this.preview ? this.hitOf(memo) : undefined;
+    return JSON.stringify([
+      memo.file,
+      memo.kind,
+      Boolean(memo.pinned),
+      memo.id === this.activeId,
+      this.preview && (hit ? [hit, this.query] : (memo.preview ?? "")),
+    ]);
+  }
+
+  private row(memo: MemoInfo): HTMLElement {
     const { stem, ext } = splitName(memo.file);
     const active = memo.id === this.activeId ? " active" : "";
     const row = h(
@@ -307,7 +349,6 @@ export class MemoList {
       ),
       memo.pinned ? pinMark() : null,
     );
-    row.style.top = `${index * this.rowHeight}px`;
     row.addEventListener("click", () => {
       const hit = this.hitOf(memo);
       if (hit) this.host.openAt(memo.id, hit.line, hit.column);

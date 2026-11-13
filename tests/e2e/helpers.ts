@@ -308,3 +308,27 @@ export async function quietErrors(
     });
   }, expected);
 }
+
+/** Holds the answers of memo saves (`writeMemo`) — the file is written at once, as the native side
+ * writes it when asked — until the returned function is called: the test acts between a save and
+ * the window hearing of it. The returned function comes back a task later, when what the answers
+ * set off (the memo list and the tab bars drawn again) has run. */
+export async function holdSaveAnswers(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const write = backend.writeMemo.bind(backend);
+    const held = new Promise<void>((resolve) =>
+      Object.assign(window, { releaseSaveAnswers: resolve }),
+    );
+    backend.writeMemo = async (...args) => {
+      const info = await write(...args);
+      await held;
+      return info;
+    };
+  });
+  return () =>
+    page.evaluate(() => {
+      (window as unknown as { releaseSaveAnswers(): void }).releaseSaveAnswers();
+      return new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+}

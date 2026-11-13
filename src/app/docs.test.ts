@@ -1323,6 +1323,41 @@ describe("importExternal", () => {
     expect(backend.data.drafts["/x/deploy.sh"]).toBeUndefined();
   });
 
+  it("takes the text it sent, whatever the tab comes to hold while the import is on its way", async () => {
+    const { backend, host } = setup({ files: { "/x/deploy.sh": fakeFile("echo hi\n") } });
+    const ext = new ExternalDoc(host, "/x/deploy.sh");
+    await ext.ensureLoaded();
+    const importMemo = backend.importMemo.bind(backend);
+    let answer!: () => void;
+    const held = new Promise<void>((resolve) => (answer = resolve));
+    backend.importMemo = async (name, bytes) => {
+      const info = await importMemo(name, bytes);
+      await held;
+      return info;
+    };
+    const importing = importExternal(ext, host);
+    type(ext, "echo more\n");
+    answer();
+    const memo = await importing;
+    // The memo counts its text as saved: it must be the text its file holds.
+    expect(memo.unwritten).toBe(false);
+    expect(memo.state!.doc.toString()).toBe("echo hi\n");
+    expect(backend.memoText(memo.info.id)).toBe("echo hi\n");
+    expect(backend.data.drafts["/x/deploy.sh"]).toBeUndefined();
+  });
+
+  it("puts the memo in the tab's place before it takes the text", async () => {
+    const { host } = setup({ files: { "/x/deploy.sh": fakeFile("echo hi\n") } });
+    const ext = new ExternalDoc(host, "/x/deploy.sh");
+    await ext.ensureLoaded();
+    let placedWithText: boolean | null = null;
+    const memo = await importExternal(ext, host, (placed) => {
+      placedWithText = placed.state !== null;
+    });
+    expect(placedWithText).toBe(false);
+    expect(memo.state!.doc.toString()).toBe("echo hi\n");
+  });
+
   it("carries the language picked for the file over to the memo", async () => {
     const { backend, host } = setup({ files: { "/x/notes": fakeFile("select 1") } });
     const ext = new ExternalDoc(host, "/x/notes");

@@ -200,3 +200,66 @@ test("a page longer than one range answer is fetched in pieces", async ({ page }
     [6000, 10_999],
   ]);
 });
+
+// Six million lines are 6,000 pages: read to the end, they must not all stay in memory.
+test("pages read long ago are let go of and read again when scrolled back to", async ({ page }) => {
+  await open(page);
+  const PAGES = 100;
+  const kept = await page.evaluate(async (pages) => {
+    const viewer = window.largeTextViewer;
+    for (let index = 0; index < pages; index++) {
+      const line = index * 1000 + 500;
+      viewer.goToLine(line);
+      // Drawn: the page is read and its render is the latest.
+      while (!document.querySelector(`.large-text-line[data-line="${line}"]`))
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+    return (viewer as unknown as { pages: Map<number, unknown> }).pages.size;
+  }, PAGES);
+  expect(await page.evaluate(() => window.fetchLog.length)).toBeGreaterThanOrEqual(PAGES);
+  expect(kept).toBeLessThanOrEqual(64);
+  // The latest pages are still there: going back a little reads nothing.
+  const before = await page.evaluate(() => window.fetchLog.length);
+  await page.evaluate(() => window.largeTextViewer.goToLine(98_500));
+  await expect(page.locator(".large-text-line.current")).toHaveText("L000098500");
+  expect(await page.evaluate(() => window.fetchLog.length)).toBe(before);
+  // The first page went long ago: it is read again, and shows what it did.
+  await page.evaluate(() => window.largeTextViewer.goToLine(500));
+  await expect(page.locator(".large-text-line.current")).toHaveText("L000000500");
+  expect(await page.evaluate(() => window.fetchLog.filter(([start]) => start === 0).length)).toBe(
+    2,
+  );
+});
+
+/** Shows the middle of each of `pages` in turn, waiting for it to be drawn: each visit uses that
+ * page alone (a screen and its margin are well inside 1,000 lines). */
+function visitPages(page: Page, pages: number[]): Promise<void> {
+  return page.evaluate(async (pages) => {
+    for (const index of pages) {
+      const line = index * 1000 + 500;
+      window.largeTextViewer.goToLine(line);
+      while (!document.querySelector(`.large-text-line.current[data-line="${line}"]`))
+        await new Promise((resolve) => setTimeout(resolve, 0));
+    }
+  }, pages);
+}
+
+const readsOf = (page: Page, index: number) =>
+  page.evaluate(
+    (start) => window.fetchLog.filter(([first]) => first === start).length,
+    index * 1000 * 11,
+  );
+
+// The page let go of is the one used longest ago, not the one read first: a page come back to is
+// kept over pages read since and not looked at again.
+test("a page looked at again outlasts pages read after it", async ({ page }) => {
+  await open(page);
+  // As many pages as are kept, then the first one again.
+  await visitPages(page, [...Array.from({ length: 64 }, (_, index) => index), 0]);
+  expect(await readsOf(page, 0)).toBe(1);
+  // One more page than is kept: one goes — page 1, read after page 0 but not used since.
+  await visitPages(page, [64, 0]);
+  expect(await readsOf(page, 0)).toBe(1);
+  await visitPages(page, [1]);
+  expect(await readsOf(page, 1)).toBe(2);
+});

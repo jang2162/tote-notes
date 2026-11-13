@@ -2,7 +2,16 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT, RECOVERED_NOTICE } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
-import { menu, quietErrors, ready, sessionPane, start } from "./helpers";
+import {
+  holdSaveAnswers,
+  memoWrites,
+  menu,
+  paneSession,
+  quietErrors,
+  ready,
+  sessionPane,
+  start,
+} from "./helpers";
 
 test("a new memo is named after its first line once the cursor leaves it", async ({ page }) => {
   await start(page);
@@ -604,4 +613,145 @@ test("a video in the workspace under a text name says it is not text", async ({ 
   });
   await page.locator(".memo-row", { hasText: "녹화" }).click();
   await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
+});
+
+/** The tabs the window keeps a highlighter document for that are in none of its panes: each holds
+ * its text and undo history for as long as the page lives. */
+const strayHighlights = (page: Page) =>
+  page.evaluate(() => {
+    const app = window.__tote.app as unknown as { highlights: Map<{ tabId: string }, unknown> };
+    const open = new Set<string>(
+      window.__tote.app.panes.flatMap((pane) => pane.tabs.list.map((doc) => doc.tabId)),
+    );
+    return [...app.highlights.keys()].filter((doc) => !open.has(doc.tabId)).length;
+  });
+
+const keptHighlights = (page: Page) =>
+  page.evaluate(
+    () => (window.__tote.app as unknown as { highlights: Map<unknown, unknown> }).highlights.size,
+  );
+
+test("a tab closed while its file is read is not kept for the highlighter", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 하나"), b: fakeMemo("b.md", "# 둘") } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("# 하나");
+  // The tab on show is kept: the count below is of something.
+  expect(await keptHighlights(page)).toBe(1);
+  const release = await holdReads(page);
+  await page.locator(".memo-row", { hasText: "b" }).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["a"]);
+  await release();
+  // The read's answer is taken within the task that released it.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(await strayHighlights(page)).toBe(0);
+  expect(await keptHighlights(page)).toBe(1);
+});
+
+test("a tab closed before its language's data arrives is not kept for the highlighter", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 하나") } });
+  await gateCalls(page, ["readExtensionFile"], "held");
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("# 하나");
+  expect(await keptHighlights(page)).toBe(1);
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab")).toHaveCount(0);
+  expect(await keptHighlights(page)).toBe(0);
+  await page.evaluate(async () => {
+    (window as unknown as { releaseCalls(): void }).releaseCalls();
+    // The language data that was read, then the task after the tab has been told of it.
+    await Promise.all(window.__tote.app.languageConfigs.values());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(await strayHighlights(page)).toBe(0);
+});
+
+// A save's answer draws the tab bar again: the close mark must not be made anew under a press, or
+// the release finds another element and no click comes.
+test("a close mark pressed as a save's answer comes in still closes its tab when let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("가.md", "하나"), b: fakeMemo("나.md", "둘") },
+    session: paneSession([
+      [
+        { kind: "memo", memoId: "a" },
+        { kind: "memo", memoId: "b" },
+      ],
+    ]),
+  });
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("하나");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  // Written, its answer held: the window has not heard of it.
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  const box = (await page.locator(".tab", { hasText: "나" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+});
+
+// The tab typed in takes a new title as its first line is left: it is made anew, and the tabs
+// after it are the ones whose close marks a person presses meanwhile.
+test("a close mark after a tab that a redraw makes anew still closes its tab when let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("첫 줄.md", "첫 줄", { autoTitle: true }),
+      b: fakeMemo("나.md", "둘"),
+      c: fakeMemo("다.md", "셋"),
+    },
+    session: paneSession([
+      [
+        { kind: "memo", memoId: "a" },
+        { kind: "memo", memoId: "b" },
+        { kind: "memo", memoId: "c" },
+      ],
+    ]),
+  });
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("첫 줄");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄", "나", "다"]);
+  await page.keyboard.press("Meta+ArrowDown");
+  // The new name comes with the retitle's answer and with a save's: both are held.
+  const releaseSaves = await holdSaveAnswers(page);
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const retitle = backend.retitleMemo.bind(backend);
+    const held = new Promise<void>((resolve) =>
+      Object.assign(window, { releaseRetitles: resolve }),
+    );
+    backend.retitleMemo = async (id, stem) => {
+      const info = await retitle(id, stem);
+      await held;
+      return info;
+    };
+  });
+  await page.keyboard.type("x");
+  // Leaving the first line asks for the title.
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memos.a.file))
+    .toBe("첫 줄x.md");
+  await expect.poll(() => memoWrites(page, "a")).toBeGreaterThanOrEqual(1);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄", "나", "다"]);
+  const box = (await page.locator(".tab", { hasText: "다" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.evaluate(() => {
+    (window as unknown as { releaseRetitles(): void }).releaseRetitles();
+    return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+  await releaseSaves();
+  // The first tab has its new title: its element is another, drawn while 다's mark is pressed.
+  await expect(page.locator(".tab .tab-title").first()).toHaveText("첫 줄x");
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄x", "나"]);
 });

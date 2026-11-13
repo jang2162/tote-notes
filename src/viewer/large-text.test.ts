@@ -6,8 +6,11 @@ import {
   DISPLAY_LINE_LIMIT,
   LINE_HEIGHT,
   MAX_SCROLL_HEIGHT,
+  PAGE_CACHE_BYTES,
+  PAGE_CACHE_PAGES,
   pageOf,
   pageRange,
+  pagesToDrop,
   scanBytes,
   scrollTopFor,
   virtualTop,
@@ -91,5 +94,34 @@ describe("displayLine", () => {
     expect(displayLine(long)).toBe(
       `${"y".repeat(DISPLAY_LINE_LIMIT)} … (${DISPLAY_LINE_LIMIT + 5}자)`,
     );
+  });
+});
+
+describe("pagesToDrop", () => {
+  const none = new Set<number>();
+  const small = () => 1000;
+
+  it("drops nothing while the pages kept are within both limits", () => {
+    const used = Array.from({ length: PAGE_CACHE_PAGES }, (_, i) => i);
+    expect(pagesToDrop(used, small, none)).toEqual([]);
+  });
+
+  it("drops the pages used longest ago once there are more than the limit", () => {
+    const used = Array.from({ length: PAGE_CACHE_PAGES + 3 }, (_, i) => 100 - i);
+    expect(pagesToDrop(used, small, none)).toEqual([100, 99, 98]);
+  });
+
+  it("drops the pages used longest ago until their bytes fit", () => {
+    const third = Math.floor(PAGE_CACHE_BYTES / 3);
+    // Five pages of a third of the limit each: three fit.
+    expect(pagesToDrop([7, 8, 9, 10, 11], () => third, none)).toEqual([7, 8]);
+  });
+
+  it("keeps the pages on screen however large they are", () => {
+    // A file of one enormous line per page: what the screen shows is never read again for a
+    // scroll of one line.
+    const huge = () => PAGE_CACHE_BYTES * 2;
+    expect(pagesToDrop([1, 2, 3, 4], huge, new Set([3, 4]))).toEqual([1, 2]);
+    expect(pagesToDrop([3, 1, 4, 2], huge, new Set([3, 4]))).toEqual([1, 2]);
   });
 });

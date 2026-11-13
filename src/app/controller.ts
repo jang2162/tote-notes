@@ -960,6 +960,10 @@ export class AppController implements DocHost, PaneHost {
     if (current && current.key === key) return current.highlighting.extension;
     this.dropHighlight(doc);
     if (!lang || !key) return [];
+    // Closed by now (its read, or its language's data, answering after it went): nothing drops
+    // what is kept for a tab no pane has, and its text and undo history would stay with it for
+    // as long as the page lives.
+    if (!this.docs.includes(doc)) return [];
     const highlighting = workerHighlighting(this.highlight, lang, () => {
       if (!this.perf.enabled || this.coloured.has(doc.tabId)) return;
       this.coloured.add(doc.tabId);
@@ -1122,6 +1126,9 @@ export class AppController implements DocHost, PaneHost {
   async closeTab(tabId: string): Promise<void> {
     const doc = this.docs.find((each) => each.tabId === tabId);
     if (!doc) return;
+    // The tab on show is saved as it closes: a syllable still being composed lands in it first.
+    const pane = this.paneOf(doc);
+    if (doc === pane.tabs.active && (await pane.settle()) && !this.docs.includes(doc)) return;
     if (await this.closeDoc(doc)) return;
     // Kept open for an answer the banner is asking for: say so, or ⌘W seems to do nothing.
     if (doc.banner?.kind === "conflict") this.statusBar.setMessage(CHOOSE_VERSION_FIRST);
@@ -2173,18 +2180,44 @@ export class AppController implements DocHost, PaneHost {
   }
 
   private async importActive(): Promise<void> {
-    const pane = this.focused;
-    const doc = pane.tabs.active;
-    if (!(doc instanceof ExternalDoc)) return;
-    pane.capture(doc);
-    const memo = await importExternal(doc, this);
-    pane.tabs.replace(doc, memo);
-    this.release(doc);
-    this.hold(memo);
-    this.dropHighlight(doc);
+    await settleComposition(this.focused.view);
+    const doc = this.focused.tabs.active;
+    // On its way already (the menu picked twice): another import would make a second memo.
+    if (!(doc instanceof ExternalDoc) || doc.leaving) return;
+    // The editor lets go of the tab while its text is copied, as it does of one torn off: the memo
+    // counts the text it takes over as saved, so a key typed meanwhile would never be written.
+    const from = this.paneOf(doc);
+    doc.leaving = true;
+    from.capture(doc);
+    from.surface.showNothing();
+    let memo: MemoDoc;
+    try {
+      memo = await importExternal(doc, this, (memo) => {
+        // Closed while it was copied: the memo is in the list, and no tab is left for it.
+        if (!this.docs.includes(doc)) return;
+        this.paneOf(doc).tabs.replace(doc, memo);
+        this.release(doc);
+        this.hold(memo);
+        this.dropHighlight(doc);
+        this.coloured.delete(doc.tabId);
+      });
+    } catch (error) {
+      // The tab stays: it is shown again where it is now, if it is the active tab there.
+      doc.leaving = false;
+      const pane = this.paneOf(doc);
+      if (this.docs.includes(doc) && doc === pane.tabs.active) {
+        pane.show(doc);
+        if (pane === this.focused) pane.takeKeys();
+      }
+      throw error;
+    }
     this.memoList.upsert(memo.info);
-    pane.tabs.active = null;
-    await pane.activate(memo);
+    if (!this.docs.includes(memo)) return;
+    const pane = this.paneOf(memo);
+    if (pane.tabs.active === doc) {
+      pane.tabs.active = null;
+      await pane.activate(memo);
+    } else pane.renderTabs();
     if (memo.error) this.report(memo.error);
     else this.statusBar.setMessage("워크스페이스로 가져왔습니다");
   }
@@ -2446,12 +2479,28 @@ export class AppController implements DocHost, PaneHost {
     }, MEMOS_GATHER_MS);
   }
 
-  private async refreshMemos(): Promise<void> {
+  /** Numbers the memo listings: only the latest one's answer is shown. */
+  private memoReads = 0;
+  /** The latest listing, which the ones it overtook wait for. */
+  private memosRead: Promise<void> = Promise.resolve();
+
+  private refreshMemos(): Promise<void> {
+    this.memosRead = this.readMemos(++this.memoReads);
+    return this.memosRead;
+  }
+
+  private async readMemos(read: number): Promise<void> {
     try {
       const asked = this.docs.flatMap((doc) =>
         doc instanceof MemoDoc ? [[doc, doc.infoChanges] as const] : [],
       );
+      const edits = this.memoList.edits;
       const memos = await this.backend.listMemos();
+      // Overtaken: a later listing is out, and its answer is the newer whichever comes first.
+      if (read !== this.memoReads) return this.memosRead;
+      // The window changed the list itself meanwhile (a new memo, one trashed, a save's new name):
+      // this answer may have been read before that and would undo it, so the list is read again.
+      if (edits !== this.memoList.edits) return this.refreshMemos();
       this.memoList.setMemos(memos);
       if (!this.memosLoaded) this.mark("memos-listed");
       const listed = new Map(memos.map((memo) => [memo.id, memo]));

@@ -140,7 +140,7 @@ test("a tab being torn off does not take its editor back when shown again", asyn
   await menu(page, MOVE);
   await away();
   await release();
-  await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
+  await expect(page.locator(".status-message")).toHaveText(`작업을 마치지 못했습니다: ${refused}`);
   await expect(page.locator(".cm-content")).toHaveAttribute("contenteditable", "true");
   await page.locator(".cm-content").click();
   await page.keyboard.press("Meta+ArrowDown");
@@ -184,7 +184,7 @@ test("a tab the backend does not take stays editable and says why", async ({ pag
     window.__tote.backend.data.places!["memo:a"] = "ws-9";
   });
   await menu(page, MOVE);
-  await expect(page.locator(".status-message")).toHaveText(`오류: ${refused}`);
+  await expect(page.locator(".status-message")).toHaveText(`작업을 마치지 못했습니다: ${refused}`);
   await expect(page.locator(".tab")).toHaveCount(1);
   await page.keyboard.insertText("!");
   await expect(page.locator(".cm-content")).toHaveText("우유 계란!");

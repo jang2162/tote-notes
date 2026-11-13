@@ -58,7 +58,9 @@ async function restoreHeld(page: Page, seed: Partial<FakeData>): Promise<() => P
  * (`holdLayoutRead`): the first listing failed, so the window restores at the next one, which this
  * brings about. Returns what lets the restore go on. */
 async function holdRestore(page: Page): Promise<() => Promise<void>> {
-  await expect(page.locator(".status-message")).toHaveText(`오류: ${LISTING_FAILED}`);
+  await expect(page.locator(".status-message")).toHaveText(
+    `작업을 마치지 못했습니다: ${LISTING_FAILED}`,
+  );
   const release = await holdLayoutRead(page);
   await page.evaluate(() => window.dispatchEvent(new Event("focus")));
   // The restore has begun and made no tab yet. A tab shown now would end up behind the session's

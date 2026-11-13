@@ -4,6 +4,7 @@ import {
   StateField,
   type EditorState,
   type Extension,
+  type Text,
 } from "@codemirror/state";
 import {
   Decoration,
@@ -67,6 +68,9 @@ export function workerHighlighting(
   /** The document's latest state: only a plugin sees it, and the open may be sent after the
    * view has moved on to another tab's state. */
   let latest: EditorState | null = null;
+  /** The text the worker holds: what its open carried, then every edit sent after it. Null until
+   * the open is sent. */
+  let sent: Text | null = null;
 
   // Decorations live in a field so the async worker reply can replace them with a plain dispatch,
   // and edits in between map the old ones instead of dropping all colour. One field per call: a
@@ -90,7 +94,18 @@ export function workerHighlighting(
 
       constructor(private readonly view: EditorView) {
         latest = view.state;
-        open ??= client.open(docId, lang, () => latest!.doc.toString());
+        if (!open) {
+          open = client.open(docId, lang, () => {
+            sent = latest!.doc;
+            return sent.toString();
+          });
+        } else if (sent && sent !== view.state.doc && !closed) {
+          // The text changed while no editor showed it (a version restored under a preview): no
+          // update came here for it, so the worker still holds the old lines and would colour
+          // these by them. It takes the whole text again.
+          client.edit(docId, 0, sent.lines, view.state.doc.toString().split("\n"));
+          sent = view.state.doc;
+        }
         // Shown again after another tab: the colours of the lines now visible may be missing.
         void open.then((ok) => ok && this.schedule());
         // The decorations carry the old theme's colour ids until they are asked for again.
@@ -103,6 +118,8 @@ export function workerHighlighting(
         if (update.docChanged) {
           this.version++;
           this.sendEdit(update);
+          // Before the open is sent the worker drops the edit, and the open carries the text.
+          if (sent) sent = update.state.doc;
         }
         if (update.docChanged || update.viewportChanged) this.schedule();
       }
