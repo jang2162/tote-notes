@@ -322,8 +322,9 @@ export class Pane {
 
   /** Takes `doc` out of this pane, open as it is: its panel closes, the tab next to it (or
    * nothing) is shown when it was the active one, and the tab bar is drawn again. What closing a
-   * tab or moving it elsewhere does here. The part up to showing the next tab is done by the
-   * time this returns its promise. */
+   * tab or moving it elsewhere does here. By the time this returns its promise the tab is out of
+   * the pane's list and no tab is the active one; the next tab becomes it a turn of the microtask
+   * queue later — `activate` first lets a composition land — which is before any event comes in. */
   async detach(doc: Doc): Promise<void> {
     const wasActive = doc === this.tabs.active;
     if (this.panel?.doc === doc) this.closePanel();
