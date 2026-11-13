@@ -1044,6 +1044,34 @@ describe("ExternalDoc", () => {
     expect(other.backend.fileText("/x/a.sh")).toBe("v3");
   });
 
+  it("a ⌘S that did not write leaves the edits their draft, whether it was refused or failed", async () => {
+    const draft = (backend: FakeBackend) => {
+      const kept = backend.data.drafts["/x/a.sh"];
+      return kept ? new TextDecoder().decode(fromBase64(kept.data)) : null;
+    };
+    // Refused: typed and saved within the draft's second, over another app's text.
+    const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const doc = new ExternalDoc(host, "/x/a.sh");
+    await doc.ensureLoaded();
+    type(doc, "!");
+    backend.data.files["/x/a.sh"] = fakeFile("v2");
+    expect(await doc.save()).toBe(false);
+    // The app quits: the edits are in no file, and the draft is what keeps them.
+    expect(doc.unwritten).toBe(true);
+    await doc.flush();
+    expect(draft(backend)).toBe("v1!");
+
+    // Failed: the file could not be written.
+    const other = setup({ files: { "/x/a.sh": fakeFile("v1") } });
+    const failing = new ExternalDoc(other.host, "/x/a.sh");
+    await failing.ensureLoaded();
+    type(failing, "!");
+    vi.spyOn(other.backend, "saveExternal").mockRejectedValue(new Error("locked"));
+    expect(await failing.save()).toBe(false);
+    await failing.flush();
+    expect(draft(other.backend)).toBe("v1!");
+  });
+
   it("⌘S with the conflict banner in sight is the answer 내 버전", async () => {
     const { backend, host } = setup({ files: { "/x/a.sh": fakeFile("v1") } });
     const doc = new ExternalDoc(host, "/x/a.sh");

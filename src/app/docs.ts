@@ -1146,8 +1146,10 @@ export class ExternalDoc extends Doc {
     try {
       await this.host.backend.saveExternal(this.path, this.encode(text), mine);
     } catch (error) {
-      // Settling dropped a draft retry; the edits still need their draft.
+      // Settling dropped the draft's write, or its retry; the edits still need their draft — a
+      // quit right after would otherwise go with them in no file at all.
       if (this.saveFailed) this.retryLater(this.draftKey, () => this.keepDraft());
+      else this.host.writes.schedule(this.draftKey, DRAFT_DELAY_MS, () => this.keepDraft());
       // Not a failed save: the banner asks.
       if (errorCode(error) === "conflict") this.raiseConflict();
       else this.fail(error);
