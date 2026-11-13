@@ -119,13 +119,6 @@ impl ExtensionStore {
         )
         .is_ok()
     }
-
-    pub fn find(&self, id: &str) -> Option<Installed> {
-        self.scan()
-            .extensions
-            .into_iter()
-            .find(|e| e.manifest.id() == id)
-    }
 }
 
 fn read_folder(dir: &Path, source: Source, scan: &mut Scan) {
