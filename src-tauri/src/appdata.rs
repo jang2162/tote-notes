@@ -8,8 +8,9 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{read_json_file, write_json, JsonFile};
+use crate::persist::{read_json_file, set_aside, write_json, JsonFile};
 use crate::shortcuts;
+use crate::workspace::id::is_id;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct AppPaths {
@@ -117,12 +118,15 @@ impl Machine {
 
     /// `load_or_create`, with where a file that did not parse went (`read_json_file`): the ID made
     /// in its place is a new one, so the caller has the tabs forgotten to tell the person about.
+    /// A device ID that is not a UUID — never one tote made, and it names a file
+    /// (`session::session_file`) — is taken as a file that did not parse.
     pub fn load_or_create_with_aside(
         path: &Path,
         device_name: impl FnOnce() -> String,
     ) -> io::Result<(Machine, Option<PathBuf>)> {
         let aside = match read_json_file::<Machine>(path)? {
-            JsonFile::Read(machine) => return Ok((machine, None)),
+            JsonFile::Read(machine) if is_id(&machine.device_id) => return Ok((machine, None)),
+            JsonFile::Read(_) => Some(set_aside(path)?),
             JsonFile::Missing => None,
             JsonFile::SetAside(aside) => Some(aside),
         };
@@ -1003,6 +1007,44 @@ mod tests {
         assert_eq!(first, second);
         assert_eq!(first.device_name, "맥북");
         assert!(uuid::Uuid::parse_str(&first.device_id).is_ok());
+    }
+
+    #[test]
+    fn a_device_id_tote_made_is_kept_as_it_is() {
+        // Every build has made it with `Uuid::new_v4().to_string()`: lowercase and hyphenated.
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("machine.json");
+        let made = uuid::Uuid::new_v4().to_string();
+        for id in [made.clone(), made.to_uppercase()] {
+            let text =
+                serde_json::json!({"version": 1, "deviceId": id, "deviceName": "맥북"}).to_string();
+            fs::write(&file, &text).unwrap();
+            let (machine, aside) =
+                Machine::load_or_create_with_aside(&file, || "다른 이름".into()).unwrap();
+            assert_eq!((machine.device_id.as_str(), aside), (id.as_str(), None));
+            assert_eq!(fs::read_to_string(&file).unwrap(), text);
+        }
+    }
+
+    #[test]
+    fn a_device_id_that_is_not_an_id_is_made_anew_as_for_a_broken_file() {
+        // It becomes a file name (`.tote/sessions/<device id>.json`).
+        for bad in ["../../x", "../x", "a/b", "", ".", "..", "not-a-uuid"] {
+            let dir = tempfile::tempdir().unwrap();
+            let file = dir.path().join("machine.json");
+            let text = serde_json::json!({"version": 1, "deviceId": bad, "deviceName": "맥북"})
+                .to_string();
+            fs::write(&file, &text).unwrap();
+            let (machine, aside) =
+                Machine::load_or_create_with_aside(&file, || "새 이름".into()).unwrap();
+            assert!(crate::workspace::id::is_id(&machine.device_id), "{bad:?}");
+            assert_eq!(machine.device_name, "새 이름");
+            let aside = aside.unwrap_or_else(|| panic!("{bad:?} was not set aside"));
+            assert_eq!(fs::read_to_string(aside).unwrap(), text);
+            // Made once: the next launch reads it.
+            let again = Machine::load_or_create_with_aside(&file, || "또".into()).unwrap();
+            assert_eq!(again, (machine, None));
+        }
     }
 
     #[test]

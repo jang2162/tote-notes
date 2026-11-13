@@ -2617,6 +2617,29 @@ mod tests {
     }
 
     #[test]
+    fn a_device_id_that_is_not_an_id_is_told_as_a_broken_machine_file() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
+        fs::create_dir_all(&paths.data_dir).unwrap();
+        fs::write(
+            paths.machine_file(),
+            r#"{"version": 1, "deviceId": "../../elsewhere", "deviceName": "맥북"}"#,
+        )
+        .unwrap();
+        let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
+        assert!(crate::workspace::id::is_id(&core.machine.device_id));
+        let a = open(&core, "가");
+        let told = notices(core.take_pending(&a));
+        assert_eq!(told.len(), 1, "{told:?}");
+        assert!(
+            told[0].starts_with(
+                "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다(원래 파일: machine.json.corrupt-"
+            ),
+            "{told:?}"
+        );
+    }
+
+    #[test]
     fn a_broken_settings_machine_or_state_file_is_told_to_the_first_window() {
         let dir = tempfile::tempdir().unwrap();
         let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
