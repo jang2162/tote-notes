@@ -2412,12 +2412,28 @@ export class AppController implements DocHost, PaneHost {
     }, MEMOS_GATHER_MS);
   }
 
-  private async refreshMemos(): Promise<void> {
+  /** Numbers the memo listings: only the latest one's answer is shown. */
+  private memoReads = 0;
+  /** The latest listing, which the ones it overtook wait for. */
+  private memosRead: Promise<void> = Promise.resolve();
+
+  private refreshMemos(): Promise<void> {
+    this.memosRead = this.readMemos(++this.memoReads);
+    return this.memosRead;
+  }
+
+  private async readMemos(read: number): Promise<void> {
     try {
       const asked = this.docs.flatMap((doc) =>
         doc instanceof MemoDoc ? [[doc, doc.infoChanges] as const] : [],
       );
+      const edits = this.memoList.edits;
       const memos = await this.backend.listMemos();
+      // Overtaken: a later listing is out, and its answer is the newer whichever comes first.
+      if (read !== this.memoReads) return this.memosRead;
+      // The window changed the list itself meanwhile (a new memo, one trashed, a save's new name):
+      // this answer may have been read before that and would undo it, so the list is read again.
+      if (edits !== this.memoList.edits) return this.refreshMemos();
       this.memoList.setMemos(memos);
       if (!this.memosLoaded) this.mark("memos-listed");
       const listed = new Map(memos.map((memo) => [memo.id, memo]));

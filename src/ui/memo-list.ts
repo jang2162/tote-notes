@@ -195,8 +195,17 @@ export class MemoList {
     this.refilter();
   }
 
+  /** How many times the window put a memo in or took one out itself (`upsert`, `remove`): a
+   * listing asked for before the latest of them is older than what the list holds. */
+  get edits(): number {
+    return this.editCount;
+  }
+
+  private editCount = 0;
+
   /** A viewed time only moves on: an info a tab kept from before its last view keeps the list's. */
   upsert(info: MemoInfo): void {
+    this.editCount++;
     const listed = this.get(info.id)?.viewedMs;
     const viewedMs = Math.max(listed ?? -Infinity, info.viewedMs ?? -Infinity);
     const memo = Number.isFinite(viewedMs) ? { ...info, viewedMs } : info;
@@ -204,6 +213,7 @@ export class MemoList {
   }
 
   remove(id: string): void {
+    this.editCount++;
     this.memos = this.memos.filter((memo) => memo.id !== id);
     this.refilter();
   }

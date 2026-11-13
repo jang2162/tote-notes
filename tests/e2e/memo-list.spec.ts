@@ -488,3 +488,70 @@ test("the pinned zone filters by content too", async ({ page }) => {
   await expect(page.locator(".memo-pinned .memo-row .memo-name")).toHaveText(["할 일"]);
   await expect(page.locator(".memo-pinned .memo-preview mark")).toHaveText("청소");
 });
+
+/** Holds the answer of the next `listMemos` — read at once, as the native side lists the folder
+ * when it is asked — until the returned function is called. Later listings answer as usual. The
+ * returned function comes back a task later: whatever the answer set off has run by then. */
+async function holdListing(page: Page): Promise<() => Promise<void>> {
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const list = backend.listMemos.bind(backend);
+    let held = false;
+    backend.listMemos = async () => {
+      const answer = list();
+      if (held) return answer;
+      held = true;
+      await new Promise<void>((resolve) => Object.assign(window, { releaseListing: resolve }));
+      return answer;
+    };
+  });
+  return () =>
+    page.evaluate(() => {
+      (window as unknown as { releaseListing(): void }).releaseListing();
+      return new Promise<void>((resolve) => setTimeout(resolve, 0));
+    });
+}
+
+const windowFocused = (page: Page) =>
+  page.evaluate(() => void window.dispatchEvent(new Event("focus")));
+
+test("a memo made while a listing is on its way stays in the list", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  await menu(page, "new-memo");
+  await expect(names(page)).toHaveCount(2);
+  await release();
+  await expect(names(page)).toHaveCount(2);
+});
+
+test("a memo trashed while a listing is on its way stays out of the list", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나"), b: fakeMemo("나.md", "둘") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  await page.evaluate(() => window.__tote.app.trashMemo("b"));
+  await expect(names(page)).toHaveText(["가"]);
+  await release();
+  await expect(names(page)).toHaveText(["가"]);
+});
+
+test("a listing that answers after a later one does not undo it", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", "하나") } });
+  const release = await holdListing(page);
+  await windowFocused(page);
+  // Another app adds 나: the listing that follows answers first.
+  await page.evaluate(
+    (memo) => {
+      const { backend } = window.__tote;
+      backend.data.memos.b = memo;
+      backend.outside({
+        kind: "workspace",
+        changes: [{ kind: "added", id: "b", file: memo.file }],
+      });
+    },
+    fakeMemo("나.md", "둘"),
+  );
+  await expect(names(page)).toHaveText(["가", "나"]);
+  await release();
+  await expect(names(page)).toHaveText(["가", "나"]);
+});
