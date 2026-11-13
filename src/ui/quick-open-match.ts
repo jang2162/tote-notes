@@ -322,6 +322,7 @@ export class FileIndex {
       for (const entry of this.memos) top.offer(entry, 0);
       return [...top.kept.map(({ entry }) => entry), ...this.externals].map((e) => e.result);
     }
+    const tracesBefore = traces;
     const key = String.fromCodePoint(...wanted);
     const from =
       this.last && key.startsWith(this.last.key)
@@ -337,7 +338,6 @@ export class FileIndex {
       top.offer(entry, scoreOf(wanted, entry.prepared));
     }
     this.last = { key, matched };
-    const tracesBefore = traces;
     const results = top.kept.map(({ entry }) => ({
       ...entry.result,
       ...matchOf(wanted, entry.prepared),
