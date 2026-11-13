@@ -121,6 +121,11 @@ describe("TauriBackend", () => {
         "flush_done",
         { id: 3, blocked: "저장하지 못한 메모 1개" },
       ],
+      [
+        () => backend.flushWriting(3, "저장하지 못한 메모 1개"),
+        "flush_writing",
+        { id: 3, unwritten: "저장하지 못한 메모 1개" },
+      ],
       [() => backend.closeWindow(), "close_window", undefined],
       [() => backend.extensionRegistry(), "extension_registry", undefined],
       [

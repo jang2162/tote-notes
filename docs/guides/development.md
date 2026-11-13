@@ -43,7 +43,7 @@
 - 시험 워크스페이스 폴더를 손으로 만들 때는 `.tote/workspace.json`(`{"version":1,"id":"<uuid>"}`)도 만든다. 없으면 `state.json` 에 적어도 열리지 않고(stderr 「not a tote workspace」) `$TOTE_DATA_DIR/workspaces/메모` 가 새로 생긴다.
 - 파일 열기 같은 시트의 검색칸은 요소 누르기로 포커스가 가지 않는다. System Events 로 `sheet 1 of window "<제목>"` 안 `AXSearchField` 에 `AXFocused` 를 준다.
 - 편집기의 AX 값은 CodeMirror 가 그린 줄만 담는다(긴 메모는 중간이 빠진다). 본문이 바뀌었는지는 디스크의 메모 파일로 본다.
-- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다.
+- tote 안의 대화상자(이름 바꾸기 등)를 취소하면 포커스는 연 자리가 아니라 편집기로 돌아간다. 입력칸에서 연 뒤 같은 입력칸에서 이어서 확인할 때는 그 칸을 다시 누른다. 열린 탭이 없을 때와 확인 창(영구 삭제·휴지통 비우기, 설정 화면 안의 질문)은 연 자리로 돌아간다 — 버튼을 마우스로 눌러 열었으면 WebKit 이 누를 때 포커스를 비우므로 닫은 뒤에도 포커스는 아무 데도 없다.
 - tote 창이 둘 이상일 때는 `orca computer` 의 요소 번호로 누르지 않는다. `--window-id` 를 줘도 다른 창의 트리와 요소가 잡힐 수 있다(질문 창의 「업데이트하고 다시 시작」 에 포커스가 간 적이 있다). 창 제목으로 `AXWindows` 를 골라 AXUIElement 로 직접 누른다.
 - 설치본과 디버그 번들의 프로세스 이름은 둘 다 `tote` 다(`mainBinaryName`). System Events 로 `process "tote"` 나 `first process whose unix id is <pid>` 를 잡으면 이름으로 다시 찾아 먼저 뜬 쪽(대개 사람의 설치본)을 다룬다. 디버그 앱의 메뉴·창은 pid 로 만든 `AXUIElementCreateApplication(pid)` 나 `orca computer --app com.develma.totenotes.dev` 로 다룬다. 2026-10-26 화면 확인에서 이렇게 설치본의 메뉴를 읽었다.
 - 입력 소스가 한글이면 System Events `keystroke "<글자>" using {command down}` 으로 단축키를 보내지 않는다. 의도한 키로 가지 않는다(⌘Q 가 앱을 끄지 않았고 ⌘N 이 새 창을 열었다). 메뉴 항목을 `click menu item` 으로 누르거나 `key code` 로 보낸다. 앱을 끄는 확인은 그 pid 의 메뉴 「Tote Notes 종료」(0.1.0 은 「tote 종료」) 를 누른다.
@@ -105,6 +105,18 @@ stage 하지 않은 변경이 작업 트리에 남아 있으면 lefthook 의 pre
 pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈다. 문서만 고친 브랜치도 마찬가지다.
 
 - **Why:** 워크트리마다 `src-tauri/target` 이 따로라서, 워크트리의 첫 push 는 처음부터 빌드해 몇 분 걸린다. 멈춘 것이 아니다.
+
+## CI 는 로컬 훅이 돌지 않는 시험까지 돈다
+
+`.github/workflows/ci.yml` 이 `main` 으로의 push 와 pull request 마다 macOS 러너에서 포맷·린트·타입 검사·vitest·버전 확인·`cargo test`·e2e 를 차례로 돈다. 단계 목록의 정본은 그 워크플로 파일이다.
+
+- **Why:** pre-push 훅은 포맷·린트·타입 검사·vitest 까지만 돈다. `cargo test` 와 e2e 는 손으로 돌려야만 걸리고, 버전 네 곳이 같은지(`pnpm version:check`)는 릴리스 워크플로에서야 걸린다. CI 가 이 셋을 push·pull request 마다 돈다.
+- **How to apply:**
+  - 단계는 차례로 돌고, 앞 단계가 떨어지면 뒤 단계는 돌지 않는다. 포맷에서 떨어진 실행은 시험이 통과하는지 말해 주지 않는다.
+  - 같은 ref 에 새 커밋이 오면 앞선 실행은 취소된다. 취소된 실행은 실패가 아니다.
+  - e2e 가 떨어지면 `test-results/` 가 그 실행의 산출물(`e2e-test-results`)로 올라간다. 러너에서만 떨어지는 e2e 는 「부하에서만 실패하는 테스트는 시간 대신 완료 신호를 기다리게 고친다」 절의 순서로 본다.
+  - `src-tauri/tests` 의 시험 셋(`menu_key_equivalents`·`menu_keypad`·`traffic_lights_resize`)은 실제 AppKit 메뉴 막대와 창을 만든다. 로컬에서는 통과하는데 러너에서 이 셋만 떨어지면 코드보다 러너의 세션(창을 만들 수 있는가)을 먼저 본다.
+  - CI 는 비밀을 쓰지 않고 저장소를 읽기만 한다. 서명·공증·릴리스는 `release-macos.yml` 이 한다(`docs/guides/release-macos.md`).
 
 ## 파일을 되돌리면 post-checkout 훅이 돈다
 

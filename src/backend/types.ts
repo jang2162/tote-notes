@@ -382,7 +382,7 @@ export interface WorkspaceListItem {
   /** Its place in the set order, from 0, the hidden ones counted too, so not its ⌃ number.
    * `null` when `missing`. */
   order: number | null;
-  /** Left out of the switcher; 「워크스페이스 열기…」 (the 파일 menu's) still lists it. */
+  /** Left out of the switcher; the settings' 워크스페이스 section lists it and shows it again. */
   hidden: boolean;
   /** Its ID can be read, so the order file can name it. */
   orderable: boolean;
@@ -591,6 +591,10 @@ export interface Backend {
   windowFrame(): Promise<WindowFrame | null>;
   /** The 「파일 열기」 dialog; empty when cancelled. */
   pickFiles(): Promise<string[]>;
+  /** The window writes its tabs for flush round `id`: `unwritten` says what is only in memory
+   * until it answers, and is left out once all of it is written. A round that runs out of time
+   * on a window still writing asks first, as for a save that failed. */
+  flushWriting(id: number, unwritten?: string): Promise<void>;
   /** Answers flush round `id`; `blocked` says what could not be written (the quit asks first).
    * `false` when the round was settled without this answer — its timeout ran out — and the window
    * is not going: a page that let go of its panes for it takes them back. */

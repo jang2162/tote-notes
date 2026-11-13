@@ -68,7 +68,8 @@ pub enum PendingOpen {
     External {
         path: PathBuf,
     },
-    /// Why a `tote` request failed, for the status bar.
+    /// Words for the status bar: why a `tote` request failed, or what went wrong behind the
+    /// window (a backup, the watcher, a file of this device set aside at launch).
     Notice {
         message: String,
     },
@@ -179,6 +180,9 @@ struct Inner {
     /// The version of the update found last: every window shows its button, the ones registered
     /// later and the page a switch reloads too.
     update_found: Option<String>,
+    /// What went wrong while no window was there to say it (`AppCore::tell_next_window`): the next
+    /// window registered says it in its status bar.
+    waiting_notices: Vec<String>,
 }
 
 struct OpenWorkspace {
@@ -330,10 +334,16 @@ impl Inner {
         self.serials += 1;
         let serial = self.serials;
         // Its page takes these with its first `take_pending_opens`.
+        let notices = std::mem::take(&mut self.waiting_notices);
         let pending = self
             .update_button()
             .into_iter()
             .chain(self.waiting_offer.take().map(PendingOpen::Update))
+            .chain(
+                notices
+                    .into_iter()
+                    .map(|message| PendingOpen::Notice { message }),
+            )
             .collect();
         self.windows.insert(
             label.to_string(),
@@ -366,6 +376,19 @@ fn save_viewed_now(workspace: &Mutex<Workspace>) {
     }
 }
 
+/// What a window says when outside changes will not reach it (spec 「외부 변경」): its workspace
+/// could not be watched, or the watcher did not start at all.
+pub fn unwatched_notice(err: &dyn std::fmt::Display) -> String {
+    format!("외부 변경을 감시하지 못해 다른 앱에서 바꾼 내용이 반영되지 않습니다: {err}")
+}
+
+/// `what` happened to a file of this device, and the name the file was set aside under (next to
+/// where it was), so the person can take what it held from there.
+fn set_aside_notice(what: &str, aside: &Path) -> String {
+    let name = aside.file_name().unwrap_or_default().to_string_lossy();
+    format!("{what}(원래 파일: {name})")
+}
+
 /// `pin_legacy_root`, saved: the mark goes into `state.json` only once the settings it decided on
 /// are written, so a launch that could not write them tries again next time.
 fn keep_legacy_root(
@@ -393,9 +416,18 @@ impl AppCore {
     /// `bundled_dir`: the extensions folder inside the app bundle's resources.
     pub fn load(bundled_dir: PathBuf) -> Result<AppCore, String> {
         let paths = AppPaths::resolve().ok_or("could not find the app data folder")?;
-        let machine = Machine::load_or_create(&paths.machine_file(), device_name)
-            .map_err(|err| format!("machine.json: {err}"))?;
-        let mut settings = Settings::load(&paths.settings_file())
+        AppCore::load_at(paths, bundled_dir)
+    }
+
+    /// `load` with the data folder given. A `machine.json` or `settings.json` that did not parse
+    /// is set aside and started over, and the first window says so (`set_aside_notice`): the tabs
+    /// forgotten and the workspace root gone back to its default would otherwise have no cause
+    /// the person could find.
+    fn load_at(paths: AppPaths, bundled_dir: PathBuf) -> Result<AppCore, String> {
+        let (machine, machine_aside) =
+            Machine::load_or_create_with_aside(&paths.machine_file(), device_name)
+                .map_err(|err| format!("machine.json: {err}"))?;
+        let (mut settings, settings_aside) = Settings::load_with_aside(&paths.settings_file())
             .map_err(|err| format!("settings.json: {err}"))?;
         let mut launch =
             LaunchState::load(&paths.launch_file()).map_err(|err| format!("state.json: {err}"))?;
@@ -407,6 +439,23 @@ impl AppCore {
         );
         let core = AppCore::new(paths, machine, settings, launch, bundled_dir);
         core.extensions.remove_leftovers();
+        let asides = [
+            (
+                settings_aside,
+                "settings.json 을 읽지 못해 기본 설정으로 시작했습니다",
+            ),
+            (
+                machine_aside,
+                "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다",
+            ),
+        ];
+        for (aside, what) in asides {
+            if let Some(aside) = aside {
+                let message = set_aside_notice(what, &aside);
+                eprintln!("tote: {message}");
+                core.tell_next_window(message);
+            }
+        }
         Ok(core)
     }
 
@@ -453,6 +502,7 @@ impl AppCore {
                 held: HashMap::new(),
                 waiting_offer: None,
                 update_found: None,
+                waiting_notices: Vec::new(),
             }),
         }
     }
@@ -655,10 +705,13 @@ impl AppCore {
             inner.add_window(label, path, layout);
             watch
         };
-        // An unwatched workspace still works; it only misses outside changes until reopened.
+        // An unwatched workspace still works; it only misses outside changes until reopened. The
+        // window says so once its page is up: stderr is not seen in an app opened from Finder.
         if let (true, Some(watcher)) = (watch, self.watcher.get()) {
             if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(path), path) {
                 eprintln!("tote: cannot watch {} for changes: {err}", path.display());
+                let message = unwatched_notice(&err);
+                self.push_pending(label, PendingOpen::Notice { message });
             }
         }
         true
@@ -954,10 +1007,12 @@ impl AppCore {
             if let Some(key) = closed {
                 watcher.unwatch_workspace(&key);
             }
-            // An unwatched workspace still works; it only misses outside changes until reopened.
+            // As in `register_window`; the page the switch loads takes the notice.
             if fresh {
                 if let Err(err) = watcher.watch_workspace(&AppCore::workspace_key(to), to) {
                     eprintln!("tote: cannot watch {} for changes: {err}", to.display());
+                    let message = unwatched_notice(&err);
+                    self.push_pending(label, PendingOpen::Notice { message });
                 }
             }
         }
@@ -1108,8 +1163,9 @@ impl AppCore {
 
     /// `workspace` with its memos' viewed times on this device (`workspace::viewed`).
     fn with_viewed(&self, mut workspace: Workspace) -> Workspace {
-        let file = ViewedTimes::file(&self.paths.data_dir, workspace.id());
-        workspace.attach_viewed(ViewedTimes::load(file));
+        if let Some(file) = ViewedTimes::file_for(&self.paths.data_dir, workspace.id()) {
+            workspace.attach_viewed(ViewedTimes::load(file));
+        }
         workspace
     }
 
@@ -1373,6 +1429,12 @@ impl AppCore {
         }
     }
 
+    /// `message` goes to the status bar of the next window registered: for what goes wrong while
+    /// no window is there to say it — at launch, before the first one.
+    pub fn tell_next_window(&self, message: String) {
+        lock(&self.inner).waiting_notices.push(message);
+    }
+
     /// What the window should open now. Nothing while it switches (`in_switch`, `switching`): the
     /// page asking is the old one, and the reload would lose what it took.
     pub fn take_pending(&self, label: &str) -> Vec<PendingOpen> {
@@ -1549,6 +1611,12 @@ impl AppCore {
         lock(&self.inner).flush.ack(id, label, blocked)
     }
 
+    /// Window `label` writes its tabs for round `id`; `unwritten` says what is only in memory
+    /// until it answers (`FlushCoordinator::writing`).
+    pub fn flush_writing(&self, id: u64, label: &str, unwritten: Option<String>) {
+        lock(&self.inner).flush.writing(id, label, unwritten);
+    }
+
     /// Round `id` ran out of time. A window it ends as a switch or a close is marked going under
     /// the same lock: an answer coming before `lifecycle::finish` marks it would find the window
     /// staying and take its panes back, just before it reloads or goes (`lifecycle::ack`).
@@ -1689,7 +1757,14 @@ impl AppCore {
                 }
                 (workspace.root().to_path_buf(), workspace.id().to_string())
             };
-            let dir = BackupDir::new(&self.paths.backups_dir(), &id);
+            let dir = match BackupDir::for_workspace(&self.paths.backups_dir(), &id) {
+                Ok(dir) => dir,
+                // Not marked again: the ID will be no better next round.
+                Err(err) => {
+                    ticked.push((labels, Err(err)));
+                    continue;
+                }
+            };
             // Left by an app that died mid-snapshot; this thread is the only one making them.
             if let Err(err) = dir.remove_leftovers() {
                 eprintln!("tote: could not remove a half-made snapshot of {id}: {err}");
@@ -2524,6 +2599,106 @@ mod tests {
         core.closed(&w2);
         core.release(&w3);
         assert!(!core.is_open_path(&path));
+    }
+
+    /// The words of the notices among `opens`.
+    fn notices(opens: Vec<PendingOpen>) -> Vec<String> {
+        opens
+            .into_iter()
+            .filter_map(|open| match open {
+                PendingOpen::Notice { message } => Some(message),
+                _ => None,
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_broken_settings_or_machine_file_is_told_to_the_first_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
+        fs::create_dir_all(&paths.data_dir).unwrap();
+        fs::write(
+            paths.settings_file(),
+            "{ \"workspaceRoot\": \"/elsewhere\", ",
+        )
+        .unwrap();
+        fs::write(paths.machine_file(), "{ \"deviceId\": ").unwrap();
+        let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
+        // The root went back to the default and the device has a new ID: that is what is told.
+        assert_eq!(core.workspace_root(), paths.default_workspace_root);
+        let a = open(&core, "가");
+        let told = notices(core.take_pending(&a));
+        let aside = |file: &str| {
+            let name = fs::read_dir(&paths.data_dir)
+                .unwrap()
+                .map(|entry| entry.unwrap().file_name().into_string().unwrap())
+                .find(|name| name.starts_with(&format!("{file}.corrupt-")));
+            name.unwrap_or_else(|| panic!("{file} was not set aside"))
+        };
+        assert_eq!(
+            told,
+            vec![
+                format!(
+                    "settings.json 을 읽지 못해 기본 설정으로 시작했습니다(원래 파일: {})",
+                    aside("settings.json")
+                ),
+                format!(
+                    "machine.json 을 읽지 못해 이 기기의 탭 배치를 새로 시작했습니다(원래 파일: {})",
+                    aside("machine.json")
+                ),
+            ]
+        );
+        // Once, in one window.
+        let b = open(&core, "나");
+        assert!(notices(core.take_pending(&b)).is_empty());
+
+        // Files that read, or are not there yet, say nothing.
+        let core = AppCore::load_at(paths.clone(), dir.path().join("bundled")).unwrap();
+        let a = open(&core, "다");
+        assert!(notices(core.take_pending(&a)).is_empty());
+        let fresh = AppPaths::from_parts(Some(dir.path().join("새")), None, None, false).unwrap();
+        let core = AppCore::load_at(fresh, dir.path().join("bundled")).unwrap();
+        let a = open(&core, "가");
+        assert!(notices(core.take_pending(&a)).is_empty());
+    }
+
+    #[test]
+    fn a_workspace_that_cannot_be_watched_says_so_in_its_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        core.start_watching(|_, _| {}).unwrap();
+        let unwatched = |told: Vec<String>| {
+            assert_eq!(told.len(), 1, "{told:?}");
+            assert!(
+                told[0].starts_with(
+                    "외부 변경을 감시하지 못해 다른 앱에서 바꾼 내용이 반영되지 않습니다: "
+                ),
+                "{told:?}"
+            );
+        };
+        // A folder that goes between being opened and being watched: the watch fails.
+        let gone = |name: &str| {
+            let workspace = Workspace::create(&core.workspace_root(), name).unwrap();
+            let path = workspace.root().to_path_buf();
+            fs::remove_dir_all(&path).unwrap();
+            (path, workspace)
+        };
+        let (path, workspace) = gone("가");
+        let a = core.next_label();
+        assert!(core.register_window(&a, &path, Some(workspace), None));
+        unwatched(notices(core.take_pending(&a)));
+        // Once: the workspace's next window does not watch it again.
+        let again = attach(&core, &path);
+        assert!(notices(core.take_pending(&again)).is_empty());
+
+        // A workspace that is watched says nothing, and a switch to one that is not says it in
+        // the page the switch loads.
+        let b = open(&core, "나");
+        assert!(notices(core.take_pending(&b)).is_empty());
+        let (to, opened) = gone("다");
+        core.switch_window(&b, &to, opened).unwrap();
+        core.page_started(&b);
+        unwatched(notices(core.take_pending(&b)));
     }
 
     #[test]
@@ -3959,6 +4134,58 @@ mod tests {
         assert!(core.window_is_leaving(&a));
         core.close_failed(&a);
         assert!(!core.window_is_leaving(&a));
+    }
+
+    #[test]
+    fn a_round_that_times_out_on_a_window_still_writing_asks_and_keeps_the_window() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = open(&core, "가");
+        let na = closed_workspace(&core, "나", &[]);
+        let unwritten = "저장하지 못한 메모 1개".to_string();
+        let goals = [
+            FlushGoal::CloseWindow(a.clone()),
+            FlushGoal::SwitchWorkspace {
+                label: a.clone(),
+                to: na,
+            },
+            FlushGoal::Quit,
+            FlushGoal::Restart,
+        ];
+        for goal in goals {
+            let round = match goal {
+                FlushGoal::Restart => core.begin_restart().unwrap(),
+                _ => core.begin_flush(goal.clone()),
+            };
+            let Begin::Started { id, .. } = round else {
+                panic!("expected a round for {goal:?}")
+            };
+            // The page said what it holds before it wrote, and the write never ended.
+            core.flush_writing(id, &a, Some(unwritten.clone()));
+            assert_eq!(
+                core.expire_flush(id),
+                Ack::Blocked {
+                    goal: goal.clone(),
+                    reasons: vec![unwritten.clone()],
+                }
+            );
+            // Not going until the question is answered: should the write end after 「취소」, the
+            // page's late answer finds the window staying and takes its panes back.
+            assert!(!core.window_is_leaving(&a), "{goal:?}");
+            assert!(!core.is_quitting(), "{goal:?}");
+            core.cancel_flush(id);
+            assert_eq!(core.ack_flush(id, &a, None), Ack::Stale, "{goal:?}");
+        }
+
+        // All of it written by the timeout: the round ends as for a window that said nothing.
+        let close = FlushGoal::CloseWindow(a.clone());
+        let Begin::Started { id, .. } = core.begin_flush(close.clone()) else {
+            panic!("expected a round")
+        };
+        core.flush_writing(id, &a, Some(unwritten));
+        core.flush_writing(id, &a, None);
+        assert_eq!(core.expire_flush(id), Ack::Done(close));
+        assert!(core.window_is_leaving(&a));
     }
 
     #[test]

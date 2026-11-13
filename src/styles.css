@@ -1268,6 +1268,11 @@ button.danger {
   box-shadow: 0 10px 30px rgb(0 0 0 / 20%);
 }
 
+/* The dialog holds the keys itself when none of its controls can: no ring round the whole box. */
+.modal:focus {
+  outline: none;
+}
+
 .modal p {
   margin: 0 0 8px;
 }

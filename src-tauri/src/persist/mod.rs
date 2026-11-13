@@ -188,17 +188,32 @@ fn read_text_from(mut reader: impl Read, size: u64) -> io::Result<Vec<u8>> {
 /// to `<name>.corrupt-<unix ms>` and also reads as `Ok(None)`: the caller starts over without
 /// destroying what was there (spec 「오류 처리」).
 pub fn read_json<T: DeserializeOwned>(path: &Path) -> io::Result<Option<T>> {
+    Ok(match read_json_file(path)? {
+        JsonFile::Read(value) => Some(value),
+        JsonFile::Missing | JsonFile::SetAside(_) => None,
+    })
+}
+
+/// What `read_json_file` found at a path.
+#[derive(Debug, PartialEq)]
+pub enum JsonFile<T> {
+    Missing,
+    Read(T),
+    /// The file did not parse as `T` and was moved here.
+    SetAside(PathBuf),
+}
+
+/// `read_json` for a caller that tells the person: starting over from a file set aside loses what
+/// the file held, which a file that was never there does not.
+pub fn read_json_file<T: DeserializeOwned>(path: &Path) -> io::Result<JsonFile<T>> {
     let bytes = match fs::read(path) {
         Ok(bytes) => bytes,
-        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(JsonFile::Missing),
         Err(err) => return Err(err),
     };
     match serde_json::from_slice(&bytes) {
-        Ok(value) => Ok(Some(value)),
-        Err(_) => {
-            set_aside(path)?;
-            Ok(None)
-        }
+        Ok(value) => Ok(JsonFile::Read(value)),
+        Err(_) => set_aside(path).map(JsonFile::SetAside),
     }
 }
 
@@ -462,5 +477,28 @@ mod tests {
             fs::read_to_string(dir.path().join(&names[0])).unwrap(),
             "{ broken"
         );
+    }
+
+    #[test]
+    fn a_file_set_aside_is_told_from_a_missing_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("settings.json");
+        assert_eq!(read_json_file::<Sample>(&path).unwrap(), JsonFile::Missing);
+        fs::write(&path, r#"{"name": "메모"}"#).unwrap();
+        assert_eq!(
+            read_json_file::<Sample>(&path).unwrap(),
+            JsonFile::Read(Sample {
+                name: "메모".into()
+            })
+        );
+        fs::write(&path, "{ broken").unwrap();
+        let JsonFile::SetAside(aside) = read_json_file::<Sample>(&path).unwrap() else {
+            panic!("a broken file is set aside");
+        };
+        assert_eq!(
+            names(dir.path()),
+            vec![aside.file_name().unwrap().to_str().unwrap()]
+        );
+        assert_eq!(fs::read_to_string(&aside).unwrap(), "{ broken");
     }
 }

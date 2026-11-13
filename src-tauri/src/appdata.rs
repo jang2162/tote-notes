@@ -8,7 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use crate::persist::{read_json, write_json};
+use crate::persist::{read_json, read_json_file, write_json, JsonFile};
 use crate::shortcuts;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -112,16 +112,27 @@ impl Machine {
         path: &Path,
         device_name: impl FnOnce() -> String,
     ) -> io::Result<Machine> {
-        if let Some(machine) = read_json::<Machine>(path)? {
-            return Ok(machine);
-        }
+        Machine::load_or_create_with_aside(path, device_name).map(|(machine, _)| machine)
+    }
+
+    /// `load_or_create`, with where a file that did not parse went (`read_json_file`): the ID made
+    /// in its place is a new one, so the caller has the tabs forgotten to tell the person about.
+    pub fn load_or_create_with_aside(
+        path: &Path,
+        device_name: impl FnOnce() -> String,
+    ) -> io::Result<(Machine, Option<PathBuf>)> {
+        let aside = match read_json_file::<Machine>(path)? {
+            JsonFile::Read(machine) => return Ok((machine, None)),
+            JsonFile::Missing => None,
+            JsonFile::SetAside(aside) => Some(aside),
+        };
         let machine = Machine {
             version: 1,
             device_id: uuid::Uuid::new_v4().to_string(),
             device_name: device_name(),
         };
         write_json(path, &machine)?;
-        Ok(machine)
+        Ok((machine, aside))
     }
 }
 
@@ -143,7 +154,8 @@ fn command_output(program: &str, args: &[&str]) -> Option<String> {
     (out.status.success() && !text.is_empty()).then_some(text)
 }
 
-/// `settings.json`. Unknown fields are ignored on read, so a newer build's file still opens.
+/// `settings.json`. A newer build's file still opens, and what it wrote stays in the file through a
+/// save from this one (`Unknown`).
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct Settings {
@@ -168,7 +180,15 @@ pub struct Settings {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub shortcuts: BTreeMap<String, Option<String>>,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
+
+/// The fields of a settings object this build does not know — a newer build's — held as written
+/// and written again, the way `ThemeSettings::light` is: a save here would otherwise take them from
+/// the file. Each object keeps its own, so `editor.ligatures` survives as `sync` does.
+/// `ExtensionSettings` has none: what a newer build adds under `extensions` goes with a save.
+pub type Unknown = BTreeMap<String, serde_json::Value>;
 
 /// A field whose value has the wrong shape (a hand-edit typo) falls back to its default instead of
 /// failing the whole file, which `read_json` would set aside — taking `workspaceRoot` with it.
@@ -213,6 +233,8 @@ pub struct ThemeSettings {
     pub light: Option<serde_json::Value>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dark: Option<serde_json::Value>,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 /// Whether the app follows the OS appearance or keeps one (`ThemeMode` in src/backend/types.ts).
@@ -248,6 +270,8 @@ pub struct EditorSettings {
     /// A CSS font family; empty is the bundled default.
     #[serde(deserialize_with = "lenient")]
     pub font_family: String,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 /// The update check at launch (src/app/update.rs); off, tote sends nothing to github.com unless
@@ -257,11 +281,16 @@ pub struct EditorSettings {
 pub struct UpdateSettings {
     #[serde(deserialize_with = "lenient_on")]
     pub auto_check: bool,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 impl Default for UpdateSettings {
     fn default() -> Self {
-        UpdateSettings { auto_check: true }
+        UpdateSettings {
+            auto_check: true,
+            unknown: Unknown::new(),
+        }
     }
 }
 
@@ -274,6 +303,8 @@ pub struct SidebarSettings {
     pub preview: bool,
     #[serde(deserialize_with = "lenient")]
     pub sort: SortOrder,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 impl Default for SidebarSettings {
@@ -281,6 +312,7 @@ impl Default for SidebarSettings {
         SidebarSettings {
             preview: true,
             sort: SortOrder::default(),
+            unknown: Unknown::new(),
         }
     }
 }
@@ -293,6 +325,8 @@ pub struct TrashSettings {
     /// `null` when off, since a missing value is the default.
     #[serde(deserialize_with = "retention_days")]
     pub retention_days: Option<u32>,
+    #[serde(flatten)]
+    pub unknown: Unknown,
 }
 
 const DEFAULT_RETENTION_DAYS: u32 = 60;
@@ -302,6 +336,7 @@ impl Default for TrashSettings {
     fn default() -> Self {
         TrashSettings {
             retention_days: Some(DEFAULT_RETENTION_DAYS),
+            unknown: Unknown::new(),
         }
     }
 }
@@ -356,6 +391,7 @@ impl Default for EditorSettings {
             line_numbers: true,
             font_size: DEFAULT_FONT_SIZE,
             font_family: String::new(),
+            unknown: Unknown::new(),
         }
     }
 }
@@ -504,7 +540,17 @@ impl SettingsPatch {
 
 impl Settings {
     pub fn load(path: &Path) -> io::Result<Settings> {
-        Ok(read_json(path)?.unwrap_or_default())
+        Settings::load_with_aside(path).map(|(settings, _)| settings)
+    }
+
+    /// `load`, with where a file that did not parse went (`read_json_file`): the defaults in its
+    /// place move the workspace root, so the caller has that to tell the person about.
+    pub fn load_with_aside(path: &Path) -> io::Result<(Settings, Option<PathBuf>)> {
+        Ok(match read_json_file(path)? {
+            JsonFile::Read(settings) => (settings, None),
+            JsonFile::Missing => (Settings::default(), None),
+            JsonFile::SetAside(aside) => (Settings::default(), Some(aside)),
+        })
     }
 
     pub fn save(&self, path: &Path) -> io::Result<()> {
@@ -1022,6 +1068,68 @@ mod tests {
     }
 
     #[test]
+    fn fields_a_newer_build_wrote_survive_a_save() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        let written = serde_json::json!({
+            "workspaceRoot": "/x",
+            "sync": {"account": "me", "folders": [1, 2]},
+            "telemetry": false,
+            "theme": {"mode": "dark", "accent": "teal"},
+            "editor": {"fontSize": 16, "ligatures": true},
+            "updates": {"autoCheck": false, "channel": "beta"},
+            "sidebar": {"preview": false, "width": 280},
+            "trash": {"retentionDays": 30, "confirm": false},
+        });
+        fs::write(&file, written.to_string()).unwrap();
+        let mut settings = Settings::load(&file).unwrap();
+        // What this build knows reads as before.
+        assert_eq!(settings.workspace_root, Some("/x".into()));
+        assert_eq!(settings.theme.mode, ThemeMode::Dark);
+        assert_eq!(settings.editor.font_size, 16);
+        assert!(!settings.updates.auto_check);
+        assert!(!settings.sidebar.preview);
+        assert_eq!(settings.trash.retention_days, Some(30));
+        // A save from the settings screen: one field changes, the unknown ones stay as written.
+        let patch: SettingsPatch = serde_json::from_str(r#"{"editorFontSize": 18}"#).unwrap();
+        patch.apply(&mut settings).unwrap();
+        settings.save(&file).unwrap();
+        let saved: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(&file).unwrap()).unwrap();
+        assert_eq!(saved["sync"], written["sync"]);
+        assert_eq!(saved["telemetry"], written["telemetry"]);
+        assert_eq!(saved["theme"]["accent"], "teal");
+        assert_eq!(saved["editor"]["ligatures"], true);
+        assert_eq!(saved["editor"]["fontSize"], 18);
+        assert_eq!(saved["updates"]["channel"], "beta");
+        assert_eq!(saved["sidebar"]["width"], 280);
+        assert_eq!(saved["trash"]["confirm"], false);
+        // And through another load and save.
+        Settings::load(&file).unwrap().save(&file).unwrap();
+        assert_eq!(
+            serde_json::from_str::<serde_json::Value>(&fs::read_to_string(&file).unwrap()).unwrap(),
+            saved
+        );
+        // A known field cleared does not come back as an unknown one.
+        let mut settings = Settings::load(&file).unwrap();
+        settings.workspace_root = None;
+        settings.save(&file).unwrap();
+        assert_eq!(Settings::load(&file).unwrap().workspace_root, None);
+        // Settings with nothing unknown write nothing extra.
+        assert_eq!(
+            serde_json::to_value(Settings::default()).unwrap(),
+            serde_json::json!({
+                "theme": {"mode": "auto"},
+                "extensions": {"disabled": [], "precedence": "user"},
+                "editor": {"lineNumbers": true, "fontSize": 14, "fontFamily": ""},
+                "updates": {"autoCheck": true},
+                "sidebar": {"preview": true, "sort": "modified-desc"},
+                "trash": {"retentionDays": 60},
+            })
+        );
+    }
+
+    #[test]
     fn settings_round_trip_theme_and_extension_fields() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("settings.json");
@@ -1031,6 +1139,7 @@ mod tests {
                 mode: ThemeMode::Light,
                 light: Some(serde_json::json!({"extension": "tote.themes", "label": "Light+"})),
                 dark: None,
+                unknown: Unknown::new(),
             },
             extensions: ExtensionSettings {
                 disabled: vec!["someone.ext".into()],
@@ -1040,16 +1149,22 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
+                unknown: Unknown::new(),
             },
-            updates: UpdateSettings { auto_check: false },
+            updates: UpdateSettings {
+                auto_check: false,
+                unknown: Unknown::new(),
+            },
             sidebar: SidebarSettings::default(),
             trash: TrashSettings {
                 retention_days: Some(90),
+                unknown: Unknown::new(),
             },
             shortcuts: BTreeMap::from([
                 ("rename".into(), Some("CmdOrCtrl+K".into())),
                 ("new-memo".into(), None),
             ]),
+            unknown: Unknown::new(),
         };
         settings.save(&file).unwrap();
         let text = fs::read_to_string(&file).unwrap();
@@ -1074,6 +1189,7 @@ mod tests {
             line_numbers: true,
             font_size: 14,
             font_family: String::new(),
+            unknown: Unknown::new(),
         };
         let settings = serde_json::from_str::<Settings>("{}").unwrap();
         assert_eq!(settings.editor, expected);
@@ -1121,6 +1237,7 @@ mod tests {
         let off = Settings {
             trash: TrashSettings {
                 retention_days: None,
+                unknown: Unknown::new(),
             },
             ..Settings::default()
         };
@@ -1515,6 +1632,7 @@ mod tests {
                 mode: ThemeMode::Dark,
                 light: None,
                 dark: Some(night.clone()),
+                unknown: Unknown::new(),
             },
             extensions: ExtensionSettings {
                 disabled: vec!["e".into()],
@@ -1524,13 +1642,19 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
+                unknown: Unknown::new(),
             },
-            updates: UpdateSettings { auto_check: false },
+            updates: UpdateSettings {
+                auto_check: false,
+                unknown: Unknown::new(),
+            },
             sidebar: SidebarSettings::default(),
             trash: TrashSettings {
                 retention_days: Some(90),
+                unknown: Unknown::new(),
             },
             shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
+            unknown: Unknown::new(),
         };
         SettingsPatch {
             theme_mode: Some(ThemeMode::Light),
@@ -1549,6 +1673,7 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
+                unknown: Unknown::new(),
             }
         );
         assert_eq!(settings.shortcuts.len(), 1);

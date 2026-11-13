@@ -4,7 +4,7 @@
 //! matches at a time.
 
 use std::fs::File;
-use std::io::{self, BufRead, BufReader, Read};
+use std::io::{self, Read};
 use std::path::Path;
 
 use serde::{Deserialize, Serialize};
@@ -114,7 +114,8 @@ pub enum SearchError {
 }
 
 /// Matches from `from_line` on, at most `limit`, line by line through the file. `cancelled` is
-/// asked every CANCEL_CHECK_LINES lines; a newer search from the same window answers true.
+/// asked every CANCEL_CHECK_LINES lines, and at every chunk read of a line longer than one; a
+/// newer search from the same window answers true.
 pub fn search(
     path: &Path,
     query: &TextQuery,
@@ -122,56 +123,178 @@ pub fn search(
     limit: usize,
     cancelled: &dyn Fn() -> bool,
 ) -> Result<TextSearch, SearchError> {
-    let pattern = if query.regex {
-        query.query.clone()
-    } else {
-        regex::escape(&query.query)
+    let matcher = Matcher::new(query)?;
+    let mut buf = Vec::new();
+    let from = Page { from_line, limit };
+    Ok(search_reader(
+        File::open(path)?,
+        &matcher,
+        from,
+        cancelled,
+        READ_CHUNK,
+        &mut buf,
+    )?)
+}
+
+struct Matcher {
+    re: regex::bytes::Regex,
+    /// An empty query matches nothing; the file is still read to its end.
+    idle: bool,
+    /// The most bytes one match takes, for a query that is plain text: a match there depends on
+    /// nothing outside itself, so a line longer than the buffer is searched a window at a time
+    /// (`search_window`). `None` for a regex: `^`, `$`, `\b` and `.*` look at, or run through, the
+    /// whole line, so the whole line is held as before, however long.
+    longest: Option<usize>,
+}
+
+impl Matcher {
+    fn new(query: &TextQuery) -> Result<Matcher, SearchError> {
+        let pattern = if query.regex {
+            query.query.clone()
+        } else {
+            regex::escape(&query.query)
+        };
+        let re = regex::bytes::RegexBuilder::new(&pattern)
+            .case_insensitive(!query.case_sensitive)
+            .build()
+            .map_err(|err| SearchError::BadPattern(err.to_string()))?;
+        // Without case a character may match one of another length (`k` the Kelvin sign, three
+        // bytes), never more than UTF-8's four.
+        let longest = match (query.regex, query.case_sensitive) {
+            (true, _) => None,
+            (false, true) => Some(query.query.len()),
+            (false, false) => Some(query.query.chars().count() * 4),
+        };
+        Ok(Matcher {
+            re,
+            idle: query.query.is_empty(),
+            longest,
+        })
+    }
+}
+
+struct Page {
+    from_line: u64,
+    limit: usize,
+}
+
+/// `search` over `reader`, read `chunk` bytes at a time into `buf`. What `buf` holds is the part
+/// of the line being read that is not searched yet: all of it for a line that fits or for a
+/// regex, and for plain text in a longer line only its end (`search_window`) — so a file that is
+/// one line of gigabytes is searched in about two chunks of memory.
+fn search_reader(
+    mut reader: impl Read,
+    matcher: &Matcher,
+    page: Page,
+    cancelled: &dyn Fn() -> bool,
+    chunk: usize,
+    buf: &mut Vec<u8>,
+) -> io::Result<TextSearch> {
+    let answer = |matches, done, cancelled| TextSearch {
+        matches,
+        done,
+        cancelled,
     };
-    let re = regex::bytes::RegexBuilder::new(&pattern)
-        .case_insensitive(!query.case_sensitive)
-        .build()
-        .map_err(|err| SearchError::BadPattern(err.to_string()))?;
-    let mut reader = BufReader::with_capacity(READ_CHUNK, File::open(path)?);
-    let mut line_buf = Vec::new();
-    let mut line: u64 = 0;
     let mut matches = Vec::new();
+    let mut line: u64 = 0;
+    // How many bytes of the line being read were searched and dropped from `buf`.
+    let mut dropped: u64 = 0;
+    buf.clear();
     loop {
-        line_buf.clear();
-        let n = reader.read_until(b'\n', &mut line_buf)?;
-        if n == 0 {
-            return Ok(TextSearch {
-                matches,
-                done: true,
-                cancelled: false,
-            });
-        }
-        if line >= from_line && !query.query.is_empty() {
-            let text = line_buf.strip_suffix(b"\n").unwrap_or(&line_buf);
-            // A CRLF line matches as the viewer shows it, without the \r (the fake does the same).
-            let text = text.strip_suffix(b"\r").unwrap_or(text);
-            for found in re.find_iter(text) {
-                matches.push(TextMatch {
-                    line,
-                    column: found.start() as u64,
-                });
-                if matches.len() >= limit {
-                    return Ok(TextSearch {
-                        matches,
-                        done: false,
-                        cancelled: false,
+        // No `\n` among the bytes carried over: they were looked through when they were read.
+        let carried = buf.len();
+        // `read_to_end` stops short of the chunk only where the file ends.
+        let at_end = (&mut reader).take(chunk as u64).read_to_end(buf)? < chunk;
+        let mut start = 0;
+        let mut look = carried;
+        loop {
+            let end = match memchr::memchr(b'\n', &buf[look..]) {
+                Some(i) => look + i,
+                // The last line has no `\n`; nothing after the last `\n` is no line.
+                None if at_end && start < buf.len() => buf.len(),
+                None => break,
+            };
+            if line >= page.from_line && !matcher.idle {
+                // A CRLF line matches as the viewer shows it, without the \r (the fake does the same).
+                let text = &buf[start..end];
+                let text = text.strip_suffix(b"\r").unwrap_or(text);
+                for found in matcher.re.find_iter(text) {
+                    matches.push(TextMatch {
+                        line,
+                        column: dropped + found.start() as u64,
                     });
+                    if matches.len() >= page.limit {
+                        return Ok(answer(matches, false, false));
+                    }
                 }
             }
+            line += 1;
+            dropped = 0;
+            start = (end + 1).min(buf.len());
+            look = start;
+            if line.is_multiple_of(CANCEL_CHECK_LINES) && cancelled() {
+                return Ok(answer(matches, false, true));
+            }
         }
-        line += 1;
-        if line.is_multiple_of(CANCEL_CHECK_LINES) && cancelled() {
-            return Ok(TextSearch {
-                matches,
-                done: false,
-                cancelled: true,
-            });
+        if at_end {
+            return Ok(answer(matches, true, false));
         }
+        // From here `buf[start..]` is the line being read, its end not seen yet. With no line
+        // ended in a whole chunk it is a long one, and the per-line check would not come.
+        if start == 0 && cancelled() {
+            return Ok(answer(matches, false, true));
+        }
+        if line < page.from_line || matcher.idle {
+            // Not searched: only its `\n` is looked for.
+            start = buf.len();
+        } else if let Some(longest) = matcher.longest {
+            let hold = longest.max(1);
+            if buf.len() - start >= chunk + hold {
+                let resume = search_window(&buf[start..], matcher, hold, |column| {
+                    matches.push(TextMatch {
+                        line,
+                        column: dropped + column,
+                    });
+                    matches.len() < page.limit
+                });
+                let Some(resume) = resume else {
+                    return Ok(answer(matches, false, false));
+                };
+                dropped += resume as u64;
+                start += resume;
+            }
+        }
+        buf.drain(..start);
     }
+}
+
+/// Searches `window`, the start of what is left of a line whose end is not read yet, for the plain
+/// text of `matcher`, and returns where the search goes on from once more of the line is read;
+/// `None` when `found` — given each match's offset in `window` — says to stop.
+///
+/// Only matches that start more than `hold` bytes before the window's end are taken. Such a match
+/// lies whole inside the window, short of its last byte (which may be the `\r` of a CRLF the
+/// viewer does not show), so the bytes still to come cannot change it; a later one may run past
+/// the end and is left for the next window, which starts no later than it does.
+fn search_window(
+    window: &[u8],
+    matcher: &Matcher,
+    hold: usize,
+    mut found: impl FnMut(u64) -> bool,
+) -> Option<usize> {
+    let safe = window.len() - hold;
+    let mut resume = safe;
+    for each in matcher.re.find_iter(window) {
+        if each.start() >= safe {
+            break;
+        }
+        if !found(each.start() as u64) {
+            return None;
+        }
+        // Matches do not overlap: the next one starts at this one's end or later.
+        resume = safe.max(each.end());
+    }
+    Some(resume)
 }
 
 #[cfg(test)]
@@ -348,6 +471,181 @@ mod tests {
         assert_eq!(at(&regex), vec![(1000, 0), (10_000, 0)]);
         let literal = search(&path, &q("^1000+ ", false), 0, 1000, &|| false).unwrap();
         assert!(literal.matches.is_empty());
+    }
+
+    fn query(text: &str, case_sensitive: bool, regex: bool) -> TextQuery {
+        TextQuery {
+            query: text.into(),
+            case_sensitive,
+            regex,
+        }
+    }
+
+    /// The search a whole line at a time, each line in memory: what `search_reader` must answer
+    /// whatever its chunk.
+    fn by_whole_lines(text: &[u8], matcher: &Matcher, page: &Page) -> TextSearch {
+        let mut matches = Vec::new();
+        let mut rest = text;
+        let mut line = 0;
+        while !rest.is_empty() {
+            let end = memchr::memchr(b'\n', rest);
+            let this = &rest[..end.unwrap_or(rest.len())];
+            rest = end.map_or(&[][..], |end| &rest[end + 1..]);
+            if line >= page.from_line && !matcher.idle {
+                for found in matcher
+                    .re
+                    .find_iter(this.strip_suffix(b"\r").unwrap_or(this))
+                {
+                    matches.push(TextMatch {
+                        line,
+                        column: found.start() as u64,
+                    });
+                    if matches.len() >= page.limit {
+                        return TextSearch {
+                            matches,
+                            done: false,
+                            cancelled: false,
+                        };
+                    }
+                }
+            }
+            line += 1;
+        }
+        TextSearch {
+            matches,
+            done: true,
+            cancelled: false,
+        }
+    }
+
+    /// `text` searched in chunks of every size from one byte up must answer as `by_whole_lines`.
+    fn same_in_every_chunk(text: &[u8], q: &TextQuery, from_line: u64, limit: usize) {
+        let matcher = Matcher::new(q).unwrap();
+        let expected = by_whole_lines(text, &matcher, &Page { from_line, limit });
+        for chunk in 1..=text.len() + 1 {
+            let mut buf = Vec::new();
+            let page = Page { from_line, limit };
+            let found = search_reader(text, &matcher, page, &|| false, chunk, &mut buf).unwrap();
+            assert_eq!(
+                found,
+                expected,
+                "chunk {chunk}, {q:?} from line {from_line} limit {limit} in {:?}",
+                String::from_utf8_lossy(text)
+            );
+        }
+    }
+
+    #[test]
+    fn a_search_read_in_chunks_answers_as_one_read_a_line_at_a_time() {
+        let texts: [&str; 10] = [
+            "",
+            "\n",
+            "needle",
+            "a needle in a line much longer than any chunk here, then a NEEDLE and a needle\n",
+            // Matches that overlap: `aba` in `abababa` is at 0 and 4, wherever the chunks fall.
+            "abababa\nxx aba\r\nABA abaaba",
+            "abababababababababababababababababababababababababababababababa\r",
+            "\u{212a}k\u{212a}\u{212a}kkK\u{212a}\u{212a}k\u{212a}kk\u{212a}\u{212a}\u{212a}kK\u{212a}k\u{212a}\u{212a}\r\n",
+            // A CR ends a line only before its LF or at the end of the file.
+            "x\r\ry\r\r\nz\r",
+            // The Kelvin sign and the long s: three and two bytes that match `k` and `s`.
+            "kK\u{212a}k \u{212a}\u{212a}\nso \u{17f}o \u{17f}\u{17f}s\n",
+            "한글 메모와 한글\n\n한글\r\n",
+        ];
+        let queries = [
+            query("needle", false, false),
+            query("needle", true, false),
+            query("aba", false, false),
+            query("aba", true, false),
+            query("kk", false, false),
+            query("\r", true, false),
+            query("k", false, false),
+            query("ss", false, false),
+            query("한글", true, false),
+            query("a", true, false),
+            query("", false, false),
+            // A regex sees its whole line whatever the chunk.
+            query("^a.*needle$", false, true),
+            query(r"\bneedle\b|o$", false, true),
+        ];
+        for text in texts {
+            for q in &queries {
+                same_in_every_chunk(text.as_bytes(), q, 0, usize::MAX);
+                same_in_every_chunk(text.as_bytes(), q, 1, usize::MAX);
+                same_in_every_chunk(text.as_bytes(), q, 0, 2);
+            }
+        }
+        // Every text of a few letters, breaks and wide characters, by a fixed sequence.
+        let pieces = ["a", "b", "ab", "\n", "\r", "\r\n", "K", "\u{212a}", "k"];
+        let mut seed: u32 = 1;
+        for _ in 0..300 {
+            let mut text = String::new();
+            for _ in 0..12 {
+                seed = seed.wrapping_mul(1_103_515_245).wrapping_add(12_345);
+                text.push_str(pieces[(seed >> 16) as usize % pieces.len()]);
+            }
+            for q in &queries[2..7] {
+                same_in_every_chunk(text.as_bytes(), q, 0, usize::MAX);
+            }
+        }
+    }
+
+    #[test]
+    fn plain_text_in_one_huge_line_is_found_without_holding_the_line() {
+        // One line of sixteen chunks, a match across the end of a chunk and one near the end.
+        let mut text = vec![b'a'; READ_CHUNK * 16];
+        let across = READ_CHUNK * 5 - 3;
+        let late = READ_CHUNK * 15 + 7;
+        for at in [across, late] {
+            text[at..at + 6].copy_from_slice(b"Needle");
+        }
+        text.extend_from_slice(b"\r\nneedle after\n");
+        let found = |q: &TextQuery, buf: &mut Vec<u8>| {
+            let matcher = Matcher::new(q).unwrap();
+            let page = Page {
+                from_line: 0,
+                limit: 10,
+            };
+            let found =
+                search_reader(&text[..], &matcher, page, &|| false, READ_CHUNK, buf).unwrap();
+            assert!(found.done);
+            found
+                .matches
+                .iter()
+                .map(|m| (m.line, m.column))
+                .collect::<Vec<_>>()
+        };
+        let expected = vec![(0, across as u64), (0, late as u64), (1, 0)];
+        let mut buf = Vec::new();
+        assert_eq!(found(&query("needle", false, false), &mut buf), expected);
+        assert!(
+            buf.capacity() <= READ_CHUNK * 4,
+            "held {} bytes of a {} byte line",
+            buf.capacity(),
+            text.len()
+        );
+        // A regex needs the whole line, and still gets it.
+        let mut buf = Vec::new();
+        assert_eq!(found(&query("needle", false, true), &mut buf), expected);
+        assert!(buf.capacity() >= READ_CHUNK * 16);
+    }
+
+    #[test]
+    fn a_search_inside_one_long_line_can_be_cancelled() {
+        // One line of several read chunks: no line ever ends for the per-line check to run at.
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("one-line.json");
+        fs::write(&path, vec![b'a'; READ_CHUNK * 3 + 17]).unwrap();
+        let q = TextQuery {
+            query: "needle".into(),
+            case_sensitive: true,
+            regex: false,
+        };
+        let result = search(&path, &q, 0, 10, &|| true).unwrap();
+        assert!(result.cancelled && !result.done);
+        let regex = TextQuery { regex: true, ..q };
+        let result = search(&path, &regex, 0, 10, &|| true).unwrap();
+        assert!(result.cancelled && !result.done);
     }
 
     #[test]

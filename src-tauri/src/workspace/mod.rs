@@ -2,6 +2,7 @@
 //! directly inside it, known by ID through `.tote/index.json` and never by path: automatic titles
 //! rename files, and sync must still recognise a renamed file as the same memo.
 
+pub mod id;
 pub mod index;
 pub mod memo;
 pub mod names;
@@ -134,10 +135,12 @@ impl Workspace {
         if !file.is_file() {
             return Err(WorkspaceError::NotAWorkspace(path.to_path_buf()));
         }
-        let meta = match read_json::<WorkspaceFile>(&file)? {
+        let meta = match read_json::<WorkspaceFile>(&file)?.filter(|meta| id::is_id(&meta.id)) {
             Some(meta) => meta,
-            // Unreadable (read_json set it aside): a new ID keeps the memos usable; only state
-            // keyed by the ID, such as this workspace's backups, starts over.
+            // Unreadable (read_json set it aside), or its ID is not one tote makes — folders and
+            // files are named after the ID, so anything else could name one outside tote's own
+            // (`id`). A new ID keeps the memos usable; only state keyed by the ID, such as this
+            // workspace's backups, starts over.
             None => {
                 let meta = WorkspaceFile {
                     version: 1,
@@ -167,13 +170,15 @@ impl Workspace {
         })
     }
 
-    /// The ID of the workspace at `path` without opening it. Unlike `open`, an unreadable
-    /// `workspace.json` is left where it is and gives `None`: listing must not change anything.
+    /// The ID of the workspace at `path` without opening it. Unlike `open`, a `workspace.json`
+    /// that is unreadable or holds no ID tote makes is left as it is and gives `None`: listing
+    /// must not change anything.
     pub fn read_id(path: &Path) -> Option<String> {
         let bytes = fs::read(path.join(TOTE_DIR).join("workspace.json")).ok()?;
         serde_json::from_slice::<WorkspaceFile>(&bytes)
             .ok()
             .map(|meta| meta.id)
+            .filter(|id| id::is_id(id))
     }
 
     pub fn is_workspace(path: &Path) -> bool {

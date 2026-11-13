@@ -8,7 +8,8 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
-use super::TOTE_DIR;
+use super::id::is_id;
+use super::{new_id, TOTE_DIR};
 use crate::persist::{read_json, write_json};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -47,22 +48,21 @@ impl MemoIndex {
     /// Loads the index of the workspace at `root` and brings it in line with the files there.
     pub fn load(root: &Path) -> io::Result<MemoIndex> {
         let path = root.join(TOTE_DIR).join("index.json");
-        let memos = read_json::<IndexFile>(&path)?
+        let mut memos = read_json::<IndexFile>(&path)?
             .map(|file| file.memos)
             .unwrap_or_default();
+        let rekeyed = replace_bad_ids(&mut memos);
         let mut index = MemoIndex { path, memos };
-        if index.reconcile(root)? || !index.path.is_file() {
+        if index.reconcile(&memo_files(root)?) || rekeyed || !index.path.is_file() {
             index.save()?;
         }
         Ok(index)
     }
 
-    /// Drops entries whose file is gone and indexes new files. Returns whether anything changed.
-    pub fn reconcile(&mut self, root: &Path) -> io::Result<bool> {
-        let files = memo_files(root)?;
-        Ok(reconcile_entries(&mut self.memos, &files, || {
-            uuid::Uuid::new_v4().to_string()
-        }))
+    /// Drops entries whose file is not among `files` (`memo_files`) and indexes new files.
+    /// Returns whether anything changed.
+    pub fn reconcile(&mut self, files: &BTreeSet<String>) -> bool {
+        reconcile_entries(&mut self.memos, files, new_id)
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -145,10 +145,26 @@ pub fn file_ids(root: &Path, index: &MemoIndex) -> BTreeMap<String, (u64, u64)> 
         .collect()
 }
 
+/// Gives every entry whose key is not an ID tote makes a new one (`id`): the memo's trash folder
+/// is named after its ID, so anything else could name a folder outside the workspace. The entry
+/// is as good as any other — its file is checked against the folder like every entry's — so
+/// what it says of the memo stays; only the tabs that named the old key lose it. Returns whether
+/// any was replaced.
+fn replace_bad_ids(memos: &mut BTreeMap<String, MemoEntry>) -> bool {
+    let bad: Vec<String> = memos.keys().filter(|id| !is_id(id)).cloned().collect();
+    for id in &bad {
+        if let Some(entry) = memos.remove(id) {
+            memos.insert(new_id(), entry);
+        }
+    }
+    !bad.is_empty()
+}
+
 /// Drops entries whose file is gone and gives every unindexed file a new ID with
 /// `autoTitle: false` (tote did not name it). Two entries naming one file keep the first. A file
-/// renamed while tote was not watching therefore becomes a new memo; only its tab position is
-/// lost (spec 「메모 ID 와 색인」).
+/// renamed while tote was not running therefore becomes a new memo; only its tab position is
+/// lost (spec 「메모 ID 와 색인」). While it runs, `Workspace::list_memos` follows such a rename
+/// first, by the file's inode.
 pub fn reconcile_entries(
     memos: &mut BTreeMap<String, MemoEntry>,
     files: &BTreeSet<String>,
@@ -245,6 +261,49 @@ mod tests {
             files,
             BTreeSet::from(["링크.md".to_string(), "메모.md".to_string()])
         );
+    }
+
+    #[test]
+    fn keys_that_are_not_ids_get_new_ones_and_keep_their_entries() {
+        let dir = tempfile::tempdir().unwrap();
+        fs::create_dir(dir.path().join(TOTE_DIR)).unwrap();
+        for file in ["a.md", "b.py", "c.txt"] {
+            fs::write(dir.path().join(file), "").unwrap();
+        }
+        let kept = "0f8fad5b-d9cb-469f-a165-70867728950e";
+        let path = dir.path().join(TOTE_DIR).join("index.json");
+        let text = serde_json::json!({"version": 1, "memos": {
+            "../../../outside/conf.d": {"file": "a.md", "autoTitle": true, "pinned": true},
+            "": {"file": "b.py", "autoTitle": false, "language": "python"},
+            kept: {"file": "c.txt", "autoTitle": true},
+        }});
+        fs::write(&path, text.to_string()).unwrap();
+        let index = MemoIndex::load(dir.path()).unwrap();
+        assert!(index.iter().all(|(id, _)| crate::workspace::id::is_id(id)));
+        assert_eq!(index.get(kept), Some(&entry("c.txt", true)));
+        let by_file = |file: &str| index.iter().find(|(_, e)| e.file == file).unwrap().1;
+        assert_eq!(
+            by_file("a.md"),
+            &MemoEntry {
+                pinned: true,
+                ..entry("a.md", true)
+            }
+        );
+        assert_eq!(
+            by_file("b.py"),
+            &MemoEntry {
+                language: Some("python".into()),
+                ..entry("b.py", false)
+            }
+        );
+        // Written down, so the IDs are the same the next time.
+        let again = MemoIndex::load(dir.path()).unwrap();
+        assert_eq!(
+            again.iter().collect::<Vec<_>>(),
+            index.iter().collect::<Vec<_>>()
+        );
+        let written = fs::read_to_string(&path).unwrap();
+        assert!(!written.contains("outside"), "{written}");
     }
 
     #[test]

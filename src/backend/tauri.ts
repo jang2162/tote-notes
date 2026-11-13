@@ -245,6 +245,9 @@ export class TauriBackend implements Backend {
     return (await open({ multiple: true, directory: false })) ?? [];
   }
 
+  flushWriting(id: number, unwritten?: string) {
+    return call<void>("flush_writing", { id, unwritten });
+  }
   flushDone(id: number, blocked?: string) {
     return call<boolean>("flush_done", { id, blocked });
   }
