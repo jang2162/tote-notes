@@ -19,6 +19,10 @@ permissions:
 
 jobs:
   # Rust 쪽이 macOS 전용 의존성(AppKit)을 쓰고 e2e 는 WebKit 이라 macOS 러너에서 돈다
+  #
+  # 검사·시험 단계는 앞의 검사·시험이 떨어져도 돈다(`!cancelled()`) — 한 실행이 모든 검사의 결과를 보여 주게.
+  # 그 단계가 기대는 준비 단계(install·toolchain·webkit)가 성공했을 때만 돈다. 준비가 떨어졌으면 돌아도 같은 이유로
+  # 떨어질 뿐이다. 하나라도 떨어지면 잡은 실패다. 준비 단계도 앞의 검사가 떨어졌다고 건너뛰지 않게 같은 조건을 단다
   macos:
     runs-on: macos-latest
     timeout-minutes: 60
@@ -29,57 +33,72 @@ jobs:
       - uses: jdx/mise-action@v5
 
       # prepare 스크립트(ruler apply, lefthook install)도 여기서 돈다. 추적 파일은 바꾸지 않는다
-      - run: pnpm install --frozen-lockfile
+      - id: install
+        run: pnpm install --frozen-lockfile
 
       - name: 포맷 (oxfmt)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm fmt:check
 
       - name: 린트 (oxlint)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm lint
 
       - name: 타입 검사
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm typecheck
 
       - name: 시험 (vitest)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm test
 
       - name: 버전 확인(네 곳이 같아야 한다)
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm -s version:check
 
       # 툴체인째 깐다: mise 캐시가 적중하면 rust 는 「설치됨」 으로 건너뛰어지는데 새 러너의 rustup 에는 그 판이 없다.
       # 있으면 컴포넌트만 더한다. rustup 자신은 러너 이미지 그대로 둔다(--no-self-update)
       - name: Rust 툴체인
+        id: toolchain
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: rustup toolchain install "$(mise current rust)" --profile minimal --no-self-update --component rustfmt,clippy
 
       - uses: Swatinem/rust-cache@v2
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         with:
           workspaces: src-tauri -> target
 
       - name: 포맷 (rustfmt)
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: cargo fmt --manifest-path src-tauri/Cargo.toml --check
 
       # `tauri build` 가 아닌 cargo 실행(custom-protocol 기능 없음)은 devUrl 이 있으면 프런트엔드 빌드(dist/)를
       # 싣지 않는다 — 그래서 앞에 pnpm build 를 두지 않는다
       - name: 린트 (clippy)
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
 
       # src-tauri/tests 의 셋(menu_key_equivalents, menu_keypad, traffic_lights_resize)은 시험 하네스 없이
-      # 실제 AppKit 메뉴 막대·창을 만든다. 러너의 세션이 그것을 허락하는지에 달려 있어, 로컬에서 통과한다는 것이
-      # 여기서도 돈다는 근거가 되지 못한다 — 이 셋만 떨어지면 코드보다 러너 세션을 먼저 본다.
+      # 실제 AppKit 메뉴 막대·창을 만든다. macos-latest 러너의 세션은 그것을 허락한다 — 셋 다 끝까지 돌아
+      # 마지막 줄 「<이름>: ok」 를 찍는다. 러너 이미지가 바뀐 뒤 이 셋만 떨어지면 코드보다 러너 세션을 먼저 본다.
       # --no-fail-fast: 하나가 떨어져도 나머지 시험 바이너리의 결과를 본다
       - name: 시험 (cargo)
+        if: ${{ !cancelled() && steps.toolchain.outcome == 'success' }}
         run: cargo test --manifest-path src-tauri/Cargo.toml --no-fail-fast
 
       - name: WebKit 설치 (Playwright)
+        id: webkit
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: pnpm exec playwright install webkit
 
       - name: 시험 (e2e)
         id: e2e
+        if: ${{ !cancelled() && steps.webkit.outcome == 'success' }}
         run: pnpm test:e2e
 
       # 실패한 시험이 남긴 것(오류 문맥 등). 러너가 사라지면 로그 말고는 이것만 남는다
       - name: e2e 결과 올리기 (실패했을 때)
-        if: failure() && steps.e2e.conclusion == 'failure'
+        if: ${{ !cancelled() && steps.e2e.outcome == 'failure' }}
         uses: actions/upload-artifact@v7
         with:
           name: e2e-test-results

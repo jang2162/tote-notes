@@ -317,21 +317,68 @@ fn touch(batches: &mut BTreeMap<WatchTarget, Batch>, target: &WatchTarget, path:
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::mpsc::Receiver;
 
     /// FSEvents delivers within tens of milliseconds; two seconds is the plan's bound. A test
     /// that misses it is reported, not retried.
     const WAIT: Duration = Duration::from_secs(2);
-    /// How long "nothing else came" is watched for.
-    const QUIET: Duration = Duration::from_millis(500);
+    /// The window label of the marks `through` writes. It sorts after every label the tests use:
+    /// the batches of one gathering are handed on in target order, so a batch that came with a
+    /// mark is received before the mark's.
+    const MARK: &str = "~mark";
 
-    fn watcher() -> (Watcher, Receiver<(WatchTarget, Batch)>) {
+    type Batches = Receiver<(WatchTarget, Batch)>;
+
+    fn watcher() -> (Watcher, Batches) {
         let (sender, batches) = mpsc::channel();
         let watcher = Watcher::new(move |target, batch| {
             let _ = sender.send((target, batch));
         })
         .unwrap();
         (watcher, batches)
+    }
+
+    /// Writes a new mark file in `folder` and waits for its batch, returning the batches for the
+    /// targets under test that came first. FSEvents delivers in order, so whatever was written
+    /// before the mark has come through by then: a signal that it is over, where waiting a while
+    /// for nothing to come would only guess.
+    ///
+    /// Called before the targets under test are watched, it also starts the folder's stream
+    /// early. FSEvents can deliver what was written just before a stream started: on a loaded
+    /// machine, the `Create` and `Modify` of a file written a moment before watching (without
+    /// the first mark, `an_external_file_is_reported_alone` failed 25 of 60 runs at load 20–28
+    /// and on the CI runner). Those then go to no one, and the targets joining later share the
+    /// running stream (`Watcher::hold`), so no new stream starts that could catch up on them.
+    fn through(watcher: &Watcher, batches: &Batches, folder: &Path) -> Vec<(WatchTarget, Batch)> {
+        static NEXT: AtomicUsize = AtomicUsize::new(0);
+        let mark = folder.join(format!(".mark-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
+        watcher.watch_external(MARK, &mark).unwrap();
+        fs::write(&mark, "").unwrap();
+        let mut before = Vec::new();
+        loop {
+            let (target, batch) = batches.recv_timeout(WAIT).expect("the mark's batch");
+            match &target {
+                WatchTarget::External(label, path) if label == MARK => {
+                    if *path == mark {
+                        return before;
+                    }
+                }
+                _ => before.push((target, batch)),
+            }
+        }
+    }
+
+    /// The next batch for a target under test. A mark's late events are passed over.
+    fn next(batches: &Batches) -> (WatchTarget, Batch) {
+        let deadline = Instant::now() + WAIT;
+        loop {
+            let left = deadline.saturating_duration_since(Instant::now());
+            let got = batches.recv_timeout(left).expect("a batch");
+            if !matches!(&got.0, WatchTarget::External(label, _) if label == MARK) {
+                return got;
+            }
+        }
     }
 
     #[test]
@@ -343,7 +390,7 @@ mod tests {
         watcher.watch_workspace("ws-1", dir.path()).unwrap();
         let started = Instant::now();
         fs::write(dir.path().join("메모.md"), "x").unwrap();
-        let (target, batch) = batches.recv_timeout(WAIT).expect("a batch");
+        let (target, batch) = next(&batches);
         assert!(
             started.elapsed() < Duration::from_secs(1),
             "{:?}",
@@ -351,7 +398,7 @@ mod tests {
         );
         assert_eq!(target, WatchTarget::Workspace("ws-1".into()));
         assert_eq!(batch.touched, BTreeSet::from([root.join("메모.md")]));
-        assert!(batches.recv_timeout(QUIET).is_err(), "one batch");
+        assert_eq!(through(&watcher, &batches, dir.path()), vec![], "one batch");
     }
 
     #[test]
@@ -399,11 +446,17 @@ mod tests {
         fs::write(&a, "a").unwrap();
         fs::write(&b, "b").unwrap();
         let (watcher, batches) = watcher();
+        // The writes above may still be on their way; this lets them go by before `a` is watched.
+        through(&watcher, &batches, dir.path());
         watcher.watch_external("ws-1", &a).unwrap();
         fs::write(&b, "b2").unwrap();
-        assert!(batches.recv_timeout(QUIET).is_err(), "nothing for b.txt");
+        assert_eq!(
+            through(&watcher, &batches, dir.path()),
+            vec![],
+            "nothing for b.txt"
+        );
         fs::write(&a, "a2").unwrap();
-        let (target, batch) = batches.recv_timeout(WAIT).expect("a batch");
+        let (target, batch) = next(&batches);
         // Named by the path the window gave, so it finds its tab.
         assert_eq!(target, WatchTarget::External("ws-1".into(), a.clone()));
         let canonical = fs::canonicalize(&a).unwrap();

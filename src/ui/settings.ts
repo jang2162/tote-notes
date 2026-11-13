@@ -1,4 +1,4 @@
-import type { Backend, ExtensionRegistry, SettingsPatch, ThemeMode } from "../backend/types";
+import type { Backend, ExtensionRegistry, SettingsPatch, ThemeChoice } from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   EDITOR_FONT_SIZE_MAX,
@@ -11,6 +11,7 @@ import {
 import { confirm, isSubmitEnter, modal } from "./dialogs";
 import { h } from "./dom";
 import { shortcutsSection } from "./shortcut-settings";
+import { choiceOf, themeOptions, type ThemeOption } from "./theme-options";
 import { workspacesSection } from "./workspace-settings";
 
 export type SettingsSection = "general" | "workspaces" | "appearance" | "shortcuts" | "extensions";
@@ -21,14 +22,6 @@ const SECTIONS: [SettingsSection, string][] = [
   ["appearance", "모양"],
   ["shortcuts", "단축키"],
   ["extensions", "확장"],
-];
-
-/** The 「테마」 picker's options, in order (spec 「테마」). Installed themes are to join them here
- * later as further options; for now each appearance draws with its bundled default theme. */
-const THEME_OPTIONS: [ThemeMode, string][] = [
-  ["auto", "자동"],
-  ["light", "라이트"],
-  ["dark", "다크"],
 ];
 
 export interface SettingsOptions {
@@ -215,16 +208,23 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     fontFamily.addEventListener("change", commitFontFamily);
     onEnter(fontFamily, commitFontFamily);
 
-    // Auto follows the OS; light and dark keep the app's appearance whatever the OS's.
-    const themePicker = h(
-      "select",
-      { name: "themeMode" },
-      ...THEME_OPTIONS.map(([value, label]) => h("option", { value, textContent: label })),
-    );
+    // Auto follows the OS; light and dark keep the app's appearance whatever the OS's; a theme is
+    // drawn whatever the OS's (theme picker spec 「고르개」). Its options come with the registry.
+    const themePicker = h("select", { name: "themeMode" });
     themePicker.addEventListener(
       "change",
-      () => void save({ themeMode: themePicker.value as ThemeMode }),
+      () => void save({ themeMode: choiceOf(themePicker.value) }),
     );
+    const showThemes = (choice: ThemeChoice | undefined, registry: ExtensionRegistry) => {
+      const options = themeOptions(choice, registry);
+      const option = ({ value, label, disabled }: ThemeOption) =>
+        h("option", { value, textContent: label, disabled: !!disabled });
+      themePicker.replaceChildren(
+        ...options.modes.map(option),
+        h("optgroup", { label: "테마" }, ...options.themes.map(option)),
+      );
+      themePicker.value = options.selected;
+    };
     const heading = (text: string) => h("h2", { class: "settings-heading", textContent: text });
     // One grid for the three groups: their controls line up under one another.
     const appearanceSection = h(
@@ -357,7 +357,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         trashDays.disabled = days === null;
         sync(fontFamily, current.editor.fontFamily);
         // Rust always sends one; an old fake backend seed has none, which is auto.
-        themePicker.value = current.theme.mode ?? "auto";
+        showThemes(current.theme.mode, registry);
         panel.querySelector<HTMLInputElement>(
           `input[name=precedence][value=${current.extensions.precedence}]`,
         )!.checked = true;
