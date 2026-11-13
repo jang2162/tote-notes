@@ -671,3 +671,62 @@ test("a close mark pressed as a save's answer comes in still closes its tab when
   await page.mouse.up();
   await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
 });
+
+// The tab typed in takes a new title as its first line is left: it is made anew, and the tabs
+// after it are the ones whose close marks a person presses meanwhile.
+test("a close mark after a tab that a redraw makes anew still closes its tab when let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("첫 줄.md", "첫 줄", { autoTitle: true }),
+      b: fakeMemo("나.md", "둘"),
+      c: fakeMemo("다.md", "셋"),
+    },
+    session: paneSession([
+      [
+        { kind: "memo", memoId: "a" },
+        { kind: "memo", memoId: "b" },
+        { kind: "memo", memoId: "c" },
+      ],
+    ]),
+  });
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(page.locator(".cm-content")).toHaveText("첫 줄");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄", "나", "다"]);
+  await page.keyboard.press("Meta+ArrowDown");
+  // The new name comes with the retitle's answer and with a save's: both are held.
+  const releaseSaves = await holdSaveAnswers(page);
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const retitle = backend.retitleMemo.bind(backend);
+    const held = new Promise<void>((resolve) =>
+      Object.assign(window, { releaseRetitles: resolve }),
+    );
+    backend.retitleMemo = async (id, stem) => {
+      const info = await retitle(id, stem);
+      await held;
+      return info;
+    };
+  });
+  await page.keyboard.type("x");
+  // Leaving the first line asks for the title.
+  await page.keyboard.press("Enter");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.memos.a.file))
+    .toBe("첫 줄x.md");
+  await expect.poll(() => memoWrites(page, "a")).toBeGreaterThanOrEqual(1);
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄", "나", "다"]);
+  const box = (await page.locator(".tab", { hasText: "다" }).locator(".tab-close").boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await page.evaluate(() => {
+    (window as unknown as { releaseRetitles(): void }).releaseRetitles();
+    return new Promise<void>((resolve) => setTimeout(resolve, 0));
+  });
+  await releaseSaves();
+  // The first tab has its new title: its element is another, drawn while 다's mark is pressed.
+  await expect(page.locator(".tab .tab-title").first()).toHaveText("첫 줄x");
+  await page.mouse.up();
+  await expect(page.locator(".tab .tab-title")).toHaveText(["첫 줄x", "나"]);
+});

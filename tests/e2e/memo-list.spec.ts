@@ -589,3 +589,90 @@ test("a row pressed as a save's answer comes in still opens when it is let go", 
   await expect(page.locator(".tab.active .tab-title")).toHaveText("나");
   await expect(page.locator(".cm-content")).toHaveText("둘");
 });
+
+/** Presses on `target`'s middle, lets the held save answers in (`release`), and lets go. */
+async function pressThroughRedraw(
+  page: Page,
+  target: ReturnType<typeof row>,
+  release: () => Promise<void>,
+): Promise<void> {
+  const box = (await target.boundingBox())!;
+  await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2);
+  await page.mouse.down();
+  await release();
+  await page.mouse.up();
+}
+
+// The memo typed in is the top row, and typing past its first line changes its preview: its row
+// is made anew by every save. The rows under it are the ones a person presses meanwhile.
+test("a row under one a save's answer makes anew still opens when it is let go", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "하나\n둘째 줄", { modifiedMs: 5 }),
+      b: fakeMemo("나.md", "둘", { modifiedMs: 3 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 1 }),
+    },
+  });
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await expect(row(page, "가").locator(".memo-preview")).toHaveText("둘째 줄");
+  await page.keyboard.press("Meta+ArrowDown");
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  await pressThroughRedraw(page, row(page, "다"), release);
+  // The save's answer is in: 가's row shows the new line.
+  await expect(row(page, "가").locator(".memo-preview")).toHaveText("둘째 줄x");
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+  await expect(page.locator(".cm-content")).toHaveText("셋");
+});
+
+// A save moves its memo to the top of the list (the newest first). A row that keeps its place
+// under that is still pressed; one pushed down from under the pointer is not — and the row that
+// comes under the pointer in its place was never pressed, so nothing opens.
+test("a row that keeps its place as the list is put in a new order still opens", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      b: fakeMemo("나.md", "둘", { modifiedMs: 5 }),
+      a: fakeMemo("가.md", "하나", { modifiedMs: 3 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 1 }),
+    },
+  });
+  await expect(names(page)).toHaveText(["나", "가", "다"]);
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  await pressThroughRedraw(page, row(page, "다"), release);
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("다");
+});
+
+test("a row pushed from under a press opens nothing, nor does the row that takes its place", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: {
+      b: fakeMemo("나.md", "둘", { modifiedMs: 5 }),
+      c: fakeMemo("다.md", "셋", { modifiedMs: 4 }),
+      a: fakeMemo("가.md", "하나", { modifiedMs: 3 }),
+    },
+  });
+  await expect(names(page)).toHaveText(["나", "다", "가"]);
+  await row(page, "가").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  const release = await holdSaveAnswers(page);
+  await page.keyboard.type("x");
+  await expect.poll(() => memoWrites(page, "a")).toBe(1);
+  // 다 is the second row; the save puts 가 first and 나 second, under the pointer.
+  await pressThroughRedraw(page, row(page, "다"), release);
+  await expect(names(page)).toHaveText(["가", "나", "다"]);
+  // A click that was coming has come by the next task.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  await expect(page.locator(".tab .tab-title")).toHaveText(["가"]);
+});
