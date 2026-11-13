@@ -61,6 +61,13 @@ function lineRange(text: string, line: number): { from: number; to: number } | n
   return { from, to: end ? end.index : text.length };
 }
 
+/** Where the box's mark (the character between its brackets) is in `line`, or null when `line`
+ * does not start as a task list item does. */
+export function boxMark(line: string): number | null {
+  const head = TASK_LINE.exec(line);
+  return head ? head[0].length - 2 : null;
+}
+
 /** The change that flips the box of the `index`-th task of `text` (`[ ]` ↔ `[x]`): one character,
  * at an offset into `text`. Null when there is no such task, when its line does not look like a
  * task (the count went wrong: nothing is changed rather than the wrong line), or when `drawn` — the
@@ -76,8 +83,8 @@ export function toggleTask(
   if (line === undefined) return null;
   const range = lineRange(text, line);
   if (!range) return null;
-  const head = TASK_LINE.exec(text.slice(range.from, range.to));
-  if (!head) return null;
-  const at = range.from + head[0].length - 2;
+  const mark = boxMark(text.slice(range.from, range.to));
+  if (mark === null) return null;
+  const at = range.from + mark;
   return { from: at, to: at + 1, insert: text[at] === " " ? "x" : " " };
 }

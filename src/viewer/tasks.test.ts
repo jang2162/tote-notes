@@ -1,7 +1,7 @@
 import { marked } from "marked";
 import { describe, expect, it } from "vitest";
 
-import { taskLines, toggleTask } from "./tasks";
+import { boxMark, taskLines, toggleTask } from "./tasks";
 
 /** How many checkboxes `marked` draws for `text`: what the viewer numbers. */
 function drawn(text: string): number {
@@ -169,5 +169,29 @@ describe("toggleTask", () => {
     const now = ["- [ ] 새 줄", "- [ ] 하나", "- [ ] 둘"].join("\n");
     expect(toggleTask(now, 1, shown)).toBeNull();
     expect(toggleTask(shown, 1, shown)).toEqual({ from: 12, to: 13, insert: "x" });
+  });
+});
+
+describe("boxMark", () => {
+  it("finds the box at a list item's head, after quote marks, bullets and spaces", () => {
+    expect(boxMark("- [ ] 하나")).toBe(3);
+    expect(boxMark("  * [x] 둘")).toBe(5);
+    expect(boxMark("> 12. [X] 셋")).toBe(7);
+    expect(boxMark(">> - - [ ] 넷")).toBe(8);
+    expect(boxMark("1)\t[ ] 탭")).toBe(4);
+  });
+
+  it("turns a line away that does not start as a task does: the count went wrong", () => {
+    for (const line of [
+      "문단 [ ] 아님",
+      "-[ ] 붙음",
+      "- [ ]붙음",
+      "- [] 빈",
+      "```",
+      "",
+      "- [y] 다른",
+    ]) {
+      expect(boxMark(line), line).toBeNull();
+    }
   });
 });
