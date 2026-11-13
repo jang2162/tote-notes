@@ -53,16 +53,16 @@ impl MemoIndex {
             .unwrap_or_default();
         let rekeyed = replace_bad_ids(&mut memos);
         let mut index = MemoIndex { path, memos };
-        if index.reconcile(root)? || rekeyed || !index.path.is_file() {
+        if index.reconcile(&memo_files(root)?) || rekeyed || !index.path.is_file() {
             index.save()?;
         }
         Ok(index)
     }
 
-    /// Drops entries whose file is gone and indexes new files. Returns whether anything changed.
-    pub fn reconcile(&mut self, root: &Path) -> io::Result<bool> {
-        let files = memo_files(root)?;
-        Ok(reconcile_entries(&mut self.memos, &files, new_id))
+    /// Drops entries whose file is not among `files` (`memo_files`) and indexes new files.
+    /// Returns whether anything changed.
+    pub fn reconcile(&mut self, files: &BTreeSet<String>) -> bool {
+        reconcile_entries(&mut self.memos, files, new_id)
     }
 
     pub fn save(&self) -> io::Result<()> {
@@ -162,8 +162,9 @@ fn replace_bad_ids(memos: &mut BTreeMap<String, MemoEntry>) -> bool {
 
 /// Drops entries whose file is gone and gives every unindexed file a new ID with
 /// `autoTitle: false` (tote did not name it). Two entries naming one file keep the first. A file
-/// renamed while tote was not watching therefore becomes a new memo; only its tab position is
-/// lost (spec 「메모 ID 와 색인」).
+/// renamed while tote was not running therefore becomes a new memo; only its tab position is
+/// lost (spec 「메모 ID 와 색인」). While it runs, `Workspace::list_memos` follows such a rename
+/// first, by the file's inode.
 pub fn reconcile_entries(
     memos: &mut BTreeMap<String, MemoEntry>,
     files: &BTreeSet<String>,
