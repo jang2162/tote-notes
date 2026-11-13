@@ -63,12 +63,23 @@ function setup(dark: boolean) {
   );
   const applied: ActiveTheme[] = [];
   const m = media(dark);
-  const manager = new ThemeManager(backend, () => registry, {
+  const state = { registry };
+  const manager = new ThemeManager(backend, () => state.registry, {
     media: m.query,
     apply: (a) => void applied.push(a),
   });
-  return { backend, manager, applied, media: m };
+  return { backend, manager, applied, media: m, state };
 }
+
+/** `registry` with the user's extension switched off: its themes are gone. */
+const withoutNight = new Registry({
+  ...registry.data,
+  extensions: [
+    { ...summary("someone.night", "user"), enabled: false },
+    summary("tote.themes", "bundled"),
+  ],
+  themes: registry.data.themes.filter((t) => t.extension !== "someone.night"),
+});
 
 describe("ThemeManager", () => {
   it("picks the theme for the OS appearance and follows a change", async () => {
@@ -102,7 +113,7 @@ describe("ThemeManager", () => {
     expect(manager.active.info?.label).toBe("Dark+");
   });
 
-  it("draws the bundled theme of the appearance though a user extension's theme comes first", async () => {
+  it("draws no user extension's theme unless it is picked, though its precedence puts it first", async () => {
     const { backend, manager, media } = setup(true);
     await manager.start();
     expect(manager.active.info?.label).toBe("Dark+");
@@ -139,6 +150,55 @@ describe("ThemeManager", () => {
     expect(manager.active.info?.label).toBe("Dark+");
     media.flip(false);
     await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+  });
+
+  it("draws a picked theme whatever the OS appearance, as its own kind", async () => {
+    const { backend, manager, media } = setup(false);
+    await backend.patchSettings({ themeMode: { extension: "someone.night", label: "Night" } });
+    await manager.start();
+    expect(manager.active.info).toMatchObject({ extension: "someone.night", label: "Night" });
+    expect(manager.active.variables["--bg"]).toBe("#000000");
+    // Night is vs-dark: the colours it leaves out are the dark ones, in the light appearance too.
+    expect(manager.active.kind).toBe("dark");
+    expect(manager.active.variables["--fg"]).toBe(DEFAULT_VARIABLES.dark["--fg"]);
+    media.flip(true);
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Night");
+    expect(manager.active.kind).toBe("dark");
+
+    await backend.patchSettings({ themeMode: { extension: "someone.night", label: "Day" } });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Day");
+    expect(manager.active.variables["--bg"]).toBe("#fffff0");
+    expect(manager.active.kind).toBe("light");
+    // A mode again: the bundled default, as before.
+    await backend.patchSettings({ themeMode: "dark" });
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Dark+");
+  });
+
+  it("draws as auto while the picked theme is not in the registry, keeping the setting", async () => {
+    const { backend, manager, media, state } = setup(true);
+    const night = { extension: "someone.night", label: "Night" };
+    await backend.patchSettings({ themeMode: night });
+    state.registry = withoutNight;
+    await manager.start();
+    expect(manager.active.info?.label).toBe("Dark+");
+    media.flip(false);
+    await new Promise((r) => setTimeout(r, 0));
+    expect(manager.active.info?.label).toBe("Light+");
+    expect(manager.active.kind).toBe("light");
+    expect((await backend.settings()).theme.mode).toEqual(night);
+    // Its extension switched on again: the theme is back.
+    state.registry = registry;
+    await manager.refresh();
+    expect(manager.active.info?.label).toBe("Night");
+    expect(manager.active.variables["--bg"]).toBe("#000000");
+    // Another extension's theme of the same name is not it.
+    await backend.patchSettings({ themeMode: { extension: "another.one", label: "Night" } });
+    await manager.refresh();
     expect(manager.active.info?.label).toBe("Light+");
   });
 

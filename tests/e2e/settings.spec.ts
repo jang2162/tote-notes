@@ -324,6 +324,8 @@ test("a theme an older build saved for an appearance is neither offered nor draw
     "자동",
     "라이트",
     "다크",
+    "Light+",
+    "Dark+",
   ]);
   // Dark+, the default dark theme: its editor.background, not Light+'s white.
   await expect
@@ -332,7 +334,7 @@ test("a theme an older build saved for an appearance is neither offered nor draw
   await expect(page.locator("html")).toHaveAttribute("data-appearance", "dark");
 });
 
-test("a theme a user extension brings changes nothing drawn, though its precedence puts it first", async ({
+test("a theme a user extension brings changes nothing drawn until it is picked, though its precedence puts it first", async ({
   page,
 }) => {
   const themes = [
@@ -375,6 +377,120 @@ test("a theme a user extension brings changes nothing drawn, though its preceden
     .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
     .toBe("light");
   expect(await drawn()).toEqual(["Light+", "#ffffff"]);
+});
+
+const NIGHT_AND_DAY = {
+  packages: {
+    "/pkg/night.vsix": {
+      ...PKG,
+      themes: [
+        { label: "Night", uiTheme: "vs-dark", path: "night.json" },
+        { label: "Day", uiTheme: "vs", path: "day.json" },
+      ],
+    },
+  },
+  picks: ["/pkg/night.vsix"],
+  extensionFiles: {
+    "someone.night/night.json": `{ "colors": { "editor.background": "#000000" } }`,
+    "someone.night/day.json": `{ "colors": { "editor.background": "#fffff0" } }`,
+  },
+};
+
+/** The `--bg` the page is drawn with. */
+const pageBg = (page: Page) =>
+  page.evaluate(() =>
+    getComputedStyle(document.documentElement).getPropertyValue("--bg").trim().toLowerCase(),
+  );
+
+test("a theme picked from an installed extension is drawn whatever the OS, in an open preview too", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("회의.md", "# 회의 준비") }, ...NIGHT_AND_DAY });
+  await page.emulateMedia({ colorScheme: "light" });
+  await page.locator(".memo-row", { hasText: "회의" }).click();
+  await menu(page, "toggle-preview");
+  const preview = page.frameLocator("iframe.viewer-frame").locator("html");
+  await expect(preview.locator("h1")).toHaveText("회의 준비");
+  const previewBg = () =>
+    preview.evaluate((html) =>
+      getComputedStyle(html).getPropertyValue("--bg").trim().toLowerCase(),
+    );
+  await expect.poll(previewBg).toBe("#ffffff");
+  const drawnAs = () => page.evaluate(() => document.documentElement.dataset.appearance);
+
+  const panel = await openSection(page, "확장");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  await expect(panel.locator(".extension-row", { hasText: "Night Theme" })).toBeVisible();
+  await section(panel, "모양");
+  const picker = panel.getByRole("combobox", { name: "테마" });
+  // In the registry's order: the user's extension first (precedence 「user」, the default).
+  await expect(picker.locator("optgroup option")).toHaveText(["Night", "Day", "Light+", "Dark+"]);
+  await picker.selectOption({ label: "Night" });
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.theme.mode))
+    .toEqual({ extension: "someone.night", label: "Night" });
+  await expect.poll(() => pageBg(page)).toBe("#000000");
+  await expect.poll(drawnAs).toBe("dark");
+  await expect.poll(previewBg).toBe("#000000");
+  await expect(picker.locator("option:checked")).toHaveText("Night");
+  // The OS turning dark and back does not take the page with it.
+  await page.emulateMedia({ colorScheme: "dark" });
+  await page.emulateMedia({ colorScheme: "light" });
+  await expect.poll(() => pageBg(page)).toBe("#000000");
+  await expect.poll(drawnAs).toBe("dark");
+
+  await page.emulateMedia({ colorScheme: "dark" });
+  await picker.selectOption({ label: "Day" });
+  await expect.poll(() => pageBg(page)).toBe("#fffff0");
+  await expect.poll(drawnAs).toBe("light");
+  await expect.poll(previewBg).toBe("#fffff0");
+  // A mode again: the bundled default of it, as before.
+  await picker.selectOption({ label: "자동" });
+  await expect.poll(() => pageBg(page)).toBe("#1e1e1e");
+  await expect.poll(previewBg).toBe("#1e1e1e");
+});
+
+test("switching the picked theme's extension off draws as auto and keeps the pick; on, it is back", async ({
+  page,
+}) => {
+  await start(page, NIGHT_AND_DAY);
+  await page.emulateMedia({ colorScheme: "light" });
+  const panel = await openSection(page, "확장");
+  await panel.locator("button", { hasText: "파일에서 설치…" }).click();
+  const row = panel.locator(".extension-row", { hasText: "Night Theme" });
+  await expect(row).toBeVisible();
+  await section(panel, "모양");
+  const picker = panel.getByRole("combobox", { name: "테마" });
+  await picker.selectOption({ label: "Night" });
+  await expect.poll(() => pageBg(page)).toBe("#000000");
+
+  await section(panel, "확장");
+  await row.locator("input[type=checkbox]").uncheck();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.settings.extensions.disabled))
+    .toEqual(["someone.night"]);
+  // As auto: the OS appearance's bundled theme.
+  await expect.poll(() => pageBg(page)).toBe("#ffffff");
+  await page.emulateMedia({ colorScheme: "dark" });
+  await expect.poll(() => pageBg(page)).toBe("#1e1e1e");
+  const night = { extension: "someone.night", label: "Night" };
+  expect(await page.evaluate(() => window.__tote.backend.data.settings.theme.mode)).toEqual(night);
+  await section(panel, "모양");
+  await expect(picker.locator("option:checked")).toHaveText("Night (찾을 수 없음, 지금은 자동)");
+  await expect(picker.locator("option:checked")).toBeDisabled();
+  await expect(picker.locator("optgroup option")).toHaveText([
+    "Light+",
+    "Dark+",
+    "Night (찾을 수 없음, 지금은 자동)",
+  ]);
+
+  await section(panel, "확장");
+  await row.locator("input[type=checkbox]").check();
+  await expect.poll(() => pageBg(page)).toBe("#000000");
+  await section(panel, "모양");
+  await expect(picker.locator("option:checked")).toHaveText("Night");
+  await expect(picker.locator("optgroup option")).toHaveText(["Night", "Day", "Light+", "Dark+"]);
+  expect(await page.evaluate(() => window.__tote.backend.data.settings.theme.mode)).toEqual(night);
 });
 
 test("the root field shows the default root, and its folder dialog opens at the root in use", async ({
@@ -791,7 +907,10 @@ test("the 모양 section holds the theme, editor and sidebar settings, each unde
   await expect(shown.getByRole("radio")).toHaveCount(0);
   await expect(shown.getByRole("combobox")).toHaveCount(1);
   const picker = shown.getByRole("combobox", { name: "테마" });
-  await expect(picker.locator("option")).toHaveText(["자동", "라이트", "다크"]);
+  // The modes, then the registry's themes under their own group (theme picker spec 「고르개」).
+  await expect(picker.locator("option")).toHaveText(["자동", "라이트", "다크", "Light+", "Dark+"]);
+  await expect(picker.locator("optgroup")).toHaveAttribute("label", "테마");
+  await expect(picker.locator("optgroup option")).toHaveText(["Light+", "Dark+"]);
   await expect(picker).toHaveValue("auto");
 });
 
