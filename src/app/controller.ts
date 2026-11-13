@@ -186,8 +186,8 @@ const unsavedMemos = (count: number) => `저장하지 못한 메모 ${count}개`
 
 /** The tab's text is in no file until a flush writes it: typed since the last write, or kept by
  * a save that failed. The 「내 버전」 of a conflict nobody answered is among the first: a memo's
- * conflict is raised only over unsaved text (`MemoDoc.outsideModified`), which no save writes
- * while it is open. */
+ * conflict is raised only over unsaved text (`MemoDoc.outsideModified`, and `saveRefused` for the
+ * save that met the other app's text first), which no save writes while it is open. */
 const heldInMemory = (doc: Doc) => doc.unwritten || doc.saveFailed;
 
 /** A pane this near the editing area's left or top edge (a fraction of it) is at that edge. */

@@ -74,9 +74,13 @@ export async function openShopping(page: Page, seed: Partial<FakeData> = {}): Pr
 }
 
 /** Opens 장보기 (우유), types 「 계란」 behind 우유, and another app writes 두유 and is heard — in one
- * go. Between steps the save's timer can run out under load, and the save then writes the typed
- * text over 두유 before the change is heard: there would be no other app's text left to choose. */
-export async function typeWhileChangedElsewhere(page: Page): Promise<void> {
+ * go, so the order is the test's and not the load's: typed, written elsewhere, heard, and only
+ * then the save's timer. With `heard: false` the watcher stays silent — the write is inside the
+ * save's half second and the save is the first to meet it. */
+export async function typeWhileChangedElsewhere(
+  page: Page,
+  options: { heard?: boolean } = {},
+): Promise<void> {
   await openShopping(page);
   const change: OutsideChange = { kind: "workspace", changes: [{ kind: "modified", id: "a" }] };
   await page.evaluate(
@@ -88,9 +92,9 @@ export async function typeWhileChangedElsewhere(page: Page): Promise<void> {
         userEvent: "input.type",
       });
       Object.assign(backend.data.memos.a, { data, modifiedMs: 900 });
-      backend.outside(heard);
+      if (heard) backend.outside(heard);
     },
-    [fakeFile("두유"), change] as const,
+    [fakeFile("두유"), options.heard === false ? null : change] as const,
   );
 }
 

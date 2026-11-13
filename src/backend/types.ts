@@ -444,6 +444,9 @@ export const BACKEND_ERROR_CODES = [
   "not-text",
   // A read refused by the file's size, over the editor's limit (`persist::read_editable_text`).
   "too-large",
+  // A save refused because the file holds another app's text the editor has not read
+  // (`persist::Conflict`). Nothing was written: the tab asks which to keep, it does not retry.
+  "conflict",
   // The update's (src-tauri/src/app/commands.rs `install_update`, `restart_for_update`).
   "no-update",
   "update-failed",
@@ -489,8 +492,13 @@ export interface Backend {
   workspaceInfo(): Promise<WorkspaceInfo>;
   listMemos(): Promise<MemoInfo[]>;
   createMemo(): Promise<MemoInfo>;
+  /** The memo's bytes. The native side counts the editor as holding them from here on: a save is
+   * measured against the last read or write, whichever came later. */
   readMemo(id: string): Promise<Uint8Array>;
-  writeMemo(id: string, bytes: Uint8Array): Promise<MemoInfo>;
+  /** Saves the memo — `conflict`, with the file left alone, when it holds anything but what the
+   * editor last read or wrote there (a file gone is written again). With `overwrite` it is written
+   * whatever it holds: the person chose their text (「내 버전」, 「다시 저장」). */
+  writeMemo(id: string, bytes: Uint8Array, overwrite?: boolean): Promise<MemoInfo>;
   retitleMemo(id: string, stem: string): Promise<MemoInfo>;
   renameMemo(id: string, file: string): Promise<MemoInfo>;
   /** The memo came on show in a pane: its info with the viewed time now. Every window's list
@@ -500,7 +508,9 @@ export interface Backend {
   setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
   /** `detected`: the editor's automatic pick, which leaves a memo the person named as it is. */
   setMemoLanguage(id: string, language: string, ext: string, detected?: boolean): Promise<MemoInfo>;
-  deleteMemo(id: string): Promise<void>;
+  /** Removes an empty memo for good. `false`, with the memo left in the list, when its file holds
+   * text: another app wrote into it. */
+  deleteMemo(id: string): Promise<boolean>;
   /** Moves the memo to the workspace's trash. A memo another window has open stays where it is:
    * `elsewhere`, and that window hears `onTrashRequest`. Every window's memo list and trash
    * follow. */
@@ -548,7 +558,13 @@ export interface Backend {
   readExternalDraft(path: string): Promise<Uint8Array>;
   keepExternalDraft(path: string, bytes: Uint8Array): Promise<void>;
   discardExternalDraft(path: string): Promise<void>;
-  saveExternal(path: string, bytes: Uint8Array): Promise<void>;
+  /** 「내 버전」 picked for a draft whose file changed: the file as it is now becomes what the
+   * edits are measured against — for the ⌘S that follows, which is then refused only if the file
+   * changes again, and for the draft, which no longer opens with the question. */
+  rebaseExternal(path: string): Promise<void>;
+  /** ⌘S. `conflict`, with the file and the draft left alone, when the file holds anything but
+   * what editing started from or tote last read or saved; `overwrite` writes whatever it holds. */
+  saveExternal(path: string, bytes: Uint8Array, overwrite?: boolean): Promise<void>;
   /** Changes other apps make to the file come as `onOutsideChange`. Counted: each call needs an
    * `unwatchExternal`. */
   watchExternal(path: string): Promise<void>;

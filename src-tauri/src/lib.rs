@@ -122,6 +122,7 @@ pub fn run() {
             commands::read_external_draft,
             commands::keep_external_draft,
             commands::discard_external_draft,
+            commands::rebase_external,
             commands::save_external,
             commands::watch_external,
             commands::unwatch_external,

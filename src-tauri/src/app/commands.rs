@@ -95,6 +95,9 @@ fn io_code(err: &io::Error) -> &'static str {
     if crate::persist::is_too_large(err) {
         return "too-large";
     }
+    if crate::persist::is_conflict(err) {
+        return "conflict";
+    }
     match err.kind() {
         io::ErrorKind::NotFound => "not-found",
         io::ErrorKind::InvalidData | io::ErrorKind::InvalidInput => "bad-request",
@@ -149,6 +152,12 @@ fn header(request: &Request<'_>, name: &str) -> CmdResult<String> {
         .decode_utf8()
         .map(Cow::into_owned)
         .map_err(|_| CommandError::new("bad-request", format!("header {name} is not UTF-8")))
+}
+
+/// Whether a save was sent to go over whatever the file holds (`x-overwrite`): the person chose
+/// their text in the conflict banner, or asked for a deleted file to be written back.
+fn overwrites(request: &Request<'_>) -> bool {
+    request.headers().contains_key("x-overwrite")
 }
 
 fn body<'a>(request: &'a Request<'_>) -> CmdResult<&'a [u8]> {
@@ -252,7 +261,11 @@ pub async fn write_memo(
 ) -> CmdResult<MemoInfo> {
     let id = header(&request, "x-memo-id")?;
     let workspace = workspace_to_change(&core, &window)?;
-    let info = lock(&workspace).write_memo(&id, body(&request)?)?;
+    let info = if overwrites(&request) {
+        lock(&workspace).overwrite_memo(&id, body(&request)?)?
+    } else {
+        lock(&workspace).write_memo(&id, body(&request)?)?
+    };
     memos_changed(window.app_handle(), window.label());
     Ok(info)
 }
@@ -345,16 +358,19 @@ pub async fn set_memo_language(
     Ok(info)
 }
 
+/// Whether the memo was removed: one whose file holds text is left (`Workspace::delete_memo`).
 #[tauri::command]
 pub async fn delete_memo(
     core: State<'_, AppCore>,
     window: WebviewWindow,
     id: String,
-) -> CmdResult<()> {
+) -> CmdResult<bool> {
     let workspace = workspace_to_change(&core, &window)?;
-    lock(&workspace).delete_memo(&id)?;
-    memos_changed(window.app_handle(), window.label());
-    Ok(())
+    let deleted = lock(&workspace).delete_memo(&id)?;
+    if deleted {
+        memos_changed(window.app_handle(), window.label());
+    }
+    Ok(deleted)
 }
 
 /// What `trash_memo` did. `Elsewhere`: another window has the memo open, so nothing moved; that
@@ -714,10 +730,22 @@ pub async fn discard_external_draft(core: State<'_, AppCore>, path: String) -> C
     Ok(())
 }
 
+/// 「내 버전」 picked for a draft whose file changed: the file as it is now is what the edits are
+/// measured against from here on (`ExternalFiles::rebase`).
+#[tauri::command]
+pub async fn rebase_external(core: State<'_, AppCore>, path: String) -> CmdResult<()> {
+    core.external.rebase(&absolute_path(&path)?)?;
+    Ok(())
+}
+
 #[tauri::command]
 pub async fn save_external(core: State<'_, AppCore>, request: Request<'_>) -> CmdResult<u64> {
     let path = absolute_path(&header(&request, "x-path")?)?;
-    Ok(core.external.save(&path, body(&request)?)?)
+    Ok(if overwrites(&request) {
+        core.external.overwrite(&path, body(&request)?)?
+    } else {
+        core.external.save(&path, body(&request)?)?
+    })
 }
 
 /// The window shows the external file at `path`: what other apps do to it comes as
@@ -1439,6 +1467,28 @@ mod tests {
         assert_eq!(CommandError::from(gone).code, "not-found");
         let bad = io::Error::new(io::ErrorKind::InvalidData, "broken");
         assert_eq!(CommandError::from(bad).code, "bad-request");
+    }
+
+    /// The page raises the conflict banner on `conflict` instead of counting a failed save,
+    /// whether the save was a memo's or an outside file's.
+    #[test]
+    fn a_save_refused_over_another_apps_edit_reaches_the_page_as_conflict() {
+        use crate::persist::external::ExternalFiles;
+        use crate::session::drafts::DraftStore;
+        let dir = tempfile::tempdir().unwrap();
+        let mut workspace = Workspace::create(dir.path(), "메모").unwrap();
+        let memo = workspace.create_memo("md", b"ours").unwrap();
+        std::fs::write(workspace.root().join(&memo.file), "theirs").unwrap();
+        let err = CommandError::from(workspace.write_memo(&memo.id, b"ours!").unwrap_err());
+        assert_eq!(err.code, "conflict", "{}", err.message);
+
+        let file = dir.path().join("밖.txt");
+        std::fs::write(&file, "disk").unwrap();
+        let external = ExternalFiles::new(DraftStore::new(dir.path().join("buffers")));
+        external.open(&file).unwrap();
+        std::fs::write(&file, "theirs").unwrap();
+        let err = CommandError::from(external.save(&file, b"mine").unwrap_err());
+        assert_eq!(err.code, "conflict", "{}", err.message);
     }
 
     #[test]

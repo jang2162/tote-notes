@@ -401,6 +401,69 @@ test("a draft whose file changed on disk opens with the conflict banner", async 
   expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});
 });
 
+test("내 버전 picked for a restored draft does not cover a change made after it", async ({
+  page,
+}) => {
+  await start(page, {
+    files: { "/x/a.sh": fakeFile("v1") },
+    drafts: { "/x/a.sh": { base: fakeFile("v0"), data: fakeFile("mine") } },
+    picks: ["/x/a.sh"],
+  });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("mine");
+  const banner = page.locator(".banner");
+  await banner.getByRole("button", { name: "내 버전" }).click();
+  await expect(banner).toBeHidden();
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+  // Written again elsewhere, the watcher silent: this is not the version the choice was about.
+  await page.evaluate(
+    ([data]) => {
+      window.__tote.backend.data.files["/x/a.sh"] = data;
+    },
+    [fakeFile("v2")] as const,
+  );
+  await menu(page, "save");
+  await expect(banner.locator(".banner-text")).toHaveText(
+    "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?",
+  );
+  expect(await page.evaluate(() => window.__tote.backend.fileText("/x/a.sh"))).toBe("v2");
+  await expect(page.locator(".cm-content")).toHaveText("mine");
+});
+
+test("⌘S over another app's text the watcher has not reported asks instead of writing", async ({
+  page,
+}) => {
+  await start(page, { files: { "/x/a.sh": fakeFile("v1") }, picks: ["/x/a.sh"] });
+  await menu(page, "open-file");
+  await expect(page.locator(".cm-content")).toHaveText("v1");
+  await page.locator(".cm-content").focus();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText(" mine");
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+  // Written elsewhere, the watcher silent.
+  await page.evaluate(
+    ([data]) => {
+      window.__tote.backend.data.files["/x/a.sh"] = data;
+    },
+    [fakeFile("v2")] as const,
+  );
+  await menu(page, "save");
+  const banner = page.locator(".banner");
+  await expect(banner.locator(".banner-text")).toHaveText(
+    "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?",
+  );
+  expect(await page.evaluate(() => window.__tote.backend.fileText("/x/a.sh"))).toBe("v2");
+  await expect(page.locator(".cm-content")).toHaveText("v1 mine");
+  await expect(page.locator(".tab.active")).toHaveClass(/dirty/);
+  await expect(page.locator(".status-message")).not.toHaveClass(/error/);
+  await banner.getByRole("button", { name: "내 버전" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.fileText("/x/a.sh")))
+    .toBe("v1 mine");
+  await expect(banner).toBeHidden();
+  await expect(page.locator(".tab.active")).not.toHaveClass(/dirty/);
+});
+
 test("an external file edited elsewhere while clean is reread", async ({ page }) => {
   await start(page, { files: { "/x/a.sh": fakeFile("v1") }, picks: ["/x/a.sh"] });
   await menu(page, "open-file");
