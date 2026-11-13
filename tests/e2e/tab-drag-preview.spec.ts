@@ -355,3 +355,174 @@ test("the tabs slide aside, at once for reduced motion", async ({ page }) => {
   await page.emulateMedia({ reducedMotion: "no-preference" });
   await expect.poll(duration).toBe("0.15s");
 });
+
+// A drop is not a slide: the tabs are in their places in the frame the drop is drawn in. The
+// tests above cannot see it — with reduced motion nothing slides at all — so these run with
+// motion on, and read every tab in the first frame after the drop (or the key) is handled.
+test.describe("with motion on", () => {
+  test.use({ reducedMotion: "no-preference" });
+
+  type TabFrame = Record<string, { left: number; animations: number }>;
+  const readTabs = () =>
+    Object.fromEntries(
+      [...document.querySelectorAll<HTMLElement>(".tab")].map((el) => [
+        el.querySelector(".tab-title")!.textContent!,
+        { left: el.getBoundingClientRect().left, animations: el.getAnimations().length },
+      ]),
+    );
+
+  /** Reads every tab (by title) in the first frame after the window's next `event` — the release
+   * of a drag, a key — once the page has handled it. Call before the event; await `frame` after. */
+  async function watchFrameAfter(page: Page, event: "pointerup" | "keydown"): Promise<void> {
+    await page.evaluate(
+      ([event, read]) => {
+        const seen = window as unknown as { tabFrame?: TabFrame };
+        seen.tabFrame = undefined;
+        // eslint-disable-next-line no-new-func -- the reader crosses into the page as text
+        const readTabs = new Function(`return (${read})()`) as () => TabFrame;
+        window.addEventListener(
+          event,
+          () => requestAnimationFrame(() => (seen.tabFrame = readTabs())),
+          { once: true, capture: true },
+        );
+      },
+      [event, readTabs.toString()] as const,
+    );
+  }
+
+  async function frame(page: Page): Promise<TabFrame> {
+    const handle = await page.waitForFunction(
+      () => (window as unknown as { tabFrame?: TabFrame }).tabFrame,
+    );
+    return (await handle.jsonValue()) as TabFrame;
+  }
+
+  /** Every tab once nothing slides any more. */
+  async function settled(page: Page): Promise<TabFrame> {
+    await page.waitForFunction(() =>
+      [...document.querySelectorAll(".tab")].every((el) => el.getAnimations().length === 0),
+    );
+    return page.evaluate(readTabs);
+  }
+
+  /** In the frame `at`, every tab is where it ends up and none is sliding. */
+  function expectInPlace(at: TabFrame, end: TabFrame): void {
+    expect(Object.keys(at).sort()).toEqual(Object.keys(end).sort());
+    for (const [title, tab] of Object.entries(at)) {
+      expect(tab.animations, `${title} slides`).toBe(0);
+      expect(Math.abs(tab.left - end[title].left), `${title} is off its place`).toBeLessThanOrEqual(
+        1,
+      );
+    }
+  }
+
+  test("a tab dropped in its own bar is in its place at once, and so are its neighbours", async ({
+    page,
+  }) => {
+    await start(page, {
+      memos,
+      session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c"), memoTab("d")]]),
+    });
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다", "라"]);
+    const target = await centre(tab(page, 0, "다"));
+    await press(page, tab(page, 0, "나"), { x: target.x + 5, y: target.y });
+    await expect.poll(() => shownOrder(page, 0)).toEqual(["가", "다", "나", "라"]);
+    await settled(page);
+    await watchFrameAfter(page, "pointerup");
+    await page.mouse.up();
+    const dropped = await frame(page);
+    await expect(titles(page, 0)).toHaveText(["가", "다", "나", "라"]);
+    expectInPlace(dropped, await settled(page));
+  });
+
+  test("a tab dropped in another pane's bar is in its place at once, and so are the tabs there", async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 1280, height: 720 });
+    await start(page, {
+      memos,
+      session: paneSession([
+        [memoTab("a"), memoTab("b")],
+        [memoTab("c"), memoTab("d")],
+      ]),
+    });
+    await expect(titles(page, 1)).toHaveText(["다", "라"]);
+    const there = await edges(page, 1);
+    await press(page, tab(page, 0, "나"), await before(tab(page, 1, "라")));
+    // The gap is open: 라 has stepped right.
+    await expect
+      .poll(async () => (await edges(page, 1))["라"].left)
+      .toBeGreaterThan(there["라"].left + 10);
+    await settled(page);
+    await watchFrameAfter(page, "pointerup");
+    await page.mouse.up();
+    const dropped = await frame(page);
+    await expect(titles(page, 1)).toHaveText(["다", "나", "라"]);
+    expectInPlace(dropped, await settled(page));
+  });
+
+  test("a tab dropped back where it was is in its place at once", async ({ page }) => {
+    await start(page, {
+      memos,
+      session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]),
+    });
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+    const was = await edges(page, 0);
+    const from = await centre(tab(page, 0, "나"));
+    // Dragged a little: held off its place, no neighbour giving way yet.
+    await press(page, tab(page, 0, "나"), { x: from.x + 12, y: from.y });
+    await expect
+      .poll(async () => (await edges(page, 0))["나"].left)
+      .toBeGreaterThan(was["나"].left + 6);
+    await settled(page);
+    await watchFrameAfter(page, "pointerup");
+    await page.mouse.up();
+    const dropped = await frame(page);
+    expectInPlace(dropped, await settled(page));
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+  });
+
+  test("a bar drawn again during a drag has its tabs where the preview had them, at once", async ({
+    page,
+  }) => {
+    await start(page, {
+      memos,
+      session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]),
+    });
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+    await press(page, tab(page, 0, "가"), await before(tab(page, 0, "다")));
+    await expect.poll(() => shownOrder(page, 0)).toEqual(["나", "가", "다"]);
+    const shown = await settled(page);
+    // A save's answer draws the bar again mid-drag; read in the same task, before any frame.
+    const drawn = await page.evaluate((read) => {
+      window.__tote.app.panes[0].renderTabs();
+      // eslint-disable-next-line no-new-func -- the reader crosses into the page as text
+      return (new Function(`return (${read})()`) as () => TabFrame)();
+    }, readTabs.toString());
+    expectInPlace(drawn, shown);
+    await page.mouse.up();
+  });
+
+  // Called off, the tabs do slide back: nothing was dropped, and the bar is not drawn again.
+  test("Esc lets the tabs slide back to where they were", async ({ page }) => {
+    await start(page, {
+      memos,
+      session: paneSession([[memoTab("a"), memoTab("b"), memoTab("c")]]),
+    });
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+    const was = await edges(page, 0);
+    await press(page, tab(page, 0, "가"), await before(tab(page, 0, "다")));
+    await expect.poll(() => shownOrder(page, 0)).toEqual(["나", "가", "다"]);
+    await settled(page);
+    await watchFrameAfter(page, "keydown");
+    await page.keyboard.press("Escape");
+    const called = await frame(page);
+    // 나, which had stepped aside, and 가, which was held at the pointer, are on their way back.
+    expect(called["나"].animations).toBe(1);
+    expect(called["가"].animations).toBe(1);
+    const end = await settled(page);
+    for (const title of ["가", "나", "다"]) near(end[title].left, was[title].left);
+    await page.mouse.up();
+    await expect(titles(page, 0)).toHaveText(["가", "나", "다"]);
+  });
+});
