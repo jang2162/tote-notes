@@ -3,6 +3,7 @@ name = "tote"
 version = "0.6.0"
 description = "tote-notes: a light notes app that keeps everything as you left it"
 edition = "2021"
+license = "MIT"
 
 [lib]
 # The `_lib` suffix keeps the library apart from the `tote` binary (cargo#8519 on Windows).

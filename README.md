@@ -53,3 +53,7 @@ pnpm test:e2e
 - `docs/guides/` — 개발·릴리스 가이드.
 - `docs/superpowers/` — 설계(`specs/`), 구현 계획(`plans/`), 확인 기록(`reports/`). 그때의 판단을 남긴 기록이다.
 - `docs/guideline/` — 에이전트 작업 지침의 사본.
+
+## 라이선스
+
+MIT. 전문은 [`LICENSE`](LICENSE). 번들한 문법·테마는 각자의 라이선스를 따른다 — 확장 폴더마다 `LICENSES.md` 가 있다(`src-tauri/resources/extensions/`).
