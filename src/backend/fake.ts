@@ -889,13 +889,15 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
+  /** As `delete_memo`: only a blank memo goes. */
   async deleteMemo(id: string) {
     this.refuseWhileSwitching();
-    this.memo(id);
+    if (/\S/.test(decode(this.memo(id).data))) return false;
     delete this.data.memos[id];
     delete this.held[id];
     this.commit();
     this.memosTouched();
+    return true;
   }
 
   /** As the `trash_memo` command: a memo another window holds stays, and that window is asked;

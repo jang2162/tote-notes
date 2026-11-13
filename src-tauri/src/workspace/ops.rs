@@ -66,6 +66,9 @@ fn device_and_inode(_meta: &fs::Metadata) -> (u64, u64) {
     (0, 0)
 }
 
+/// A memo this long is not an empty new memo, whatever it holds (`Workspace::delete_memo`).
+const BLANK_LIMIT: u64 = 1024 * 1024;
+
 impl Workspace {
     pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
         let file = self.free_name("untitled", ext, None);
@@ -256,8 +259,14 @@ impl Workspace {
         self.memo_info(id)
     }
 
-    pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
+    /// Removes an empty memo for good — the new memo a tab closed without a word in it (spec
+    /// 「세션」). `false`, with the memo left in place, when its file holds text: another app wrote
+    /// into it and the watcher has not said so yet.
+    pub fn delete_memo(&mut self, id: &str) -> Result<bool, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        if !is_blank(&self.root.join(&file))? {
+            return Ok(false);
+        }
         self.mark_changed();
         match fs::remove_file(self.root.join(&file)) {
             Ok(()) => {}
@@ -270,7 +279,7 @@ impl Workspace {
         if let Some(viewed) = self.viewed.as_mut() {
             viewed.retain(|each| each != id);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Copies `contents` in as a new memo named `file_name` (`a.sh`, `a 2.sh`, …). The person
@@ -430,6 +439,27 @@ impl Workspace {
     }
 }
 
+/// Whether the file at `path` is blank as the editor counts it (`isBlank` in src/app/docs.ts):
+/// nothing but white space, a byte order mark aside. A missing file is; bytes that are not UTF-8
+/// and a file over `BLANK_LIMIT` are not.
+fn is_blank(path: &Path) -> io::Result<bool> {
+    let meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    if meta.len() > BLANK_LIMIT {
+        return Ok(false);
+    }
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    Ok(std::str::from_utf8(&bytes)
+        .is_ok_and(|text| text.chars().all(|c| c.is_whitespace() || c == '\u{feff}')))
+}
+
 #[cfg(unix)]
 fn same_file(a: &Path, b: &Path) -> bool {
     use std::os::unix::fs::MetadataExt;
@@ -505,9 +535,9 @@ mod tests {
     #[test]
     fn deleting_a_pinned_memo_drops_its_entry() {
         let (_root, mut ws) = workspace();
-        let memo = ws.import_memo("가.md", b"x").unwrap();
+        let memo = ws.import_memo("가.md", b"").unwrap();
         ws.set_pinned(&memo.id, true).unwrap();
-        ws.delete_memo(&memo.id).unwrap();
+        assert!(ws.delete_memo(&memo.id).unwrap());
         assert!(matches!(
             ws.set_pinned(&memo.id, true),
             Err(WorkspaceError::UnknownMemo(_))
@@ -553,6 +583,9 @@ mod tests {
         fs::write(&outside, "c").unwrap();
         ws.import_file(&outside).unwrap();
         check(&mut ws, "import file");
+        // Only an empty memo is removed.
+        ws.write_memo(&memo.id, b"").unwrap();
+        ws.take_changed();
         ws.delete_memo(&memo.id).unwrap();
         check(&mut ws, "delete");
 
@@ -867,6 +900,26 @@ mod tests {
         assert_eq!(ws.read_memo(&old.id).unwrap(), b"old");
         ws.write_memo(&old.id, b"old, edited").unwrap();
         assert_eq!(on_disk(&ws, "옛.md"), "old, edited");
+    }
+
+    #[test]
+    fn delete_leaves_a_file_another_app_wrote_into() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        elsewhere(&ws, &memo.file, "theirs");
+        ws.take_changed();
+        assert!(!ws.delete_memo(&memo.id).unwrap());
+        assert_eq!(on_disk(&ws, &memo.file), "theirs");
+        assert_eq!(ws.memo_info(&memo.id).unwrap().file, memo.file);
+        assert!(!ws.take_changed(), "nothing was removed");
+        // Blank as the editor counts it — spaces, line ends, a byte order mark — still goes.
+        elsewhere(&ws, &memo.file, "\u{feff} \n\t\u{3000}\r\n");
+        assert!(ws.delete_memo(&memo.id).unwrap());
+        assert!(listed(&ws).is_empty());
+        // Bytes that are not text are not blank.
+        let binary = ws.create_memo("md", b"").unwrap();
+        fs::write(ws.root().join(&binary.file), [0xff, 0xfe]).unwrap();
+        assert!(!ws.delete_memo(&binary.id).unwrap());
     }
 
     #[test]

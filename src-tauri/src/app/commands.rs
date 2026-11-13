@@ -358,16 +358,19 @@ pub async fn set_memo_language(
     Ok(info)
 }
 
+/// Whether the memo was removed: one whose file holds text is left (`Workspace::delete_memo`).
 #[tauri::command]
 pub async fn delete_memo(
     core: State<'_, AppCore>,
     window: WebviewWindow,
     id: String,
-) -> CmdResult<()> {
+) -> CmdResult<bool> {
     let workspace = workspace_to_change(&core, &window)?;
-    lock(&workspace).delete_memo(&id)?;
-    memos_changed(window.app_handle(), window.label());
-    Ok(())
+    let deleted = lock(&workspace).delete_memo(&id)?;
+    if deleted {
+        memos_changed(window.app_handle(), window.label());
+    }
+    Ok(deleted)
 }
 
 /// What `trash_memo` did. `Elsewhere`: another window has the memo open, so nothing moved; that

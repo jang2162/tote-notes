@@ -27,6 +27,31 @@ test("closing an empty new memo leaves no file behind", async ({ page }) => {
   await expect(page.locator(".editor-placeholder")).toContainText("새 메모를 만드세요");
 });
 
+test("closing an empty new memo leaves the file when another app has written into it", async ({
+  page,
+}) => {
+  await start(page);
+  await menu(page, "new-memo");
+  await expect(page.locator(".tab")).toHaveCount(1);
+  // Written elsewhere, the watcher silent: the tab still believes the memo is empty.
+  await page.evaluate(
+    ([data]) => {
+      const { memos } = window.__tote.backend.data;
+      for (const memo of Object.values(memos)) Object.assign(memo, { data, modifiedMs: 900 });
+    },
+    [fakeFile("다른 앱이 쓴 글")] as const,
+  );
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab")).toHaveCount(0);
+  expect(
+    await page.evaluate(() => {
+      const { backend } = window.__tote;
+      return Object.keys(backend.data.memos).map((id) => backend.memoText(id));
+    }),
+  ).toEqual(["다른 앱이 쓴 글"]);
+  await expect(page.locator(".memo-row")).toHaveCount(1);
+});
+
 test("restoring a session reads only the active tab", async ({ page }) => {
   const session = {
     version: 1,

@@ -150,6 +150,17 @@ describe("MemoDoc", () => {
     expect(backend.data.memos.named).toBeDefined();
   });
 
+  it("closing an empty new memo leaves the file when another app has written into it", async () => {
+    const { backend, host, changes } = setup();
+    const doc = new MemoDoc(host, await backend.createMemo());
+    doc.startEmpty();
+    // Written elsewhere, and the watcher has not said so yet.
+    backend.data.memos[doc.info.id].data = fakeFile("다른 앱");
+    expect(await doc.close()).toBe(true);
+    expect(backend.memoText(doc.info.id)).toBe("다른 앱");
+    expect(changes).not.toContain("deleted");
+  });
+
   it("recovers a memo whose file vanished", async () => {
     const { backend, host } = setup({ memos: { a: fakeMemo("a.md", "원래") } });
     const doc = new MemoDoc(host, (await backend.listMemos())[0]);

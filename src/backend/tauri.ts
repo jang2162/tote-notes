@@ -137,7 +137,7 @@ export class TauriBackend implements Backend {
     return call<MemoInfo>("set_memo_language", { id, language, ext, detected });
   }
   deleteMemo(id: string) {
-    return call<void>("delete_memo", { id });
+    return call<boolean>("delete_memo", { id });
   }
   trashMemo(id: string) {
     return call<TrashOutcome>("trash_memo", { id });

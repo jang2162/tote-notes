@@ -89,6 +89,17 @@ describe("FakeBackend saves over another app's text", () => {
     expect(backend.data.failWrites).toBe(1);
   });
 
+  it("deleteMemo leaves a memo whose file holds text", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    const memo = await backend.createMemo();
+    backend.data.memos[memo.id].data = fakeFile("theirs");
+    expect(await backend.deleteMemo(memo.id)).toBe(false);
+    expect(backend.memoText(memo.id)).toBe("theirs");
+    backend.data.memos[memo.id].data = fakeFile(" \n\t");
+    expect(await backend.deleteMemo(memo.id)).toBe(true);
+    expect(backend.memoText(memo.id)).toBeNull();
+  });
+
   it("refuses an external save over a file changed since it was opened, as ExternalFiles::save does", async () => {
     const seed = { ...defaultFakeData(), files: { "/x/a.sh": fakeFile("v1") } };
     const backend = new FakeBackend(memoryStorage(JSON.stringify(seed)));

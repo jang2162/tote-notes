@@ -875,8 +875,9 @@ export class MemoDoc extends Doc {
     // An empty new memo leaves no file behind (spec 「세션」); "new" means tote still names it.
     if (this.info.autoTitle && this.state && isBlank(this.state.doc)) {
       try {
-        await this.host.backend.deleteMemo(this.info.id);
-        this.host.changed(this, "deleted");
+        // Kept when another app has written into the file meanwhile: the memo stays in the list
+        // with that text, and the watcher's report brings the rest.
+        if (await this.host.backend.deleteMemo(this.info.id)) this.host.changed(this, "deleted");
       } catch (error) {
         this.fail(error);
       }

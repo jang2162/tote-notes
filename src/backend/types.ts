@@ -508,7 +508,9 @@ export interface Backend {
   setMemoPinned(id: string, pinned: boolean): Promise<MemoInfo>;
   /** `detected`: the editor's automatic pick, which leaves a memo the person named as it is. */
   setMemoLanguage(id: string, language: string, ext: string, detected?: boolean): Promise<MemoInfo>;
-  deleteMemo(id: string): Promise<void>;
+  /** Removes an empty memo for good. `false`, with the memo left in the list, when its file holds
+   * text: another app wrote into it. */
+  deleteMemo(id: string): Promise<boolean>;
   /** Moves the memo to the workspace's trash. A memo another window has open stays where it is:
    * `elsewhere`, and that window hears `onTrashRequest`. Every window's memo list and trash
    * follow. */
