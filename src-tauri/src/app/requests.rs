@@ -10,7 +10,7 @@ use super::{commands, lock, windows, AppCore, PendingOpen};
 use crate::appdata::shown_from_home;
 use crate::cli::CliRequest;
 use crate::workspace::names::is_valid_file_name;
-use crate::workspace::{MemoInfo, Workspace, WorkspaceError};
+use crate::workspace::{MemoInfo, Workspace};
 
 pub fn handle(app: &AppHandle, request: CliRequest) {
     let core = app.state::<AppCore>();
@@ -169,11 +169,9 @@ fn take_stdin(inbox: &Path, workspace: &Mutex<Workspace>, file: &Path) -> Result
         eprintln!("tote: inbox 밖의 파일은 받지 않습니다: {}", file.display());
         return Err(STDIN_FAILED.to_string());
     }
-    let created = fs::read(file)
-        .map_err(WorkspaceError::from)
-        .and_then(|text| lock(workspace).create_memo("md", &text));
-    // The parked file is the only copy of the piped text until it is a memo.
-    match created {
+    // Copied file to file: the text may be larger than is good to hold. The parked file is the
+    // only copy of it until it is a memo.
+    match lock(workspace).create_memo_from_file("md", file) {
         Ok(info) => {
             let _ = fs::remove_file(file);
             Ok(info)
