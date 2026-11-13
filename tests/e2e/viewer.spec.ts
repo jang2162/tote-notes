@@ -67,3 +67,73 @@ test("messages from any other window are ignored", async ({ page }) => {
   await expect(page.locator("body")).toHaveAttribute("data-intruder", "seen");
   await expect(page.locator("#log")).toHaveText("");
 });
+
+// Spec 2026-11-14 md-preview 「뷰어 API 추가」: what a preview asks is checked by the host first.
+
+const previewCalls = (page: Page) => page.evaluate(() => window.previewCalls);
+
+test("a preview's requests reach its tab only in the shape and for the text on show", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/e2e/pages/viewer.html?preview=1&viewer=/tests/e2e/pages/viewers/requests.html",
+  );
+  const body = frame(page).locator("body");
+  await expect(body).toHaveAttribute("data-init", /"version":1/);
+  expect(JSON.parse((await body.getAttribute("data-init"))!)).toMatchObject({
+    type: "init",
+    text: "- [ ] a",
+    version: 1,
+    readOnly: false,
+  });
+  await expect(body).toHaveAttribute("data-resolved", "9");
+  expect(await previewCalls(page)).toEqual([
+    ["highlight", [{ index: 0, lang: "ts", code: "a" }]],
+    ["toggleTask", 0, "- [ ] a"],
+    ["openLink", "https://example.com/ok"],
+  ]);
+  await expect(body).toHaveAttribute("data-highlighted", /"req":4/);
+  expect(JSON.parse((await body.getAttribute("data-highlighted"))!)).toEqual({
+    type: "highlighted",
+    version: 1,
+    req: 4,
+    blocks: [{ index: 0, lines: [[{ text: "a", color: "#ff0000", fontStyle: 0 }]] }],
+  });
+});
+
+test("an update numbers the text anew, and a request for the old one is dropped", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/e2e/pages/viewer.html?preview=1&viewer=/tests/e2e/pages/viewers/requests.html",
+  );
+  await expect.poll(() => previewCalls(page)).toHaveLength(3);
+  await page.evaluate(() => window.viewerHost.update("- [x] a"));
+  // The viewer asks again only on init; a stale request now carries version 1.
+  await frame(page)
+    .locator("body")
+    .evaluate(() => parent.postMessage({ type: "toggleTask", version: 1, index: 0 }, "*"));
+  await frame(page)
+    .locator("body")
+    .evaluate(() => parent.postMessage({ type: "toggleTask", version: 2, index: 0 }, "*"));
+  await expect.poll(() => previewCalls(page)).toHaveLength(4);
+  expect((await previewCalls(page))[3]).toEqual(["toggleTask", 0, "- [x] a"]);
+});
+
+test("a preview's requests from any other window are ignored", async ({ page }) => {
+  await page.goto(
+    "/tests/e2e/pages/viewer.html?preview=1&viewer=/tests/e2e/pages/viewers/ok.html&intruder=1",
+  );
+  await expect(frame(page).locator("body")).toHaveAttribute("data-file", "할일.md");
+  // The intruder's last message is its error: by the time it is seen, so are the others.
+  await expect(page.locator("body")).toHaveAttribute("data-intruder", "seen");
+  expect(await previewCalls(page)).toEqual([]);
+  await expect(page.locator("#log")).toHaveText("");
+});
+
+test("a viewer given no preview requests has them dropped", async ({ page }) => {
+  await page.goto("/tests/e2e/pages/viewer.html?viewer=/tests/e2e/pages/viewers/requests.html");
+  await expect(frame(page).locator("body")).toHaveAttribute("data-resolved", "9");
+  await expect(page.locator("#log")).toHaveText("");
+  expect(await previewCalls(page)).toEqual([]);
+});

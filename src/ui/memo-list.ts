@@ -186,6 +186,12 @@ export class MemoList {
     return this.memos.find((memo) => memo.id === id);
   }
 
+  /** The memo whose file is `name`, both read in NFC. */
+  byFile(name: string): MemoInfo | undefined {
+    const wanted = name.normalize("NFC");
+    return this.memos.find((memo) => memo.file.normalize("NFC") === wanted);
+  }
+
   get order(): MemoSort {
     return this.sort;
   }

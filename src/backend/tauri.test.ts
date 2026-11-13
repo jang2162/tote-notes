@@ -195,6 +195,11 @@ describe("TauriBackend", () => {
         "read_extension_file",
         { extensionId: "p.x", path: "t.json" },
       ],
+      [
+        () => backend.openLink("https://example.com/a"),
+        "open_link",
+        { url: "https://example.com/a" },
+      ],
     ];
     for (const [run, command, args] of calls) {
       invoke.mockClear();

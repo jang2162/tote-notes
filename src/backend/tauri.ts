@@ -236,6 +236,9 @@ export class TauriBackend implements Backend {
   revealBackups() {
     return call<void>("reveal_backups");
   }
+  openLink(url: string) {
+    return call<void>("open_link", { url });
+  }
 
   async windowFrame(): Promise<WindowFrame> {
     const scale = await this.window.scaleFactor();

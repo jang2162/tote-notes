@@ -1,0 +1,30 @@
+<!doctype html>
+<meta charset="utf-8" />
+<script>
+  // A preview viewer that asks its host for everything a preview may ask, in shapes it must drop
+  // and then in ones it takes; the last request taken is the sign the others have been seen.
+  addEventListener("message", (e) => {
+    const data = e.data;
+    if (data?.type === "highlighted") document.body.dataset.highlighted = JSON.stringify(data);
+    if (data?.type === "resolved") document.body.dataset.resolved = String(data.id);
+    if (data?.type !== "init") return;
+    const version = data.version;
+    document.body.dataset.init = JSON.stringify(data);
+    const send = (message) => parent.postMessage(message, "*");
+    send({ type: "toggleTask", version, index: -1 });
+    send({ type: "toggleTask", version, index: 1.5 });
+    send({ type: "toggleTask", version, index: "0" });
+    send({ type: "toggleTask", version: version + 1, index: 0 });
+    send({ type: "openLink", href: 42 });
+    send({ type: "openLink", href: "https://example.com/" + "a".repeat(9000) });
+    send({ type: "highlight", version, req: 1, blocks: [{ index: 0, lang: "ts", code: 5 }] });
+    send({ type: "highlight", version, req: 2, blocks: "ts" });
+    send({ type: "highlight", version: version + 1, req: 3, blocks: [] });
+    send({ type: "highlight", version, req: 4, blocks: [{ index: 0, lang: "ts", code: "a" }] });
+    send({ type: "toggleTask", version, index: 0 });
+    send({ type: "openLink", href: "https://example.com/ok" });
+    // Answered after the host has taken every message above.
+    send({ type: "resolveRelative", id: 9, path: "pic.png" });
+  });
+  parent.postMessage({ type: "ready" }, "*");
+</script>

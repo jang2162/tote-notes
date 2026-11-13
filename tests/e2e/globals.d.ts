@@ -48,6 +48,8 @@ declare global {
     result: unknown;
     /** Set by tests/e2e/pages/viewer.ts. */
     viewerHost: ViewerHost;
+    /** tests/e2e/pages/viewer.ts with `?preview=1`: the preview requests its host passed on. */
+    previewCalls: unknown[][];
     /** Set by tests/e2e/pages/large-text.ts. */
     largeTextViewer: LargeTextViewer;
     searchCalls: {

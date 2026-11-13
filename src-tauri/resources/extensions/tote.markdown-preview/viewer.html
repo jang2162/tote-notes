@@ -4,7 +4,7 @@
     <meta charset="utf-8" />
     <meta
       http-equiv="Content-Security-Policy"
-      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-ZTtXdje0pgzbVjd9JCdemtOZdhK/2RvtkWrxvkFbFpY='"
+      content="default-src 'none'; img-src tote-file: data:; style-src 'unsafe-inline'; script-src 'sha256-f6V0Qt0mwzw2EeB9rTmwnE+bIdbBqFWOMRirnH7FhVo=' 'sha256-zkNK3hn7/9t/zAok4UKN1/xXu/xzIparT+glT5LcpRs='"
     />
     <title>미리보기</title>
     <style>
@@ -55,6 +55,15 @@
       td {
         padding: 4px 8px;
         border: 1px solid var(--border, #ddd);
+      }
+      /* A task list item shows its box where the bullet was (spec 2026-11-14 md-preview). */
+      li:has(> input.task),
+      li:has(> p > input.task) {
+        list-style: none;
+      }
+      input.task {
+        margin: 0 0.4em 0 -1.4em;
+        vertical-align: -0.1em;
       }
       .blocked-image {
         display: inline-block;
@@ -157,24 +166,62 @@ if(__exports != exports)module.exports = exports;return module.exports}));
       // URLs from the host, remote images are not shown. Markdown may carry raw HTML; the CSP has
       // no 'unsafe-inline' for scripts and the sandbox has no navigation, so what remains is kept
       // from running by stripping the elements that could still act (script, meta refresh, frames,
-      // forms) before the HTML enters the document.
+      // forms) before the HTML enters the document. Spec 2026-11-14 md-preview: task boxes the
+      // host flips in the text, code colours the host's grammars make, links the host follows.
       const DROP =
-        "script, meta, link, base, iframe, frame, object, embed, form, input, button, textarea, select, style, map, area";
+        "script, meta, link, base, iframe, frame, object, embed, form, button, textarea, select, style, map, area";
       const main = document.getElementById("main");
       let nextId = 1;
       const waiting = new Map();
+      /** Image path → the token URL it resolved to: a text drawn again asks no second time. */
+      const resolved = new Map();
+      /** The number of the text on show: a request to the host names it. */
+      let version = 0;
+      let readOnly = true;
+      /** This drawing's mark on the boxes marked draws (see the checkbox renderer). */
+      let nonce = "";
+      let boxes = 0;
+      /** The drawing's code elements, by the index the host's colours name. */
+      let codes = [];
+      let highlightReq = 0;
+
+      // Only the boxes marked draws carry this drawing's random mark: an <input> written as HTML
+      // in the memo does not, and is dropped below, so it cannot shift the numbering the host
+      // counts the text's tasks by (src/viewer/tasks.ts).
+      marked.use({
+        renderer: {
+          checkbox({ checked }) {
+            const box = `<input type="checkbox" data-nonce="${nonce}" data-task="${boxes++}"`;
+            return `${box}${checked ? " checked" : ""}> `;
+          },
+        },
+      });
 
       function applyTheme(theme) {
         for (const [name, value] of Object.entries(theme || {}))
           document.documentElement.style.setProperty(name, value);
       }
 
+      function decoded(text) {
+        try {
+          return decodeURIComponent(text);
+        } catch {
+          return text;
+        }
+      }
+
       function resolve(path) {
-        return new Promise((resolve) => {
-          const id = nextId++;
-          waiting.set(id, resolve);
-          parent.postMessage({ type: "resolveRelative", id, path }, "*");
-        });
+        if (!resolved.has(path)) {
+          resolved.set(
+            path,
+            new Promise((resolve) => {
+              const id = nextId++;
+              waiting.set(id, resolve);
+              parent.postMessage({ type: "resolveRelative", id, path }, "*");
+            }),
+          );
+        }
+        return resolved.get(path);
       }
 
       function blocked(img, label) {
@@ -194,10 +241,37 @@ if(__exports != exports)module.exports = exports;return module.exports}));
         else blocked(img, "찾을 수 없음");
       }
 
+      /** GitHub's heading anchors: lower case, letters, digits, `-`, `_` and spaces kept, spaces
+       * as `-`, a repeat numbered `-1`, `-2`, … */
+      function slug(text) {
+        return text
+          .trim()
+          .toLowerCase()
+          .replace(/[^\p{L}\p{M}\p{N}\p{Pc} -]/gu, "")
+          .replace(/ /g, "-");
+      }
+
+      function taskBox(input) {
+        const box = document.createElement("input");
+        box.type = "checkbox";
+        box.className = "task";
+        box.checked = input.hasAttribute("checked");
+        box.disabled = readOnly;
+        box.dataset.task = input.dataset.task;
+        return box;
+      }
+
       function render(text) {
+        nonce = Array.from(crypto.getRandomValues(new Uint32Array(4)), (n) => n.toString(36)).join("");
+        boxes = 0;
         const html = marked.parse(text, { async: false, gfm: true });
         const template = document.createElement("template");
         template.innerHTML = html;
+        for (const input of template.content.querySelectorAll("input")) {
+          const ours = input.dataset.nonce === nonce && input.getAttribute("type") === "checkbox";
+          if (ours) input.replaceWith(taskBox(input));
+          else input.remove();
+        }
         for (const el of template.content.querySelectorAll(DROP)) el.remove();
         for (const el of template.content.querySelectorAll("*")) {
           for (const attr of [...el.attributes]) {
@@ -205,27 +279,128 @@ if(__exports != exports)module.exports = exports;return module.exports}));
               el.removeAttribute(attr.name);
           }
         }
+        const seen = new Map();
+        for (const heading of template.content.querySelectorAll("h1, h2, h3, h4, h5, h6")) {
+          const base = slug(heading.textContent || "");
+          const count = seen.get(base) || 0;
+          seen.set(base, count + 1);
+          heading.dataset.anchor = count ? `${base}-${count}` : base;
+        }
+        // The address shows on hover (spec 2026-11-14 md-preview 「링크」).
+        for (const link of template.content.querySelectorAll("a[href]")) {
+          if (!link.hasAttribute("title")) link.title = decoded(link.getAttribute("href"));
+        }
         main.replaceChildren(template.content);
         for (const img of main.querySelectorAll("img")) placeImage(img);
+        codes = [...main.querySelectorAll("pre > code")];
+        requestHighlight();
+      }
+
+      function fenceOf(code) {
+        const name = [...code.classList].find((c) => c.startsWith("language-"));
+        return name ? name.slice("language-".length) : "";
+      }
+
+      /** Drawn plain first; the colours come later, from the host's highlight worker. */
+      function requestHighlight() {
+        const blocks = [];
+        codes.forEach((code, index) => {
+          const lang = fenceOf(code);
+          if (lang) blocks.push({ index, lang, code: code.textContent });
+        });
+        if (blocks.length === 0) return;
+        parent.postMessage({ type: "highlight", version, req: ++highlightReq, blocks }, "*");
+      }
+
+      /** Pieces of text with a colour, never markup: each becomes a text node in a span. */
+      function colorBlock(code, lines) {
+        const text = lines.map((line) => line.map((span) => span.text).join("")).join("\n");
+        if (text !== code.textContent) return;
+        const out = document.createDocumentFragment();
+        lines.forEach((line, i) => {
+          if (i > 0) out.append("\n");
+          for (const piece of line) {
+            const span = document.createElement("span");
+            span.className = "tok";
+            span.textContent = piece.text;
+            if (piece.color) span.style.color = piece.color;
+            if (piece.fontStyle & 1) span.style.fontStyle = "italic";
+            if (piece.fontStyle & 2) span.style.fontWeight = "bold";
+            const marks = [];
+            if (piece.fontStyle & 4) marks.push("underline");
+            if (piece.fontStyle & 8) marks.push("line-through");
+            if (marks.length) span.style.textDecoration = marks.join(" ");
+            out.append(span);
+          }
+        });
+        code.replaceChildren(out);
+      }
+
+      function scrollToAnchor(fragment) {
+        const name = decoded(fragment);
+        const wanted = [name.toLowerCase(), slug(name)];
+        const headings = [...main.querySelectorAll("[data-anchor]")];
+        const target =
+          headings.find((h) => wanted.includes(h.dataset.anchor)) ||
+          [...main.querySelectorAll("[id], a[name]")].find(
+            (el) => el.id === name || el.getAttribute("name") === name,
+          );
+        if (target) target.scrollIntoView({ block: "start" });
       }
 
       addEventListener("click", (event) => {
-        const link = event.target instanceof Element ? event.target.closest("a, area") : null;
-        if (link) event.preventDefault();
+        const target = event.target instanceof Element ? event.target : null;
+        const box = target ? target.closest("input.task") : null;
+        if (box) {
+          // The box changes when the text does: the host flips it there and draws it again.
+          event.preventDefault();
+          if (!readOnly && !box.disabled)
+            parent.postMessage({ type: "toggleTask", version, index: Number(box.dataset.task) }, "*");
+          return;
+        }
+        const link = target ? target.closest("a, area") : null;
+        if (!link) return;
+        event.preventDefault();
+        const href = link.getAttribute("href");
+        if (href === null) return;
+        if (href.startsWith("#")) scrollToAnchor(href.slice(1));
+        else parent.postMessage({ type: "openLink", href }, "*");
       });
+
+      function draw(text) {
+        try {
+          render(text || "");
+        } catch (error) {
+          parent.postMessage({ type: "error", message: String(error) }, "*");
+        }
+      }
 
       addEventListener("message", (event) => {
         const data = event.data;
         if (!data || typeof data !== "object") return;
         if (data.type === "init") {
           applyTheme(data.theme);
-          try {
-            render(data.text || "");
-          } catch (error) {
-            parent.postMessage({ type: "error", message: String(error) }, "*");
+          version = data.version || 0;
+          readOnly = data.readOnly !== false;
+          draw(data.text);
+        }
+        if (data.type === "update") {
+          version = data.version;
+          const y = scrollY;
+          draw(data.text);
+          scrollTo(scrollX, y);
+        }
+        if (data.type === "theme") {
+          applyTheme(data.theme);
+          requestHighlight();
+        }
+        if (data.type === "highlighted") {
+          if (data.version !== version || data.req !== highlightReq) return;
+          for (const block of data.blocks || []) {
+            const code = codes[block.index];
+            if (code && Array.isArray(block.lines)) colorBlock(code, block.lines);
           }
         }
-        if (data.type === "theme") applyTheme(data.theme);
         if (data.type === "resolved") {
           const resolve = waiting.get(data.id);
           waiting.delete(data.id);

@@ -160,6 +160,7 @@ pub fn run() {
             commands::list_versions,
             commands::read_version,
             commands::reveal_backups,
+            commands::open_link,
             commands::perf_mark,
             commands::perf_config,
         ])
