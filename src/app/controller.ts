@@ -950,6 +950,10 @@ export class AppController implements DocHost, PaneHost {
     if (current && current.key === key) return current.highlighting.extension;
     this.dropHighlight(doc);
     if (!lang || !key) return [];
+    // Closed by now (its read, or its language's data, answering after it went): nothing drops
+    // what is kept for a tab no pane has, and its text and undo history would stay with it for
+    // as long as the page lives.
+    if (!this.docs.includes(doc)) return [];
     const highlighting = workerHighlighting(this.highlight, lang, () => {
       if (!this.perf.enabled || this.coloured.has(doc.tabId)) return;
       this.coloured.add(doc.tabId);

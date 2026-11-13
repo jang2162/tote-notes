@@ -580,3 +580,57 @@ test("a video in the workspace under a text name says it is not text", async ({ 
   await page.locator(".memo-row", { hasText: "녹화" }).click();
   await expect(page.locator(".editor-placeholder p")).toHaveText("텍스트로 열 수 없음");
 });
+
+/** The tabs the window keeps a highlighter document for that are in none of its panes: each holds
+ * its text and undo history for as long as the page lives. */
+const strayHighlights = (page: Page) =>
+  page.evaluate(() => {
+    const app = window.__tote.app as unknown as { highlights: Map<{ tabId: string }, unknown> };
+    const open = new Set<string>(
+      window.__tote.app.panes.flatMap((pane) => pane.tabs.list.map((doc) => doc.tabId)),
+    );
+    return [...app.highlights.keys()].filter((doc) => !open.has(doc.tabId)).length;
+  });
+
+const keptHighlights = (page: Page) =>
+  page.evaluate(
+    () => (window.__tote.app as unknown as { highlights: Map<unknown, unknown> }).highlights.size,
+  );
+
+test("a tab closed while its file is read is not kept for the highlighter", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 하나"), b: fakeMemo("b.md", "# 둘") } });
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("# 하나");
+  // The tab on show is kept: the count below is of something.
+  expect(await keptHighlights(page)).toBe(1);
+  const release = await holdReads(page);
+  await page.locator(".memo-row", { hasText: "b" }).click();
+  await expect(page.locator(".tab")).toHaveCount(2);
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab .tab-title")).toHaveText(["a"]);
+  await release();
+  // The read's answer is taken within the task that released it.
+  await page.evaluate(() => new Promise((resolve) => setTimeout(resolve, 0)));
+  expect(await strayHighlights(page)).toBe(0);
+  expect(await keptHighlights(page)).toBe(1);
+});
+
+test("a tab closed before its language's data arrives is not kept for the highlighter", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "# 하나") } });
+  await gateCalls(page, ["readExtensionFile"], "held");
+  await page.locator(".memo-row", { hasText: "a" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("# 하나");
+  expect(await keptHighlights(page)).toBe(1);
+  await menu(page, "close-tab");
+  await expect(page.locator(".tab")).toHaveCount(0);
+  expect(await keptHighlights(page)).toBe(0);
+  await page.evaluate(async () => {
+    (window as unknown as { releaseCalls(): void }).releaseCalls();
+    // The language data that was read, then the task after the tab has been told of it.
+    await Promise.all(window.__tote.app.languageConfigs.values());
+    await new Promise((resolve) => setTimeout(resolve, 0));
+  });
+  expect(await strayHighlights(page)).toBe(0);
+});

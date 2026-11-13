@@ -93,6 +93,13 @@ test("keys typed while a file is imported do not end up unsaved in the memo", as
   // The memo takes the keys once it is there.
   await page.keyboard.type("!");
   await expect(page.locator(".cm-content")).toHaveText("echo hi!");
+  // And its colours: only a tab the window has is kept a highlighter document, and the memo is
+  // one. (That it is in the tab's place before it takes the text is docs.test.ts's to show: here
+  // the language data arriving later would give it one all the same.)
+  const kept = await page.evaluate(
+    () => (window.__tote.app as unknown as { highlights: Map<unknown, unknown> }).highlights.size,
+  );
+  expect(kept).toBe(1);
 });
 
 test("picking 가져오기 twice while the first is on its way makes one memo", async ({ page }) => {
