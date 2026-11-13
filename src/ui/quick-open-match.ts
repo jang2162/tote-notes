@@ -59,20 +59,21 @@ interface Prepared {
 function prepare(name: string): Prepared {
   const chars = Array.from(name.normalize("NFC"));
   const n = chars.length;
-  const folded = new Array<number>(n);
-  const heads = new Array<number>(n).fill(0);
+  const folded: number[] = [];
+  const heads: number[] = [];
   let before = -1;
   for (let at = 0; at < n; at++) {
     const char = chars[at];
     const code = char.codePointAt(0)!;
-    folded[at] = lowerCode(char, code);
-    if (at === 0) heads[at] = NAME_HEAD;
+    folded.push(lowerCode(char, code));
+    if (at === 0) heads.push(NAME_HEAD);
     else if (
       SEPARATORS.has(chars[at - 1]) ||
       (isUpper(char, code) && isLower(chars[at - 1], before)) ||
       isHangul(before) !== isHangul(code)
     )
-      heads[at] = WORD_HEAD;
+      heads.push(WORD_HEAD);
+    else heads.push(0);
     before = code;
   }
   return { chars, folded, heads };
