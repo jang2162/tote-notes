@@ -137,3 +137,31 @@ test("a viewer given no preview requests has them dropped", async ({ page }) => 
   await expect(page.locator("#log")).toHaveText("");
   expect(await previewCalls(page)).toEqual([]);
 });
+
+const MARKDOWN_VIEWER = "/extensions/tote.markdown-preview/viewer.html";
+
+test("the Markdown viewer asks for a task's box by its number, and not at all for a read-only tab", async ({
+  page,
+}) => {
+  const text = encodeURIComponent("- [ ] 하나\n- [x] 둘");
+  await page.goto(`/tests/e2e/pages/viewer.html?preview=1&viewer=${MARKDOWN_VIEWER}&text=${text}`);
+  const boxes = frame(page).locator("input[type=checkbox]");
+  await expect(boxes).toHaveCount(2);
+  await boxes.nth(1).click();
+  await expect.poll(() => previewCalls(page)).toEqual([["toggleTask", 1, "- [ ] 하나\n- [x] 둘"]]);
+  // Unchanged until the host draws the text again.
+  await expect(boxes.nth(1)).toBeChecked();
+
+  await page.goto(
+    `/tests/e2e/pages/viewer.html?preview=1&viewer=${MARKDOWN_VIEWER}&text=${text}&readonly`,
+  );
+  await expect(boxes).toHaveCount(2);
+  await expect(boxes.nth(0)).toBeDisabled();
+  await boxes.nth(0).click({ force: true });
+  await boxes.nth(0).dispatchEvent("click");
+  // A link press after it is the sign the box's would have arrived by now.
+  await page.evaluate(() => window.viewerHost.update("- [ ] 하나\n\n[웹](https://example.com/)"));
+  await frame(page).locator("a").click();
+  await expect.poll(() => previewCalls(page)).toEqual([["openLink", "https://example.com/"]]);
+  await expect(boxes.nth(0)).not.toBeChecked();
+});

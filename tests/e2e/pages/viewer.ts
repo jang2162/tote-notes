@@ -2,7 +2,8 @@ import { ViewerHost, type PreviewRequests } from "../../../src/viewer/host";
 
 const params = new URLSearchParams(location.search);
 const log = document.getElementById("log")!;
-// `?preview=1`: a preview viewer's host, its requests written down in `previewCalls`.
+// `?preview=1`: a preview viewer's host, its requests written down in `previewCalls`; `?text=`
+// is the text it is given, `?readonly` makes the tab read-only.
 const previewCalls: unknown[][] = [];
 const preview: PreviewRequests | undefined = params.has("preview")
   ? {
@@ -26,7 +27,14 @@ const host = new ViewerHost({
 document.getElementById("host")!.append(host.el);
 host.start(
   preview
-    ? { fileName: "할일.md", extension: "md", size: 7, text: "- [ ] a", theme: {}, readOnly: false }
+    ? {
+        fileName: "할일.md",
+        extension: "md",
+        size: 7,
+        text: params.get("text") ?? "- [ ] a",
+        theme: {},
+        readOnly: params.has("readonly"),
+      }
     : {
         fileName: "사진.png",
         extension: "png",
