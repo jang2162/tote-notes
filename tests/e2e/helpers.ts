@@ -320,8 +320,8 @@ export async function holdSaveAnswers(page: Page): Promise<() => Promise<void>> 
     const held = new Promise<void>((resolve) =>
       Object.assign(window, { releaseSaveAnswers: resolve }),
     );
-    backend.writeMemo = async (id, bytes) => {
-      const info = await write(id, bytes);
+    backend.writeMemo = async (...args) => {
+      const info = await write(...args);
       await held;
       return info;
     };

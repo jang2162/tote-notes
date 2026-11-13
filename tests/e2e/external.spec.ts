@@ -92,9 +92,14 @@ test("keys typed while a file is imported do not end up unsaved in the memo", as
   await expect(page.locator(".cm-content")).toHaveText(saved ?? "");
   expect(saved).toBe("echo hi");
   expect(await page.evaluate(() => window.__tote.backend.data.drafts)).toEqual({});
-  // The memo takes the keys once it is there.
+  // The memo takes the keys once it is there, and what is typed is saved: the memo holds the text
+  // the import wrote, so its first save is no other app's change to ask about.
   await page.keyboard.type("!");
   await expect(page.locator(".cm-content")).toHaveText("echo hi!");
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoTextByFile("deploy.sh")))
+    .toBe("echo hi!");
+  await expect(page.locator(".banner")).toBeHidden();
   // And its colours: only a tab the window has is kept a highlighter document, and the memo is
   // one. (That it is in the tab's place before it takes the text is docs.test.ts's to show: here
   // the language data arriving later would give it one all the same.)

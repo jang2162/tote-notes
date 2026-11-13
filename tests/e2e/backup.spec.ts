@@ -84,6 +84,11 @@ test("a version restored under a preview is coloured as the new text once the ed
     "color",
     body,
   );
+  // And it saves as typing does: the restore is an edit of the text the tab held.
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("a")))
+    .toBe("본문\n\n# 제목");
+  await expect(page.locator(".banner")).toBeHidden();
 });
 
 test("a memo without versions says so", async ({ page }) => {
