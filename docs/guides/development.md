@@ -106,6 +106,18 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 - **Why:** 워크트리마다 `src-tauri/target` 이 따로라서, 워크트리의 첫 push 는 처음부터 빌드해 몇 분 걸린다. 멈춘 것이 아니다.
 
+## CI 는 로컬 훅이 돌지 않는 시험까지 돈다
+
+`.github/workflows/ci.yml` 이 `main` 으로의 push 와 pull request 마다 macOS 러너에서 포맷·린트·타입 검사·vitest·버전 확인·`cargo test`·e2e 를 차례로 돈다. 단계 목록의 정본은 그 워크플로 파일이다.
+
+- **Why:** pre-push 훅은 포맷·린트·타입 검사·vitest 까지만 돈다. `cargo test` 와 e2e 는 손으로 돌려야만 걸리고, 버전 네 곳이 같은지(`pnpm version:check`)는 릴리스 워크플로에서야 걸린다. CI 가 이 셋을 push·pull request 마다 돈다.
+- **How to apply:**
+  - 단계는 차례로 돌고, 앞 단계가 떨어지면 뒤 단계는 돌지 않는다. 포맷에서 떨어진 실행은 시험이 통과하는지 말해 주지 않는다.
+  - 같은 ref 에 새 커밋이 오면 앞선 실행은 취소된다. 취소된 실행은 실패가 아니다.
+  - e2e 가 떨어지면 `test-results/` 가 그 실행의 산출물(`e2e-test-results`)로 올라간다. 러너에서만 떨어지는 e2e 는 「부하에서만 실패하는 테스트는 시간 대신 완료 신호를 기다리게 고친다」 절의 순서로 본다.
+  - `src-tauri/tests` 의 시험 셋(`menu_key_equivalents`·`menu_keypad`·`traffic_lights_resize`)은 실제 AppKit 메뉴 막대와 창을 만든다. 로컬에서는 통과하는데 러너에서 이 셋만 떨어지면 코드보다 러너의 세션(창을 만들 수 있는가)을 먼저 본다.
+  - CI 는 비밀을 쓰지 않고 저장소를 읽기만 한다. 서명·공증·릴리스는 `release-macos.yml` 이 한다(`docs/guides/release-macos.md`).
+
 ## 파일을 되돌리면 post-checkout 훅이 돈다
 
 되돌리기 실증으로 `git restore`·`git checkout -- <파일>` 을 하면 post-checkout 훅(`pnpm install`·`ruler apply`)이 매번 돈다. 생성물만 다시 만들고 추적 파일은 바꾸지 않으므로 그대로 둔다.
