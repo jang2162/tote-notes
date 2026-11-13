@@ -345,11 +345,11 @@ mod tests {
     /// for nothing to come would only guess.
     ///
     /// Called before the targets under test are watched, it also starts the folder's stream
-    /// early. FSEvents can deliver what was written just before a stream started — on a loaded
-    /// machine, the `Create` and `Modify` of a file written a moment before watching (CI run
-    /// 43518453310; 25 of 60 local runs at load 20–28). Those then go to no one, and the targets
-    /// joining later share the running stream (`Watcher::hold`), so no new stream starts that
-    /// could catch up on them.
+    /// early. FSEvents can deliver what was written just before a stream started: on a loaded
+    /// machine, the `Create` and `Modify` of a file written a moment before watching (without
+    /// the first mark, `an_external_file_is_reported_alone` failed 25 of 60 runs at load 20–28
+    /// and on the CI runner). Those then go to no one, and the targets joining later share the
+    /// running stream (`Watcher::hold`), so no new stream starts that could catch up on them.
     fn through(watcher: &Watcher, batches: &Batches, folder: &Path) -> Vec<(WatchTarget, Batch)> {
         static NEXT: AtomicUsize = AtomicUsize::new(0);
         let mark = folder.join(format!(".mark-{}", NEXT.fetch_add(1, Ordering::Relaxed)));
