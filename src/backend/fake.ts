@@ -469,6 +469,10 @@ export class FakeBackend implements Backend {
   private stored: string | null;
   /** The base of each opened external file, held in memory like the Rust side does. */
   private bases: Record<string, string | null> = {};
+  /** Memo ID → what the editor holds of it (base64): what was last read or written through this
+   * backend, as `Held` in src-tauri/src/workspace/ops.rs. A test plays another app by changing
+   * `data.memos[id].data` itself — and the watcher by calling `outside`, or not yet. */
+  private held: Record<string, string> = {};
   /** The number of the workspace search allowed to go on; 0 for none. */
   private liveWorkspaceSearch = 0;
   private liveMemoFilter = 0;
@@ -801,18 +805,29 @@ export class FakeBackend implements Backend {
     const memo = this.memo(id);
     this.data.reads[id] = (this.data.reads[id] ?? 0) + 1;
     this.commit();
-    return textOnly(fromBase64(memo.data), memo.file);
+    const bytes = textOnly(fromBase64(memo.data), memo.file);
+    this.held[id] = memo.data;
+    return bytes;
   }
 
-  async writeMemo(id: string, bytes: Uint8Array) {
+  /** As `write_memo`: refused when the memo holds neither what the editor holds nor `bytes`. */
+  async writeMemo(id: string, bytes: Uint8Array, overwrite = false) {
     this.refuseWhileSwitching();
+    const data = toBase64(bytes);
+    const known = this.data.memos[id];
+    // Looked at before the write is tried, so a refused save is not a failed one.
+    if (known && !overwrite && known.data !== this.held[id] && known.data !== data)
+      throw new BackendError("conflict", "the file was changed by another app");
+    // As `overwrite_memo`: the memo as it is now is held, whether or not the write goes through.
+    if (known && overwrite) this.held[id] = known.data;
     if (this.data.failWrites) {
       this.data.failWrites -= 1;
       this.commit();
       throw new BackendError("io", "no space left on device");
     }
     const memo = this.memo(id);
-    memo.data = toBase64(bytes);
+    memo.data = data;
+    this.held[id] = data;
     memo.modifiedMs = this.tick();
     // Data stored by a dev page before the count existed has no record of it.
     const memoWrites = (this.data.memoWrites ??= {});
@@ -889,12 +904,15 @@ export class FakeBackend implements Backend {
     return this.info(id, memo);
   }
 
+  /** As `delete_memo`: only a blank memo goes. */
   async deleteMemo(id: string) {
     this.refuseWhileSwitching();
-    this.memo(id);
+    if (/\S/.test(decode(this.memo(id).data))) return false;
     delete this.data.memos[id];
+    delete this.held[id];
     this.commit();
     this.memosTouched();
+    return true;
   }
 
   /** As the `trash_memo` command: a memo another window holds stays, and that window is asked;
@@ -941,6 +959,7 @@ export class FakeBackend implements Backend {
     const { deletedMs: _deleted, ...memo } = item;
     const { stem, ext } = splitName(item.file);
     this.data.memos[id] = { ...memo, file: this.freeName(stem, ext) };
+    this.held[id] = memo.data;
     delete this.data.trash![id];
     this.commit();
     this.memosTouched();
@@ -1147,8 +1166,22 @@ export class FakeBackend implements Backend {
     this.commit();
   }
 
-  async saveExternal(path: string, bytes: Uint8Array) {
+  /** As `ExternalFiles::rebase`: the base, and the draft's, become what the file holds now. */
+  async rebaseExternal(path: string) {
+    const base = this.data.files[path] ?? null;
+    this.bases[path] = base;
+    const draft = this.data.drafts[path];
+    if (draft) draft.base = base;
+    this.commit();
+  }
+
+  /** As `ExternalFiles::save`: refused when the file holds neither its base nor `bytes`. */
+  async saveExternal(path: string, bytes: Uint8Array, overwrite = false) {
     const data = toBase64(bytes);
+    const disk = this.data.files[path];
+    if (!overwrite && path in this.bases && disk !== undefined)
+      if (disk !== this.bases[path] && disk !== data)
+        throw new BackendError("conflict", "the file was changed by another app");
     this.data.files[path] = data;
     delete this.data.drafts[path];
     this.bases[path] = data;
@@ -1972,6 +2005,7 @@ export class FakeBackend implements Backend {
   private add(file: string, autoTitle: boolean, bytes: Uint8Array): MemoInfo {
     const id = crypto.randomUUID();
     this.data.memos[id] = { file, autoTitle, data: toBase64(bytes), modifiedMs: this.tick() };
+    this.held[id] = this.data.memos[id].data;
     this.commit();
     this.memosTouched();
     return this.info(id, this.data.memos[id]);

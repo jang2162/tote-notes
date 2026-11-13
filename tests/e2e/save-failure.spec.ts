@@ -118,6 +118,27 @@ test("a flush counts a conflict nobody answered among what is only in memory", a
   expect(await text("장보기 2.md")).toBe("우유 계란");
 });
 
+// The watcher has not reported the other app's write, so no banner asks yet: the save the flush
+// starts with is the first to meet it. A refused save is not a failed one — the round keeps both
+// texts as it does for a conflict left open, and answers without a reason to ask about.
+test("a flush whose save is the first to meet another app's text keeps both before it answers", async ({
+  page,
+}) => {
+  await typeWhileChangedElsewhere(page, { heard: false });
+  const release = await holdWrites(page);
+  await page.evaluate(() => window.__tote.backend.requestFlush(7));
+  await expect.poll(() => saidWriting(page)).toEqual([{ id: 7, unwritten: UNWRITTEN }]);
+  // 「내 버전」 is in no file yet: no answer.
+  expect(await flushed(page)).toEqual([]);
+  await release();
+  await expect.poll(() => flushed(page)).toEqual([{ id: 7 }]);
+  expect(await saidWriting(page)).toEqual([{ id: 7, unwritten: UNWRITTEN }, { id: 7 }]);
+  const text = (file: string) =>
+    page.evaluate((f) => window.__tote.backend.memoTextByFile(f), file);
+  expect(await text("장보기.md")).toBe("두유");
+  expect(await text("장보기 2.md")).toBe("우유 계란");
+});
+
 // A draft that failed has left the scheduler's slot empty: nothing waits to be written, yet the
 // edits are only in memory, and the flush tries once more.
 test("a flush counts a tab whose save failed among what is only in memory", async ({ page }) => {

@@ -4,12 +4,70 @@
 use std::fs::{self, File};
 use std::io::{self, Read};
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use super::index::{file_id, MemoEntry};
 use super::names::{is_valid_file_name, join_name, split_name, unique_file_name};
 use super::{kind_for, FileKind, MemoInfo, Workspace, WorkspaceError};
 use crate::persist::external::MAX_EDITOR_BYTES;
-use crate::persist::{atomic_write, content_hash, read_text};
+use crate::persist::{atomic_write_seen, conflict, content_hash, read_text};
+
+/// What the editor holds of a memo file: the bytes tote last read for it or wrote from it. A save
+/// goes through only while the file still holds them (spec 「외부 변경」), and a change the watcher
+/// sees that hashes like them is not news.
+#[derive(Clone, Debug)]
+pub(super) struct Held {
+    pub(super) hash: String,
+    /// How long those bytes are: a file of another length is told apart unread.
+    len: u64,
+    /// The file as it stood holding them. A file that still looks like this is not read to be
+    /// compared; `None` once it is known to hold something else.
+    seen: Option<Stamp>,
+}
+
+impl Held {
+    fn of(bytes: &[u8], seen: Option<Stamp>) -> Held {
+        let len = bytes.len() as u64;
+        Held {
+            hash: content_hash(bytes),
+            len,
+            seen: seen.filter(|stamp| stamp.len == len),
+        }
+    }
+}
+
+/// What tells a file was not written since it was looked at: which file it is, its length and its
+/// modification time. Replacing the file by a rename changes the first, writing into it the last.
+#[derive(Clone, Copy, Debug, PartialEq)]
+struct Stamp {
+    file: (u64, u64),
+    len: u64,
+    modified: Option<SystemTime>,
+}
+
+impl Stamp {
+    fn of(meta: &fs::Metadata) -> Stamp {
+        Stamp {
+            file: device_and_inode(meta),
+            len: meta.len(),
+            modified: meta.modified().ok(),
+        }
+    }
+}
+
+#[cfg(unix)]
+fn device_and_inode(meta: &fs::Metadata) -> (u64, u64) {
+    use std::os::unix::fs::MetadataExt;
+    (meta.dev(), meta.ino())
+}
+
+#[cfg(not(unix))]
+fn device_and_inode(_meta: &fs::Metadata) -> (u64, u64) {
+    (0, 0)
+}
+
+/// A memo this long is not an empty new memo, whatever it holds (`Workspace::delete_memo`).
+const BLANK_LIMIT: u64 = 1024 * 1024;
 
 impl Workspace {
     pub fn create_memo(&mut self, ext: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
@@ -21,21 +79,124 @@ impl Workspace {
         Ok(self.root.join(&self.entry(id)?.file))
     }
 
-    /// Refused after its first bytes when the memo is not text (`read_text`): a video in the
-    /// workspace under a text name is not loaded to be turned away by the page.
-    pub fn read_memo(&self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
-        let file = &self.entry(id)?.file;
-        Ok(read_text(&self.root.join(file))?)
+    /// The memo's bytes for the editor, which holds them from here on (`Held`). Refused after its
+    /// first bytes when the memo is not text (`read_text`): a video in the workspace under a text
+    /// name is not loaded to be turned away by the page.
+    pub fn read_memo(&mut self, id: &str) -> Result<Vec<u8>, WorkspaceError> {
+        let file = self.entry(id)?.file.clone();
+        // Looked at before the read: a write landing in between leaves a stamp that no longer
+        // fits, and the next save reads the file to compare instead of trusting it.
+        let seen = self.stamp(&file);
+        let bytes = read_text(&self.root.join(&file))?;
+        self.held.insert(file, Held::of(&bytes, seen));
+        Ok(bytes)
     }
 
-    /// Writes by ID. A file deleted under us is written again: the editor's text is the newest
-    /// copy there is.
+    /// Writes by ID — unless the file holds something the editor does not (`holds_another`):
+    /// refused then as `persist::Conflict`, with the file left as it is. A file deleted under us
+    /// is written again: the editor's text is the newest copy there is.
     pub fn write_memo(&mut self, id: &str, contents: &[u8]) -> Result<MemoInfo, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        if self.holds_another(&file, contents) {
+            return Err(conflict().into());
+        }
+        self.write_file(id, &file, contents)
+    }
+
+    /// `write_memo` whatever the file holds: the person chose their text over it (「내 버전」,
+    /// 「다시 저장」). The file as it is now is held from here on, whether or not the write goes
+    /// through: the choice was about this version of it, so the retry of a write that failed is
+    /// an ordinary save — still over this version, and refused once the file has changed again.
+    pub fn overwrite_memo(
+        &mut self,
+        id: &str,
+        contents: &[u8],
+    ) -> Result<MemoInfo, WorkspaceError> {
+        let file = self.entry(id)?.file.clone();
+        self.hold_as_it_is(&file);
+        self.write_file(id, &file, contents)
+    }
+
+    /// What `file` holds now is what the editor holds of it, whatever its kind: the person has
+    /// answered for it. Nothing is held of a file gone or too large to hold.
+    fn hold_as_it_is(&mut self, file: &str) {
+        let path = self.root.join(file);
+        let held = fs::metadata(&path)
+            .ok()
+            .filter(|meta| meta.len() <= MAX_EDITOR_BYTES)
+            .and_then(|meta| Some(Held::of(&fs::read(&path).ok()?, Some(Stamp::of(&meta)))));
+        match held {
+            Some(held) => self.held.insert(file.to_string(), held),
+            None => self.held.remove(file),
+        };
+    }
+
+    fn write_file(
+        &mut self,
+        id: &str,
+        file: &str,
+        contents: &[u8],
+    ) -> Result<MemoInfo, WorkspaceError> {
         self.mark_changed();
-        atomic_write(&self.root.join(&file), contents)?;
-        self.wrote(&file, contents);
+        let written = atomic_write_seen(&self.root.join(file), contents)?;
+        self.wrote(file, contents, &written);
         self.memo_info(id)
+    }
+
+    /// Whether saving `contents` to `file` would write over text the editor has not seen: the file
+    /// is there and holds neither what the editor holds (`Held`) nor `contents` itself. A memo the
+    /// editor never read counts — a save of it is an edit of nothing.
+    ///
+    /// The watcher would report the same edit, but up to `watch::BATCH_DELAY` later, and a save in
+    /// between would go over it. Between this look and the write's rename there is still a moment
+    /// nothing guards.
+    fn holds_another(&mut self, file: &str, contents: &[u8]) -> bool {
+        let path = self.root.join(file);
+        // Gone: written again. Any other failure is the write's to report.
+        let Ok(meta) = fs::metadata(&path) else {
+            return false;
+        };
+        let now = Stamp::of(&meta);
+        let held = self.held.get_mut(file);
+        if held.as_ref().is_some_and(|held| held.seen == Some(now)) {
+            return false;
+        }
+        let may_be = |len: u64| len == now.len;
+        let held_len = held.as_ref().map(|held| held.len);
+        if !held_len.is_some_and(may_be) && !may_be(contents.len() as u64) {
+            return true;
+        }
+        let Ok(disk) = fs::read(&path).map(|bytes| content_hash(&bytes)) else {
+            return false;
+        };
+        match held {
+            // Written again with the same bytes: what it looks like now is remembered.
+            Some(held) if held.hash == disk => {
+                held.seen = Some(now);
+                false
+            }
+            _ => disk != content_hash(contents),
+        }
+    }
+
+    /// Whether `file` still holds what the editor holds, read to be sure: the watcher reported it.
+    /// When it does not, the editor's text stays what the next save is measured against, and the
+    /// file is not trusted by its looks again.
+    pub(super) fn still_held(&mut self, file: &str) -> bool {
+        let path = self.root.join(file);
+        let Some(held) = self.held.get_mut(file) else {
+            return false;
+        };
+        let meta = fs::metadata(&path).ok();
+        let same = meta.as_ref().is_some_and(|meta| meta.len() == held.len)
+            && fs::read(&path).is_ok_and(|bytes| content_hash(&bytes) == held.hash);
+        held.seen = meta.filter(|_| same).map(|meta| Stamp::of(&meta));
+        same
+    }
+
+    /// The files the editor holds something of, for looking at them all again (`Flag::Rescan`).
+    pub fn held_files(&self) -> Vec<String> {
+        self.held.keys().cloned().collect()
     }
 
     /// Renames an automatically titled memo to `<stem>.<its extension>`; memos the person named
@@ -120,8 +281,14 @@ impl Workspace {
         self.memo_info(id)
     }
 
-    pub fn delete_memo(&mut self, id: &str) -> Result<(), WorkspaceError> {
+    /// Removes an empty memo for good — the new memo a tab closed without a word in it (spec
+    /// 「세션」). `false`, with the memo left in place, when its file holds text: another app wrote
+    /// into it and the watcher has not said so yet.
+    pub fn delete_memo(&mut self, id: &str) -> Result<bool, WorkspaceError> {
         let file = self.entry(id)?.file.clone();
+        if !is_blank(&self.root.join(&file))? {
+            return Ok(false);
+        }
         self.mark_changed();
         match fs::remove_file(self.root.join(&file)) {
             Ok(()) => {}
@@ -134,7 +301,7 @@ impl Workspace {
         if let Some(viewed) = self.viewed.as_mut() {
             viewed.retain(|each| each != id);
         }
-        Ok(())
+        Ok(true)
     }
 
     /// Copies `contents` in as a new memo named `file_name` (`a.sh`, `a 2.sh`, …). The person
@@ -214,8 +381,8 @@ impl Workspace {
         contents: &[u8],
     ) -> Result<MemoInfo, WorkspaceError> {
         self.mark_changed();
-        atomic_write(&self.root.join(&file), contents)?;
-        self.wrote(&file, contents);
+        let written = atomic_write_seen(&self.root.join(&file), contents)?;
+        self.wrote(&file, contents, &written);
         let id = uuid::Uuid::new_v4().to_string();
         self.index.insert(
             id.clone(),
@@ -264,23 +431,22 @@ impl Workspace {
         self.memo_info(id)
     }
 
-    /// tote wrote `contents` to `file`: the watcher's next event there is this write.
-    fn wrote(&mut self, file: &str, contents: &[u8]) {
-        self.last_written
-            .insert(file.to_string(), content_hash(contents));
+    /// tote wrote `contents` to `file`: the editor holds them, and the watcher's next event there
+    /// is this write. `written` is the file as the write left it (`atomic_write_seen`), not as a
+    /// look at it now finds it: another app's write in between must not pass for tote's.
+    fn wrote(&mut self, file: &str, contents: &[u8], written: &fs::Metadata) {
+        let seen = Some(Stamp::of(written));
+        self.held.insert(file.to_string(), Held::of(contents, seen));
         self.track_inode(file);
     }
 
-    /// tote renamed `from` to `to`; the contents did not change, so neither does what counts as
-    /// tote's own. A file tote has not written since opening is hashed now, or the rename would
-    /// look like another app's edit — unless the editor would not open it anyway.
+    /// tote renamed `from` to `to`; the contents did not change, so neither does what the editor
+    /// holds. A file tote has neither read nor written since opening is hashed now, or the rename
+    /// would look like another app's edit — unless the editor would not open it anyway.
     fn moved(&mut self, from: &str, to: &str) {
-        let hash = self
-            .last_written
-            .remove(from)
-            .or_else(|| self.editor_hash(to));
-        if let Some(hash) = hash {
-            self.last_written.insert(to.to_string(), hash);
+        let held = self.held.remove(from).or_else(|| self.held_now(to));
+        if let Some(held) = held {
+            self.held.insert(to.to_string(), held);
         }
         self.inodes.remove(from);
         self.track_inode(to);
@@ -289,9 +455,9 @@ impl Workspace {
     /// tote moved `file` in from outside the folder the watcher looks at (a memo back from the
     /// trash): its next event there is this move, as for `moved`.
     pub(super) fn came_in(&mut self, file: &str) {
-        match self.editor_hash(file) {
-            Some(hash) => self.last_written.insert(file.to_string(), hash),
-            None => self.last_written.remove(file),
+        match self.held_now(file) {
+            Some(held) => self.held.insert(file.to_string(), held),
+            None => self.held.remove(file),
         };
         self.track_inode(file);
     }
@@ -299,17 +465,24 @@ impl Workspace {
     /// `file` left the workspace by tote's hand (removed, or moved to the trash): nothing of it is
     /// tote's own any more.
     pub(super) fn went_out(&mut self, file: &str) {
-        self.last_written.remove(file);
+        self.held.remove(file);
         self.inodes.remove(file);
     }
 
-    /// The hash of `file` as it is now, when the editor would open it.
-    fn editor_hash(&self, file: &str) -> Option<String> {
+    /// `file` as it is now, when the editor would open it.
+    fn held_now(&self, file: &str) -> Option<Held> {
         let path = self.root.join(file);
         let meta = fs::metadata(&path).ok()?;
         (meta.len() <= MAX_EDITOR_BYTES && kind_for(file) == FileKind::Text)
-            .then(|| fs::read(&path).ok().map(|bytes| content_hash(&bytes)))
+            .then(|| fs::read(&path).ok())
             .flatten()
+            .map(|bytes| Held::of(&bytes, Some(Stamp::of(&meta))))
+    }
+
+    fn stamp(&self, file: &str) -> Option<Stamp> {
+        fs::metadata(self.root.join(file))
+            .ok()
+            .map(|meta| Stamp::of(&meta))
     }
 
     pub(super) fn track_inode(&mut self, file: &str) {
@@ -331,6 +504,27 @@ impl Workspace {
                 && own.as_deref().is_none_or(|own| !same_file(own, &path))
         })
     }
+}
+
+/// Whether the file at `path` is blank as the editor counts it (`isBlank` in src/app/docs.ts):
+/// nothing but white space, a byte order mark aside. A missing file is; bytes that are not UTF-8
+/// and a file over `BLANK_LIMIT` are not.
+fn is_blank(path: &Path) -> io::Result<bool> {
+    let meta = match fs::metadata(path) {
+        Ok(meta) => meta,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    if meta.len() > BLANK_LIMIT {
+        return Ok(false);
+    }
+    let bytes = match fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(true),
+        Err(err) => return Err(err),
+    };
+    Ok(std::str::from_utf8(&bytes)
+        .is_ok_and(|text| text.chars().all(|c| c.is_whitespace() || c == '\u{feff}')))
 }
 
 /// Copies what is left of `source` into a new file at `to` a buffer at a time, the way
@@ -427,9 +621,9 @@ mod tests {
     #[test]
     fn deleting_a_pinned_memo_drops_its_entry() {
         let (_root, mut ws) = workspace();
-        let memo = ws.import_memo("가.md", b"x").unwrap();
+        let memo = ws.import_memo("가.md", b"").unwrap();
         ws.set_pinned(&memo.id, true).unwrap();
-        ws.delete_memo(&memo.id).unwrap();
+        assert!(ws.delete_memo(&memo.id).unwrap());
         assert!(matches!(
             ws.set_pinned(&memo.id, true),
             Err(WorkspaceError::UnknownMemo(_))
@@ -475,6 +669,9 @@ mod tests {
         fs::write(&outside, "c").unwrap();
         ws.import_file(&outside).unwrap();
         check(&mut ws, "import file");
+        // Only an empty memo is removed.
+        ws.write_memo(&memo.id, b"").unwrap();
+        ws.take_changed();
         ws.delete_memo(&memo.id).unwrap();
         check(&mut ws, "delete");
 
@@ -657,6 +854,268 @@ mod tests {
         ));
     }
 
+    /// Another app's write the watcher has not reported yet.
+    fn elsewhere(ws: &Workspace, file: &str, contents: &str) {
+        fs::write(ws.root().join(file), contents).unwrap();
+    }
+
+    fn refused(result: Result<MemoInfo, WorkspaceError>) -> bool {
+        matches!(&result, Err(WorkspaceError::Io(err)) if crate::persist::is_conflict(err))
+    }
+
+    fn on_disk(ws: &Workspace, file: &str) -> String {
+        fs::read_to_string(ws.root().join(file)).unwrap()
+    }
+
+    #[test]
+    fn a_save_over_another_apps_edit_is_refused() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        // The same length, written in place: only the time tells.
+        elsewhere(&ws, &memo.file, "them");
+        ws.take_changed();
+        assert!(refused(ws.write_memo(&memo.id, b"ours!")));
+        assert_eq!(on_disk(&ws, &memo.file), "them");
+        assert!(!ws.take_changed(), "nothing was written");
+        // Asked again, the answer is the same: the refusal did not make the file tote's.
+        assert!(refused(ws.write_memo(&memo.id, b"ours!")));
+        // 「내 버전」 writes over it, and the saves after that are tote's own again.
+        ws.overwrite_memo(&memo.id, b"ours!").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours!");
+        ws.write_memo(&memo.id, b"ours!!").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours!!");
+
+        // Replaced by a rename, as an atomic save does it.
+        let temp = ws.root().join(".other-app-tmp");
+        fs::write(&temp, "replaced").unwrap();
+        fs::rename(&temp, ws.root().join(&memo.file)).unwrap();
+        assert!(refused(ws.write_memo(&memo.id, b"ours!!!")));
+        assert_eq!(on_disk(&ws, &memo.file), "replaced");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_chosen_overwrite_that_failed_is_retried_as_a_plain_save() {
+        use std::os::unix::fs::PermissionsExt;
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        let path = ws.root().join(&memo.file);
+        let lock = |mode| fs::set_permissions(&path, fs::Permissions::from_mode(mode)).unwrap();
+        // 「내 버전」 over another app's text, and the write fails.
+        elsewhere(&ws, &memo.file, "theirs");
+        lock(0o444);
+        assert!(ws.overwrite_memo(&memo.id, b"ours!").is_err());
+        lock(0o644);
+        assert_eq!(on_disk(&ws, &memo.file), "theirs");
+        // The retry is an ordinary save: over the text chosen against it goes through, …
+        ws.write_memo(&memo.id, b"ours!").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours!");
+
+        // … and over a later write it does not.
+        elsewhere(&ws, &memo.file, "theirs");
+        lock(0o444);
+        assert!(ws.overwrite_memo(&memo.id, b"ours!!").is_err());
+        lock(0o644);
+        elsewhere(&ws, &memo.file, "theirs, again");
+        assert!(refused(ws.write_memo(&memo.id, b"ours!!")));
+        assert_eq!(on_disk(&ws, &memo.file), "theirs, again");
+    }
+
+    #[test]
+    fn the_watchers_report_does_not_make_another_apps_edit_ours() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        elsewhere(&ws, &memo.file, "theirs");
+        let seen = [memo.file.clone()].into();
+        assert_eq!(
+            ws.apply_fs_events(&seen, &[]).unwrap(),
+            vec![super::super::Change::Modified {
+                id: memo.id.clone()
+            }]
+        );
+        // The editor still holds the old text until it reads the file.
+        assert!(refused(ws.write_memo(&memo.id, b"ours!")));
+        assert_eq!(on_disk(&ws, &memo.file), "theirs");
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), b"theirs");
+        ws.write_memo(&memo.id, b"theirs!").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "theirs!");
+    }
+
+    #[test]
+    fn an_edit_the_files_looks_do_not_show_is_refused_once_the_watcher_has_read_it() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        let path = ws.root().join(&memo.file);
+        // Written in place with the same length and the time put back, as on a file system whose
+        // times are too coarse to tell two writes apart: nothing a look at the file shows.
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut &file, b"them").unwrap();
+        file.set_modified(before).unwrap();
+        drop(file);
+        // The watcher reads what it reports, and from then on the file is not trusted by its looks.
+        let seen = [memo.file.clone()].into();
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap().len(), 1);
+        assert!(refused(ws.write_memo(&memo.id, b"ours!")));
+        assert_eq!(on_disk(&ws, &memo.file), "them");
+    }
+
+    #[test]
+    fn a_save_after_totes_own_write_trusts_the_files_looks_and_does_not_read_it() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.write_memo(&memo.id, b"ours").unwrap();
+        let path = ws.root().join(&memo.file);
+        // The same edit no look can show (see the test above), with no watcher to read it: the
+        // save goes through, which it only can when the file was not read — when the looks tote
+        // kept from its own write are the ones the file has. (This is the gap the spec names, and
+        // what keeps a large memo from being hashed at every save.)
+        let before = fs::metadata(&path).unwrap().modified().unwrap();
+        let file = fs::OpenOptions::new().write(true).open(&path).unwrap();
+        std::io::Write::write_all(&mut &file, b"them").unwrap();
+        file.set_modified(before).unwrap();
+        drop(file);
+        ws.write_memo(&memo.id, b"ours, on").unwrap();
+        assert_eq!(on_disk(&ws, &memo.file), "ours, on");
+    }
+
+    #[test]
+    fn a_save_goes_through_when_the_file_holds_what_the_editor_has() {
+        let (_root, mut ws) = workspace();
+        // A new memo, then tote's own writes one after another.
+        let memo = ws.create_memo("md", b"").unwrap();
+        ws.write_memo(&memo.id, "# 회의".as_bytes()).unwrap();
+        ws.write_memo(&memo.id, "# 회의\n".as_bytes()).unwrap();
+        // tote's own renames: the title, the language, a name the person typed.
+        ws.retitle_memo(&memo.id, "회의").unwrap();
+        ws.write_memo(&memo.id, "# 회의\n1".as_bytes()).unwrap();
+        ws.set_language(&memo.id, "python", "py", false).unwrap();
+        ws.write_memo(&memo.id, "# 회의\n2".as_bytes()).unwrap();
+        ws.rename_memo(&memo.id, "안건.md").unwrap();
+        ws.write_memo(&memo.id, "# 회의\n3".as_bytes()).unwrap();
+        // Back from the trash.
+        ws.trash_memo(&memo.id, 1).unwrap();
+        let back = ws.restore_memo(&memo.id).unwrap();
+        ws.write_memo(&memo.id, "# 회의\n4".as_bytes()).unwrap();
+        assert_eq!(on_disk(&ws, &back.file), "# 회의\n4");
+        // Made with its text, as `tote -` makes one.
+        let piped = ws.import_memo("log.txt", b"piped").unwrap();
+        ws.write_memo(&piped.id, b"piped, edited").unwrap();
+
+        // Another app's edit the editor has read is what it holds now.
+        elsewhere(&ws, &piped.file, "theirs");
+        assert_eq!(ws.read_memo(&piped.id).unwrap(), b"theirs");
+        ws.write_memo(&piped.id, b"theirs, edited").unwrap();
+        // Written again with the same bytes (a sync tool, `touch`): nothing the editor lacks.
+        elsewhere(&ws, &piped.file, "theirs, edited");
+        ws.write_memo(&piped.id, b"more").unwrap();
+        // Another app wrote the very text about to be saved.
+        elsewhere(&ws, &piped.file, "the same");
+        ws.write_memo(&piped.id, b"the same").unwrap();
+        assert_eq!(on_disk(&ws, &piped.file), "the same");
+
+        // Another app renamed it: the name changed, the text did not.
+        fs::rename(ws.root().join("log.txt"), ws.root().join("일지.txt")).unwrap();
+        let seen = ["log.txt".to_string(), "일지.txt".to_string()].into();
+        ws.apply_fs_events(&seen, &[]).unwrap();
+        ws.write_memo(&piped.id, b"renamed").unwrap();
+        assert_eq!(on_disk(&ws, "일지.txt"), "renamed");
+    }
+
+    #[test]
+    fn a_memo_copied_in_is_saved_without_being_read_first() {
+        let (root, mut ws) = workspace();
+        // Imported from a file, and the text `tote -` parked: the tab that takes one over may
+        // save before it ever reads the memo.
+        let outside = root.path().join("deploy.sh");
+        fs::write(&outside, "echo hi\n").unwrap();
+        let imported = ws.import_file(&outside).unwrap();
+        ws.write_memo(&imported.id, b"echo hi\necho more\n")
+            .unwrap();
+        let piped = ws.create_memo_from_file("md", &outside).unwrap();
+        ws.write_memo(&piped.id, b"# piped\n").unwrap();
+        assert_eq!(on_disk(&ws, &piped.file), "# piped\n");
+
+        // A copy the editor would not open (by its kind here; one over the editor's limit goes
+        // the same way) is not hashed, so the editor holds nothing of it: a save is refused until
+        // it is read — 「텍스트로 열기」 — and the watcher still reports a change to it.
+        let picture = root.path().join("그림.png");
+        fs::write(&picture, "not really a picture").unwrap();
+        let unread = ws.import_file(&picture).unwrap();
+        assert_eq!(ws.held_hash(&unread.file), None);
+        assert!(refused(ws.write_memo(&unread.id, b"blind")));
+        assert_eq!(on_disk(&ws, &unread.file), "not really a picture");
+        assert_eq!(ws.read_memo(&unread.id).unwrap(), b"not really a picture");
+        ws.write_memo(&unread.id, b"read, then edited").unwrap();
+    }
+
+    #[test]
+    fn a_save_follows_a_rename_the_memo_list_found_before_the_watcher() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"ours").unwrap();
+        fs::rename(ws.root().join(&memo.file), ws.root().join("이름.md")).unwrap();
+        // The listing pairs the rename by inode; what the editor holds goes with the name.
+        let listed_as = ws.list_memos().unwrap();
+        assert_eq!(listed_as[0].file, "이름.md");
+        ws.write_memo(&memo.id, b"ours, edited").unwrap();
+        assert_eq!(on_disk(&ws, "이름.md"), "ours, edited");
+        assert_eq!(listed(&ws), vec!["이름.md"]);
+        // The watcher's batch for the rename, late, has nothing left to say.
+        let seen = ["untitled.md".to_string(), "이름.md".to_string()].into();
+        assert_eq!(ws.apply_fs_events(&seen, &[]).unwrap(), vec![]);
+    }
+
+    #[test]
+    fn a_memo_whose_id_the_index_replaced_is_saved_once_read() {
+        let (_root, ws) = workspace();
+        fs::write(ws.root().join("옛.md"), "old").unwrap();
+        fs::write(
+            ws.root().join(".tote/index.json"),
+            r#"{"version":1,"memos":{"../밖":{"file":"옛.md","autoTitle":false}}}"#,
+        )
+        .unwrap();
+        // Opening gives the entry an ID tote makes; nothing is held of any file yet.
+        let mut ws = Workspace::open(ws.root()).unwrap();
+        let memo = ws.list_memos().unwrap().remove(0);
+        assert_ne!(memo.id, "../밖");
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), b"old");
+        ws.write_memo(&memo.id, b"old, edited").unwrap();
+        assert_eq!(on_disk(&ws, "옛.md"), "old, edited");
+    }
+
+    #[test]
+    fn a_memo_there_before_the_workspace_opened_is_saved_once_read() {
+        let (_root, ws) = workspace();
+        fs::write(ws.root().join("옛.md"), "old").unwrap();
+        let mut ws = Workspace::open(ws.root()).unwrap();
+        let old = ws.list_memos().unwrap().remove(0);
+        // Never read: there is no text of it the save could be an edit of.
+        assert!(refused(ws.write_memo(&old.id, b"blind")));
+        assert_eq!(ws.read_memo(&old.id).unwrap(), b"old");
+        ws.write_memo(&old.id, b"old, edited").unwrap();
+        assert_eq!(on_disk(&ws, "옛.md"), "old, edited");
+    }
+
+    #[test]
+    fn delete_leaves_a_file_another_app_wrote_into() {
+        let (_root, mut ws) = workspace();
+        let memo = ws.create_memo("md", b"").unwrap();
+        elsewhere(&ws, &memo.file, "theirs");
+        ws.take_changed();
+        assert!(!ws.delete_memo(&memo.id).unwrap());
+        assert_eq!(on_disk(&ws, &memo.file), "theirs");
+        assert_eq!(ws.memo_info(&memo.id).unwrap().file, memo.file);
+        assert!(!ws.take_changed(), "nothing was removed");
+        // Blank as the editor counts it — spaces, line ends, a byte order mark — still goes.
+        elsewhere(&ws, &memo.file, "\u{feff} \n\t\u{3000}\r\n");
+        assert!(ws.delete_memo(&memo.id).unwrap());
+        assert!(listed(&ws).is_empty());
+        // Bytes that are not text are not blank.
+        let binary = ws.create_memo("md", b"").unwrap();
+        fs::write(ws.root().join(&binary.file), [0xff, 0xfe]).unwrap();
+        assert!(!ws.delete_memo(&binary.id).unwrap());
+    }
+
     #[test]
     fn imports_keep_the_name_and_never_auto_title() {
         let (root, mut ws) = workspace();
@@ -771,14 +1230,15 @@ mod tests {
         let text = "echo hi\n".repeat(20_000); // more than one buffer of the copy
         fs::write(&outside, &text).unwrap();
         let memo = ws.import_file(&outside).unwrap();
-        assert_eq!(ws.read_memo(&memo.id).unwrap(), text.as_bytes());
+        // Before any read: reading the memo would make it the editor's just as well.
         assert_eq!(
-            ws.last_written("deploy.sh"),
+            ws.held_hash("deploy.sh"),
             Some(content_hash(text.as_bytes()).as_str())
         );
         // The watcher's event for the copy is not taken for another app's change.
         let touched = std::collections::BTreeSet::from(["deploy.sh".to_string()]);
         assert_eq!(ws.apply_fs_events(&touched, &[]).unwrap(), vec![]);
+        assert_eq!(ws.read_memo(&memo.id).unwrap(), text.as_bytes());
 
         // Text parked by `tote -` becomes an untitled memo the same way, and stays where it was.
         let parked = root.path().join("0123abcd.txt");

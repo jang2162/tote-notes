@@ -130,6 +130,48 @@ test("an external change while typing shows the conflict banner and keeps the ty
   await expect(page.locator(".cm-content")).toHaveText("우유 계란");
 });
 
+test("a save that meets another app's text before the watcher reports it asks instead of writing", async ({
+  page,
+}) => {
+  await typeWhileChangedElsewhere(page, { heard: false });
+  // Raised by the save itself, once its timer runs out.
+  await expect(banner(page).locator(".banner-text")).toHaveText(
+    "다른 앱이 이 파일을 바꿨습니다. 어느 쪽을 둘까요?",
+  );
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+  await writesSettled(page);
+  expect(await memoWrites(page, "a")).toBe(0);
+  expect(await page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("두유");
+  // Not a failed save: no mark on the tab, no error in the status bar.
+  await expect(page.locator(".tab.active")).not.toHaveClass(/\bfailed\b/);
+  await expect(page.locator(".status-message")).not.toHaveClass(/error/);
+  // The watcher's report, late, changes nothing.
+  await outside(page, { kind: "modified", id: "a" });
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+
+  await banner(page).getByRole("button", { name: "내 버전" }).click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.memoText("a")))
+    .toBe("우유 계란");
+  await expect(banner(page)).toBeHidden();
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+});
+
+test("디스크 버전 after a save met another app's text takes that text", async ({ page }) => {
+  await typeWhileChangedElsewhere(page, { heard: false });
+  await banner(page).getByRole("button", { name: "디스크 버전" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("두유");
+  await expect(banner(page)).toBeHidden();
+  await writesSettled(page);
+  expect(await memoWrites(page, "a")).toBe(0);
+  // Typing on from there saves as usual.
+  await page.locator(".cm-content").focus();
+  await page.keyboard.press("Meta+ArrowDown");
+  await page.keyboard.insertText("!");
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.memoText("a"))).toBe("두유!");
+  await expect(banner(page)).toBeHidden();
+});
+
 test("디스크 버전 replaces the text and clears the banner", async ({ page }) => {
   await typeWhileChangedElsewhere(page);
   await banner(page).getByRole("button", { name: "디스크 버전" }).click();

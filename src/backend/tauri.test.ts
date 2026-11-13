@@ -108,6 +108,7 @@ describe("TauriBackend", () => {
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
       [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],
       [() => backend.discardExternalDraft("/a.sh"), "discard_external_draft", { path: "/a.sh" }],
+      [() => backend.rebaseExternal("/a.sh"), "rebase_external", { path: "/a.sh" }],
       [() => backend.listWorkspaces(), "list_workspaces", undefined],
       [
         () => backend.setWorkspaceOrder(["/w/업무", "/w/개인"], ["/w/개인"]),
@@ -233,6 +234,27 @@ describe("TauriBackend", () => {
     await backend.saveExternal("/a b/c.sh", bytes);
     expect(invoke).toHaveBeenLastCalledWith("save_external", bytes, {
       headers: { "x-path": "%2Fa%20b%2Fc.sh" },
+    });
+  });
+
+  it("marks a save that goes over whatever the file holds, and only that one", async () => {
+    const bytes = new Uint8Array([1, 2, 3]);
+    await backend.writeMemo("m", bytes, true);
+    expect(invoke).toHaveBeenLastCalledWith("write_memo", bytes, {
+      headers: { "x-memo-id": "m", "x-overwrite": "1" },
+    });
+    await backend.saveExternal("/a.sh", bytes, true);
+    expect(invoke).toHaveBeenLastCalledWith("save_external", bytes, {
+      headers: { "x-path": "%2Fa.sh", "x-overwrite": "1" },
+    });
+    await backend.writeMemo("m", bytes, false);
+    expect(invoke).toHaveBeenLastCalledWith("write_memo", bytes, { headers: { "x-memo-id": "m" } });
+  });
+
+  it("keeps the code of a save refused over another app's text", async () => {
+    invoke.mockRejectedValueOnce({ code: "conflict", message: "changed by another app" });
+    await expect(backend.writeMemo("m", new Uint8Array())).rejects.toMatchObject({
+      code: "conflict",
     });
   });
 

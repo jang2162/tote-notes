@@ -19,7 +19,7 @@ use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
-use notify::event::{EventKind, ModifyKind, RenameMode};
+use notify::event::{EventKind, Flag, ModifyKind, RenameMode};
 use notify::{Event, RecommendedWatcher, RecursiveMode, Watcher as _};
 
 use crate::app::lock;
@@ -43,6 +43,10 @@ pub struct Batch {
     pub touched: BTreeSet<PathBuf>,
     /// From → to pairs the platform reported as one rename.
     pub renames: Vec<(PathBuf, PathBuf)>,
+    /// Events were dropped (`Flag::Rescan`): what changed is not known, so whatever the target
+    /// holds of its files is to be looked at again. Workspace targets only — an external file is
+    /// simply `touched`.
+    pub rescan: bool,
 }
 
 pub struct Watcher {
@@ -231,7 +235,14 @@ fn route(targets: &Targets, events: &[Event]) -> Vec<(WatchTarget, Batch)> {
     let mut paths = Vec::new();
     let mut pairs = Vec::new();
     let mut froms: BTreeMap<usize, PathBuf> = BTreeMap::new();
+    // Folders whose events were dropped. The path is the folder to scan again, which is the
+    // watched folder or one above it — never an entry in it, so it must not go the way of `paths`.
+    let mut rescans = Vec::new();
     for event in events {
+        if event.flag() == Some(Flag::Rescan) {
+            rescans.extend(event.paths.iter().cloned());
+            continue;
+        }
         match (&event.kind, event.tracker(), &event.paths[..]) {
             // Reading a file, or its permissions, tags or times changing: not a change to it.
             (EventKind::Access(_) | EventKind::Modify(ModifyKind::Metadata(_)), ..) => {}
@@ -269,11 +280,16 @@ fn route(targets: &Targets, events: &[Event]) -> Vec<(WatchTarget, Batch)> {
         for path in paths.iter().filter(|path| in_workspace(root, path)) {
             touch(&mut batches, &target, path);
         }
+        if rescans.iter().any(|folder| root.starts_with(folder)) {
+            batch(&mut batches, &target).rescan = true;
+        }
     }
     for ((label, known_as), (canonical, _)) in &targets.externals {
         let target = WatchTarget::External(label.clone(), known_as.clone());
         let ends = pairs.iter().flat_map(|(from, to)| [from, to]);
-        if ends.chain(&paths).any(|path| path == canonical) {
+        if ends.chain(&paths).any(|path| path == canonical)
+            || rescans.iter().any(|folder| canonical.starts_with(folder))
+        {
             touch(&mut batches, &target, canonical);
         }
     }
@@ -435,9 +451,48 @@ mod tests {
                 Batch {
                     touched: BTreeSet::from([PathBuf::from("/r/memo.md")]),
                     renames: vec![],
+                    rescan: false,
                 }
             )]
         );
+    }
+
+    #[test]
+    fn dropped_events_have_every_target_under_the_folder_looked_at_again() {
+        let mut targets = Targets::default();
+        targets.workspaces.insert("w".into(), PathBuf::from("/r"));
+        targets
+            .workspaces
+            .insert("other".into(), PathBuf::from("/elsewhere"));
+        let known_as = PathBuf::from("/link/a.txt");
+        targets.externals.insert(
+            ("w".into(), known_as.clone()),
+            (PathBuf::from("/r/sub/a.txt"), 1),
+        );
+        targets.externals.insert(
+            ("w".into(), PathBuf::from("/far/b.txt")),
+            (PathBuf::from("/far/b.txt"), 1),
+        );
+        // FSEvents names the folder to scan again: the watched one, or one above it.
+        for folder in ["/r", "/"] {
+            let dropped = event(EventKind::Other, &[folder], None).set_flag(Flag::Rescan);
+            let batches = route(&targets, &[dropped]);
+            let rescan = Batch {
+                rescan: true,
+                ..Batch::default()
+            };
+            let touched = |path: &str| Batch {
+                touched: BTreeSet::from([PathBuf::from(path)]),
+                ..Batch::default()
+            };
+            assert!(batches.contains(&(WatchTarget::Workspace("w".into()), rescan.clone())));
+            assert!(batches.contains(&(
+                WatchTarget::External("w".into(), known_as.clone()),
+                touched("/r/sub/a.txt")
+            )));
+            let everything = folder == "/";
+            assert_eq!(batches.len(), if everything { 4 } else { 2 }, "{folder}");
+        }
     }
 
     #[test]
@@ -461,6 +516,7 @@ mod tests {
                 Batch {
                     touched: BTreeSet::from([path("/r/e"), path("/r/f")]),
                     renames: vec![(path("/r/a"), path("/r/b")), (path("/r/c"), path("/r/d"))],
+                    rescan: false,
                 }
             )]
         );
