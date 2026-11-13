@@ -728,8 +728,8 @@ test("a close mark after a tab that a redraw makes anew still closes its tab whe
     const held = new Promise<void>((resolve) =>
       Object.assign(window, { releaseRetitles: resolve }),
     );
-    backend.retitleMemo = async (id, stem) => {
-      const info = await retitle(id, stem);
+    backend.retitleMemo = async (...args) => {
+      const info = await retitle(...args);
       await held;
       return info;
     };

@@ -30,10 +30,10 @@ async function holdLayoutRead(page: Page): Promise<() => Promise<void>> {
     const held = new Promise<void>((resolve) =>
       Object.assign(window, { releaseLayout: resolve, layoutReads: 0 }),
     );
-    backend.readWindowLayout = async () => {
+    backend.readWindowLayout = async (...args) => {
       const reads = ((window as unknown as { layoutReads: number }).layoutReads += 1);
       if (reads === 1) await held;
-      return read();
+      return read(...args);
     };
   });
   return () =>
@@ -198,20 +198,20 @@ async function holdListing(page: Page): Promise<{
     const held = new Promise<void>((resolve) => Object.assign(window, { releaseList: resolve }));
     const seen = { listings: 0, events: [] as string[] };
     Object.assign(window, { seen });
-    backend.listMemos = async () => {
+    backend.listMemos = async (...args) => {
       seen.listings += 1;
       await held;
-      return list();
+      return list(...args);
     };
     const write = backend.writeWindowLayout.bind(backend);
-    backend.writeWindowLayout = (json) => {
-      seen.events.push(json.includes('"memoId":"b"') ? "layout with 나" : "layout");
-      return write(json);
+    backend.writeWindowLayout = (...args) => {
+      seen.events.push(args[0].includes('"memoId":"b"') ? "layout with 나" : "layout");
+      return write(...args);
     };
     const done = backend.flushDone.bind(backend);
-    backend.flushDone = (id, blocked) => {
+    backend.flushDone = (...args) => {
       seen.events.push("answer");
-      return done(id, blocked);
+      return done(...args);
     };
   }, memos.b);
   type Seen = { seen: { listings: number; events: string[] } };

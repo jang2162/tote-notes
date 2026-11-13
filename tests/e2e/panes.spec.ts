@@ -1030,8 +1030,8 @@ test("a shortcut table that failed to read is read again when the window takes t
         const backend = value.backend;
         const read = backend.shortcutTable.bind(backend);
         let failed = false;
-        backend.shortcutTable = () => {
-          if (failed) return read();
+        backend.shortcutTable = (...args) => {
+          if (failed) return read(...args);
           failed = true;
           return Promise.reject(new Error("unreadable"));
         };

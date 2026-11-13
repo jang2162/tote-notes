@@ -505,8 +505,8 @@ async function holdListing(page: Page): Promise<() => Promise<void>> {
     const backend = window.__tote.backend;
     const list = backend.listMemos.bind(backend);
     let held = false;
-    backend.listMemos = async () => {
-      const answer = list();
+    backend.listMemos = async (...args) => {
+      const answer = list(...args);
       if (held) return answer;
       held = true;
       await new Promise<void>((resolve) => Object.assign(window, { releaseListing: resolve }));

@@ -100,9 +100,9 @@ test("a deferred restore that fails is tried again by the next listing", async (
     const backend = window.__tote.backend;
     const read = backend.readWindowLayout.bind(backend);
     let failures = 1;
-    backend.readWindowLayout = async () => {
+    backend.readWindowLayout = async (...args) => {
       if (failures-- > 0) throw new Error("the session could not be read");
-      return read();
+      return read(...args);
     };
   });
   const message = page.locator(".status-message");

@@ -221,9 +221,9 @@ test("arrow keys and Enter switch, Esc closes without switching", async ({ page 
     const { backend } = window.__tote;
     const switches: string[] = [];
     const switchWorkspace = backend.switchWorkspace.bind(backend);
-    backend.switchWorkspace = (path) => {
-      switches.push(path);
-      return switchWorkspace(path);
+    backend.switchWorkspace = (...args) => {
+      switches.push(...args);
+      return switchWorkspace(...args);
     };
     Object.assign(window, { switches });
   });
@@ -542,9 +542,9 @@ test("a switch whose write does not end is not carried out when its round times 
     const { app, backend } = window.__tote;
     const held = new Promise<void>((resolve) => Object.assign(window, { releaseWrites: resolve }));
     const writeMemo = backend.writeMemo.bind(backend);
-    backend.writeMemo = async (id, bytes) => {
+    backend.writeMemo = async (...args) => {
       await held;
-      return writeMemo(id, bytes);
+      return writeMemo(...args);
     };
     app.view.dispatch({ changes: { from: 2, insert: " 셋" }, userEvent: "input.type" });
   });
@@ -625,9 +625,9 @@ test("a late answer after the round ended gives the panes back", async ({ page }
   await page.evaluate(() => {
     const { app, backend } = window.__tote;
     const flushDone = backend.flushDone.bind(backend);
-    backend.flushDone = (id, blocked) => {
+    backend.flushDone = (...args) => {
       Object.assign(window, { emptyAtAnswer: app.leaving });
-      return flushDone(id, blocked);
+      return flushDone(...args);
     };
     backend.staleFlush = true;
     backend.requestFlush(77, "switch");
@@ -713,9 +713,9 @@ test("a switcher click while the window leaves does nothing", async ({ page }) =
     const { backend } = window.__tote;
     const switches: string[] = [];
     const switchWorkspace = backend.switchWorkspace.bind(backend);
-    backend.switchWorkspace = (path) => {
-      switches.push(path);
-      return switchWorkspace(path);
+    backend.switchWorkspace = (...args) => {
+      switches.push(...args);
+      return switchWorkspace(...args);
     };
     Object.assign(window, { switches });
   });
@@ -755,9 +755,9 @@ test("⌃2 does nothing while a dialog is open", async ({ page }) => {
     const { backend } = window.__tote;
     const switches: string[] = [];
     const switchWorkspace = backend.switchWorkspace.bind(backend);
-    backend.switchWorkspace = (path) => {
-      switches.push(path);
-      return switchWorkspace(path);
+    backend.switchWorkspace = (...args) => {
+      switches.push(...args);
+      return switchWorkspace(...args);
     };
     Object.assign(window, { switches });
   });
@@ -972,9 +972,9 @@ async function composeUntilBlur(page: Page, patch: Partial<FakeData> = {}): Prom
     const state = { ended: false, endedAtSwitch: null as boolean | null };
     Object.assign(window, { composed: state });
     const switchWorkspace = backend.switchWorkspace.bind(backend);
-    backend.switchWorkspace = (path) => {
+    backend.switchWorkspace = (...args) => {
       state.endedAtSwitch = state.ended;
-      return switchWorkspace(path);
+      return switchWorkspace(...args);
     };
     composition("compositionstart", "");
     await tick();
