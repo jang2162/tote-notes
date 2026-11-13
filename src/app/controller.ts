@@ -58,7 +58,14 @@ import {
 } from "../shortcuts/keys";
 import { ThemeManager } from "../theme/manager";
 import { tokenTheme } from "../theme/vscode-theme";
-import { askUnsaved, confirm, modalOpen, pickLanguage, promptText } from "../ui/dialogs";
+import {
+  askUnsaved,
+  confirm,
+  giveKeysHomeWith,
+  modalOpen,
+  pickLanguage,
+  promptText,
+} from "../ui/dialogs";
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
@@ -478,6 +485,8 @@ export class AppController implements DocHost, PaneHost {
     });
     this.focused = this.makePane();
     this.panes = [this.focused];
+    // A dialog with nothing to give the keys back to: the focused pane's editor, or the pane.
+    giveKeysHomeWith(() => this.focused.takeKeys());
     this.layout = leaf(this.focused.id);
     this.panesEl.append(this.focused.el);
     this.syncPanes();

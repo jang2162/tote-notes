@@ -155,3 +155,87 @@ test("a question over the settings screen holds it off, then gives the keys back
   await page.keyboard.press("Escape");
   await expect(page.locator(".modal")).toHaveCount(0);
 });
+
+// A press on a button takes the keys off whatever had them (WebKit), so a dialog it opens has
+// nothing to give them back to: they go to the focused pane, or stay with a dialog left open.
+const TRASH = { b: { ...fakeMemo("나.md", ""), deletedMs: 1 } satisfies FakeTrashed };
+
+test("휴지통 비우기 pressed with the mouse and called off gives the keys to the editor", async ({
+  page,
+}) => {
+  await start(page, { memos: MEMOS, trash: TRASH });
+  await openMemo(page);
+  await page.getByRole("button", { name: "휴지통", exact: true }).click();
+  await page.getByRole("button", { name: "휴지통 비우기" }).click();
+  await expect(page.locator(".modal.confirm")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await page.keyboard.type("x");
+  await expect(page.locator(".cm-content")).toContainText("x");
+});
+
+test("with no tab open, a dialog with nothing to give the keys back to gives them to the pane", async ({
+  page,
+}) => {
+  await start(page, { memos: MEMOS, trash: TRASH });
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await page.getByRole("button", { name: "휴지통", exact: true }).click();
+  await page.getByRole("button", { name: "휴지통 비우기" }).click();
+  await expect(page.locator(".modal.confirm")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator(".pane")).toBeFocused();
+});
+
+test("a purge asked for with the keys on nothing gives them to the editor once it is done", async ({
+  page,
+}) => {
+  await start(page, { memos: MEMOS, trash: TRASH });
+  await openMemo(page);
+  await page.getByRole("button", { name: "휴지통", exact: true }).click();
+  // As the row's context menu leaves it: the press took the keys off the editor.
+  await page.evaluate(() => {
+    (document.activeElement as HTMLElement | null)?.blur();
+    void window.__tote.app.purgeTrashed("b");
+  });
+  await page.locator(".modal.confirm").getByRole("button", { name: "영구 삭제" }).click();
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect.poll(() => page.evaluate(() => window.__tote.backend.data.trash?.b)).toBeUndefined();
+  await expect(page.locator(".cm-content")).toBeFocused();
+});
+
+test("a question over the settings screen opened with the mouse gives the keys back to it", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: MEMOS,
+    settings: { ...defaultFakeData().settings, shortcuts: { "new-memo": "CmdOrCtrl+Shift+M" } },
+  });
+  await openMemo(page);
+  await menu(page, "settings");
+  const settings = page.locator(".modal.settings");
+  await settings.getByRole("tab", { name: "단축키", exact: true }).click();
+  await settings.getByRole("button", { name: "모두 기본값으로", exact: true }).click();
+  await expect(page.locator(".modal.confirm")).toHaveCount(1);
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal.confirm")).toHaveCount(0);
+  await expect
+    .poll(() => page.evaluate(() => document.activeElement?.closest(".modal.settings") != null))
+    .toBe(true);
+});
+
+test("a dialog whose opener has left the page gives the keys to the editor", async ({ page }) => {
+  await start(page, { memos: MEMOS, trash: TRASH });
+  await openMemo(page);
+  await page.getByRole("button", { name: "휴지통", exact: true }).click();
+  const empty = page.getByRole("button", { name: "휴지통 비우기" });
+  await empty.focus();
+  await page.keyboard.press("Enter");
+  await expect(page.locator(".modal.confirm")).toHaveCount(1);
+  // What opened it goes while it is up, as a row another window removes does.
+  await empty.evaluate((button) => button.remove());
+  await page.keyboard.press("Escape");
+  await expect(page.locator(".modal")).toHaveCount(0);
+  await expect(page.locator(".cm-content")).toBeFocused();
+});
