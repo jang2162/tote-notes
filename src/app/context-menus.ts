@@ -33,8 +33,18 @@ export function movePick(picked: string | null): string | null {
   return picked?.startsWith(MOVE_TO_PREFIX) ? picked.slice(MOVE_TO_PREFIX.length) : null;
 }
 
-/** A memo row's menu. With no workspace to move to, the move item is left out. */
-export function memoRowMenu(info: MemoInfo, targets: WorkspaceListItem[]): PopupMenuItem[] {
+/** Whether 「맨 위에 고정」 is the pin item for `infos`: unless every one of them is pinned already
+ * (list keyboard spec 「문맥 메뉴」). */
+export function pinsAll(infos: readonly MemoInfo[]): boolean {
+  return !infos.every((info) => info.pinned);
+}
+
+/** A memo row's menu, for the rows picked. With no workspace to move to, the move item is left
+ * out; with several picked, so are the items for one memo alone (list keyboard spec 「문맥 메뉴」). */
+export function memoRowMenu(
+  infos: readonly MemoInfo[],
+  targets: WorkspaceListItem[],
+): PopupMenuItem[] {
   const move: PopupMenuItem[] = targets.length
     ? [
         {
@@ -47,14 +57,19 @@ export function memoRowMenu(info: MemoInfo, targets: WorkspaceListItem[]): Popup
         },
       ]
     : [];
+  const one = infos.length === 1;
   return [
-    { id: RENAME, text: "이름 바꾸기…" },
-    { id: PIN, text: info.pinned ? "고정 해제" : "맨 위에 고정" },
+    ...(one ? [{ id: RENAME, text: "이름 바꾸기…" }] : []),
+    { id: PIN, text: pinsAll(infos) ? "맨 위에 고정" : "고정 해제" },
     { id: DUPLICATE, text: "복제" },
     ...move,
-    MENU_SEPARATOR,
-    { id: REVEAL_IN_FINDER, text: "Finder 에서 보기" },
-    { id: COPY_PATH, text: "경로 복사" },
+    ...(one
+      ? [
+          MENU_SEPARATOR,
+          { id: REVEAL_IN_FINDER, text: "Finder 에서 보기" },
+          { id: COPY_PATH, text: "경로 복사" },
+        ]
+      : []),
     MENU_SEPARATOR,
     { id: TRASH, text: "휴지통으로 이동" },
   ];
@@ -71,11 +86,11 @@ export function tabFileItems(kind: "memo" | "external" | "trashed"): PopupMenuIt
   ];
 }
 
-/** A trashed row's menu. */
-export function trashRowMenu(): PopupMenuItem[] {
+/** A trashed row's menu, for `count` rows picked: Finder is for one alone. */
+export function trashRowMenu(count = 1): PopupMenuItem[] {
   return [
     { id: RESTORE, text: "복구" },
-    { id: REVEAL_IN_FINDER, text: "Finder 에서 보기" },
+    ...(count === 1 ? [{ id: REVEAL_IN_FINDER, text: "Finder 에서 보기" }] : []),
     MENU_SEPARATOR,
     { id: PURGE, text: "영구 삭제" },
   ];

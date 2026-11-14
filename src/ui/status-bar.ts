@@ -6,8 +6,15 @@ import { h } from "./dom";
 export class StatusBar {
   private readonly message = h("span", { class: "status-message" });
   private readonly position = h("span", { class: "status-position" });
+  /** Outside the `role="status"` message: a count read out at every keystroke would drown it. */
   private readonly count = h("span", { class: "status-count" });
-  private readonly language = h("span", { class: "status-language" });
+  /** A button that opens the language picker; off where the language cannot be changed (list
+   * keyboard spec 「상태 표시줄」). */
+  private readonly language = h("button", {
+    class: "status-language",
+    type: "button",
+    disabled: true,
+  });
   readonly el = h(
     "footer",
     { class: "statusbar" },
@@ -21,6 +28,11 @@ export class StatusBar {
   private readonly counter = new CharCounter((label) => (this.count.textContent = label ?? ""));
   /** What `setPosition` was last given, for the count once it is switched on. */
   private shown: EditorState | null = null;
+
+  constructor() {
+    // What the status bar says is read out as it changes.
+    this.message.setAttribute("role", "status");
+  }
 
   get showsError(): boolean {
     return this.message.classList.contains("error");
@@ -60,7 +72,10 @@ export class StatusBar {
   setLanguage(label: string, onPick?: () => void): void {
     this.language.textContent = label;
     this.language.onclick = onPick ?? null;
+    this.language.disabled = !onPick;
     this.language.classList.toggle("clickable", Boolean(onPick));
     this.language.title = onPick ? "언어 바꾸기" : "";
+    if (label) this.language.setAttribute("aria-label", `언어: ${label}`);
+    else this.language.removeAttribute("aria-label");
   }
 }

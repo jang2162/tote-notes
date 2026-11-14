@@ -3,6 +3,7 @@
 
 import { errorCode, type Backend, type FileTarget, type MemoInfo } from "../backend/types";
 import { withRo } from "./context-menus";
+import type { MoveOutcome } from "./list-actions";
 import { asksAboutFile, type MemoDoc } from "./docs";
 
 export const NOT_IN_FINDER = "파일이 없어 Finder 에서 보지 못했습니다";
@@ -63,19 +64,19 @@ export async function moveMemo(
   host: ConvenienceHost,
   id: string,
   workspace: string,
-): Promise<void> {
+): Promise<MoveOutcome> {
   let target = id;
   const doc = host.memoTab(id);
   if (doc) {
     if (asksAboutFile(doc.banner)) {
       host.say(NOT_MOVED_BANNER, "error");
-      return;
+      return "kept";
     }
     const closed = await host.closeMemoTab(doc);
-    if (closed === null) return;
+    if (closed === null) return "other";
     if (!closed) {
       host.say(NOT_MOVED_UNSAVED, "error");
-      return;
+      return "kept";
     }
     // A save that recovered a vanished memo wrote the text under a new ID.
     target = doc.info.id;
@@ -87,9 +88,10 @@ export async function moveMemo(
     // Gone already: an empty new memo its close deleted, or a file another app removed.
     if (errorCode(error) !== "unknown-memo") throw error;
     host.removeListed(target);
-    return;
+    return "other";
   }
-  if (outcome.kind !== "moved") return;
+  if (outcome.kind !== "moved") return "other";
   host.removeListed(target);
   host.say(movedText(outcome.workspace));
+  return "moved";
 }

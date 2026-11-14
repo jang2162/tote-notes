@@ -236,9 +236,13 @@ export function promptText(message: string, initial: string): Promise<string | n
   });
 }
 
+/** Numbers the language pickers: the rows' element IDs are the page's alone. */
+let pickers = 0;
+
 /** The status bar's language picker: a filter over ids and display names, the current language
- * in bold. Enter takes the first language shown; with no filter it takes the current language,
- * or nothing (the first of the full list is not a choice the user made). */
+ * in bold. One row is marked, for Enter to take and ↑↓ to move (list keyboard spec 「언어
+ * 고르기」): the first language shown, or with no filter the current language — or none (the
+ * first of the full list is not a choice the user made). */
 export function pickLanguage(
   languages: LanguageInfo[],
   currentId: string | null,
@@ -246,32 +250,61 @@ export function pickLanguage(
   return modal<LanguageInfo>((close) => {
     const input = h("input", { placeholder: "언어 이름" });
     input.spellcheck = false;
-    const list = h("ul", { class: "picker-list" });
+    const listId = `language-list-${++pickers}`;
+    const list = h("ul", { class: "picker-list", id: listId });
+    list.setAttribute("role", "listbox");
+    list.setAttribute("aria-label", "언어");
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-label", "언어 이름");
+    input.setAttribute("aria-expanded", "true");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-controls", listId);
     let shown = languages;
+    let marked = -1;
+    const mark = (at: number) => {
+      marked = at;
+      list.childNodes.forEach((li, index) => {
+        if (!(li instanceof HTMLElement)) return;
+        li.setAttribute("aria-selected", String(index === at));
+        if (index === at) li.scrollIntoView?.({ block: "nearest" });
+      });
+      if (at >= 0) input.setAttribute("aria-activedescendant", `${listId}-${at}`);
+      else input.removeAttribute("aria-activedescendant");
+    };
     const render = () => {
       const query = input.value.trim().toLocaleLowerCase();
       shown = languages.filter(
         (l) => !query || [l.id, ...l.aliases].some((n) => n.toLocaleLowerCase().includes(query)),
       );
       list.replaceChildren(
-        ...shown.map((lang) => {
+        ...shown.map((lang, index) => {
           const li = h("li", {
             textContent: lang.aliases[0] ?? lang.id,
             class: lang.id === currentId ? "current" : "",
+            id: `${listId}-${index}`,
           });
+          li.setAttribute("role", "option");
+          // The field keeps the keys while a row is pressed.
+          li.addEventListener("mousedown", (event) => event.preventDefault());
           li.addEventListener("click", () => close(lang));
           return li;
         }),
       );
+      mark(query ? Math.min(0, shown.length - 1) : shown.findIndex((l) => l.id === currentId));
     };
     input.addEventListener("input", render);
     input.addEventListener("keydown", (event) => {
-      if (!isSubmitEnter(event)) return;
+      if (isSubmitEnter(event)) {
+        event.preventDefault();
+        if (shown[marked]) close(shown[marked]);
+        return;
+      }
+      if (isCompositionKey(event) || event.metaKey || event.altKey || event.ctrlKey) return;
+      if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
       event.preventDefault();
-      if (!input.value.trim()) {
-        const current = languages.find((l) => l.id === currentId);
-        if (current) close(current);
-      } else if (shown[0]) close(shown[0]);
+      if (shown.length === 0) return;
+      const by = event.key === "ArrowDown" ? 1 : -1;
+      mark(Math.max(0, Math.min(marked < 0 ? 0 : marked + by, shown.length - 1)));
     });
     render();
     return h(

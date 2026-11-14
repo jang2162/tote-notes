@@ -5,6 +5,7 @@ import {
   COPY_PATH,
   DUPLICATE,
   memoRowMenu,
+  pinsAll,
   movePick,
   moveTargets,
   REVEAL_IN_FINDER,
@@ -55,7 +56,7 @@ describe("moveTargets", () => {
 
 describe("memoRowMenu", () => {
   it("has the move submenu with each workspace, picked by its path", () => {
-    const items = memoRowMenu(memo(), [workspace("가", 0), workspace("나".normalize("NFD"), 1)]);
+    const items = memoRowMenu([memo()], [workspace("가", 0), workspace("나".normalize("NFD"), 1)]);
     expect(items.map((item) => item.text)).toEqual([
       "이름 바꾸기…",
       "맨 위에 고정",
@@ -73,9 +74,32 @@ describe("memoRowMenu", () => {
   });
 
   it("leaves the move out when there is nowhere to move to, and says 고정 해제 for a pinned memo", () => {
-    const items = memoRowMenu(memo(true), []);
+    const items = memoRowMenu([memo(true)], []);
     expect(items.some((item) => item.items)).toBe(false);
     expect(items[1].text).toBe("고정 해제");
+  });
+
+  it("leaves out what is for one memo alone when several are picked", () => {
+    const items = memoRowMenu([memo(), memo(true)], [workspace("가", 0)]);
+    expect(items.map((item) => item.text)).toEqual([
+      "맨 위에 고정",
+      "복제",
+      "다른 워크스페이스로 옮기기",
+      "",
+      "휴지통으로 이동",
+    ]);
+    expect(memoRowMenu([memo(), memo()], []).map((item) => item.text)).toEqual([
+      "맨 위에 고정",
+      "복제",
+      "",
+      "휴지통으로 이동",
+    ]);
+  });
+
+  it("says 고정 해제 for several only when every one of them is pinned", () => {
+    expect(memoRowMenu([memo(true), memo(true)], [])[0].text).toBe("고정 해제");
+    expect(pinsAll([memo(true), memo()])).toBe(true);
+    expect(pinsAll([memo(true), memo(true)])).toBe(false);
   });
 
   it("tells a pick of the move submenu from the other items", () => {
@@ -107,6 +131,12 @@ describe("trashRowMenu", () => {
       "",
       "영구 삭제",
     ]);
+  });
+});
+
+describe("trashRowMenu for several", () => {
+  it("leaves Finder out", () => {
+    expect(trashRowMenu(2).map((item) => item.text)).toEqual(["복구", "", "영구 삭제"]);
   });
 });
 

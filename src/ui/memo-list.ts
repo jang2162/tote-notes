@@ -1,6 +1,8 @@
 import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
 import { splitName } from "../core/names";
+import { modalOpen } from "./dialogs";
 import { h, placeChildren } from "./dom";
+import { ListSelection, listKey } from "./list-selection";
 import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
 import { SEARCH_DEBOUNCE_MS } from "./search-panel";
 
@@ -24,14 +26,19 @@ export function visibleRows(
 
 /** What the memo list asks of the window. */
 export interface MemoListHost {
-  open(id: string): void;
-  /** A row's context menu (right click, ⌃click). */
-  menu(id: string): void;
+  open(id: string): Promise<void>;
+  /** The context menu of the rows picked (right click, ⌃click, ⇧F10): what it picks applies to
+   * every one of them. */
+  menu(ids: string[]): Promise<void>;
+  /** ⌘⌫: the memos to the trash, without asking. */
+  trash(ids: string[]): Promise<void>;
+  /** The keys to the focused pane's tab. */
+  toEditor(): void;
   /** The sort button: the order menu. */
   sort(): void;
   /** A row found by its content (spec 2026-10-30 「필터가 내용도 찾는다」): the memo, its cursor
    * on the match. `line` is 0-based; `column` counts characters in the whole line. */
-  openAt(id: string, line: number, column: number): void;
+  openAt(id: string, line: number, column: number): Promise<void>;
   /** The memos holding `query` in their text, first match each; `null` when a newer ask or a
    * cancel stopped this one. */
   find(query: string): Promise<ContentHit[] | null>;
@@ -94,6 +101,10 @@ class RowSection {
     /** Everything `draw` shows of a memo, but where its row is. */
     private readonly look: (memo: MemoInfo) => string,
     private readonly rowHeight: () => number,
+    /** Marks a row drawn as picked or current, on the element as it is: a row made anew under a
+     * press would lose the click, so the picks are not part of its look. Then once all are. */
+    private readonly paint: (id: string, el: HTMLElement) => void,
+    private readonly painted: () => void,
   ) {
     this.el = h("div", { class: className }, this.rows);
     this.el.addEventListener("scroll", () => this.render(), { passive: true });
@@ -122,8 +133,22 @@ class RowSection {
       this.rows,
       [...drawn.values()].map(({ el }) => el),
     );
+    for (const [id, { el }] of drawn) this.paint(id, el);
+    this.painted();
+  }
+
+  /** Scrolls the row at `at` into view. */
+  reveal(at: number): void {
+    const rowHeight = this.rowHeight();
+    const top = at * rowHeight;
+    if (top < this.el.scrollTop) this.el.scrollTop = top;
+    else if (top + rowHeight > this.el.scrollTop + this.el.clientHeight)
+      this.el.scrollTop = top + rowHeight - this.el.clientHeight;
   }
 }
+
+/** A memo row's element ID, which the list's `aria-activedescendant` names. */
+const optionId = (id: string) => `memo-option-${id}`;
 
 /** The sidebar's memo pane: the pinned memos in a zone that stays put above the list, then every
  * other memo in the order picked, all filtered by name at once and by content a moment later
@@ -135,11 +160,14 @@ export class MemoList {
     class: "memo-filter",
   });
   private readonly sortButton = h("button", { class: "memo-sort", type: "button" }, sortMark());
+  private readonly picks = new ListSelection();
   private readonly pinned = new RowSection(
     "memo-pinned",
     (memo) => this.row(memo),
     (memo) => this.rowLook(memo),
     () => this.rowHeight,
+    (id, el) => this.paint(id, el),
+    () => this.painted(),
   );
   private readonly divider = h("div", { class: "memo-pinned-divider" });
   private readonly list = new RowSection(
@@ -147,14 +175,23 @@ export class MemoList {
     (memo) => this.row(memo),
     (memo) => this.rowLook(memo),
     () => this.rowHeight,
+    (id, el) => this.paint(id, el),
+    () => this.painted(),
+  );
+  /** One stop of Tab for both zones: the keys stay on it and `aria-activedescendant` names the
+   * current row, which comes and goes with the scroll (list keyboard spec 「자리와 역할」). */
+  private readonly box = h(
+    "div",
+    { class: "memo-listbox", tabIndex: 0 },
+    this.pinned.el,
+    this.divider,
+    this.list.el,
   );
   readonly el = h(
     "div",
     { class: "memo-pane with-preview" },
     h("div", { class: "memo-filter-row" }, this.filter, this.sortButton),
-    this.pinned.el,
-    this.divider,
-    this.list.el,
+    this.box,
   );
   private readonly none = h("p", { class: "memo-none", textContent: "맞는 메모가 없습니다" });
   private memos: MemoInfo[] = [];
@@ -180,6 +217,17 @@ export class MemoList {
     this.sortButton.title = "정렬";
     this.sortButton.addEventListener("click", () => this.host.sort());
     this.filter.addEventListener("input", () => this.queryChanged());
+    this.filter.addEventListener("keydown", (event) => this.onFilterKey(event));
+    this.box.setAttribute("role", "listbox");
+    this.box.setAttribute("aria-label", "메모 목록");
+    this.box.setAttribute("aria-multiselectable", "true");
+    this.divider.setAttribute("role", "none");
+    this.box.addEventListener("keydown", (event) => this.onKey(event));
+  }
+
+  /** The keys on the list, its current row as it was. */
+  focus(): void {
+    this.box.focus({ preventScroll: true });
   }
 
   get(id: string): MemoInfo | undefined {
@@ -313,6 +361,7 @@ export class MemoList {
     // Said only once the content's answer is in: until then a memo may still turn up.
     this.none.hidden = shown.length > 0 || !this.query || this.asking;
     const { pinned, rest } = splitPinned(shown);
+    this.picks.setOrder([...pinned, ...rest].map((memo) => memo.id));
     this.pinned.items = pinned;
     this.list.items = rest;
     this.pinned.el.hidden = pinned.length === 0;
@@ -325,6 +374,114 @@ export class MemoList {
   private render(): void {
     this.pinned.render();
     this.list.render();
+  }
+
+  private paint(id: string, el: HTMLElement): void {
+    const picked = this.picks.isPicked(id);
+    el.setAttribute("aria-selected", String(picked));
+    el.classList.toggle("picked", picked);
+    el.classList.toggle("current", id === this.picks.cursor);
+  }
+
+  /** The current row is named only while it is drawn: one scrolled away has no element. */
+  private painted(): void {
+    const cursor = this.picks.cursor;
+    const drawn = cursor !== null && this.box.querySelector(`[id="${optionId(cursor)}"]`);
+    if (drawn) this.box.setAttribute("aria-activedescendant", optionId(cursor));
+    else this.box.removeAttribute("aria-activedescendant");
+    // One row picked shows only while the list has the keys: a plain press picks the row it opens
+    // and gives the keys to the editor, where the active row's colour says it all.
+    this.box.classList.toggle("several", this.picks.size > 1);
+  }
+
+  /** The current row in view, and drawn. */
+  private reveal(): void {
+    const id = this.picks.cursor;
+    for (const section of [this.pinned, this.list]) {
+      const at = section.items.findIndex((memo) => memo.id === id);
+      if (at >= 0) section.reveal(at);
+    }
+    this.render();
+  }
+
+  /** ↓ from the filter: the list's first row (list keyboard spec 「키」). */
+  private onFilterKey(event: KeyboardEvent): void {
+    if (event.key !== "ArrowDown" || event.metaKey || event.shiftKey || event.altKey) return;
+    if (event.ctrlKey || event.isComposing || event.keyCode === 229) return;
+    const first = this.pinned.items[0] ?? this.list.items[0];
+    if (!first) return;
+    event.preventDefault();
+    this.picks.only(first.id);
+    this.reveal();
+    this.focus();
+  }
+
+  private onKey(event: KeyboardEvent): void {
+    const key = listKey(event);
+    if (!key) return;
+    event.preventDefault();
+    if (key.kind === "held") return;
+    if (key.kind === "move") {
+      if (key.to === "up" && !key.extend && this.picks.index === 0) {
+        this.filter.focus();
+        return;
+      }
+      if (key.to === "first" || key.to === "last") this.picks.to(key.to, key.extend);
+      else this.picks.step(this.stepOf(key.to), key.extend);
+      this.reveal();
+    } else if (key.kind === "all") {
+      this.picks.selectAll();
+      this.render();
+    } else if (key.kind === "open") void this.openCurrent(key.toEditor);
+    else if (key.kind === "delete") void this.trashPicked();
+    else void this.menuFromKeys();
+  }
+
+  /** ⇧F10: the menu of what is picked; whatever it did, the keys come back here. */
+  private async menuFromKeys(): Promise<void> {
+    const ids = this.picks.menuFor(this.picks.cursor);
+    this.render();
+    if (ids.length === 0) return;
+    await this.host.menu(ids);
+    this.keepKeys();
+  }
+
+  /** Rows a key moves: one, or a page of the list below the pinned zone less one row. */
+  private stepOf(to: "up" | "down" | "page-up" | "page-down"): number {
+    const page = Math.max(1, Math.floor(this.list.el.clientHeight / this.rowHeight) - 1);
+    return { up: -1, down: 1, "page-up": -page, "page-down": page }[to];
+  }
+
+  /** Enter: the current row's memo in the focused pane, the keys kept here — but for ⌘Enter, and
+   * for the memo the pane shows already, whose tab takes them. */
+  private async openCurrent(toEditor: boolean): Promise<void> {
+    const id = this.picks.cursor;
+    const memo = id === null ? undefined : this.get(id);
+    if (!memo) return;
+    if (memo.id === this.activeId) return this.host.toEditor();
+    const hit = this.hitOf(memo);
+    await (hit ? this.host.openAt(memo.id, hit.line, hit.column) : this.host.open(memo.id));
+    if (toEditor) this.host.toEditor();
+    else this.keepKeys();
+  }
+
+  /** ⌘⌫: what is picked to the trash; the keys stay here, on the row now in the place of the
+   * current one, though a tab closing took them. */
+  private async trashPicked(): Promise<void> {
+    const ids = this.picks.targets();
+    if (ids.length === 0) return;
+    await this.host.trash(ids);
+    this.keepKeys();
+  }
+
+  /** Back to the list, unless a dialog has them now. */
+  private keepKeys(): void {
+    if (!modalOpen()) this.focus();
+  }
+
+  private openMenu(ids: string[]): void {
+    this.render();
+    if (ids.length) void this.host.menu(ids);
   }
 
   /** Everything `row` draws of `memo`. Its listeners go by the memo's ID alone, so a row kept
@@ -345,7 +502,7 @@ export class MemoList {
     const active = memo.id === this.activeId ? " active" : "";
     const row = h(
       "div",
-      { class: `memo-row kind-${memo.kind}${active}`, title: memo.file },
+      { class: `memo-row kind-${memo.kind}${active}`, title: memo.file, id: optionId(memo.id) },
       h("span", { class: "memo-icon" }),
       h(
         "span",
@@ -360,14 +517,29 @@ export class MemoList {
       ),
       memo.pinned ? pinMark() : null,
     );
-    row.addEventListener("click", () => {
+    row.setAttribute("role", "option");
+    row.setAttribute("aria-label", memo.file);
+    // A ⇧ press would also select the page's text from the last press; the list takes the keys
+    // itself on the click.
+    row.addEventListener("mousedown", (event) => {
+      if (event.shiftKey) event.preventDefault();
+    });
+    row.addEventListener("click", (event) => {
+      // ⌘ adds or takes out, ⇧ picks a run; neither opens (list keyboard spec 「누르기」).
+      if (event.metaKey || event.shiftKey) {
+        this.picks.press(memo.id, { toggle: event.metaKey, range: event.shiftKey });
+        this.render();
+        this.focus();
+        return;
+      }
+      this.picks.only(memo.id);
+      this.render();
       const hit = this.hitOf(memo);
-      if (hit) this.host.openAt(memo.id, hit.line, hit.column);
-      else this.host.open(memo.id);
+      void (hit ? this.host.openAt(memo.id, hit.line, hit.column) : this.host.open(memo.id));
     });
     row.addEventListener("contextmenu", (event) => {
       event.preventDefault();
-      this.host.menu(memo.id);
+      this.openMenu(this.picks.menuFor(memo.id));
     });
     return row;
   }
