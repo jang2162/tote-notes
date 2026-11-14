@@ -1,0 +1,10 @@
+{
+  "commands": [
+    {
+      "id": "quick-note",
+      "label": "빠른 메모",
+      "default": "Ctrl+Alt+N",
+      "current": "Ctrl+Alt+N"
+    }
+  ]
+}

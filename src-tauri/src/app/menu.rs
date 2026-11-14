@@ -622,6 +622,9 @@ fn route(id: &str) -> Route<'_> {
 }
 
 pub fn on_event(app: &AppHandle, event: MenuEvent) {
+    if let Some(item) = super::tray::item_of(event.id().as_ref()) {
+        return super::tray::on_menu(app, item);
+    }
     match route(event.id().as_ref()) {
         Route::PopupMenu(item) => app.state::<PopupMenu>().record(item),
         Route::App(id) => run(app, id, target_window(app)),

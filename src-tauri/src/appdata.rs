@@ -8,6 +8,7 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 
+use crate::global_shortcuts;
 use crate::persist::{read_json_file, set_aside, write_json, JsonFile};
 use crate::shortcuts;
 use crate::workspace::id::is_id;
@@ -184,6 +185,28 @@ pub struct Settings {
         skip_serializing_if = "BTreeMap::is_empty"
     )]
     pub shortcuts: BTreeMap<String, Option<String>>,
+    /// Global command id → the shortcut it has instead of its default, `None` for none
+    /// (src/global_shortcuts.rs). Entries that clash with an app command's key are dropped once
+    /// both maps are read (`load_with_aside`).
+    #[serde(
+        default,
+        deserialize_with = "global_shortcut_overrides",
+        skip_serializing_if = "BTreeMap::is_empty"
+    )]
+    pub global_shortcuts: BTreeMap<String, Option<String>>,
+    #[serde(default, deserialize_with = "lenient")]
+    pub tray: TraySettings,
+    #[serde(flatten)]
+    pub unknown: Unknown,
+}
+
+/// The menu bar icon (src/app/tray.rs): off unless the person turns it on, so an update alone does
+/// not put one in the menu bar.
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TraySettings {
+    #[serde(deserialize_with = "lenient")]
+    pub visible: bool,
     #[serde(flatten)]
     pub unknown: Unknown,
 }
@@ -222,6 +245,26 @@ where
         })
         .collect();
     Ok(shortcuts::sanitize(&shortcuts::from_keypad(&saved)))
+}
+
+/// The saved global shortcut overrides, each entry judged on its own as `shortcut_overrides` judges
+/// the app's, against no app overrides yet: `load_with_aside` judges them again once both are read.
+fn global_shortcut_overrides<'de, D>(
+    deserializer: D,
+) -> Result<BTreeMap<String, Option<String>>, D::Error>
+where
+    D: serde::Deserializer<'de>,
+{
+    let entries: BTreeMap<String, serde_json::Value> = lenient(deserializer)?;
+    let saved = entries
+        .into_iter()
+        .filter_map(|(id, keys)| match keys {
+            serde_json::Value::Null => Some((id, None)),
+            serde_json::Value::String(keys) => Some((id, Some(keys))),
+            _ => None,
+        })
+        .collect();
+    Ok(global_shortcuts::sanitize(&saved, &BTreeMap::new()))
 }
 
 /// Which theme the app draws with (spec 「테마」): a mode's bundled default, or one theme picked.
@@ -535,6 +578,11 @@ pub struct SettingsPatch {
     /// another window has changed since is refused, whatever else it names.
     #[serde(default)]
     pub shortcuts_expected: Option<BTreeMap<String, Option<String>>>,
+    /// The whole global map: what is not in it goes back to its default.
+    #[serde(default)]
+    pub global_shortcuts: Option<BTreeMap<String, Option<String>>>,
+    #[serde(default)]
+    pub tray_visible: Option<bool>,
 }
 
 /// What `apply` says when `shortcuts_expected` is not the saved map; the settings screen tells
@@ -564,6 +612,14 @@ impl SettingsPatch {
         }
         if let Some(overrides) = &self.shortcuts {
             shortcuts::validate(overrides)?;
+        }
+        if self.shortcuts.is_some() || self.global_shortcuts.is_some() {
+            global_shortcuts::validate(
+                self.global_shortcuts
+                    .as_ref()
+                    .unwrap_or(&settings.global_shortcuts),
+                self.shortcuts.as_ref().unwrap_or(&settings.shortcuts),
+            )?;
         }
         if let Some(root) = &self.workspace_root {
             settings.workspace_root = root.clone();
@@ -610,6 +666,12 @@ impl SettingsPatch {
         if let Some(overrides) = &self.shortcuts {
             settings.shortcuts = overrides.clone();
         }
+        if let Some(overrides) = &self.global_shortcuts {
+            settings.global_shortcuts = overrides.clone();
+        }
+        if let Some(on) = self.tray_visible {
+            settings.tray.visible = on;
+        }
         Ok(())
     }
 }
@@ -622,8 +684,14 @@ impl Settings {
     /// `load`, with where a file that did not parse went (`read_json_file`): the defaults in its
     /// place move the workspace root, so the caller has that to tell the person about.
     pub fn load_with_aside(path: &Path) -> io::Result<(Settings, Option<PathBuf>)> {
-        Ok(match read_json_file(path)? {
-            JsonFile::Read(settings) => (settings, None),
+        Ok(match read_json_file::<Settings>(path)? {
+            JsonFile::Read(mut settings) => {
+                // A global key an app command has: the app command's stays (global shortcuts spec
+                // 「데이터·저장」).
+                settings.global_shortcuts =
+                    global_shortcuts::sanitize(&settings.global_shortcuts, &settings.shortcuts);
+                (settings, None)
+            }
             JsonFile::Missing => (Settings::default(), None),
             JsonFile::SetAside(aside) => (Settings::default(), Some(aside)),
         })
@@ -1264,6 +1332,7 @@ mod tests {
                 "updates": {"autoCheck": true},
                 "sidebar": {"preview": true, "sort": "modified-desc"},
                 "trash": {"retentionDays": 60},
+                "tray": {"visible": false},
             })
         );
     }
@@ -1308,6 +1377,11 @@ mod tests {
                 ("rename".into(), Some("CmdOrCtrl+K".into())),
                 ("new-memo".into(), None),
             ]),
+            global_shortcuts: BTreeMap::from([("quick-note".into(), None)]),
+            tray: TraySettings {
+                visible: true,
+                unknown: Unknown::new(),
+            },
             unknown: Unknown::new(),
         };
         settings.save(&file).unwrap();
@@ -1917,6 +1991,8 @@ mod tests {
                 unknown: Unknown::new(),
             },
             shortcuts: BTreeMap::from([("rename".into(), Some("CmdOrCtrl+K".into()))]),
+            global_shortcuts: BTreeMap::new(),
+            tray: TraySettings::default(),
             unknown: Unknown::new(),
         };
         SettingsPatch {
@@ -2064,5 +2140,147 @@ mod tests {
                 PathBuf::from("/w/A")
             ]
         );
+    }
+
+    fn settings_from(json: &str) -> Settings {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("settings.json");
+        fs::write(&file, json).unwrap();
+        Settings::load(&file).unwrap()
+    }
+
+    #[test]
+    fn the_menu_bar_icon_is_off_by_default_and_a_bad_value_is_off() {
+        assert!(!Settings::default().tray.visible);
+        assert!(!settings_from("{}").tray.visible);
+        assert!(settings_from(r#"{"tray": {"visible": true}}"#).tray.visible);
+        assert!(
+            !settings_from(r#"{"tray": {"visible": "yes"}}"#)
+                .tray
+                .visible
+        );
+        assert!(!settings_from(r#"{"tray": 3}"#).tray.visible);
+        // The rest of the file stays.
+        let settings = settings_from(r#"{"tray": 3, "workspaceRoot": "/x"}"#);
+        assert_eq!(settings.workspace_root, Some(PathBuf::from("/x")));
+    }
+
+    #[test]
+    fn saved_global_shortcuts_are_read_entry_by_entry() {
+        let global = |json: &str| settings_from(json).global_shortcuts;
+        assert_eq!(global("{}"), BTreeMap::new());
+        assert_eq!(
+            global(r#"{"globalShortcuts": {"quick-note": "Ctrl+Alt+Shift+N"}}"#),
+            BTreeMap::from([("quick-note".into(), Some("Ctrl+Alt+Shift+N".into()))])
+        );
+        assert_eq!(
+            global(r#"{"globalShortcuts": {"quick-note": null}}"#),
+            BTreeMap::from([("quick-note".into(), None)])
+        );
+        for bad in [
+            r#"{"globalShortcuts": {"quick-note": 5}}"#,
+            r#"{"globalShortcuts": {"quick-note": "Cmd+++"}}"#,
+            r#"{"globalShortcuts": {"quick-note": "CmdOrCtrl+Q"}}"#,
+            r#"{"globalShortcuts": {"nope": "Ctrl+Alt+K"}}"#,
+            r#"{"globalShortcuts": "Ctrl+Alt+N"}"#,
+        ] {
+            assert_eq!(global(bad), BTreeMap::new(), "{bad}");
+        }
+    }
+
+    /// Read from a file of a build that had no global shortcuts, or edited by hand: the app
+    /// command's key stays, and the global entry goes.
+    #[test]
+    fn a_saved_global_key_an_app_command_has_is_dropped_as_the_file_is_read() {
+        let settings = settings_from(
+            r#"{"shortcuts": {"rename": "Ctrl+Alt+K"},
+                "globalShortcuts": {"quick-note": "Ctrl+Alt+K"}}"#,
+        );
+        assert_eq!(
+            settings.shortcuts,
+            BTreeMap::from([("rename".into(), Some("Ctrl+Alt+K".into()))])
+        );
+        assert_eq!(settings.global_shortcuts, BTreeMap::new());
+    }
+
+    #[test]
+    fn a_patch_saves_the_global_shortcuts_and_the_menu_bar_icon() {
+        let mut settings = Settings::default();
+        SettingsPatch {
+            global_shortcuts: Some(BTreeMap::from([("quick-note".into(), None)])),
+            tray_visible: Some(true),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(
+            settings.global_shortcuts,
+            BTreeMap::from([("quick-note".into(), None)])
+        );
+        assert!(settings.tray.visible);
+        let patch: SettingsPatch =
+            serde_json::from_str(r#"{"globalShortcuts": {}, "trayVisible": false}"#).unwrap();
+        patch.apply(&mut settings).unwrap();
+        assert_eq!(settings.global_shortcuts, BTreeMap::new());
+        assert!(!settings.tray.visible);
+    }
+
+    #[test]
+    fn a_patch_with_a_global_key_that_cannot_stand_is_refused_whole() {
+        let mut settings = Settings::default();
+        for keys in ["CmdOrCtrl+N", "CmdOrCtrl+Q", "N", "Cmd+++"] {
+            let error = SettingsPatch {
+                global_shortcuts: Some(BTreeMap::from([("quick-note".into(), Some(keys.into()))])),
+                tray_visible: Some(true),
+                ..Default::default()
+            }
+            .apply(&mut settings)
+            .unwrap_err();
+            assert!(error.contains("quick-note"), "{keys}: {error}");
+            assert_eq!(settings, Settings::default(), "{keys}");
+        }
+    }
+
+    #[test]
+    fn an_app_patch_cannot_take_a_saved_global_key_but_may_take_the_default_one() {
+        let mut settings = Settings {
+            global_shortcuts: BTreeMap::from([("quick-note".into(), Some("Ctrl+Alt+K".into()))]),
+            ..Default::default()
+        };
+        let before = settings.clone();
+        let error = SettingsPatch {
+            shortcuts: Some(BTreeMap::from([(
+                "rename".into(),
+                Some("Ctrl+Alt+K".into()),
+            )])),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap_err();
+        assert!(error.contains("quick-note"), "{error}");
+        assert_eq!(settings, before);
+        // Cleared in the same patch, it may.
+        SettingsPatch {
+            shortcuts: Some(BTreeMap::from([(
+                "rename".into(),
+                Some("Ctrl+Alt+K".into()),
+            )])),
+            global_shortcuts: Some(BTreeMap::from([("quick-note".into(), None)])),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        // The default ⌃⌥N gives way instead.
+        let mut settings = Settings::default();
+        SettingsPatch {
+            shortcuts: Some(BTreeMap::from([(
+                "rename".into(),
+                Some("Ctrl+Alt+N".into()),
+            )])),
+            ..Default::default()
+        }
+        .apply(&mut settings)
+        .unwrap();
+        assert_eq!(settings.global_shortcuts, BTreeMap::new());
     }
 }

@@ -206,6 +206,12 @@ pub fn same(a: &str, b: &str) -> bool {
     matches!((parse(a), parse(b)), (Some(a), Some(b)) if a == b)
 }
 
+/// Whether `keys` parses and the settings screen could have recorded it (`recordable`): the rule a
+/// global shortcut is held to as well (src/global_shortcuts.rs).
+pub fn recordable_keys(keys: &str) -> bool {
+    parse(keys).is_some_and(|keys| recordable(&keys))
+}
+
 /// `map` without the entries that say what their command has anyway: its default, or no shortcut
 /// for a command that has none. The settings screen never saves such an entry, but a file edited
 /// by hand may hold one, and the two maps compared by `SettingsPatch::apply` must not differ by it.

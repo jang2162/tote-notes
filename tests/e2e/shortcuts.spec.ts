@@ -1,6 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { defaultFakeData, type FakeData } from "../../src/backend/fake";
+import { FAKE_GLOBAL_COMMANDS } from "../../src/backend/fake-global-shortcuts";
+import { FAKE_SHORTCUT_COMMANDS } from "../../src/backend/fake-shortcuts";
 import type { SettingsPatch } from "../../src/backend/types";
 import { menu, nextWindow, start, startWindows } from "./helpers";
 
@@ -433,7 +435,10 @@ test("the search filters by name and by shortcut", async ({ page }) => {
   await search.fill("⌘N");
   await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
   await search.fill("");
-  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(28);
+  // Every app command's row (28 with 줄 바꿈) and every global one's (the 「전역」 group).
+  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(
+    FAKE_SHORTCUT_COMMANDS.length + FAKE_GLOBAL_COMMANDS.length,
+  );
 });
 
 test("the update check command takes a shortcut", async ({ page }) => {

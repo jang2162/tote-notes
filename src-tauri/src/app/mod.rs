@@ -14,9 +14,11 @@ pub mod lifecycle;
 pub mod links;
 pub mod menu;
 pub mod places;
+pub mod quick_note;
 pub mod requests;
 #[cfg(target_os = "macos")]
 pub mod traffic_lights;
+pub mod tray;
 pub mod update;
 pub mod windows;
 
@@ -83,6 +85,9 @@ pub enum PendingOpen {
     UpdateFound {
         version: String,
     },
+    /// A new memo in the focused pane, as ⌘N makes one: 빠른 메모 pressed while the window may not
+    /// be up yet (src/app/quick_note.rs).
+    NewMemo,
 }
 
 /// What a window asked to switch to calls for (`AppCore::switch_target`).
@@ -1372,6 +1377,29 @@ impl AppCore {
 
     pub fn latest_window(&self) -> Option<String> {
         lock(&self.inner).focus.first().cloned()
+    }
+
+    /// The windows most recently focused first, each with whether it is leaving: closing,
+    /// switching, or a round to close it or switch its workspace is open (asking included).
+    /// `None` while tote quits or restarts. For 빠른 메모 (src/app/quick_note.rs).
+    pub fn windows_by_focus(&self) -> Option<Vec<(String, bool)>> {
+        let inner = lock(&self.inner);
+        if inner.quitting || inner.flush.ends_the_app() {
+            return None;
+        }
+        Some(
+            inner
+                .focus
+                .iter()
+                .map(|label| {
+                    let leaving = inner
+                        .windows
+                        .get(label)
+                        .is_none_or(|window| inner.gives_no_tabs(label, window));
+                    (label.clone(), leaving)
+                })
+                .collect(),
+        )
     }
 
     /// Hands a found update to the windows (spec 2026-10-25 「제약」): its button goes up in every

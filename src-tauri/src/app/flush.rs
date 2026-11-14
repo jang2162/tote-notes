@@ -245,6 +245,11 @@ impl FlushCoordinator {
             .any(|round| round.goal.window() == Some(label))
     }
 
+    /// A round to quit or restart is open, writing or asking.
+    pub fn ends_the_app(&self) -> bool {
+        self.rounds.values().any(|round| round.goal.is_quit())
+    }
+
     /// No round is open, writing or asking.
     pub fn is_idle(&self) -> bool {
         self.rounds.is_empty()

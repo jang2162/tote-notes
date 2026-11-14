@@ -33,6 +33,7 @@ import {
   type WindowStart,
   type WorkspaceRoots,
   type SettingsPatch,
+  type GlobalShortcutTable,
   type ShortcutTable,
   type TextQuery,
   type TextScan,
@@ -322,6 +323,9 @@ export class TauriBackend implements Backend {
   }
   shortcutTable() {
     return call<ShortcutTable>("shortcut_table");
+  }
+  globalShortcutTable() {
+    return call<GlobalShortcutTable>("global_shortcut_table");
   }
   suspendShortcuts(on: boolean) {
     return call<void>("suspend_shortcuts", { on });

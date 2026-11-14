@@ -1861,7 +1861,8 @@ button.danger {
   color: var(--muted);
 }
 
-.shortcut-fixed-title {
+.shortcut-fixed-title,
+.shortcut-global-title {
   margin: 8px 0 4px;
   color: var(--muted);
   font-size: 12px;
