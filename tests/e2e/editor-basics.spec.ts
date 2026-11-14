@@ -1,8 +1,8 @@
 import { expect, test, type Page } from "@playwright/test";
 
 import { WRAP_LIMIT } from "../../src/app/docs";
-import { fakeMemo } from "../../src/backend/fake";
-import type { SettingsPatch } from "../../src/backend/types";
+import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
+import { DEFAULT_EDITOR_SETTINGS, type SettingsPatch } from "../../src/backend/types";
 import { menu, nextWindow, paneSession, start, startWindows } from "./helpers";
 
 // Editor basics spec: bracket matching, the wrap and indent settings, the character count, folding.
@@ -212,4 +212,51 @@ test("the line number of a folded block selects every line it holds", async ({ p
   });
   // 「if x:\n  y」: the folded line goes with its head, up to the line break before 「z」.
   expect(selection).toEqual([0, 9]);
+});
+
+test("saved editor settings apply from the start, in a new window too", async ({ context }) => {
+  const settings = defaultFakeData().settings;
+  settings.editor = {
+    ...DEFAULT_EDITOR_SETTINGS,
+    charCount: true,
+    wrap: false,
+    indent: "tab",
+    foldGutter: false,
+  };
+  const first = await startWindows(context, { memos, session: openA, settings });
+  const [second] = await Promise.all([nextWindow(first), menu(first, "new-window")]);
+  await second.locator(".memo-row", { hasText: "나" }).click();
+  await expect(second.locator(".cm-content")).toHaveText("(a [b] c)");
+  await expect(first.locator(".status-count")).toHaveText("9자");
+  await expect(second.locator(".status-count")).toHaveText("9자");
+  for (const page of [first, second]) {
+    expect(await wraps(page)).toBe(false);
+    await expect(page.locator(".cm-foldGutter")).toHaveCount(0);
+    await select(page, 0);
+    await page.keyboard.press("Tab");
+    await expect.poll(() => text(page).then((t) => t[0])).toBe("\t");
+  }
+});
+
+test("with the count off the status bar is laid out as before it, one gap between its items", async ({
+  page,
+}) => {
+  await start(page, { memos, session: openA });
+  await expect(page.locator(".status-position")).not.toBeEmpty();
+  const gap = (from: string, to: string) =>
+    page.evaluate(
+      ([a, b]) =>
+        document.querySelector(b)!.getBoundingClientRect().left -
+        document.querySelector(a)!.getBoundingClientRect().right,
+      [from, to] as const,
+    );
+  const between = await page.evaluate(() =>
+    parseFloat(getComputedStyle(document.querySelector(".statusbar")!).columnGap),
+  );
+  expect(between).toBe(16);
+  expect(await gap(".status-position", ".status-language")).toBe(between);
+  await patch(page, { editorCharCount: true });
+  await expect(page.locator(".status-count")).toHaveText("9자");
+  expect(await gap(".status-position", ".status-count")).toBe(between);
+  expect(await gap(".status-count", ".status-language")).toBe(between);
 });

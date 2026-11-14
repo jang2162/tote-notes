@@ -1114,6 +1114,11 @@ html:not(.sidebar-collapsed) .tab-lead {
   white-space: nowrap;
 }
 
+/* Off, the character count takes no room: an empty flex item still adds a gap. */
+.status-count:empty {
+  display: none;
+}
+
 .status-message.error {
   color: var(--danger);
 }

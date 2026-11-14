@@ -746,6 +746,8 @@ export class AppController implements DocHost, PaneHost {
     await this.loadRegistry();
     await Promise.all([this.loadSettings(), shortcutsRead]);
     this.applyEditorFont();
+    // The rest of the editor settings are read as each tab's state is made (`extensions`).
+    this.statusBar.setCharCount(this.settings.editor.charCount);
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
     this.theme.onChange((active) => {
