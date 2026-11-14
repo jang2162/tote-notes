@@ -2,6 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { LONG_LINE_LIMIT } from "../../src/app/docs";
 import { fakeFile, fakeMemo } from "../../src/backend/fake";
+import { DEFAULT_EDITOR_SETTINGS } from "../../src/backend/types";
 import { menu, nextWindow, paneSession, ready, start, startWindows } from "./helpers";
 
 const PKG = { name: "night", publisher: "someone", version: "1.0.0", displayName: "Night Theme" };
@@ -310,7 +311,7 @@ test("a theme an older build saved for an appearance is neither offered nor draw
       workspaceRoot: null,
       theme,
       extensions: { disabled: [], precedence: "user" },
-      editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+      editor: { ...DEFAULT_EDITOR_SETTINGS },
       updates: { autoCheck: true },
       sidebar: { preview: true, sort: "modified-desc" },
       trash: { retentionDays: 60 },

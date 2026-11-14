@@ -51,6 +51,8 @@ export const CSS_VARIABLES: { variable: string; keys: string[] }[] = [
   { variable: "--search-match", keys: ["editor.findMatchHighlightBackground"] },
   { variable: "--search-match-current", keys: ["editor.findMatchBackground"] },
   { variable: "--search-match-border", keys: ["editor.findMatchBorder"] },
+  { variable: "--bracket-match", keys: ["editorBracketMatch.background"] },
+  { variable: "--bracket-match-border", keys: ["editorBracketMatch.border"] },
 ];
 
 /** The values styles.css carries for each appearance; the theme overrides key by key. */
@@ -76,6 +78,8 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--search-match": "rgb(255 213 0 / 35%)",
     "--search-match-current": "rgb(255 140 0 / 45%)",
     "--search-match-border": "#b85c00",
+    "--bracket-match": "rgb(0 100 0 / 10%)",
+    "--bracket-match-border": "#6e7781",
   },
   dark: {
     "--bg": "#1e1f22",
@@ -98,6 +102,8 @@ export const DEFAULT_VARIABLES: Record<Appearance, Record<string, string>> = {
     "--search-match": "rgb(255 210 0 / 22%)",
     "--search-match-current": "rgb(255 140 0 / 40%)",
     "--search-match-border": "#e8892b",
+    "--bracket-match": "rgb(80 200 120 / 16%)",
+    "--bracket-match-border": "#8b9099",
   },
 };
 

@@ -9,9 +9,9 @@ import {
   selectLine,
 } from "@codemirror/commands";
 import { markdown } from "@codemirror/lang-markdown";
-import { indentUnit } from "@codemirror/language";
+import { bracketMatching, foldKeymap, indentUnit } from "@codemirror/language";
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search";
-import { Compartment, EditorState, Prec, type Extension } from "@codemirror/state";
+import { Compartment, EditorState, Facet, Prec, type Extension } from "@codemirror/state";
 import {
   crosshairCursor,
   drawSelection,
@@ -25,8 +25,10 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 
+import type { EditorIndent } from "../backend/types";
 import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
+import { folding, foldFits } from "./folding";
 import { historyStaysWithTheKeys } from "./history-menu";
 import { multiRangeIme, redoWithCursors, undoWithCursors } from "./ime";
 import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
@@ -65,6 +67,7 @@ export const editorKeymap: readonly KeyBinding[] = [
   ...searchBarKeymap,
   ...searchKeymap,
   ...historyKeymap,
+  ...foldKeymap,
 ];
 
 const language = new Compartment();
@@ -102,6 +105,51 @@ const lineNumberSlot = new Compartment();
 /** Shows or hides the gutter of a state built by `editorExtensions` (the line-number setting). */
 export function lineNumbersEffect(on: boolean) {
   return lineNumberSlot.reconfigure(on ? lineNumberGutter() : []);
+}
+
+const wrapSlot = new Compartment();
+
+/** Whether the state's lines were short enough to wrap when it was made (`WRAP_LIMIT` in
+ * src/app/docs.ts); the wrap setting cannot turn wrapping on where they were not. */
+const wrapFitsFacet = Facet.define<boolean, boolean>({
+  combine: (values) => values.every(Boolean),
+});
+
+function wrapping(on: boolean, fits: boolean): Extension {
+  return on && fits ? EditorView.lineWrapping : [];
+}
+
+/** Turns soft wrap on or off in `state`, built by `editorExtensions` (the wrap setting). */
+export function wrapEffect(state: EditorState, on: boolean) {
+  return wrapSlot.reconfigure(wrapping(on, state.facet(wrapFitsFacet)));
+}
+
+const indentSlot = new Compartment();
+
+const INDENT_UNITS: Record<EditorIndent, string> = {
+  "spaces-2": "  ",
+  "spaces-4": "    ",
+  tab: "\t",
+};
+
+/** A tab is four columns wide whatever the indent setting: CodeMirror's default, which the editor
+ * showed before there was a setting. */
+const TAB_SIZE = 4;
+
+function indentation(indent: EditorIndent): Extension {
+  return [indentUnit.of(INDENT_UNITS[indent]), EditorState.tabSize.of(TAB_SIZE)];
+}
+
+/** Swaps the indent unit of a state built by `editorExtensions` (the indent setting). */
+export function indentEffect(indent: EditorIndent) {
+  return indentSlot.reconfigure(indentation(indent));
+}
+
+const foldSlot = new Compartment();
+
+/** Shows or hides the fold markers of `state`, built by `editorExtensions` (the fold setting). */
+export function foldGutterEffect(state: EditorState, on: boolean) {
+  return foldSlot.reconfigure(folding({ fits: state.facet(foldFits), gutter: on }));
 }
 
 const menuKeySlot = new Compartment();
@@ -182,6 +230,27 @@ const appTheme = EditorView.theme({
     outline: "1px solid var(--search-match-border)",
   },
   ".cm-panels": { backgroundColor: "var(--panel-bg)", color: "var(--fg)" },
+  "&.cm-focused .cm-matchingBracket, .cm-matchingBracket": {
+    backgroundColor: "var(--bracket-match)",
+    outline: "1px solid var(--bracket-match-border)",
+  },
+  "&.cm-focused .cm-nonmatchingBracket, .cm-nonmatchingBracket": {
+    backgroundColor: "transparent",
+    color: "var(--danger)",
+  },
+  ".cm-foldGutter .cm-gutterElement": {
+    padding: "0 4px",
+    cursor: "pointer",
+    color: "var(--line-number, var(--muted))",
+  },
+  ".cm-foldGutter .cm-gutterElement:hover": { color: "var(--fg)" },
+  ".cm-foldPlaceholder": {
+    backgroundColor: "var(--panel-bg)",
+    border: "1px solid var(--border)",
+    color: "var(--muted)",
+    margin: "0 2px",
+    padding: "0 4px",
+  },
   ".cm-panels.cm-panels-top": { borderBottom: "1px solid var(--border)" },
 });
 
@@ -189,8 +258,18 @@ export interface EditorOptions {
   fileName: string;
   /** The registry's language id for the file, when it has one (`languageFor`). */
   languageId?: string;
-  /** Soft wrap; off when a line is too long to wrap cheaply (`WRAP_LIMIT` in src/app/docs.ts). */
+  /** Soft wrap (the setting). */
   wrap: boolean;
+  /** The lines are short enough to wrap cheaply (`WRAP_LIMIT` in src/app/docs.ts); when not, the
+   * state never wraps. True when absent. */
+  wrapFits?: boolean;
+  /** The indent setting; two spaces when absent. */
+  indent?: EditorIndent;
+  /** The fold markers (the setting); shown when absent. */
+  foldGutter?: boolean;
+  /** The text is short enough to fold (`foldsAt` in src/editor/folding.ts); when not, nothing
+   * folds. True when absent. */
+  foldFits?: boolean;
   /** The line-number gutter (the editor setting). */
   lineNumbers: boolean;
   /** The font settings; styles.css's `--editor-font` and `--editor-size` when absent. */
@@ -227,15 +306,20 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     highlightActiveLine(),
     highlightSpecialChars(),
     highlightSelectionMatches(),
+    bracketMatching(),
     closeBrackets(),
     searchBar(),
     multiRangeIme,
-    options.wrap ? EditorView.lineWrapping : [],
+    wrapFitsFacet.of(options.wrapFits ?? true),
+    wrapSlot.of(wrapping(options.wrap, options.wrapFits ?? true)),
+    indentSlot.of(indentation(options.indent ?? "spaces-2")),
     language.of(languageFor(options.fileName, options.languageId)),
     configuration.of(languageDataExtension(options.languageData ?? DEFAULT_LANGUAGE_DATA)),
     menuKeySlot.of(menuKeys(options.menuKeys ?? [])),
     keymap.of(editorKeymap),
     lineNumberSlot.of(options.lineNumbers ? lineNumberGutter() : []),
+    foldFits.of(options.foldFits ?? true),
+    foldSlot.of(folding({ fits: options.foldFits ?? true, gutter: options.foldGutter ?? true })),
     fontSlot.of(
       fontTheme(options.font ?? { family: "var(--editor-font)", size: "var(--editor-size)" }),
     ),

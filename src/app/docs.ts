@@ -48,8 +48,8 @@ export const MAX_EDITOR_BYTES = 100 * 1024 * 1024;
  * runs, and the smaller of the two formats' values (`code.ts` 5,000,000, `note.md` 200,000; both
  * measured by the pre-registered procedure, see the measurement report). Re-measure after changing the editor's extensions. */
 export const LONG_LINE_LIMIT = 200_000;
-/** Soft wrap stays off above this line length (the same limit highlighting uses): wrapping one
- * huge line costs seconds. */
+/** Soft wrap stays off above this line length (the same limit highlighting uses), whatever the
+ * wrap setting says: wrapping one huge line costs seconds. */
 export const WRAP_LIMIT = 20_000;
 
 export const RECOVERED_NOTICE = "원래 파일을 찾지 못해 새 메모로 저장했습니다";
@@ -97,7 +97,7 @@ export interface DocHost {
   viewOf(doc: Doc): Pick<EditorView, "state" | "dispatch">;
   /** Editor extensions for a state of `doc` holding `text`, including the listener that calls
    * `doc.update`. */
-  extensions(doc: Doc, options: { wrap: boolean; text: string }): Extension[];
+  extensions(doc: Doc, options: { wrapFits: boolean; text: string }): Extension[];
   /** The language-configuration data of `doc`'s language (`{}` when it has none). */
   languageConfig(lang: LanguageInfo | undefined): Promise<LanguageData>;
   languageOf(doc: Doc): LanguageInfo | undefined;
@@ -335,7 +335,7 @@ export abstract class Doc {
   ): void {
     let state = EditorState.create({
       doc: text,
-      extensions: this.host.extensions(this, { wrap: longest <= WRAP_LIMIT, text }),
+      extensions: this.host.extensions(this, { wrapFits: longest <= WRAP_LIMIT, text }),
     });
     const wanted = select
       ? select(state.doc)

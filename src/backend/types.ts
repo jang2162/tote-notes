@@ -320,7 +320,28 @@ export interface EditorSettings {
   /** 11–24; Rust clamps what a patch asks for. */
   fontSize: number;
   fontFamily: string;
+  /** Soft wrap; a tab with a line over `WRAP_LIMIT` (src/app/docs.ts) does not wrap whatever it says. */
+  wrap: boolean;
+  indent: EditorIndent;
+  /** The status bar's character count. */
+  charCount: boolean;
+  /** The fold markers beside the line numbers. */
+  foldGutter: boolean;
 }
+
+/** What Tab and the automatic indentation put in (`Indent` in src-tauri/src/appdata.rs). */
+export type EditorIndent = "spaces-2" | "spaces-4" | "tab";
+
+/** The editor settings as Rust reads a file that has none of them. */
+export const DEFAULT_EDITOR_SETTINGS: EditorSettings = {
+  lineNumbers: true,
+  fontSize: 14,
+  fontFamily: "",
+  wrap: true,
+  indent: "spaces-2",
+  charCount: false,
+  foldGutter: true,
+};
 
 /** The smallest and largest editor font size (`FONT_SIZES` in src-tauri/src/appdata.rs). */
 export const EDITOR_FONT_SIZE_MIN = 11;
@@ -348,6 +369,11 @@ export interface SettingsPatch {
   editorLineNumbers?: boolean;
   editorFontSize?: number;
   editorFontFamily?: string;
+  editorWrap?: boolean;
+  /** Refused (`bad-request`) when it is none of the three. */
+  editorIndent?: EditorIndent;
+  editorCharCount?: boolean;
+  editorFoldGutter?: boolean;
   updatesAutoCheck?: boolean;
   sidebarPreview?: boolean;
   sidebarSort?: MemoSort;

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 
+import { contrastRatio } from "./contrast";
 import {
   DEFAULT_VARIABLES,
   loadTheme,
@@ -89,6 +90,36 @@ describe("themeVariables", () => {
       "light",
     );
     expect(vars["--accent"]).toBe("#0E639C");
+  });
+});
+
+describe("themeVariables bracket colours", () => {
+  it("fills the bracket match from the theme's and keeps the defaults without them", () => {
+    const vars = themeVariables(
+      {
+        colors: {
+          "editorBracketMatch.background": "#0064001a",
+          "editorBracketMatch.border": "#888888",
+        },
+      },
+      "dark",
+    );
+    expect(vars["--bracket-match"]).toBe("#0064001a");
+    expect(vars["--bracket-match-border"]).toBe("#888888");
+    expect(themeVariables({ colors: {} }, "light")["--bracket-match-border"]).toBe(
+      DEFAULT_VARIABLES.light["--bracket-match-border"],
+    );
+  });
+
+  // The text in the match stays readable and its frame shows against the editor (editor basics
+  // spec 「대괄호 짝」): 4.5:1 for the text, 3:1 for the frame.
+  it("defaults to a match the text reads on and a frame that shows, light and dark", () => {
+    for (const appearance of ["light", "dark"] as const) {
+      const v = DEFAULT_VARIABLES[appearance];
+      expect(contrastRatio(v["--fg"], v["--bracket-match"], v["--bg"])).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(v["--bracket-match-border"], v["--bg"])).toBeGreaterThanOrEqual(3);
+      expect(contrastRatio(v["--danger"], v["--bg"])).toBeGreaterThanOrEqual(3);
+    }
   });
 });
 

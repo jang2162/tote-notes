@@ -53,6 +53,7 @@ export const FAKE_SHORTCUT_COMMANDS: Omit<ShortcutCommand, "current">[] = [
     default: "CmdOrCtrl+Shift+P",
     yields: true,
   },
+  { id: "toggle-wrap", label: "줄 바꿈", menu: "보기", default: "Alt+Z", yields: true },
   { id: "move-tab-to-new-window", label: "탭을 새 창으로 옮기기", menu: "윈도우", default: null },
 ];
 
