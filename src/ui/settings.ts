@@ -1,4 +1,10 @@
-import type { Backend, ExtensionRegistry, SettingsPatch, ThemeChoice } from "../backend/types";
+import type {
+  Backend,
+  EditorIndent,
+  ExtensionRegistry,
+  SettingsPatch,
+  ThemeChoice,
+} from "../backend/types";
 import { describeError } from "../app/errors";
 import {
   EDITOR_FONT_SIZE_MAX,
@@ -13,6 +19,13 @@ import { h } from "./dom";
 import { shortcutsSection } from "./shortcut-settings";
 import { choiceOf, themeOptions, type ThemeOption } from "./theme-options";
 import { workspacesSection } from "./workspace-settings";
+
+/** The indent picker's choices (editor basics spec 「들여쓰기」). */
+const INDENT_OPTIONS: [EditorIndent, string][] = [
+  ["spaces-2", "공백 2"],
+  ["spaces-4", "공백 4"],
+  ["tab", "탭"],
+];
 
 export type SettingsSection = "general" | "workspaces" | "appearance" | "shortcuts" | "extensions";
 
@@ -196,6 +209,23 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       "change",
       () => void save({ editorLineNumbers: lineNumbers.checked }),
     );
+    const check = (name: string, patch: (on: boolean) => SettingsPatch) => {
+      const box = h("input", { type: "checkbox", name });
+      box.addEventListener("change", () => void save(patch(box.checked)));
+      return box;
+    };
+    const foldGutter = check("editorFoldGutter", (on) => ({ editorFoldGutter: on }));
+    const wrap = check("editorWrap", (on) => ({ editorWrap: on }));
+    const charCount = check("editorCharCount", (on) => ({ editorCharCount: on }));
+    const indent = h(
+      "select",
+      { name: "editorIndent" },
+      ...INDENT_OPTIONS.map(([value, label]) => h("option", { value, textContent: label })),
+    );
+    indent.addEventListener(
+      "change",
+      () => void save({ editorIndent: indent.value as EditorIndent }),
+    );
     const fontSize = h("input", { type: "number", name: "editorFontSize" });
     numberField(
       fontSize,
@@ -238,8 +268,12 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       ...field("테마", themePicker),
       heading("편집기"),
       ...field("줄번호 표시", lineNumbers),
+      ...field("접기 표시", foldGutter),
+      ...field("줄 바꿈", wrap),
+      ...field("들여쓰기", indent),
       ...field("글꼴 크기", fontSize),
       ...field("글꼴", fontFamily),
+      ...field("글자 수 보이기", charCount),
       heading("사이드바"),
       ...field("메모 목록에 내용 미리보기", preview),
     );
@@ -350,6 +384,10 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         sync(rootInput, current.workspaceRoot ?? "");
         rootInput.placeholder = roots.defaultShown;
         lineNumbers.checked = current.editor.lineNumbers;
+        foldGutter.checked = current.editor.foldGutter;
+        wrap.checked = current.editor.wrap;
+        indent.value = current.editor.indent;
+        charCount.checked = current.editor.charCount;
         preview.checked = current.sidebar.preview;
         autoCheck.checked = current.updates.autoCheck;
         trayVisible.checked = current.tray?.visible ?? false;

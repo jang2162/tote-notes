@@ -135,6 +135,8 @@ pub const COMMANDS: &[Command] = &[
         "보기",
         Some("CmdOrCtrl+Shift+P"),
     ),
+    // Came after people could save keys, as 빠른 열기 did. ⌥Z is VS Code's.
+    yielding("toggle-wrap", "줄 바꿈", "보기", Some("Alt+Z")),
     command(
         "move-tab-to-new-window",
         "탭을 새 창으로 옮기기",
@@ -743,6 +745,7 @@ mod tests {
             ("next-tab", Some("CmdOrCtrl+Shift+]")),
             ("prev-tab", Some("CmdOrCtrl+Shift+[")),
             ("toggle-preview", Some("CmdOrCtrl+Shift+P")),
+            ("toggle-wrap", Some("Alt+Z")),
             ("move-tab-to-new-window", None),
         ];
         let actual: Vec<(&str, Option<String>)> = effective(&BTreeMap::new())
@@ -895,9 +898,38 @@ mod tests {
     }
 
     #[test]
+    fn the_wrap_toggle_is_option_z_in_the_view_menu_and_gives_way_to_a_saved_key() {
+        let wrap = COMMANDS.iter().find(|c| c.id == "toggle-wrap").unwrap();
+        assert_eq!((wrap.label, wrap.menu), ("줄 바꿈", "보기"));
+        assert_eq!(wrap.default, Some("Alt+Z"));
+        assert!(wrap.yields);
+        // No other default and no fixed key is ⌥Z.
+        let effective = effective(&BTreeMap::new());
+        let taken: Vec<&str> = effective
+            .iter()
+            .filter(|(_, keys)| keys.as_deref() == Some("Alt+Z"))
+            .map(|(command, _)| command.id)
+            .collect();
+        assert_eq!(taken, ["toggle-wrap"]);
+        assert!(FIXED.iter().all(|f| f.accelerator != "Alt+Z"));
+        // Someone who saved ⌥Z for another command keeps it; 줄 바꿈 starts with no key.
+        let saved = overrides(&[("rename", Some("Alt+Z"))]);
+        assert_eq!(shortcut_of(&saved, "toggle-wrap"), None);
+        assert_eq!(shortcut_of(&saved, "rename"), Some("Alt+Z".into()));
+    }
+
+    #[test]
     fn only_the_commands_that_came_after_saved_keys_give_their_defaults_way() {
         let yielding: Vec<&str> = COMMANDS.iter().filter(|c| c.yields).map(|c| c.id).collect();
-        assert_eq!(yielding, ["quick-open", "toggle-sidebar", "toggle-preview"]);
+        assert_eq!(
+            yielding,
+            [
+                "quick-open",
+                "toggle-sidebar",
+                "toggle-preview",
+                "toggle-wrap"
+            ]
+        );
     }
 
     #[test]
@@ -915,7 +947,8 @@ mod tests {
             [
                 ("quick-open", &yes),
                 ("toggle-sidebar", &yes),
-                ("toggle-preview", &yes)
+                ("toggle-preview", &yes),
+                ("toggle-wrap", &yes)
             ]
         );
     }

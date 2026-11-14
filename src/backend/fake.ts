@@ -24,6 +24,7 @@ import {
 } from "./fake-shortcuts";
 import {
   BackendError,
+  DEFAULT_EDITOR_SETTINGS,
   EDITOR_FONT_SIZE_MAX,
   EDITOR_FONT_SIZE_MIN,
   type Backend,
@@ -359,7 +360,7 @@ export function defaultFakeData(): FakeData {
       workspaceRoot: null,
       theme: { mode: "auto" },
       extensions: { disabled: [], precedence: "user" },
-      editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+      editor: { ...DEFAULT_EDITOR_SETTINGS },
       updates: { autoCheck: true },
       sidebar: { preview: true, sort: "modified-desc" },
       trash: { retentionDays: 60 },
@@ -1816,7 +1817,8 @@ export class FakeBackend implements Backend {
 
   async settings() {
     const settings = structuredClone(this.data.settings);
-    settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    // An old seed has no `editor`, or one without the later fields; Rust reads them as defaults.
+    settings.editor = { ...DEFAULT_EDITOR_SETTINGS, ...settings.editor };
     // An old seed has no `updates`; Rust reads a missing one as on.
     settings.updates ??= { autoCheck: true };
     settings.sidebar ??= { preview: true, sort: "modified-desc" };
@@ -1865,14 +1867,17 @@ export class FakeBackend implements Backend {
     // Rust refuses a patch whose theme is neither a mode nor an extension and label (`ThemeChoice`).
     if (patch.themeMode != null && !isThemeChoice(patch.themeMode))
       throw new BackendError("bad-request", "themeMode: data did not match any variant");
+    // As serde refuses a variant `Indent` does not have.
+    if (patch.editorIndent != null && !["spaces-2", "spaces-4", "tab"].includes(patch.editorIndent))
+      throw new BackendError("bad-request", "editorIndent: unknown variant");
     const settings = this.data.settings;
     // `undefined` is what JSON leaves out on the way to Rust: such a field is kept.
     if (patch.workspaceRoot !== undefined) settings.workspaceRoot = patch.workspaceRoot;
     // Rust reads `null` here as no change (`Option`).
     if (patch.themeMode != null) settings.theme.mode = patch.themeMode;
     if (patch.precedence !== undefined) settings.extensions.precedence = patch.precedence;
-    // An old seed has no `editor`.
-    settings.editor ??= { lineNumbers: true, fontSize: 14, fontFamily: "" };
+    // An old seed has no `editor`, or one without the later fields.
+    settings.editor = { ...DEFAULT_EDITOR_SETTINGS, ...settings.editor };
     settings.updates ??= { autoCheck: true };
     settings.sidebar ??= { preview: true, sort: "modified-desc" };
     if (patch.updatesAutoCheck !== undefined) settings.updates.autoCheck = patch.updatesAutoCheck;
@@ -1892,6 +1897,10 @@ export class FakeBackend implements Backend {
         Math.max(EDITOR_FONT_SIZE_MIN, Math.round(patch.editorFontSize)),
       );
     if (patch.editorFontFamily !== undefined) settings.editor.fontFamily = patch.editorFontFamily;
+    if (patch.editorWrap !== undefined) settings.editor.wrap = patch.editorWrap;
+    if (patch.editorIndent !== undefined) settings.editor.indent = patch.editorIndent;
+    if (patch.editorCharCount !== undefined) settings.editor.charCount = patch.editorCharCount;
+    if (patch.editorFoldGutter !== undefined) settings.editor.foldGutter = patch.editorFoldGutter;
     // The whole map, which Rust leaves out of the JSON when it is empty.
     if (patch.shortcuts !== undefined) {
       if (Object.keys(patch.shortcuts).length > 0)

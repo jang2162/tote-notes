@@ -435,7 +435,7 @@ test("the search filters by name and by shortcut", async ({ page }) => {
   await search.fill("⌘N");
   await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
   await search.fill("");
-  // Every app command's row and every global one's (the 「전역」 group).
+  // Every app command's row (28 with 줄 바꿈) and every global one's (the 「전역」 group).
   await expect(panel.locator(".shortcut-row:visible")).toHaveCount(
     FAKE_SHORTCUT_COMMANDS.length + FAKE_GLOBAL_COMMANDS.length,
   );

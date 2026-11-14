@@ -80,6 +80,7 @@ pub fn run() {
             // The menu was built before the settings were read, with the default shortcuts. On
             // the main thread this runs at once, before any window opens.
             menu::follow_settings(app.handle());
+            menu::follow_checks(app.handle());
             // Before any window opens, so none is drawn in the other appearance first.
             app::appearance::follow_settings(app.handle());
             app::quick_note::follow_settings(app.handle());

@@ -1162,6 +1162,7 @@ pub async fn patch_settings(
     if shortcuts_changed {
         menu::follow_settings(&app);
     }
+    menu::follow_checks(&app);
     // An app shortcut can take the default global key, which then gives way: both follow.
     quick_note::follow_settings(&app);
     tray::follow_settings(&app);
