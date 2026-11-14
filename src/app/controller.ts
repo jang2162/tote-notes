@@ -1,4 +1,4 @@
-import type { Extension } from "@codemirror/state";
+import type { EditorState, Extension, StateEffect } from "@codemirror/state";
 import { EditorView, type KeyBinding, type ViewUpdate } from "@codemirror/view";
 
 import type {
@@ -16,7 +16,7 @@ import type {
   WindowStart,
   WorkspaceListItem,
 } from "../backend/types";
-import { errorCode } from "../backend/types";
+import { DEFAULT_EDITOR_SETTINGS, errorCode, type EditorSettings } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
@@ -36,15 +36,19 @@ import {
   parseLanguageConfiguration,
   type LanguageData,
 } from "../editor/language-config";
+import { foldsAt } from "../editor/folding";
 import {
   editorExtensions,
   type EditorFont,
+  foldGutterEffect,
   highlightEffect,
+  indentEffect,
   languageDataEffect,
   languageEffect,
   fontEffect,
   lineNumbersEffect,
   menuKeysEffect,
+  wrapEffect,
 } from "../editor/setup";
 import { EMPTY_REGISTRY, languageLabelFor, Registry } from "../extensions/registry";
 import { HighlightClient } from "../highlight/client";
@@ -338,7 +342,7 @@ export class AppController implements DocHost, PaneHost {
   private settings: Settings = {
     theme: { mode: "auto" },
     extensions: { disabled: [], precedence: "user" },
-    editor: { lineNumbers: true, fontSize: 14, fontFamily: "" },
+    editor: DEFAULT_EDITOR_SETTINGS,
     updates: { autoCheck: true },
     sidebar: { preview: true, sort: "modified-desc" },
     trash: { retentionDays: 60 },
@@ -758,6 +762,8 @@ export class AppController implements DocHost, PaneHost {
     await this.loadRegistry();
     await Promise.all([this.loadSettings(), shortcutsRead]);
     this.applyEditorFont();
+    // The rest of the editor settings are read as each tab's state is made (`extensions`).
+    this.statusBar.setCharCount(this.settings.editor.charCount);
     this.extensionSet = extensionSignature(this.registry);
     this.backend.onConfigChanged(() => void this.onConfigChanged());
     this.theme.onChange((active) => {
@@ -975,10 +981,11 @@ export class AppController implements DocHost, PaneHost {
 
   /** Settings or extensions changed (this window's settings screen or another's). */
   private async onConfigChanged(): Promise<void> {
-    const lineNumbers = this.settings.editor.lineNumbers;
+    const before = this.settings.editor;
     const [, shortcuts] = await Promise.all([this.loadSettings(), this.loadShortcuts()]);
     this.applyEditorFont();
-    if (this.settings.editor.lineNumbers !== lineNumbers) {
+    this.applyEditorBasics(before);
+    if (this.settings.editor.lineNumbers !== before.lineNumbers) {
       for (const doc of this.docs) this.reconfigureLineNumbers(doc);
     }
     if (shortcuts) this.shortcutsChanged();
@@ -997,14 +1004,39 @@ export class AppController implements DocHost, PaneHost {
     for (const listener of this.configListeners) listener();
   }
 
-  extensions(doc: Doc, options: { wrap: boolean; text: string }) {
+  /** The editor basics (editor basics spec): every open tab's state follows a change of the wrap,
+   * indent or fold-marker setting, the status bar the character count's. */
+  private applyEditorBasics(before: EditorSettings): void {
+    const { wrap, indent, foldGutter, charCount } = this.settings.editor;
+    this.statusBar.setCharCount(charCount);
+    if (wrap === before.wrap && indent === before.indent && foldGutter === before.foldGutter)
+      return;
+    for (const doc of this.docs)
+      this.reconfigure(doc, (state) => [
+        wrapEffect(state, wrap),
+        indentEffect(indent),
+        foldGutterEffect(state, foldGutter),
+      ]);
+  }
+
+  /** 보기 › 줄 바꿈: the setting, for every window (the menu's tick follows it, `follow_checks`). */
+  private async toggleWrap(): Promise<void> {
+    await this.backend.patchSettings({ editorWrap: !this.settings.editor.wrap });
+  }
+
+  extensions(doc: Doc, options: { wrapFits: boolean; text: string }) {
     // A new state: the worker's copy of the old text is no use to it.
     this.dropHighlight(doc);
+    const { wrap, indent, foldGutter, lineNumbers } = this.settings.editor;
     return editorExtensions({
       fileName: doc.fileName,
       languageId: this.languageOf(doc)?.id,
-      wrap: options.wrap,
-      lineNumbers: this.settings.editor.lineNumbers,
+      wrap,
+      wrapFits: options.wrapFits,
+      indent,
+      foldGutter,
+      foldFits: foldsAt(options.text.length),
+      lineNumbers,
       font: this.editorFont(),
       menuKeys: this.menuKeys,
       languageData: doc.languageData,
@@ -2104,7 +2136,7 @@ export class AppController implements DocHost, PaneHost {
     doc.update(update);
     const pane = this.paneOf(doc);
     if (doc !== pane.tabs.active || !(update.docChanged || update.selectionSet)) return;
-    this.statusOf(pane)?.setPosition(update.state);
+    this.statusOf(pane)?.setPosition(update.state, { edited: update.docChanged });
     this.saveSessionSoon();
   }
 
@@ -2237,6 +2269,8 @@ export class AppController implements DocHost, PaneHost {
           return await this.cycleTab(-1);
         case "toggle-preview":
           return await this.togglePreview();
+        case "toggle-wrap":
+          return await this.toggleWrap();
         case "quick-open":
           return await this.quickOpen();
         case "open-workspace":
@@ -2633,6 +2667,16 @@ export class AppController implements DocHost, PaneHost {
     const pane = this.paneOf(doc);
     if (doc === pane.tabs.active && pane.view.state === doc.state) pane.view.dispatch({ effects });
     else doc.state = doc.state.update({ effects }).state;
+  }
+
+  /** Gives `doc`'s state the effects `effects` makes for it, shown or not. Tabs of a viewer have
+   * no editor state and are left alone. */
+  private reconfigure(doc: Doc, effects: (state: EditorState) => StateEffect<unknown>[]): void {
+    if (!doc.state) return;
+    const pane = this.paneOf(doc);
+    if (doc === pane.tabs.active && pane.view.state === doc.state)
+      pane.view.dispatch({ effects: effects(doc.state) });
+    else doc.state = doc.state.update({ effects: effects(doc.state) }).state;
   }
 
   /** Tabs of a viewer have no editor state: only text tabs carry a gutter. */

@@ -297,8 +297,33 @@ pub struct EditorSettings {
     /// A CSS font family; empty is the bundled default.
     #[serde(deserialize_with = "lenient")]
     pub font_family: String,
+    /// Soft wrap, which a line over the wrap limit turns off in its tab whatever this says
+    /// (`WRAP_LIMIT` in src/app/docs.ts).
+    #[serde(deserialize_with = "lenient_on")]
+    pub wrap: bool,
+    #[serde(deserialize_with = "lenient")]
+    pub indent: Indent,
+    /// The character count in the status bar; off by default so an update leaves the bar as it was.
+    #[serde(deserialize_with = "lenient")]
+    pub char_count: bool,
+    /// The fold markers beside the line numbers; the fold keys work either way.
+    #[serde(deserialize_with = "lenient_on")]
+    pub fold_gutter: bool,
     #[serde(flatten)]
     pub unknown: Unknown,
+}
+
+/// What Tab and the automatic indentation put in (`EditorIndent` in src/backend/types.ts). Two
+/// spaces is what CodeMirror did before there was a setting.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum Indent {
+    #[default]
+    #[serde(rename = "spaces-2")]
+    Spaces2,
+    #[serde(rename = "spaces-4")]
+    Spaces4,
+    Tab,
 }
 
 /// The update check at launch (src/app/update.rs); off, tote sends nothing to github.com unless
@@ -418,6 +443,10 @@ impl Default for EditorSettings {
             line_numbers: true,
             font_size: DEFAULT_FONT_SIZE,
             font_family: String::new(),
+            wrap: true,
+            indent: Indent::default(),
+            char_count: false,
+            fold_gutter: true,
             unknown: Unknown::new(),
         }
     }
@@ -483,6 +512,14 @@ pub struct SettingsPatch {
     #[serde(default)]
     pub editor_font_family: Option<String>,
     #[serde(default)]
+    pub editor_wrap: Option<bool>,
+    #[serde(default)]
+    pub editor_indent: Option<Indent>,
+    #[serde(default)]
+    pub editor_char_count: Option<bool>,
+    #[serde(default)]
+    pub editor_fold_gutter: Option<bool>,
+    #[serde(default)]
     pub updates_auto_check: Option<bool>,
     #[serde(default)]
     pub sidebar_preview: Option<bool>,
@@ -545,6 +582,18 @@ impl SettingsPatch {
         }
         if let Some(family) = &self.editor_font_family {
             settings.editor.font_family = family.clone();
+        }
+        if let Some(on) = self.editor_wrap {
+            settings.editor.wrap = on;
+        }
+        if let Some(indent) = self.editor_indent {
+            settings.editor.indent = indent;
+        }
+        if let Some(on) = self.editor_char_count {
+            settings.editor.char_count = on;
+        }
+        if let Some(on) = self.editor_fold_gutter {
+            settings.editor.fold_gutter = on;
         }
         if let Some(on) = self.updates_auto_check {
             settings.updates.auto_check = on;
@@ -1203,7 +1252,15 @@ mod tests {
             serde_json::json!({
                 "theme": {"mode": "auto"},
                 "extensions": {"disabled": [], "precedence": "user"},
-                "editor": {"lineNumbers": true, "fontSize": 14, "fontFamily": ""},
+                "editor": {
+                    "lineNumbers": true,
+                    "fontSize": 14,
+                    "fontFamily": "",
+                    "wrap": true,
+                    "indent": "spaces-2",
+                    "charCount": false,
+                    "foldGutter": true,
+                },
                 "updates": {"autoCheck": true},
                 "sidebar": {"preview": true, "sort": "modified-desc"},
                 "trash": {"retentionDays": 60},
@@ -1232,6 +1289,10 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
+                wrap: false,
+                indent: Indent::Tab,
+                char_count: true,
+                fold_gutter: false,
                 unknown: Unknown::new(),
             },
             updates: UpdateSettings {
@@ -1272,6 +1333,10 @@ mod tests {
             line_numbers: true,
             font_size: 14,
             font_family: String::new(),
+            wrap: true,
+            indent: Indent::Spaces2,
+            char_count: false,
+            fold_gutter: true,
             unknown: Unknown::new(),
         };
         let settings = serde_json::from_str::<Settings>("{}").unwrap();
@@ -1291,6 +1356,59 @@ mod tests {
                 ..expected
             }
         );
+    }
+
+    #[test]
+    fn the_editor_basics_default_to_what_the_editor_did_before_them() {
+        let editor = serde_json::from_str::<Settings>("{}").unwrap().editor;
+        assert!(editor.wrap);
+        assert_eq!(editor.indent, Indent::Spaces2);
+        assert!(!editor.char_count);
+        assert!(editor.fold_gutter);
+        // A wrong value is that field's default, and leaves the others as written.
+        let editor = serde_json::from_str::<Settings>(
+            r#"{"editor": {"wrap": 0, "indent": "tabs", "charCount": "yes", "foldGutter": null, "fontSize": 18}}"#,
+        )
+        .unwrap()
+        .editor;
+        assert!(editor.wrap);
+        assert_eq!(editor.indent, Indent::Spaces2);
+        assert!(!editor.char_count);
+        assert!(editor.fold_gutter);
+        assert_eq!(editor.font_size, 18);
+        let editor = serde_json::from_str::<Settings>(
+            r#"{"editor": {"wrap": false, "indent": "tab", "charCount": true, "foldGutter": false}}"#,
+        )
+        .unwrap()
+        .editor;
+        assert!(!editor.wrap);
+        assert_eq!(editor.indent, Indent::Tab);
+        assert!(editor.char_count);
+        assert!(!editor.fold_gutter);
+        assert_eq!(
+            serde_json::to_value(Indent::Spaces4).unwrap(),
+            serde_json::json!("spaces-4")
+        );
+    }
+
+    #[test]
+    fn a_patch_sets_the_editor_basics_and_refuses_an_unknown_indent() {
+        let mut settings = Settings::default();
+        let patch: SettingsPatch = serde_json::from_str(
+            r#"{"editorWrap": false, "editorIndent": "spaces-4", "editorCharCount": true, "editorFoldGutter": false}"#,
+        )
+        .unwrap();
+        patch.apply(&mut settings).unwrap();
+        assert!(!settings.editor.wrap);
+        assert_eq!(settings.editor.indent, Indent::Spaces4);
+        assert!(settings.editor.char_count);
+        assert!(!settings.editor.fold_gutter);
+        // A patch that names none of them leaves them.
+        let patch: SettingsPatch = serde_json::from_str(r#"{"editorFontSize": 12}"#).unwrap();
+        patch.apply(&mut settings).unwrap();
+        assert!(!settings.editor.wrap);
+        assert_eq!(settings.editor.indent, Indent::Spaces4);
+        assert!(serde_json::from_str::<SettingsPatch>(r#"{"editorIndent": "tabs"}"#).is_err());
     }
 
     #[test]
@@ -1787,7 +1905,7 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
-                unknown: Unknown::new(),
+                ..EditorSettings::default()
             },
             updates: UpdateSettings {
                 auto_check: false,
@@ -1818,7 +1936,7 @@ mod tests {
                 line_numbers: false,
                 font_size: 16,
                 font_family: "D2Coding".into(),
-                unknown: Unknown::new(),
+                ..EditorSettings::default()
             }
         );
         assert_eq!(settings.shortcuts.len(), 1);

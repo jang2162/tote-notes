@@ -12,8 +12,8 @@ use std::thread::ThreadId;
 
 use serde::Deserialize;
 use tauri::menu::{
-    CheckMenuItemBuilder, IsMenuItem, Menu, MenuBuilder, MenuEvent, MenuItem, MenuItemBuilder,
-    PredefinedMenuItem, Submenu, SubmenuBuilder,
+    CheckMenuItem, CheckMenuItemBuilder, IsMenuItem, Menu, MenuBuilder, MenuEvent, MenuId,
+    MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
 use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
@@ -22,6 +22,7 @@ use super::flush::FlushGoal;
 use super::windows::{cascade, frame_of, monitor_rects, WindowPlan};
 use super::{lifecycle, lock, update, windows, AppCore};
 
+use crate::appdata::Settings;
 use crate::cli::front::app_bundle;
 use crate::cli::install::{install, Installed};
 use crate::shortcuts::{
@@ -45,6 +46,33 @@ fn item(
         None => builder,
     }
     .build(app)
+}
+
+/// The commands whose menu items are check items, ticked by a setting (`checks`).
+const CHECK_ITEMS: &[&str] = &["toggle-wrap"];
+
+/// Whether each check item is ticked under `settings`.
+fn checks(settings: &Settings) -> Vec<(&'static str, bool)> {
+    vec![("toggle-wrap", settings.editor.wrap)]
+}
+
+/// A plain item, or a check item for a command of `CHECK_ITEMS`.
+fn command_item(
+    app: &AppHandle,
+    id: &str,
+    text: &str,
+    accelerator: Option<&str>,
+) -> tauri::Result<MenuEntryItem> {
+    if !CHECK_ITEMS.contains(&id) {
+        return item(app, id, text, accelerator).map(MenuEntryItem::Plain);
+    }
+    let builder = CheckMenuItemBuilder::with_id(id, text);
+    match accelerator {
+        Some(accelerator) => builder.accelerator(accelerator),
+        None => builder,
+    }
+    .build(app)
+    .map(MenuEntryItem::Check)
 }
 
 /// An entry of a submenu.
@@ -184,6 +212,7 @@ const MENUS: &[(&str, &[Slot])] = &[
             Slot::Command("prev-tab"),
             Slot::Separator,
             Slot::Command("toggle-preview"),
+            Slot::Command("toggle-wrap"),
             Slot::Separator,
             Slot::Fullscreen,
         ],
@@ -277,7 +306,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
                 .iter()
                 .find(|(item, _)| *item == id)
                 .expect("MENUS names only commands of shortcuts::COMMANDS, and the fixed items");
-            let made = item(app, id, label, keys.as_deref())?;
+            let made = command_item(app, id, label, keys.as_deref())?;
             Ok((id, MenuEntry { menu, item: made }))
         })
         .collect::<tauri::Result<Vec<_>>>()?;
@@ -287,7 +316,7 @@ pub fn build(app: &AppHandle) -> tauri::Result<Menu<Wry>> {
         for slot in *slots {
             if let Some(id) = shortcut_item(slot) {
                 let (_, made) = items.iter().find(|(item, _)| *item == id).unwrap();
-                menu = menu.item(&made.item);
+                menu = menu.item(made.item.as_item());
                 continue;
             }
             menu = match slot {
@@ -341,7 +370,44 @@ fn put(slot: &impl AcceleratorSlot, accelerator: Option<&str>) {
 pub(crate) struct MenuEntry {
     #[cfg_attr(not(target_os = "macos"), allow(dead_code))]
     menu: &'static str,
-    item: MenuItem<Wry>,
+    item: MenuEntryItem,
+}
+
+/// The item of a `MenuEntry`.
+pub(crate) enum MenuEntryItem {
+    Plain(MenuItem<Wry>),
+    Check(CheckMenuItem<Wry>),
+}
+
+impl MenuEntryItem {
+    fn as_item(&self) -> &dyn IsMenuItem<Wry> {
+        match self {
+            MenuEntryItem::Plain(item) => item,
+            MenuEntryItem::Check(item) => item,
+        }
+    }
+
+    fn id(&self) -> &MenuId {
+        match self {
+            MenuEntryItem::Plain(item) => item.id(),
+            MenuEntryItem::Check(item) => item.id(),
+        }
+    }
+
+    fn set_accelerator(&self, accelerator: Option<&str>) -> tauri::Result<()> {
+        match self {
+            MenuEntryItem::Plain(item) => item.set_accelerator(accelerator),
+            MenuEntryItem::Check(item) => item.set_accelerator(accelerator),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    fn text(&self) -> tauri::Result<String> {
+        match self {
+            MenuEntryItem::Plain(item) => item.text(),
+            MenuEntryItem::Check(item) => item.text(),
+        }
+    }
 }
 
 impl AcceleratorSlot for MenuEntry {
@@ -508,6 +574,37 @@ pub(crate) fn follow_settings(app: &AppHandle) {
     });
 }
 
+impl MenuShortcuts {
+    /// Ticks check item `id`, or not.
+    fn check(&self, id: &str, on: bool) {
+        let state = self.state();
+        if let Some((
+            _,
+            MenuEntry {
+                item: MenuEntryItem::Check(item),
+                ..
+            },
+        )) = state.items.iter().find(|(item, _)| *item == id)
+        {
+            if let Err(err) = item.set_checked(on) {
+                eprintln!("tote: menu item {id}: {err}");
+            }
+        }
+    }
+}
+
+/// Ticks the check items as the saved settings have them. macOS ticks or unticks an item as it is
+/// picked, before the page has changed the setting (or when no page will): picking one puts its
+/// tick back first, and the setting's change moves it.
+pub(crate) fn follow_checks(app: &AppHandle) {
+    let handle = app.clone();
+    change_shortcuts(app, move |menu| {
+        for (id, on) in checks(&handle.state::<AppCore>().settings()) {
+            menu.check(id, on);
+        }
+    });
+}
+
 /// Where a menu event goes.
 #[derive(Debug, PartialEq)]
 enum Route<'a> {
@@ -549,6 +646,9 @@ fn app_command(id: &str) -> Option<&'static Command> {
 
 /// What menu bar item `id` does, in `window` (the focused one, or the last one used).
 fn run(app: &AppHandle, id: &str, window: Option<WebviewWindow>) {
+    if CHECK_ITEMS.contains(&id) {
+        follow_checks(app);
+    }
     match id {
         "quit" => lifecycle::begin(app, FlushGoal::Quit),
         "install-cli" => install_cli(app),
@@ -1017,6 +1117,23 @@ mod tests {
                 Slot::Command("search-workspace")
             ]
         );
+    }
+
+    #[test]
+    fn the_wrap_toggle_is_a_check_item_under_the_preview_toggle_that_follows_the_setting() {
+        let (_, slots) = MENUS.iter().find(|(title, _)| *title == "보기").unwrap();
+        let at = slots
+            .iter()
+            .position(|slot| *slot == Slot::Command("toggle-preview"))
+            .unwrap();
+        assert_eq!(slots[at + 1], Slot::Command("toggle-wrap"));
+        assert_eq!(CHECK_ITEMS, ["toggle-wrap"]);
+        let mut settings = Settings::default();
+        assert_eq!(checks(&settings), [("toggle-wrap", true)]);
+        settings.editor.wrap = false;
+        assert_eq!(checks(&settings), [("toggle-wrap", false)]);
+        let keys = accelerators_while(false, &shortcuts::effective(&BTreeMap::new()));
+        assert!(keys.contains(&("toggle-wrap", Some("Alt+Z".into()))));
     }
 
     #[test]

@@ -70,6 +70,7 @@ import {
   undo,
   undoSelection,
 } from "@codemirror/commands";
+import { foldAll, foldCode, unfoldAll, unfoldCode } from "@codemirror/language";
 import {
   closeSearchPanel,
   findNext,
@@ -172,9 +173,13 @@ const NAMED: Record<string, Function> = {
   openSearchBar,
   openSearchWithReplace,
   insertIndent,
+  foldCode,
+  unfoldCode,
+  foldAll,
+  unfoldAll,
 };
 
-// No export of the three packages is an alias of another today, so each function has one name here.
+// No export of the four packages is an alias of another today, so each function has one name here.
 const names = new Map<Function, string>();
 for (const [name, run] of Object.entries(NAMED)) names.set(run, name);
 

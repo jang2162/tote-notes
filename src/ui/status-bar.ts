@@ -1,10 +1,13 @@
 import type { EditorState } from "@codemirror/state";
 
+import { CharCounter } from "../editor/char-count";
 import { h } from "./dom";
 
 export class StatusBar {
   private readonly message = h("span", { class: "status-message" });
   private readonly position = h("span", { class: "status-position" });
+  /** Outside the `role="status"` message: a count read out at every keystroke would drown it. */
+  private readonly count = h("span", { class: "status-count" });
   /** A button that opens the language picker; off where the language cannot be changed (list
    * keyboard spec 「상태 표시줄」). */
   private readonly language = h("button", {
@@ -12,7 +15,19 @@ export class StatusBar {
     type: "button",
     disabled: true,
   });
-  readonly el = h("footer", { class: "statusbar" }, this.message, this.position, this.language);
+  readonly el = h(
+    "footer",
+    { class: "statusbar" },
+    this.message,
+    this.position,
+    this.count,
+    this.language,
+  );
+  /** The character count setting. */
+  private counting = false;
+  private readonly counter = new CharCounter((label) => (this.count.textContent = label ?? ""));
+  /** What `setPosition` was last given, for the count once it is switched on. */
+  private shown: EditorState | null = null;
 
   constructor() {
     // What the status bar says is read out as it changes.
@@ -28,7 +43,10 @@ export class StatusBar {
     this.message.classList.toggle("error", tone === "error");
   }
 
-  setPosition(state: EditorState | null): void {
+  /** `edited`: the state is the shown one's text just changed, not another tab's (`CharCounter`). */
+  setPosition(state: EditorState | null, { edited = false }: { edited?: boolean } = {}): void {
+    this.shown = state;
+    if (this.counting) this.counter.request(state, { edited });
     if (!state) {
       this.position.textContent = "";
       return;
@@ -37,6 +55,17 @@ export class StatusBar {
     const line = state.doc.lineAt(head);
     const cursors = state.selection.ranges.length;
     this.position.textContent = `줄 ${line.number}, 열 ${head - line.from + 1}${cursors > 1 ? ` · 커서 ${cursors}개` : ""}`;
+  }
+
+  /** Shows the character count of what `setPosition` is given, or stops counting. */
+  setCharCount(on: boolean): void {
+    if (on === this.counting) return;
+    this.counting = on;
+    if (on) this.counter.request(this.shown, { edited: false });
+    else {
+      this.counter.cancel();
+      this.count.textContent = "";
+    }
   }
 
   /** `onPick` makes the label a button that opens the language picker. */

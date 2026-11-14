@@ -433,7 +433,7 @@ test("the search filters by name and by shortcut", async ({ page }) => {
   await search.fill("⌘N");
   await expect(panel.locator(".shortcut-row:visible .shortcut-name")).toHaveText(["새 메모"]);
   await search.fill("");
-  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(27);
+  await expect(panel.locator(".shortcut-row:visible")).toHaveCount(28);
 });
 
 test("the update check command takes a shortcut", async ({ page }) => {

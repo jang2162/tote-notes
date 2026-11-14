@@ -1,6 +1,7 @@
 import { expect, test, type Page } from "@playwright/test";
 
-import { fakeMemo, type FakeData, type FakeTrashed } from "../../src/backend/fake";
+import { defaultFakeData, fakeMemo, type FakeData, type FakeTrashed } from "../../src/backend/fake";
+import { DEFAULT_EDITOR_SETTINGS } from "../../src/backend/types";
 import { menu, start } from "./helpers";
 
 // The memo list's and the trash list's keys and picks, and the keys of the versions dialog, the
@@ -716,4 +717,17 @@ test("picking and moving the current row keep each row's element", async ({ page
   expect(now).toHaveLength(rows.length);
   for (const [i, row] of rows.entries())
     expect(await row.evaluate((el, other) => el === other, now[i])).toBe(true);
+});
+
+// The character count (editor basics spec) changes at every keystroke: inside the status, which
+// assistive technology reads out as it changes, it would be read at every one.
+test("the character count stands outside the status the status bar reads out", async ({ page }) => {
+  const settings = defaultFakeData().settings;
+  settings.editor = { ...DEFAULT_EDITOR_SETTINGS, charCount: true };
+  await start(page, { memos: { a: fakeMemo("가.md", "하나") }, settings });
+  await option(page, "가.md").click();
+  await expect(page.locator(".status-count")).not.toBeEmpty();
+  await expect(status(page)).toHaveCount(1);
+  await expect(status(page).locator(".status-count")).toHaveCount(0);
+  await expect(page.locator(".statusbar > .status-count")).toHaveCount(1);
 });

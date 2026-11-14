@@ -9,7 +9,7 @@ import {
   fakeMemo,
   memoryStorage,
 } from "./fake";
-import type { BackendError, TabRef } from "./types";
+import { DEFAULT_EDITOR_SETTINGS, type BackendError, type TabRef } from "./types";
 
 describe("FakeBackend settings", () => {
   it("hands out a copy, so a caller's edit is not a save", async () => {
@@ -210,7 +210,44 @@ describe("FakeBackend editor settings", () => {
       lineNumbers: true,
       fontSize: 14,
       fontFamily: "",
+      wrap: true,
+      indent: "spaces-2",
+      charCount: false,
+      foldGutter: true,
     });
+  });
+
+  it("reads a seed from before the editor basics with their defaults, as Rust does", async () => {
+    const data = defaultFakeData();
+    data.settings.editor = { lineNumbers: false, fontSize: 16, fontFamily: "" } as never;
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    expect((await backend.settings()).editor).toMatchObject({
+      lineNumbers: false,
+      wrap: true,
+      indent: "spaces-2",
+      charCount: false,
+      foldGutter: true,
+    });
+  });
+
+  it("sets the editor basics and refuses an indent Rust has no variant for", async () => {
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(defaultFakeData())));
+    await backend.patchSettings({
+      editorWrap: false,
+      editorIndent: "tab",
+      editorCharCount: true,
+      editorFoldGutter: false,
+    });
+    expect((await backend.settings()).editor).toMatchObject({
+      wrap: false,
+      indent: "tab",
+      charCount: true,
+      foldGutter: false,
+    });
+    await expect(backend.patchSettings({ editorIndent: "tabs" as never })).rejects.toMatchObject({
+      code: "bad-request",
+    });
+    expect((await backend.settings()).editor.indent).toBe("tab");
   });
 
   it("clamps the font size to 11–24 like the Rust side and rounds a fraction", async () => {
@@ -228,6 +265,7 @@ describe("FakeBackend editor settings", () => {
     await backend.patchSettings({ editorLineNumbers: false, editorFontFamily: "Menlo" });
     await backend.patchSettings({ editorFontSize: 18 });
     expect((await backend.settings()).editor).toEqual({
+      ...DEFAULT_EDITOR_SETTINGS,
       lineNumbers: false,
       fontSize: 18,
       fontFamily: "Menlo",
