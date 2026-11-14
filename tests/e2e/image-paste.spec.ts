@@ -244,6 +244,22 @@ test("a dropped image over 20MB stays out with its name in the status bar; the r
   await expect(titles(page)).toHaveText(["a"]);
 });
 
+test("an image dropped on the editor of a memo in another language opens as a tab, not as a link", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { t: fakeMemo("목록.txt", "x") },
+    files: { "/x/b.png": fakeFile(PNG) },
+  });
+  await openMemo(page, "목록", "x");
+  const at = await endOfLine(page, 1);
+  await page.evaluate((point) => window.__tote.backend.dropFiles(["/x/b.png"], point), at);
+  await expect(page.locator(".tab.active .tab-title")).toHaveText("b.png");
+  await expect(titles(page)).toHaveText(["목록.txt", "b.png"]);
+  expect(await memoText(page, "목록.txt")).toBe("x");
+  expect(await imageCalls(page)).toEqual([]);
+});
+
 test("an image already in the workspace is linked as it is, not copied", async ({ page }) => {
   await start(page, {
     memos: {

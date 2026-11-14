@@ -50,6 +50,8 @@ declare global {
     viewerHost: ViewerHost;
     /** tests/e2e/pages/viewer.ts with `?preview=1`: the preview requests its host passed on. */
     previewCalls: unknown[][];
+    /** tests/e2e/pages/viewer.ts with `?preview=1`: each colour request's `stale`, asked now. */
+    highlightStale: () => boolean[];
     /** tests/e2e/pages/viewer.ts: another frame posts a theme to the viewer frame. */
     forge: () => void;
     /** Set by tests/e2e/pages/large-text.ts. */

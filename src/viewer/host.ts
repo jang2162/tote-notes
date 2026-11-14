@@ -57,6 +57,9 @@ export class ViewerHost {
   private version = 0;
   private ready = false;
   private failed = false;
+  /** The `req` of the latest colour request taken: an earlier one still on its way is not wanted
+   * any more (a theme change asks again for the same text). */
+  private colorReq: number | null = null;
   private timer: ReturnType<typeof setTimeout> | null = null;
   private readonly onMessage = (event: MessageEvent<ViewerMessage>) => this.receive(event);
 
@@ -128,16 +131,17 @@ export class ViewerHost {
         if (!preview || version !== this.version || !isIndex(req)) return;
         const blocks = codeBlocks(message.blocks);
         if (!blocks) return;
+        this.colorReq = req;
+        // A text drawn since, or a newer request for this one, asks for its own colours.
+        const stale = () => version !== this.version || req !== this.colorReq || this.failed;
         void preview
-          .highlight(blocks, () => version !== this.version || this.failed)
+          .highlight(blocks, stale)
           .catch((error: unknown) => {
             console.warn("preview code colours", error);
             return [];
           })
-          // A text drawn since asks for its own colours.
           .then((colors) => {
-            if (version === this.version && !this.failed)
-              this.send({ type: "highlighted", version, req, blocks: colors });
+            if (!stale()) this.send({ type: "highlighted", version, req, blocks: colors });
           });
         return;
       }

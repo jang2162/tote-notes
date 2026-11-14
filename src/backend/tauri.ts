@@ -21,6 +21,7 @@ import {
   type MoveOutcome,
   type OutsideChange,
   type PendingOpen,
+  type MenuPoint,
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
@@ -209,8 +210,8 @@ export class TauriBackend implements Backend {
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }) {
     return call<"moved" | "window">("tear_off_tab", { tab, tabRef: ref, at: at ?? null });
   }
-  showPopupMenu(items: PopupMenuItem[]) {
-    return call<string | null>("show_popup_menu", { items });
+  showPopupMenu(items: PopupMenuItem[], at?: MenuPoint) {
+    return call<string | null>("show_popup_menu", { items, at: at ?? null });
   }
 
   openExternal(path: string) {

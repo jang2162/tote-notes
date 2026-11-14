@@ -111,20 +111,26 @@ describe("TauriBackend", () => {
       [
         () => backend.showPopupMenu([{ id: "x", text: "엑스" }]),
         "show_popup_menu",
-        { items: [{ id: "x", text: "엑스" }] },
+        { items: [{ id: "x", text: "엑스" }], at: null },
+      ],
+      [
+        () => backend.showPopupMenu([{ id: "x", text: "엑스" }], { x: 12, y: 40.5 }),
+        "show_popup_menu",
+        // Rust's `MenuPoint` reads this shape (`a_menu_point_reads_as_a_logical_position`).
+        { items: [{ id: "x", text: "엑스" }], at: { x: 12, y: 40.5 } },
       ],
       [
         () => backend.showPopupMenu([MENU_SEPARATOR]),
         "show_popup_menu",
         // Rust's `PopupMenuItem` reads this shape (`a_separator_item_reads_without_id_or_text`).
-        { items: [{ id: "", text: "", separator: true }] },
+        { items: [{ id: "", text: "", separator: true }], at: null },
       ],
       [
         () => backend.showPopupMenu([{ id: "", text: "옮기기", items: [{ id: "a", text: "가" }] }]),
         "show_popup_menu",
         // Rust's `PopupMenuItem` reads this shape
         // (`a_popup_item_with_items_is_a_submenu_whose_items_answer_with_their_ids`).
-        { items: [{ id: "", text: "옮기기", items: [{ id: "a", text: "가" }] }] },
+        { items: [{ id: "", text: "옮기기", items: [{ id: "a", text: "가" }] }], at: null },
       ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],

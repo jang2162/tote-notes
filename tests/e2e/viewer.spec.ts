@@ -120,6 +120,28 @@ test("an update numbers the text anew, and a request for the old one is dropped"
   expect((await previewCalls(page))[3]).toEqual(["toggleTask", 0, "- [x] a"]);
 });
 
+test("a newer colour request, as a theme change sends, stops the one before it", async ({
+  page,
+}) => {
+  await page.goto(
+    "/tests/e2e/pages/viewer.html?preview=1&viewer=/tests/e2e/pages/viewers/requests.html",
+  );
+  await expect.poll(() => previewCalls(page)).toHaveLength(3);
+  expect(await page.evaluate(() => window.highlightStale())).toEqual([false]);
+  // The same text, coloured again under another theme.
+  await frame(page)
+    .locator("body")
+    .evaluate(() =>
+      parent.postMessage(
+        { type: "highlight", version: 1, req: 5, blocks: [{ index: 0, lang: "ts", code: "a" }] },
+        "*",
+      ),
+    );
+  await expect.poll(() => previewCalls(page)).toHaveLength(4);
+  expect(await page.evaluate(() => window.highlightStale())).toEqual([true, false]);
+  await expect(frame(page).locator("body")).toHaveAttribute("data-highlighted", /"req":5/);
+});
+
 test("a preview's requests from any other window are ignored", async ({ page }) => {
   await page.goto(
     "/tests/e2e/pages/viewer.html?preview=1&viewer=/tests/e2e/pages/viewers/ok.html&intruder=1",

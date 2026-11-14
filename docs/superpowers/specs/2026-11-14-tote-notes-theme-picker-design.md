@@ -66,6 +66,6 @@
   - 「고르지 않으면 사용자 확장 테마는 그려지지 않는다」(기존 시험의 뜻을 고쳐 남김).
 - 단위(vitest, `src/ui/theme-options.test.ts`): 옵션 목록 — 모드 셋, 묶음, 같은 이름의 괄호, 찾을 수 없는 테마, 값의 왕복.
 - Rust(`appdata.rs`): `theme.mode` 객체 읽기·쓰기, 꼴이 틀린 객체는 자동, 패치 객체 적용과 거절.
-- Rust(`app/appearance.rs`): 고른 테마의 종류가 네이티브 모양이 된다(`uiTheme`, 모르는 `uiTheme` 이면 파일 `type`), 레지스트리에 없으면 `None`.
-- e2e(`tests/e2e/settings.spec.ts`): 확장 테마를 고르면 그 색이 그려지고 OS 모양을 바꿔도 그대로다. 확장을 끄면 자동으로 그리고 값은 남으며 고르개에 「찾을 수 없음」 이 보인다. 다시 켜면 돌아온다. 같은 이름 둘의 괄호. 열린 마크다운 미리보기가 새 테마 변수를 받는다.
+- Rust(`app/appearance.rs`): 고른 테마의 종류가 네이티브 모양이 된다(`uiTheme`, 모르는 `uiTheme` 이면 파일 `type`), 레지스트리에 없으면 `None`. 테마 파일의 `type` 은 설치된 확장 폴더에서 읽는다 — JSONC, `type` 없음, 깨진 파일, 없는 파일, `include` 는 따라가지 않음(`a_theme_files_type_is_read_from_its_installed_extension`, 2026-11-14 후속).
+- e2e(`tests/e2e/settings.spec.ts`): 확장 테마를 고르면 그 색이 그려지고 OS 모양을 바꿔도 그대로다. 확장을 끄면 자동으로 그리고 값은 남으며 고르개에 「찾을 수 없음」 이 보인다. 다시 켜면 돌아온다. 열린 마크다운 미리보기가 새 테마 변수를 받는다. 같은 이름 둘의 괄호는 e2e 가 아니라 위 vitest(「names the extension after each theme whose name another one has too」)가 본다(2026-11-14 후속에서 고친 문장).
 - e2e 는 네이티브 모양을 보지 못한다(가짜 백엔드에 없다). 실기기 확인은 보고서의 「사람 확인」 표.

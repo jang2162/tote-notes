@@ -163,7 +163,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - 조합 이벤트를 직접 보내는 시험은 `toBeFocused` 뒤에 본문 텍스트(`toHaveText`)를 먼저 기다린다. 포커스는 본문이 그려지기 전에 올 수 있고, 그때 `view.domAtPos` 가 `No tile at position N` 을 던진다.
   - 목록·메뉴처럼 포커스를 가져가는 오버레이가 있는 화면에서는 포커스 이동의 부수 효과(조합 확정 등)가 구분력 시험을 조용히 약하게 만들 수 있다. 시험이 정말 보호 대상 코드 때문에 통과하는지 그 코드를 지워 실패하는지 본다.
   - 개발 서버에서 받는 것(`readExtensionFile` 이 받는 언어 설정 등)은 부하에서 늦게 도착한다. 늦은 응답의 효과를 시험하려면 `page.route` 로 그 요청을 붙잡았다가 풀어 준다. 실제 앱에서는 같은 데이터가 IPC 로 와서 이 방법이 닿지 않는다.
-  - 파일 감시 시험(`src-tauri/src/watch/mod.rs`)은 감시를 걸기 전에 쓴 파일의 이벤트가 감시를 건 뒤에 올 수 있다고 보고 짠다. FSEvents 는 스트림을 열기 직전에 쓴 것(그 파일의 `Create`·`Modify`)을 부하에서 연 뒤에 전한다. 이벤트는 쓴 순서대로 오므로, 표식 파일을 쓰고 그 묶음을 기다리는 것(시험의 `through`)이 「그 앞에 쓴 것은 다 왔다」 는 완료 신호다. 「아무것도 오지 않음」 도 같은 표식으로 단언한다. 앱에서는 이 늦은 이벤트가 무해하다 — 외부 파일은 지금 디스크 내용의 해시를 기준과 비교해 같으면 알리지 않는다(`ExternalFiles::outside_state`).
+  - 파일 감시 시험(`src-tauri/src/watch/mod.rs`)은 감시를 걸기 전에 쓴 파일의 이벤트가 감시를 건 뒤에 올 수 있다고 보고 짠다. FSEvents 는 스트림을 열기 직전에 쓴 것(그 파일의 `Create`·`Modify`)을 부하에서 연 뒤에 전한다. 이벤트는 쓴 순서대로 오므로, 표식 파일을 쓰고 그 묶음을 기다리는 것(시험의 `through`)이 「그 앞에 쓴 것은 다 왔다」 는 완료 신호다. 「아무것도 오지 않음」 도 같은 표식으로 단언한다. 앱에서는 이 늦은 이벤트가 무해하다. 외부 파일 탭은 감시를 먼저 걸고(`watchExternal`) 그 뒤에 파일을 열어 기준 해시를 적는다(`openExternal`, `ExternalDoc.read` 의 순서). 그래서 감시 전에 쓴 것의 늦은 이벤트는 열기 전에 오면 기준이 없어 「바뀜」 으로 알려지지만(`ExternalFiles::outside_state`) 탭이 아직 글을 읽지 않아 버리고(`ExternalDoc.onOutside` 의 `!this.state` — 탭은 곧 지금 디스크 내용을 읽는다), 연 뒤에 오면 지금 디스크 내용의 해시가 기준과 같아 알려지지 않는다.
   - 기다리는 것이 없는 동기 테스트의 시간 초과는 디스크·CPU 처리량을 잰다. 검사하는 것이 속도가 아니면 그 테스트에만 시간 제한을 준다(`scripts/perf-fixtures.test.ts` 의 1만 메모 테스트). 올린 제한 안의 속도 회귀는 이제 잡히지 않는다. 속도는 perf 스크립트(`pnpm perf:measure`)가 잰다.
     - 1만 메모 테스트의 5초 초과는 재현되지 않았다. 단독 20번(부하 9~28)과 `pnpm exec vitest run` 전체 3번(부하 13)에서 최대 2.4초였다. 그래서 「시간 초과는 처리량」 은 테스트가 동기라는 코드에서 나온 판단이지 관찰이 아니다. 30초 제한을 넘기거나 다른 메시지로 실패하면 원인을 다시 찾는다.
   - e2e 를 에이전트가 돌리면 Vite 가 에이전트를 감지해(`AI_AGENT` 같은 환경 변수) `server.forwardConsole` 을 켠다. 페이지의 `console` 이 개발 서버로 전달되는 래퍼를 지나므로 사람이 돌릴 때와 경로가 다르다. 사람과 에이전트에서 결과가 갈리면 이것부터 의심한다. `quietErrors` 가 이 래퍼와 서로를 불러 `RangeError` 를 내던 것이 그 예다(`tests/e2e/quiet-errors.spec.ts`, 에이전트 실행에서만 구분력이 있다).
@@ -197,6 +197,23 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 - **Why:** accelerator 는 네이티브 메뉴(muda)가 받는다. Playwright 의 키 입력은 웹뷰 안으로만 들어가므로 메뉴를 지나지 않는다.
 - **How to apply:** 단축키 연결은 Rust 시험(`menu.rs`·`shortcuts.rs`)과 화면 확인(`docs/superpowers/reports/2026-10-20-tote-notes-settings-and-shortcuts-smoke.md`)으로 본다. e2e 가 통과했다는 것을 메뉴 단축키가 동작한다는 증거로 쓰지 않는다.
+
+## 앱 명령을 더하면 Rust 의 표, 시험 고정 파일, 가짜 백엔드의 표를 함께 고친다
+
+앱 명령(메뉴 항목이자 단축키를 받는 것)은 `src-tauri/src/shortcuts.rs` 의 `COMMANDS` 가 정본이다. 더하거나 빼면 그 시험 고정 파일(`src-tauri/tests/fixtures/shortcut-table.json`)을 `UPDATE_FIXTURES=1 cargo test --manifest-path src-tauri/Cargo.toml the_shortcut_table_fixture_is_current` 로 다시 쓰고, 가짜 백엔드의 사본(`src/backend/fake-shortcuts.ts` 의 `FAKE_SHORTCUT_COMMANDS`)에도 같은 행을 더한다.
+
+- **Why:** 셋이 갈리면 어긋난 쪽의 시험만 떨어지고 메시지가 원인을 말하지 않는다 — Rust 는 「고정 파일이 낡았다」, vitest(`src/backend/fake-shortcuts.test.ts`)는 사본이 고정 파일과 다르다고, e2e 는 설정 화면의 행이 모자라다고 떨어진다.
+- **How to apply:**
+  - `tests/e2e/shortcuts.spec.ts` 의 앱 명령 행 수는 손으로 고치지 않는다. 「the search filters by name and by shortcut」 이 `FAKE_SHORTCUT_COMMANDS.length + FAKE_GLOBAL_COMMANDS.length` 로 센다. 같은 시험의 주석에 적힌 수(「28 with 줄 바꿈」)는 계산과 상관없는 설명이라 명령 수가 바뀌면 함께 고친다.
+  - 고정 단축키(`shortcuts::FIXED`, 가짜의 `FAKE_FIXED_SHORTCUTS`)를 더하거나 빼면 같은 파일의 「the fixed group lists the fixed keys and cannot be edited」 의 `toHaveCount(21)` 은 손으로 고친다 — 이 수는 표에서 계산하지 않는다.
+  - 메뉴에 놓는 자리(`src-tauri/src/app/menu.rs` 의 `MENUS`)와 단축키 연결은 Rust 시험으로 본다(「e2e 는 메뉴 단축키를 누르지 못한다」).
+
+## `getByRole` 은 `inert` 인 요소도 찾는다
+
+Playwright 의 `getByRole` 은 숨긴 요소(`display: none`, `aria-hidden="true"` 등)를 빼지만 `inert` 인 요소는 그대로 찾는다. 대화상자가 떠 있는 동안 페이지 본문(`main`)은 `inert` 다(`src/ui/dialogs.ts`). 그래서 대화상자 뒤의 메모 목록도 `getByRole("listbox", { name: "메모 목록" })` 으로 찾히고 `toBeVisible` 도 통과한다.
+
+- **Why:** 「목록에 닿을 수 있다」 를 `getByRole` 로 찾힌다는 것으로 단언하면, 대화상자가 목록을 막고 있어도 통과한다. 사람은 그 목록을 누르지도, 키로 옮겨 가지도 못한다. `aria-hidden` 으로는 빠지므로 두 막는 방법이 시험에서 다르게 보인다(확인: `inert` 안의 버튼은 1개 찾히고 `aria-hidden="true"` 안의 버튼은 0개).
+- **How to apply:** 닿을 수 있음을 볼 때는 찾히는지가 아니라 포커스(`toBeFocused`)나 누르기의 결과를 단언한다. 막혀 있음을 볼 때는 조상의 `inert`(`toHaveAttribute("inert", "")`, `tests/e2e/dialogs.spec.ts`)를 본다.
 
 ## e2e 가 키로 버튼에 닿게 할 때는 Tab 이 아니라 ⌥Tab 을 누른다
 

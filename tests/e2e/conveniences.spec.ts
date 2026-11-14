@@ -2,7 +2,16 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { FAKE_STORAGE_KEY, fakeFile, fakeMemo, type FakeData } from "../../src/backend/fake";
 import type { WorkspaceInfo } from "../../src/backend/types";
-import { menu, openWindow, quietErrors, start, startWindows } from "./helpers";
+import {
+  menu,
+  memoWrites,
+  openWindow,
+  quietErrors,
+  start,
+  startWindows,
+  typeWhileChangedElsewhere,
+  writesSettled,
+} from "./helpers";
 
 // Finder, the clipboard, a memo copied or moved to another workspace, and a workspace renamed or
 // trashed from the settings (docs/superpowers/specs/2026-11-14-tote-notes-conveniences-design.md),
@@ -10,6 +19,7 @@ import { menu, openWindow, quietErrors, start, startWindows } from "./helpers";
 
 const NOT_IN_FINDER = "파일이 없어 Finder 에서 보지 못했습니다";
 const NOT_MOVED_UNSAVED = "저장하지 못해 다른 워크스페이스로 옮기지 않았습니다";
+const NOT_MOVED_BANNER = "충돌·삭제 알림이 떠 있어 다른 워크스페이스로 옮기지 않았습니다";
 const WRITE_FAILED = "no space left on device";
 const OPEN_NOTE =
   "열린 워크스페이스는 그 창을 닫거나 다른 워크스페이스로 바꾼 뒤 이름을 바꾸거나 지울 수 있습니다.";
@@ -277,6 +287,31 @@ test("a memo whose save failed does not move", async ({ page }) => {
   await expect(page.locator(".cm-content")).toHaveText("청소 빨래");
   await expect(row(page, "할 일")).toHaveCount(1);
   expect(await memosOf(page, "가계부")).toEqual({});
+});
+
+test("a memo whose tab asks about a change elsewhere stays, unsaved over that change", async ({
+  page,
+}) => {
+  // 장보기 (우유) typed into while another app wrote 두유: the conflict banner is up.
+  await typeWhileChangedElsewhere(page);
+  await expect(page.locator(".banner")).toBeVisible();
+  await writesSettled(page);
+  const writes = await memoWrites(page, "a");
+  const { workspaces, otherWorkspaces } = seed();
+  await page.evaluate((patch) => Object.assign(window.__tote.backend.data, patch), {
+    workspaces,
+    otherWorkspaces,
+    popupMenuPick: "move-to:/fake/가계부",
+  });
+  await row(page, "장보기").click({ button: "right" });
+  await expect(status(page)).toHaveText(NOT_MOVED_BANNER);
+  await expect(page.locator(".tab")).toHaveCount(1);
+  await expect(page.locator(".banner")).toBeVisible();
+  await expect(page.locator(".cm-content")).toHaveText("우유 계란");
+  expect(await memosOf(page, "가계부")).toEqual({});
+  // The banner is the person's to answer: the move did not try a save of its own.
+  await writesSettled(page);
+  expect(await memoWrites(page, "a")).toBe(writes);
 });
 
 test("a memo open in another window is saved and closed there, then moved", async ({ context }) => {

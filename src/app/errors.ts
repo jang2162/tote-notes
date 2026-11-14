@@ -13,6 +13,8 @@ export const ERROR_TEXT: Partial<Record<BackendErrorCode, string>> = {
   "invalid-extension": "확장 패키지를 읽을 수 없습니다",
   "window-busy": "창을 닫거나 바꾸는 중이라 탭을 옮기지 못했습니다",
   "workspace-open": "열린 창을 닫거나 다른 워크스페이스로 바꾼 뒤 바꿀 수 있습니다",
+  "workspace-opening":
+    "그 워크스페이스를 여는 창이 있어 옮기지 않았습니다. 창이 열린 뒤 다시 옮겨 주세요",
 };
 
 /** Codes whose message is the only word on the cause (a full disk, a refused permission): the

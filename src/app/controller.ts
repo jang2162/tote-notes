@@ -7,6 +7,7 @@ import type {
   FlushGoal,
   LanguageInfo,
   MemoInfo,
+  MenuPoint,
   OutsideChange,
   PerfConfig,
   Settings,
@@ -385,7 +386,7 @@ export class AppController implements DocHost, PaneHost {
   private memoFilters = 0;
   private readonly memoList = new MemoList({
     open: (id) => this.openMemo(id),
-    menu: (ids) => this.memoMenu(ids).catch((error: unknown) => this.report(error)),
+    menu: (ids, at) => this.memoMenu(ids, at).catch((error: unknown) => this.report(error)),
     trash: (ids) => this.trashMemos(ids).catch((error: unknown) => this.report(error)),
     toEditor: () => this.focused.takeKeys(),
     sort: () => void this.sortMenu().catch((error: unknown) => this.report(error)),
@@ -418,7 +419,7 @@ export class AppController implements DocHost, PaneHost {
   });
   private readonly trashList = new TrashList({
     open: (id) => this.openTrashed(id).catch((error: unknown) => this.report(error)),
-    menu: (ids) => this.trashMenu(ids).catch((error: unknown) => this.report(error)),
+    menu: (ids, at) => this.trashMenu(ids, at).catch((error: unknown) => this.report(error)),
     purge: (ids) => this.purgeMany(ids).catch((error: unknown) => this.report(error)),
     toEditor: () => this.focused.takeKeys(),
     back: () => this.showMemoList(),
@@ -1443,8 +1444,8 @@ export class AppController implements DocHost, PaneHost {
 
   /** The context menu of the trashed rows picked: 복구, Finder for one alone, or 영구 삭제 after
    * asking once. */
-  private async trashMenu(ids: string[]): Promise<void> {
-    const picked = await this.backend.showPopupMenu(trashRowMenu(ids.length));
+  private async trashMenu(ids: string[], at?: MenuPoint): Promise<void> {
+    const picked = await this.backend.showPopupMenu(trashRowMenu(ids.length), at);
     if (picked === RESTORE) await this.restoreMany(ids);
     if (picked === REVEAL_IN_FINDER)
       await revealFile(this.conveniences, { kind: "trashed", id: ids[0] });
@@ -2443,7 +2444,7 @@ export class AppController implements DocHost, PaneHost {
   /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」, conveniences spec
    * 「메뉴」). The workspaces to move to are read as it opens, so one another window made or hid
    * is as the switcher has it. */
-  private async memoMenu(ids: string[]): Promise<void> {
+  private async memoMenu(ids: string[], at?: MenuPoint): Promise<void> {
     const infos = ids.flatMap((id) => this.memoList.get(id) ?? []);
     if (infos.length === 0) return;
     const targets = await this.backend.listWorkspaces().then(
@@ -2453,7 +2454,7 @@ export class AppController implements DocHost, PaneHost {
         return [];
       },
     );
-    const picked = await this.backend.showPopupMenu(memoRowMenu(infos, targets));
+    const picked = await this.backend.showPopupMenu(memoRowMenu(infos, targets), at);
     const { id } = infos[0];
     if (picked === TRASH) await this.trashMemos(infos.map((info) => info.id));
     if (picked === PIN) await this.pinMemos(infos);

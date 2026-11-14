@@ -42,6 +42,7 @@ import {
   type OutsideChange,
   type WindowStart,
   type PendingOpen,
+  type MenuPoint,
   type PopupMenuItem,
   type ContentHit,
   type TabRef,
@@ -243,6 +244,8 @@ export interface FakeData {
   memoViewedCalls?: string[];
   /** The items of every pop-up menu shown, in order. Absent in old seeds. */
   popupMenus?: PopupMenuItem[][];
+  /** Where each of `popupMenus` was asked to show, null for the pointer. Absent in old seeds. */
+  popupMenuAts?: (MenuPoint | null)[];
   /** The windows, with a hub (`FakeHub`). Absent without one. */
   hub?: HubState;
   /** The workspace's trash by memo ID (`.trash` on the native side). Absent in old seeds. */
@@ -1298,8 +1301,9 @@ export class FakeBackend implements Backend {
     return "window";
   }
 
-  async showPopupMenu(items: PopupMenuItem[]) {
+  async showPopupMenu(items: PopupMenuItem[], at?: MenuPoint) {
     (this.data.popupMenus ??= []).push(items);
+    (this.data.popupMenuAts ??= []).push(at ?? null);
     this.commit();
     return this.data.popupMenuPick ?? null;
   }
