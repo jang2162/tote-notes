@@ -149,4 +149,63 @@ mod tests {
         });
         assert_eq!(native_theme(&other, &themes, unread), None);
     }
+
+    #[test]
+    fn a_theme_files_type_is_read_from_its_installed_extension() {
+        use crate::app::AppPaths;
+        use std::fs;
+
+        let dir = tempfile::tempdir().unwrap();
+        let paths = AppPaths::from_parts(Some(dir.path().join("data")), None, None, false).unwrap();
+        let core = AppCore::load_at(paths, dir.path().join("bundled")).unwrap();
+        let folder = crate::extensions::tests::write_extension(
+            &core.paths.extensions_dir(),
+            "someone.night@1",
+            r#"{"name": "night", "publisher": "someone", "version": "1",
+                "contributes": {"themes": [
+                  {"label": "Sepia", "uiTheme": "sepia", "path": "themes/sepia.json"},
+                  {"label": "Untyped", "uiTheme": "sepia", "path": "untyped.json"},
+                  {"label": "Broken", "uiTheme": "sepia", "path": "broken.json"},
+                  {"label": "Missing", "uiTheme": "sepia", "path": "missing.json"},
+                  {"label": "Included", "uiTheme": "sepia", "path": "included.json"}
+                ]}}"#,
+        );
+        fs::create_dir_all(folder.join("themes")).unwrap();
+        // JSONC, as theme files are: a comment and a trailing comma.
+        fs::write(
+            folder.join("themes/sepia.json"),
+            "// 세피아\n{ \"type\": \"light\", \"colors\": {}, }",
+        )
+        .unwrap();
+        fs::write(folder.join("untyped.json"), r#"{"colors": {}}"#).unwrap();
+        fs::write(folder.join("broken.json"), r#"{"type": "dark""#).unwrap();
+        // Its include says dark, but only the file's own top is read.
+        fs::write(
+            folder.join("included.json"),
+            r#"{"include": "./themes/dark.json"}"#,
+        )
+        .unwrap();
+        fs::write(folder.join("themes/dark.json"), r#"{"type": "dark"}"#).unwrap();
+        core.rescan_extensions();
+        let themes = core.registry().themes;
+        assert_eq!(themes.len(), 5, "{themes:?}");
+        let type_of = |label: &str| {
+            let theme = themes.iter().find(|t| t.label == label).unwrap();
+            theme_file_type(&core, theme)
+        };
+        assert_eq!(type_of("Sepia").as_deref(), Some("light"));
+        assert_eq!(type_of("Untyped"), None);
+        assert_eq!(type_of("Broken"), None);
+        assert_eq!(type_of("Missing"), None);
+        assert_eq!(type_of("Included"), None);
+        // What `follow_settings` puts on the app for the picked one.
+        let sepia = ThemeChoice::Theme(ThemeRef {
+            extension: "someone.night".into(),
+            label: "Sepia".into(),
+        });
+        assert_eq!(
+            native_theme(&sepia, &themes, |theme| theme_file_type(&core, theme)),
+            Some(Theme::Light)
+        );
+    }
 }
