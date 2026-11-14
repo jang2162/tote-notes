@@ -297,6 +297,71 @@ test("a press on a preview drawn from a text the tab no longer holds changes no 
   await expect.poll(() => memoText(page, "a")).toBe("- [ ] 새 줄\n- [x] 하나\n- [ ] 둘");
 });
 
+test("a press whose answer comes after its tab left the pane changes nothing", async ({ page }) => {
+  // The first press loads marked (`import("../viewer/tasks")`): held here until the tab is gone.
+  let release!: () => void;
+  const held = new Promise<void>((resolve) => (release = resolve));
+  let reached!: () => void;
+  const asked = new Promise<void>((resolve) => (reached = resolve));
+  await page.route("**/src/viewer/tasks.ts*", async (route) => {
+    reached();
+    await held;
+    await route.continue();
+  });
+  await start(page, {
+    memos: { a: fakeMemo("할일.md", "- [ ] 하나"), b: fakeMemo("다른.md", "x") },
+  });
+  await preview(page, "할일");
+  const boxes = frame(page).locator("input[type=checkbox]");
+  await expect(boxes).toHaveCount(1);
+  await boxes.nth(0).click();
+  await asked;
+  await page.locator(".memo-row", { hasText: "다른" }).click();
+  await expect(page.locator(".cm-content")).toHaveText("x");
+  release();
+  // Back on show, a press now flips the box once: had the first one landed, this would flip it
+  // back (the presses are taken in turn, each after marked is in).
+  await page.locator(".memo-row", { hasText: "할일" }).click();
+  await expect(boxes).toHaveCount(1);
+  await expect(boxes.nth(0)).not.toBeChecked();
+  await boxes.nth(0).click();
+  await expect(boxes.nth(0)).toBeChecked();
+  await expect.poll(() => memoText(page, "a")).toBe("- [x] 하나");
+});
+
+test("a press in the preview of a tab that takes no edits changes nothing", async ({ page }) => {
+  await start(page, {
+    memos: { a: fakeMemo("할일.md", "- [ ] 하나\n- [ ] 둘\n\n[웹](https://example.com/)") },
+  });
+  await preview(page, "할일");
+  const boxes = frame(page).locator("input[type=checkbox]");
+  await expect(boxes).toHaveCount(2);
+  // A press first, so that marked is in and a press is answered in the turn it is taken.
+  await boxes.nth(1).click();
+  await expect.poll(() => memoText(page, "a")).toContain("- [x] 둘");
+  // The tab turns read-only under the preview, which still offers its boxes.
+  await page.evaluate(() => {
+    const doc = window.__tote.app.focused.tabs.active!;
+    const start = doc.state!;
+    const Kind = start.constructor as typeof start.constructor & {
+      create: (config: object) => typeof start;
+      readOnly: { of: (value: boolean) => object };
+    };
+    doc.state = Kind.create({ doc: start.doc, extensions: Kind.readOnly.of(true) });
+  });
+  await boxes.nth(0).click();
+  // A link pressed after it: its call is the sign the box's request has been taken.
+  await frame(page).locator("a").click();
+  await expect
+    .poll(() => page.evaluate(() => window.__tote.backend.data.openedLinks))
+    .toEqual(["https://example.com/"]);
+  const text = await page.evaluate(() =>
+    window.__tote.app.focused.tabs.active!.state!.doc.toString(),
+  );
+  expect(text).toBe("- [ ] 하나\n- [x] 둘\n\n[웹](https://example.com/)");
+  await expect(boxes.nth(0)).not.toBeChecked();
+});
+
 test("a trashed memo's read-only tab shows no preview, so no box to press", async ({ page }) => {
   await start(page, { trash: { t: { ...fakeMemo("할일.md", "- [ ] 하나"), deletedMs: 5 } } });
   await page.getByRole("button", { name: "휴지통", exact: true }).click();
