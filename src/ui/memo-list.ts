@@ -192,6 +192,11 @@ export class MemoList {
     return this.memos.find((memo) => memo.file.normalize("NFC") === wanted);
   }
 
+  /** Every memo listed, filter or not (빠른 열기 looks through them). */
+  get all(): readonly MemoInfo[] {
+    return this.memos;
+  }
+
   get order(): MemoSort {
     return this.sort;
   }

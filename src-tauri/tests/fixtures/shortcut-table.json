@@ -36,6 +36,14 @@
       "current": "CmdOrCtrl+O"
     },
     {
+      "id": "quick-open",
+      "label": "빠른 열기…",
+      "menu": "파일",
+      "default": "CmdOrCtrl+P",
+      "current": "CmdOrCtrl+P",
+      "yields": true
+    },
+    {
       "id": "save",
       "label": "저장",
       "menu": "파일",

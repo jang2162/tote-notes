@@ -1683,6 +1683,27 @@ button.danger {
   margin: 0;
 }
 
+/* A workspace a window shows: marked, its rename and trash buttons off (conveniences spec). */
+.ws-order-open {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.ws-order-actions {
+  display: flex;
+  gap: 4px;
+}
+
+.ws-order-actions button {
+  padding: 2px 8px;
+  font-size: 12px;
+  cursor: default;
+}
+
+.ws-order-actions button:disabled {
+  opacity: 0.45;
+}
+
 .shortcut-settings {
   display: flex;
   flex-direction: column;
@@ -1814,4 +1835,87 @@ select {
   background: var(--bg);
   color: inherit;
   font: inherit;
+}
+
+/* 빠른 열기 (spec 2026-11-14): near the top of a window left in view, not dimmed. */
+.modal-backdrop:has(> .quick-open) {
+  place-items: start center;
+  padding-top: 72px;
+  background: transparent;
+}
+
+.modal.quick-open {
+  box-sizing: border-box;
+  width: min(520px, calc(100vw - 32px));
+  min-width: 0;
+  max-width: none;
+  padding: 8px;
+}
+
+/* Ten rows of 28px in view (`ROWS_IN_VIEW`, src/ui/quick-open.ts); more scroll. Only the rows in
+ * view are drawn, each placed by its own top. */
+.quick-open-scroll {
+  position: relative;
+  max-height: 280px;
+  margin-top: 6px;
+  overflow: auto;
+}
+
+.quick-open-list {
+  position: relative;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.quick-open-row {
+  position: absolute;
+  right: 0;
+  left: 0;
+  box-sizing: border-box;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  height: 28px;
+  padding: 0 8px;
+  overflow: hidden;
+  border-radius: 6px;
+  line-height: 28px;
+  white-space: nowrap;
+  cursor: default;
+}
+
+.quick-open-row.selected {
+  background: var(--active-bg);
+}
+
+.quick-open-name {
+  flex: 0 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.quick-open-name b {
+  font-weight: 700;
+}
+
+.quick-open-detail {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+}
+
+.quick-open-keys {
+  flex: none;
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.quick-open-none {
+  padding: 6px 8px 2px;
+  color: var(--muted);
 }

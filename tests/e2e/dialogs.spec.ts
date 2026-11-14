@@ -216,9 +216,10 @@ test("a dialog closed from under another leaves the page behind out of reach", a
   await expect(page.locator(".behind")).toBeFocused();
 });
 
-// Where WebKit finds no control after the last one it stops at (which controls those are is the
-// system's keyboard navigation setting), a Tab takes the keys off the page. The key alone, without
-// the browser's move, stands in for that here: this WebKit stops at every control and wraps.
+// Past the last control WebKit stops at (which controls those are is the system's keyboard
+// navigation setting), a Tab takes the keys off the page, with the setting on or off. The key alone,
+// without the browser's move, makes that the only thing that happens here, whichever controls this
+// WebKit stops at.
 test("a Tab that leaves the keys on nothing brings them back into the dialog", async ({ page }) => {
   await pageBehind(page);
   await page.evaluate(() => void window.promptText("새 파일 이름", "메모.md"));

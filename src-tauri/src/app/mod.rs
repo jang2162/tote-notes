@@ -5,6 +5,7 @@
 
 pub mod appearance;
 pub mod commands;
+pub mod conveniences;
 pub mod flush;
 #[cfg(target_os = "macos")]
 pub mod key_equivalents;
@@ -1329,6 +1330,11 @@ impl AppCore {
         };
         let fresh = inner.places.owner(&key).is_none();
         Ok(inner.places.claim(label, key).map(|()| fresh))
+    }
+
+    /// The external files open in a tab of any window, by path (빠른 열기, spec 2026-11-14).
+    pub fn open_externals(&self) -> Vec<PathBuf> {
+        lock(&self.inner).places.externals()
     }
 
     /// Window `label` closed the tab: another window may open it now. Nothing while the window

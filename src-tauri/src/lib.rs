@@ -19,7 +19,7 @@ use std::time::{Duration, Instant, SystemTime};
 
 use tauri::{AppHandle, Emitter, EventTarget, Manager, RunEvent};
 
-use app::{commands, menu, requests, windows, AppCore, PendingOpen};
+use app::{commands, conveniences, menu, requests, windows, AppCore, PendingOpen};
 use backup::notices::FailureNotices;
 use backup::SnapshotName;
 use cli::CliRequest;
@@ -114,6 +114,7 @@ pub fn run() {
             commands::write_window_layout,
             commands::claim_tabs,
             commands::release_tab,
+            commands::list_open_externals,
             commands::tear_off_tab,
             commands::show_popup_menu,
             commands::take_pending_opens,
@@ -130,6 +131,13 @@ pub fn run() {
             commands::set_workspace_order,
             commands::create_workspace,
             commands::switch_workspace,
+            conveniences::reveal_in_finder,
+            conveniences::copy_file_path,
+            conveniences::duplicate_memo,
+            conveniences::move_memo_to,
+            conveniences::rename_workspace,
+            conveniences::workspace_memo_count,
+            conveniences::trash_workspace,
             commands::flush_done,
             commands::flush_writing,
             commands::current_update,

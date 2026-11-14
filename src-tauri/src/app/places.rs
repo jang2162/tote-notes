@@ -47,6 +47,20 @@ impl Places {
         self.owners.get(key).map(String::as_str)
     }
 
+    /// The external files every window holds, by path (빠른 열기, spec 2026-11-14).
+    pub fn externals(&self) -> Vec<PathBuf> {
+        let mut paths: Vec<PathBuf> = self
+            .owners
+            .keys()
+            .filter_map(|key| match key {
+                TabKey::External { path } => Some(path.clone()),
+                TabKey::Memo { .. } => None,
+            })
+            .collect();
+        paths.sort();
+        paths
+    }
+
     /// Frees `key` only when `label` owns it.
     pub fn release(&mut self, label: &str, key: &TabKey) {
         if self.owners.get(key).is_some_and(|owner| owner == label) {
@@ -127,6 +141,25 @@ mod tests {
         );
         places.release("w1", &memo("/w/가", "a"));
         assert_eq!(places.claim("w2", memo("/w/가", "a")), Ok(()));
+    }
+
+    #[test]
+    fn the_external_files_held_are_listed_by_path_whatever_window_holds_them() {
+        let mut places = Places::default();
+        assert!(places.externals().is_empty());
+        // Ten, claimed out of order: a map's own order would come out sorted once in 10! runs.
+        let paths: Vec<String> = (0..10).map(|n| format!("/tmp/{n}.sh")).collect();
+        for (n, path) in paths.iter().enumerate().rev() {
+            places
+                .claim(&format!("w{}", n % 3), external(path))
+                .unwrap();
+        }
+        places.claim("w1", memo("/w/가", "a")).unwrap();
+        let sorted: Vec<PathBuf> = paths.iter().map(PathBuf::from).collect();
+        assert_eq!(places.externals(), sorted);
+        places.release("w1", &external("/tmp/1.sh"));
+        assert_eq!(places.externals().len(), 9);
+        assert!(!places.externals().contains(&PathBuf::from("/tmp/1.sh")));
     }
 
     #[test]

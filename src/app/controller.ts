@@ -3,6 +3,7 @@ import { EditorView, type KeyBinding, type ViewUpdate } from "@codemirror/view";
 
 import type {
   Backend,
+  FileTarget,
   FlushGoal,
   LanguageInfo,
   MemoInfo,
@@ -14,7 +15,7 @@ import type {
   TrashedInfo,
   WindowStart,
 } from "../backend/types";
-import { errorCode, MENU_SEPARATOR } from "../backend/types";
+import { errorCode } from "../backend/types";
 import { decodeText } from "../core/codec";
 import { pageLeaving } from "../core/leaving";
 import { WriteScheduler } from "../core/scheduler";
@@ -69,6 +70,8 @@ import {
 import { h } from "../ui/dom";
 import { MemoList } from "../ui/memo-list";
 import { isMemoSort, SORT_ITEMS } from "../ui/memo-order";
+import { quickOpen } from "../ui/quick-open";
+import { commandItems } from "../ui/quick-open-match";
 import { SearchPanel } from "../ui/search-panel";
 import { openSettings, type SettingsSection } from "../ui/settings";
 import { SettingsButton } from "../ui/settings-button";
@@ -102,6 +105,28 @@ import {
   type DocHost,
   type PlacedDoc,
 } from "./docs";
+import {
+  copyPath,
+  duplicateMemo,
+  moveMemo,
+  revealFile,
+  type ConvenienceHost,
+} from "./conveniences";
+import {
+  COPY_PATH,
+  DUPLICATE,
+  memoRowMenu,
+  movePick,
+  moveTargets,
+  PIN,
+  PURGE,
+  RENAME,
+  RESTORE,
+  REVEAL_IN_FINDER,
+  tabFileItems,
+  TRASH,
+  trashRowMenu,
+} from "./context-menus";
 import { editorFontStack } from "./editor-font";
 import { describeError } from "./errors";
 import {
@@ -751,6 +776,13 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onTrashRequest(
       (id) => void this.trashMemo(id).catch((error: unknown) => this.report(error)),
     );
+    // The same for a memo another window moves to another workspace.
+    this.backend.onMoveRequest(
+      (id, workspace) =>
+        void moveMemo(this.conveniences, id, workspace).catch((error: unknown) =>
+          this.report(error),
+        ),
+    );
     // A window losing focus is a tab losing focus (spec 「저장」), and hidden windows barely run
     // timers — so write now rather than when the timer fires.
     window.addEventListener("blur", () => {
@@ -1310,15 +1342,12 @@ export class AppController implements DocHost, PaneHost {
     this.sidebar.show("memos");
   }
 
-  /** A trashed row's context menu: 복구, or 영구 삭제 after asking. */
+  /** A trashed row's context menu: 복구, Finder, or 영구 삭제 after asking. */
   private async trashMenu(id: string): Promise<void> {
-    const picked = await this.backend.showPopupMenu([
-      { id: "restore", text: "복구" },
-      MENU_SEPARATOR,
-      { id: "purge", text: "영구 삭제" },
-    ]);
-    if (picked === "restore") await this.restoreTrashed(id);
-    if (picked === "purge") await this.purgeTrashed(id);
+    const picked = await this.backend.showPopupMenu(trashRowMenu());
+    if (picked === RESTORE) await this.restoreTrashed(id);
+    if (picked === REVEAL_IN_FINDER) await revealFile(this.conveniences, { kind: "trashed", id });
+    if (picked === PURGE) await this.purgeTrashed(id);
   }
 
   /** Back into the memo list, under the next free name when its own is taken; not opened. */
@@ -1459,8 +1488,13 @@ export class AppController implements DocHost, PaneHost {
       ...SPLIT_TAB_ITEMS.map(({ id, text }) => ({ id, text })),
       // A trashed memo's tab stays in this window.
       ...(doc.tabRef ? [{ id: MOVE_TAB_TO_NEW_WINDOW, text: "탭을 새 창으로 옮기기" }] : []),
+      ...tabFileItems(doc.kind),
     ]);
     if (picked === MOVE_TAB_TO_NEW_WINDOW) await this.tearOff(doc);
+    if (picked === DUPLICATE && doc instanceof MemoDoc)
+      await duplicateMemo(this.conveniences, doc.info.id);
+    if (picked === REVEAL_IN_FINDER) await revealFile(this.conveniences, fileTarget(doc));
+    if (picked === COPY_PATH) await copyPath(this.conveniences, fileTarget(doc));
     const split = SPLIT_TAB_ITEMS.find((item) => item.id === picked);
     if (!split || !this.docs.includes(doc)) return;
     // The split is of the pane the tab is in, which is the focused one from here.
@@ -2117,6 +2151,8 @@ export class AppController implements DocHost, PaneHost {
           return await this.cycleTab(-1);
         case "toggle-preview":
           return await this.togglePreview();
+        case "quick-open":
+          return await this.quickOpen();
         case "open-workspace":
           return this.openSwitcher();
         case "new-workspace":
@@ -2280,19 +2316,28 @@ export class AppController implements DocHost, PaneHost {
     );
   }
 
-  /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」). */
+  /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」, conveniences spec
+   * 「메뉴」). The workspaces to move to are read as it opens, so one another window made or hid
+   * is as the switcher has it. */
   private async memoMenu(id: string): Promise<void> {
     const info = this.memoList.get(id);
     if (!info) return;
-    const picked = await this.backend.showPopupMenu([
-      { id: "rename", text: "이름 바꾸기…" },
-      { id: "pin", text: info.pinned ? "고정 해제" : "맨 위에 고정" },
-      MENU_SEPARATOR,
-      { id: "trash", text: "휴지통으로 이동" },
-    ]);
-    if (picked === "rename") await this.renameMemo(id);
-    if (picked === "trash") await this.trashMemo(id);
-    if (picked !== "pin") return;
+    const targets = await this.backend.listWorkspaces().then(
+      (list) => moveTargets(list, this.workspacePath),
+      (error: unknown) => {
+        console.warn(error);
+        return [];
+      },
+    );
+    const picked = await this.backend.showPopupMenu(memoRowMenu(info, targets));
+    if (picked === RENAME) await this.renameMemo(id);
+    if (picked === TRASH) await this.trashMemo(id);
+    if (picked === DUPLICATE) await duplicateMemo(this.conveniences, id);
+    if (picked === REVEAL_IN_FINDER) await revealFile(this.conveniences, { kind: "memo", id });
+    if (picked === COPY_PATH) await copyPath(this.conveniences, { kind: "memo", id });
+    const to = movePick(picked);
+    if (to !== null) await moveMemo(this.conveniences, id, to);
+    if (picked !== PIN) return;
     const pinned = await this.backend.setMemoPinned(id, !info.pinned);
     this.memoList.upsert(pinned);
     // An open tab's info goes back into the list with each change of its own.
@@ -2363,6 +2408,21 @@ export class AppController implements DocHost, PaneHost {
     } catch (error) {
       this.report(error);
     }
+  }
+
+  /** 「빠른 열기…」 (spec 2026-11-14): what is picked opens where 「한 메모는 한 자리에」 says, as
+   * from the memo list; a command runs as its menu item. */
+  private async quickOpen(): Promise<void> {
+    // The window answered a close or a switch: what it lists is the workspace it leaves.
+    if (this.leaving) return;
+    const choice = await quickOpen({
+      memos: this.memoList.all,
+      externals: this.backend.listOpenExternals(),
+      commands: this.shortcuts ? commandItems(this.shortcuts) : [],
+    });
+    if (choice?.kind === "memo") await this.openMemo(choice.id);
+    else if (choice?.kind === "external") await this.openExternal(choice.path);
+    else if (choice?.kind === "command") await this.runMenuCommand(choice.id);
   }
 
   /** 「워크스페이스 열기…」: the switcher's list, in a sidebar expanded for it if it was collapsed. */
@@ -2553,4 +2613,29 @@ export class AppController implements DocHost, PaneHost {
     console.error(error);
     this.statusBar.setMessage(describeError(error), "error");
   }
+
+  /** What the window lends Finder, the clipboard, a memo's copy and its move
+   * (`src/app/conveniences.ts`). */
+  private get conveniences(): ConvenienceHost {
+    return {
+      backend: this.backend,
+      memoTab: (id) => this.memoTab(id),
+      closeMemoTab: async (doc) => {
+        await settleComposition(this.viewOf(doc));
+        if (!this.docs.includes(doc)) return null;
+        return this.closeDoc(doc);
+      },
+      removeListed: (id) => this.memoList.remove(id),
+      upsertListed: (info) => this.memoList.upsert(info),
+      say: (text, tone) => this.statusBar.setMessage(text, tone),
+    };
+  }
+}
+
+/** The file of `doc`'s tab, as Finder and the clipboard are asked about it. */
+function fileTarget(doc: Doc): FileTarget {
+  if (doc instanceof ExternalDoc) return { kind: "external", path: doc.path };
+  return doc instanceof TrashDoc
+    ? { kind: "trashed", id: doc.info.id }
+    : { kind: "memo", id: (doc as MemoDoc).info.id };
 }

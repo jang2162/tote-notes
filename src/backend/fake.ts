@@ -27,8 +27,10 @@ import {
   type ExternalInfo,
   type FileKind,
   type FileSource,
+  type FileTarget,
   type FlushGoal,
   type MemoInfo,
+  type MoveOutcome,
   type OutsideChange,
   type WindowStart,
   type PendingOpen,
@@ -239,6 +241,17 @@ export interface FakeData {
   /** The windows `trashMemo` asked to save, close and trash a memo they held, in order. Absent
    * until one is asked. */
   trashRequests?: { label: string; id: string }[];
+  /** The windows `moveMemoTo` asked to save, close and move a memo they held, in order. Absent
+   * until one is asked. */
+  moveRequests?: { label: string; id: string; workspace: string }[];
+  /** Every `duplicateMemo` call, in order: whether it brought the tab's text. Absent until one. */
+  duplicateCalls?: { id: string; withText: boolean }[];
+  /** The paths `revealInFinder` showed and `copyFilePath` put on the clipboard, in order. Absent
+   * until one. */
+  revealedFiles?: string[];
+  copiedPaths?: string[];
+  /** The workspaces `trashWorkspace` moved to the macOS trash, by path. Absent until one. */
+  trashedWorkspaces?: string[];
   /** The workspaces other than `workspace`, by path, each as `workspace`, `memos` and `session`
    * hold the current one: `switchWorkspace` trades the current one for one of these. Absent in old
    * seeds. */
@@ -501,6 +514,7 @@ export class FakeBackend implements Backend {
     memos: [] as (() => void)[],
     trash: [] as (() => void)[],
     trashRequest: [] as ((id: string) => void)[],
+    moveRequest: [] as ((id: string, workspace: string) => void)[],
     reveal: [] as ((tab: TabRef) => void)[],
     adopt: [] as ((tab: string, x: number, y: number) => void)[],
     workspaces: [] as (() => void)[],
@@ -722,6 +736,10 @@ export class FakeBackend implements Backend {
   trashRequest(id: string): void {
     for (const handler of this.handlers.trashRequest) handler(id);
   }
+  /** Another window moves a memo this one holds to another workspace (`tote://move-memo`). */
+  moveRequest(id: string, workspace: string): void {
+    for (const handler of this.handlers.moveRequest) handler(id, workspace);
+  }
   /** Another window asked for a tab this one holds. */
   reveal(tab: TabRef): void {
     for (const handler of this.handlers.reveal) handler(tab);
@@ -742,6 +760,7 @@ export class FakeBackend implements Backend {
     else if (event.type === "memos") this.memosChanged();
     else if (event.type === "trash") this.trashChanged();
     else if (event.type === "trash-memo") this.trashRequest(event.id);
+    else if (event.type === "move-memo") this.moveRequest(event.id, event.workspace);
     else if (event.type === "reveal") this.reveal(event.tab);
     else if (event.type === "adopt") this.adopt(event.tab, event.x, event.y);
     else if (event.type === "workspaces") this.workspacesChanged();
@@ -1010,6 +1029,85 @@ export class FakeBackend implements Backend {
     return this.importMemo(basename(path), fromBase64(data));
   }
 
+  /** As `Workspace::duplicate_memo`: the next free name, a new ID, its language, not its pin. */
+  async duplicateMemo(id: string, bytes?: Uint8Array) {
+    this.refuseWhileSwitching();
+    const memo = this.memo(id);
+    (this.data.duplicateCalls ??= []).push({ id, withText: bytes !== undefined });
+    const { stem, ext } = splitName(memo.file);
+    const copy = this.add(this.freeName(stem, ext), false, bytes ?? fromBase64(memo.data));
+    if (!memo.language) return copy;
+    this.data.memos[copy.id].language = memo.language;
+    this.commit();
+    return this.info(copy.id, this.data.memos[copy.id]);
+  }
+
+  /** As the `move_memo_to` command: a memo another window holds stays and that window is asked;
+   * otherwise it goes into the other workspace's memos under a new ID and the next free name
+   * there, with its automatic titles, language and pin. */
+  async moveMemoTo(id: string, workspace: string): Promise<MoveOutcome> {
+    this.refuseWhileSwitching();
+    const memo = this.memo(id);
+    const other = this.data.otherWorkspaces?.[workspace];
+    if (!other || workspace === this.data.workspace.path)
+      throw new BackendError("not-a-workspace", `${workspace} is not another tote workspace`);
+    const places = (this.data.places ??= {});
+    const key = placeKey({ kind: "memo", id });
+    const owner = places[key];
+    if (owner !== undefined && owner !== this.label) {
+      (this.data.moveRequests ??= []).push({ label: owner, id, workspace });
+      this.commit();
+      this.hub?.send([owner], { type: "move-memo", id, workspace });
+      return { kind: "elsewhere" };
+    }
+    delete places[key];
+    const { stem, ext } = splitName(memo.file);
+    const join = (s: string) => (ext ? `${s}.${ext}` : s);
+    const taken = (name: string) =>
+      Object.values(other.memos).some((each) => sameName(each.file, name));
+    let file = join(stem);
+    for (let n = 2; taken(file); n++) file = join(`${stem} ${n}`);
+    const { viewedMs: _viewed, ...kept } = memo;
+    const movedId = crypto.randomUUID();
+    other.memos[movedId] = { ...kept, file };
+    delete this.data.memos[id];
+    delete this.held[id];
+    this.commit();
+    this.memosTouched();
+    return {
+      kind: "moved",
+      info: this.info(movedId, other.memos[movedId]),
+      workspace: other.workspace.name,
+    };
+  }
+
+  /** Where the native side would find the file: the fake's workspace folder is its `path`. */
+  private targetPath(target: FileTarget): { path: string; there: boolean } {
+    const root = this.data.workspace.path;
+    if (target.kind === "external")
+      return { path: target.path, there: this.data.files[target.path] !== undefined };
+    if (target.kind === "memo") {
+      const memo = this.memo(target.id);
+      return { path: `${root}/${memo.file}`, there: true };
+    }
+    const item = this.trashed(target.id);
+    return { path: `${root}/.trash/${target.id}/${item.file}`, there: true };
+  }
+
+  async revealInFinder(target: FileTarget) {
+    const { path, there } = this.targetPath(target);
+    if (!there) throw new BackendError("not-found", path);
+    (this.data.revealedFiles ??= []).push(path);
+    this.commit();
+  }
+
+  async copyFilePath(target: FileTarget) {
+    const { path } = this.targetPath(target);
+    (this.data.copiedPaths ??= []).push(path);
+    this.commit();
+    return path;
+  }
+
   windowStart(): WindowStart {
     return {
       label: this.label,
@@ -1095,6 +1193,15 @@ export class FakeBackend implements Backend {
     if (places[placeKey(tab)] !== this.label) return;
     delete places[placeKey(tab)];
     this.commit();
+  }
+
+  /** As `Places::externals`: every window's, by path. */
+  async listOpenExternals() {
+    const prefix = placeKey({ kind: "external", path: "" });
+    return Object.keys(this.data.places ?? {})
+      .filter((key) => key.startsWith(prefix))
+      .map((key) => key.slice(prefix.length))
+      .sort();
   }
 
   /** A tab let go at `at` goes to the window of `dropTargets` there when it is another open window
@@ -1263,6 +1370,60 @@ export class FakeBackend implements Backend {
     };
     this.commit();
     return path;
+  }
+
+  /** As `AppCore::rename_workspace`: a workspace a window shows is refused (`workspace-open`). */
+  async renameWorkspace(path: string, name: string) {
+    const listed = this.workspaceToManage(path);
+    const trimmed = name.trim();
+    if (!validName(trimmed)) throw new BackendError("invalid-name", trimmed);
+    if (trimmed === listed.name) return path;
+    if (this.data.workspaces.some((w) => w !== listed && sameName(w.name, trimmed)))
+      throw new BackendError("already-exists", trimmed);
+    const to = `${path.slice(0, path.lastIndexOf("/"))}/${trimmed}`;
+    Object.assign(listed, { name: trimmed, path: to });
+    const others = (this.data.otherWorkspaces ??= {});
+    const other = others[path];
+    if (other) {
+      delete others[path];
+      others[to] = {
+        ...other,
+        workspace: { ...other.workspace, name: trimmed, title: trimmed, path: to },
+      };
+    }
+    this.commit();
+    this.workspacesChanged();
+    this.hub?.send(this.hub.siblings(this.data), { type: "workspaces" });
+    return to;
+  }
+
+  async workspaceMemoCount(path: string) {
+    this.workspaceToManage(path);
+    const memos =
+      path === this.data.workspace.path
+        ? this.data.memos
+        : this.data.otherWorkspaces?.[path]?.memos;
+    return Object.keys(memos ?? {}).length;
+  }
+
+  /** As `AppCore::trash_workspace`: it leaves the list, its memos with it. */
+  async trashWorkspace(path: string) {
+    const listed = this.workspaceToManage(path);
+    this.data.workspaces = this.data.workspaces.filter((w) => w !== listed);
+    delete this.data.otherWorkspaces?.[path];
+    (this.data.trashedWorkspaces ??= []).push(path);
+    this.commit();
+    this.workspacesChanged();
+    this.hub?.send(this.hub.siblings(this.data), { type: "workspaces" });
+  }
+
+  /** The listed workspace at `path`, refused while a window shows it. */
+  private workspaceToManage(path: string): FakeWorkspace {
+    const listed = this.data.workspaces.find((w) => w.path === path && !w.missing);
+    if (!listed) throw new BackendError("not-a-workspace", `${path} is not a tote workspace`);
+    if (listed.open || listed.windows > 0 || path === this.data.workspace.path)
+      throw new BackendError("workspace-open", `a window shows ${path}`);
+    return listed;
   }
 
   /** The native side's switch (`windows::switch`, `lifecycle::switch_window`): a workspace a window
@@ -1967,6 +2128,9 @@ export class FakeBackend implements Backend {
   }
   onTrashRequest(handler: (id: string) => void) {
     this.handlers.trashRequest.push(handler);
+  }
+  onMoveRequest(handler: (id: string, workspace: string) => void) {
+    this.handlers.moveRequest.push(handler);
   }
   onReveal(handler: (tab: TabRef) => void) {
     this.handlers.reveal.push(handler);

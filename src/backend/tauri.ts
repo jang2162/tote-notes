@@ -14,8 +14,10 @@ import {
   type ExtensionSummary,
   type ExternalInfo,
   type FileSource,
+  type FileTarget,
   type FlushGoal,
   type MemoInfo,
+  type MoveOutcome,
   type OutsideChange,
   type PendingOpen,
   type PopupMenuItem,
@@ -163,6 +165,20 @@ export class TauriBackend implements Backend {
   importFile(path: string) {
     return call<MemoInfo>("import_file", { path });
   }
+  duplicateMemo(id: string, bytes?: Uint8Array) {
+    const headers: Record<string, string> = { "x-memo-id": enc(id) };
+    if (!bytes) return call<MemoInfo>("duplicate_memo", new Uint8Array(), headers);
+    return call<MemoInfo>("duplicate_memo", bytes, { ...headers, "x-with-text": "1" });
+  }
+  moveMemoTo(id: string, workspace: string) {
+    return call<MoveOutcome>("move_memo_to", { id, workspace });
+  }
+  revealInFinder(target: FileTarget) {
+    return call<void>("reveal_in_finder", { target });
+  }
+  copyFilePath(target: FileTarget) {
+    return call<string>("copy_file_path", { target });
+  }
 
   readWindowLayout() {
     return call<string | null>("read_window_layout");
@@ -178,6 +194,9 @@ export class TauriBackend implements Backend {
   }
   releaseTab(tab: TabRef) {
     return call<void>("release_tab", { tab });
+  }
+  listOpenExternals() {
+    return call<string[]>("list_open_externals");
   }
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }) {
     return call<"moved" | "window">("tear_off_tab", { tab, tabRef: ref, at: at ?? null });
@@ -225,6 +244,15 @@ export class TauriBackend implements Backend {
   }
   switchWorkspace(path: string) {
     return call<"focused" | "switching">("switch_workspace", { path });
+  }
+  renameWorkspace(path: string, name: string) {
+    return call<string>("rename_workspace", { path, name });
+  }
+  workspaceMemoCount(path: string) {
+    return call<number>("workspace_memo_count", { path });
+  }
+  trashWorkspace(path: string) {
+    return call<void>("trash_workspace", { path });
   }
 
   listVersions(id: string) {
@@ -420,6 +448,11 @@ export class TauriBackend implements Backend {
   onTrashRequest(handler: (id: string) => void) {
     void this.window.listen<{ id: string }>("tote://trash-memo", (event) =>
       handler(event.payload.id),
+    );
+  }
+  onMoveRequest(handler: (id: string, workspace: string) => void) {
+    void this.window.listen<{ id: string; workspace: string }>("tote://move-memo", (event) =>
+      handler(event.payload.id, event.payload.workspace),
     );
   }
   onReveal(handler: (tab: TabRef) => void) {

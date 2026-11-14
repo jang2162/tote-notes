@@ -70,6 +70,18 @@ describe("TauriBackend", () => {
       [() => backend.purgeTrashed("m"), "purge_trashed", { id: "m" }],
       [() => backend.emptyTrash(), "empty_trash", undefined],
       [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],
+      [() => backend.moveMemoTo("m", "/w/업무"), "move_memo_to", { id: "m", workspace: "/w/업무" }],
+      [
+        () => backend.revealInFinder({ kind: "memo", id: "m" }),
+        "reveal_in_finder",
+        // Rust's `FileTarget` reads this shape (`file_targets_read_as_the_page_sends_them`).
+        { target: { kind: "memo", id: "m" } },
+      ],
+      [
+        () => backend.copyFilePath({ kind: "trashed", id: "m" }),
+        "copy_file_path",
+        { target: { kind: "trashed", id: "m" } },
+      ],
       [() => backend.readWindowLayout(), "read_window_layout", undefined],
       [() => backend.writeWindowLayout("{}"), "write_window_layout", { json: "{}" }],
       [() => backend.takePendingOpens(), "take_pending_opens", undefined],
@@ -83,6 +95,7 @@ describe("TauriBackend", () => {
         "release_tab",
         { tab: { kind: "external", path: "/a.sh" } },
       ],
+      [() => backend.listOpenExternals(), "list_open_externals", undefined],
       [
         () => backend.tearOffTab("{}", { kind: "memo", id: "m" }),
         "tear_off_tab",
@@ -104,6 +117,13 @@ describe("TauriBackend", () => {
         // Rust's `PopupMenuItem` reads this shape (`a_separator_item_reads_without_id_or_text`).
         { items: [{ id: "", text: "", separator: true }] },
       ],
+      [
+        () => backend.showPopupMenu([{ id: "", text: "옮기기", items: [{ id: "a", text: "가" }] }]),
+        "show_popup_menu",
+        // Rust's `PopupMenuItem` reads this shape
+        // (`a_popup_item_with_items_is_a_submenu_whose_items_answer_with_their_ids`).
+        { items: [{ id: "", text: "옮기기", items: [{ id: "a", text: "가" }] }] },
+      ],
       [() => backend.openExternal("/a.sh"), "open_external", { path: "/a.sh" }],
       [() => backend.readExternal("/a.sh"), "read_external", { path: "/a.sh" }],
       [() => backend.readExternalDraft("/a.sh"), "read_external_draft", { path: "/a.sh" }],
@@ -117,6 +137,13 @@ describe("TauriBackend", () => {
       ],
       [() => backend.createWorkspace("업무"), "create_workspace", { name: "업무" }],
       [() => backend.switchWorkspace("/w/업무"), "switch_workspace", { path: "/w/업무" }],
+      [
+        () => backend.renameWorkspace("/w/업무", "회사"),
+        "rename_workspace",
+        { path: "/w/업무", name: "회사" },
+      ],
+      [() => backend.workspaceMemoCount("/w/업무"), "workspace_memo_count", { path: "/w/업무" }],
+      [() => backend.trashWorkspace("/w/업무"), "trash_workspace", { path: "/w/업무" }],
       [
         () => backend.flushDone(3, "저장하지 못한 메모 1개"),
         "flush_done",
@@ -231,6 +258,14 @@ describe("TauriBackend", () => {
     await backend.importMemo("회의.md", bytes);
     expect(invoke).toHaveBeenLastCalledWith("import_memo", bytes, {
       headers: { "x-file-name": "%ED%9A%8C%EC%9D%98.md" },
+    });
+    await backend.duplicateMemo("id 1", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("duplicate_memo", bytes, {
+      headers: { "x-memo-id": "id%201", "x-with-text": "1" },
+    });
+    await backend.duplicateMemo("id 1");
+    expect(invoke).toHaveBeenLastCalledWith("duplicate_memo", new Uint8Array(), {
+      headers: { "x-memo-id": "id%201" },
     });
     await backend.keepExternalDraft("/a b/c.sh", bytes);
     expect(invoke).toHaveBeenLastCalledWith("keep_external_draft", bytes, {
@@ -376,5 +411,19 @@ describe("TauriBackend trash events", () => {
     listen.mock.calls[0][1]({ payload: null });
     listen.mock.calls[1][1]({ payload: { id: "m" } });
     expect(heard).toEqual(["trash", "request m"]);
+  });
+});
+
+// The event src-tauri/src/app/conveniences.rs sends to the window holding a memo another window
+// moves (`move_memo_to`).
+describe("TauriBackend move events", () => {
+  it("hears the request to move a memo, with its id and the workspace", () => {
+    const backend = new TauriBackend();
+    const heard: string[] = [];
+    listen.mockClear();
+    backend.onMoveRequest((id, workspace) => heard.push(`${id} → ${workspace}`));
+    expect(listen.mock.calls.map(([event]) => event)).toEqual(["tote://move-memo"]);
+    listen.mock.calls[0][1]({ payload: { id: "m", workspace: "/w/업무" } });
+    expect(heard).toEqual(["m → /w/업무"]);
   });
 });

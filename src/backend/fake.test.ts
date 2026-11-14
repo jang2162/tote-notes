@@ -574,3 +574,16 @@ describe("FakeBackend trash", () => {
     expect((await reader.settings()).trash).toEqual({ retentionDays: 60 });
   });
 });
+
+describe("FakeBackend listOpenExternals", () => {
+  it("lists the external files every window holds, by path, as Places::externals", async () => {
+    const data = defaultFakeData();
+    data.places = {
+      "external:/x/b.sh": "ws-2",
+      "memo:m": FAKE_LABEL,
+      "external:/x/a.sh": FAKE_LABEL,
+    };
+    const backend = new FakeBackend(memoryStorage(JSON.stringify(data)));
+    expect(await backend.listOpenExternals()).toEqual(["/x/a.sh", "/x/b.sh"]);
+  });
+});

@@ -130,7 +130,7 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
   - 검사·시험 단계는 앞의 검사·시험이 떨어져도 끝까지 돈다. 그래서 한 실행에서 떨어진 단계가 전부 보이고, 하나라도 떨어지면 실행은 실패다. 준비 단계(`pnpm install`·Rust 툴체인·WebKit 설치)가 떨어지면 그것에 기대는 단계만 건너뛴다.
   - 단계를 더할 때는 이웃 단계와 같은 `if: ${{ !cancelled() && steps.<준비 단계>.outcome == 'success' }}` 를 단다. `if:` 가 없는 단계는 앞의 아무 단계가 떨어져도 건너뛰어져, 그 실행에서 결과가 경고 없이 빠진다. 준비 단계를 더하면 `id` 를 주고 그것에 기대는 단계의 조건이 그 `id` 를 보게 한다.
   - 같은 ref 에 새 커밋이 오면 앞선 실행은 취소된다. 취소된 실행은 실패가 아니다.
-  - e2e 가 떨어지면 `test-results/` 가 그 실행의 산출물(`e2e-test-results`)로 올라간다. 러너에서만 떨어지는 e2e 는 「부하에서만 실패하는 테스트는 시간 대신 완료 신호를 기다리게 고친다」 절의 순서로 본다.
+  - e2e 가 떨어지면 `test-results/` 가 그 실행의 산출물(`e2e-test-results`)로 올라간다. 러너에서만 떨어지는 e2e 는 「부하에서만 실패하는 테스트는 시간 대신 완료 신호를 기다리게 고친다」 절의 순서로 본다. 키로 포커스를 옮기는 시험이 러너에서만 `toBeFocused` 로 떨어지면 먼저 「e2e 가 키로 버튼에 닿게 할 때는 Tab 이 아니라 ⌥Tab 을 누른다」 절을 본다 — 러너는 macOS 「키보드 탐색」 이 꺼져 있다.
   - `src-tauri/tests` 의 시험 셋(`menu_key_equivalents`·`menu_keypad`·`traffic_lights_resize`)은 실제 AppKit 메뉴 막대와 창을 만든다. `macos-latest` 러너의 세션은 그것을 허락한다. 시험 하네스가 없어 `test result` 줄을 내지 않으므로, 통과는 로그의 `Running tests/<이름>.rs` 다음 줄 `<이름>: ok`(모든 단언 뒤에 찍는다)로 본다. 러너 이미지가 바뀐 뒤 이 셋만 떨어지면 코드보다 러너의 세션(창을 만들 수 있는가)을 먼저 본다.
   - CI 는 비밀을 쓰지 않고 저장소를 읽기만 한다. 서명·공증·릴리스는 `release-macos.yml` 이 한다(`docs/guides/release-macos.md`).
 
@@ -197,3 +197,15 @@ pre-push 는 rustfmt, `cargo clippy --all-targets`, `tsc`, vitest 전체를 돈�
 
 - **Why:** accelerator 는 네이티브 메뉴(muda)가 받는다. Playwright 의 키 입력은 웹뷰 안으로만 들어가므로 메뉴를 지나지 않는다.
 - **How to apply:** 단축키 연결은 Rust 시험(`menu.rs`·`shortcuts.rs`)과 화면 확인(`docs/superpowers/reports/2026-10-20-tote-notes-settings-and-shortcuts-smoke.md`)으로 본다. e2e 가 통과했다는 것을 메뉴 단축키가 동작한다는 증거로 쓰지 않는다.
+
+## e2e 가 키로 버튼에 닿게 할 때는 Tab 이 아니라 ⌥Tab 을 누른다
+
+Tab 이 버튼에 멈추는지는 macOS 의 「키보드 탐색」 설정(시스템 설정 › 키보드, 전역 기본값 `AppleKeyboardUIMode`)이 정한다. 꺼져 있으면(macOS 기본값) WebKit 의 Tab 은 `tabindex` 없는 버튼·체크박스·링크(링크는 켜져 있어도 건너뛴다)를 건너뛰고 입력칸·`<select>`·`tabindex` 를 준 요소에만 멈춘다. ⌥Tab 은 설정이 켜져 있든 꺼져 있든 버튼에 멈춘다. Playwright 의 WebKit 도 이 설정을 그대로 따른다.
+
+- **Why:** 개발 기기는 이 설정을 켠 경우가 많고 CI 러너(`macos-latest`)는 꺼져 있다. Tab 으로 버튼에 닿는 시험은 켠 기기에서만 통과하고 러너에서는 `toBeFocused` 가 `inactive` 로 떨어진다 — 앱이 아니라 기기 설정에 따라 결과가 갈린다.
+- **How to apply:**
+  - 버튼에 키로 닿는 것을 보는 시험은 `Alt+Tab` 을 누른다(`tests/e2e/sidebar-footer.spec.ts` 「the settings button is reached with ⌥Tab …」). ⌥Tab 은 설정과 상관없이 링크에도 멈춘다(링크는 이 설정이 아니라 WebKit 의 「링크로 Tab」 환경설정이 정하고 ⌥ 가 그것을 뒤집는다) — 멈추는 자리를 순서대로 세는 시험이면 링크까지 센다.
+  - 입력칸에서 Tab 으로 포커스를 빼는 시험(입력칸의 `change` 를 내는 것 등)과 대화상자 안의 Tab 시험(`tests/e2e/dialogs.spec.ts`·`modal-focus.spec.ts`)은 설정과 상관없이 같은 것을 본다 — 앞의 것은 포커스가 어디로 가든 입력칸을 떠나고, 뒤의 것은 「어느 컨트롤에 멈추든 대화상자 안에 남는가」 를 본다.
+  - 러너에서 이 설정을 켜지 않는다(`defaults write` 단계를 두지 않는다). 대화상자의 Tab 은 두 조건에서 다른 길로 간다 — 꺼져 있으면 입력칸에서 버튼을 건너뛰어 곧장 페이지 밖으로 나갔다가 대화상자로 돌아오고(`src/ui/dialogs.ts` 의 `onKey`), 켜져 있으면 버튼들을 거친 뒤에 나갔다 돌아온다. 꺼진 러너가 macOS 기본값인 사람의 길을, 켠 개발 기기가 다른 길을 본다.
+  - 자기 기기의 설정은 `defaults read -g AppleKeyboardUIMode` 로 본다(값의 2 비트가 켜져 있으면 켜짐, 키가 없으면 꺼짐). 시험을 위해 사람 기기의 설정을 바꾸지 않는다. 꺼진 조건으로 돌려 보려면 Playwright 의 WebKit 실행 파일(`pnpm exec playwright` 가 받은 `webkit-<번호>/pw_run.sh`)을 `"$@" -AppleKeyboardUIMode 0` 으로 부르는 셸 스크립트를 스크래치에 만들고, 그 경로를 `launchOptions.executablePath` 로 준 임시 설정 파일로 `pnpm exec playwright test -c <임시 설정>` 을 돈다. 인자 도메인이라 그 프로세스에만 먹는다. 임시 설정은 저장소의 `playwright.config.ts` 를 import 해 펼치고, 저장소 밖(스크래치)에 둔다면 `webServer.cwd` 와 `testDir` 를 저장소 경로로 준다 — 안 주면 `webServer` 가 설정 파일의 폴더에서 떠 `Process from config.webServer was not able to start` 로 시험이 하나도 돌지 않는다.
+  - 화면 확인(실기기 WKWebView)에서 Tab 으로 버튼에 닿는 행은 이 설정을 켰는지 껐는지를 절차에 적는다. 꺼진 사람은 ⌥Tab 으로 닿는 것이 macOS 의 관례이고 앱의 결함이 아니다.

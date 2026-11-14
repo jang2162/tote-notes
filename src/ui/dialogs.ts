@@ -150,7 +150,7 @@ export function namingText<T extends { textContent: string | null }>(dialog: {
 /** A key that belongs to an IME composition. WebKit sends the Enter that finishes a Korean syllable
  * (and the Escape that cancels one) after `compositionend`, with `isComposing` already false but
  * `keyCode` 229. Taking it as a submit would submit the name without its last syllable. */
-function isCompositionKey(event: KeyboardEvent): boolean {
+export function isCompositionKey(event: KeyboardEvent): boolean {
   return event.isComposing || event.keyCode === 229;
 }
 

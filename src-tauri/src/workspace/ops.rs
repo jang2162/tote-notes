@@ -351,7 +351,7 @@ impl Workspace {
     /// `add_memo` for bytes that are read as they are written. What counts as tote's own write
     /// is hashed from the new file once it is there, as for a memo back from the trash
     /// (`came_in`): a copy the editor would not open is not read again at all.
-    fn add_copy(
+    pub(super) fn add_copy(
         &mut self,
         file: String,
         auto_title: bool,
@@ -374,7 +374,7 @@ impl Workspace {
         self.memo_info(&id)
     }
 
-    fn add_memo(
+    pub(super) fn add_memo(
         &mut self,
         file: String,
         auto_title: bool,
@@ -532,7 +532,7 @@ fn is_blank(path: &Path) -> io::Result<bool> {
 /// no listing takes it for a memo and the next open of the workspace removes one left behind),
 /// renamed in once it is whole and on disk. A copy cut short leaves nothing. The new file has a
 /// new file's permissions, not the source's: a locked original imports as a memo that saves.
-fn copy_in(source: &mut impl Read, to: &Path) -> io::Result<()> {
+pub(super) fn copy_in(source: &mut impl Read, to: &Path) -> io::Result<()> {
     let temp = to.with_file_name(format!(".tote-tmp-{}", uuid::Uuid::new_v4().simple()));
     let copied = File::create_new(&temp)
         .and_then(|mut file| {
