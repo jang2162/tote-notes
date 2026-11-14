@@ -1,3 +1,4 @@
+import { isolateHistory } from "@codemirror/commands";
 import { EditorView } from "@codemirror/view";
 
 import { errorCode, type Backend, type FileSource, type ViewerInfo } from "../backend/types";
@@ -9,9 +10,11 @@ import { h } from "../ui/dom";
 import type { StatusBar } from "../ui/status-bar";
 import { TabBar, type TabDrag } from "../ui/tab-bar";
 import { dragsWindow } from "../ui/window-drag";
-import { ViewerHost } from "../viewer/host";
+import { colorCode, type CodeHighlighter } from "../viewer/code-colors";
+import { ViewerHost, type PreviewRequests } from "../viewer/host";
+import { classifyLink } from "../viewer/links";
 import { LargeTextViewer } from "../viewer/large-text";
-import { MemoDoc, type Doc, type ExternalDoc, type Problem } from "./docs";
+import { ExternalDoc, MemoDoc, type Doc, type Problem } from "./docs";
 import { describeError } from "./errors";
 import { Surface } from "./surface";
 import { Tabs } from "./tabs";
@@ -45,6 +48,11 @@ function previewHint(shortcut: string | null | undefined): string {
   return shortcut ? `미리보기 · ${shortcut} 로 편집` : "미리보기";
 }
 const LARGE_TEXT_HINT = "읽기 전용 · 대용량 텍스트 뷰어";
+/** A checkbox pressed in a preview drawn from a text the tab no longer holds (spec 2026-11-14
+ * md-preview 「체크박스」). */
+export const TASK_STALE = "미리보기가 원본과 달라 다시 그렸습니다. 다시 눌러 주세요";
+export const TASK_NOT_FOUND = "이 할 일을 원본에서 찾지 못했습니다";
+export const LINK_REFUSED = "열 수 없는 링크입니다";
 
 /** A panel on show that reads its file through tokens issued to `owner`; closing it revokes them. */
 interface TokenPanel {
@@ -71,6 +79,12 @@ export interface PaneHost {
   showing(pane: Pane, doc: Doc | null): void;
   /** Tells the highlight worker which documents are on screen: every pane's active tab. */
   syncHighlightVisibility(): void;
+  /** The window's highlight worker: a Markdown preview's code blocks are coloured by it. */
+  readonly highlight: CodeHighlighter;
+  /** A preview's relative link `path`, read from folder `dir` (spec 2026-11-14 md-preview
+   * 「링크」): the workspace's memo it names comes on show. What to tell the person when there is
+   * none, or null when it opened. */
+  openLinkedMemo(path: string, dir: string | null): Promise<string | null>;
   /** The tab came on show in a pane: a memo's viewed time is now (spec 2026-10-30 「정렬」). */
   viewed(doc: Doc): void;
   /** The shortcut app command `id` has now, as written (`shortcutHint` in src/shortcuts/keys.ts);
@@ -440,6 +454,7 @@ export class Pane {
         console.warn(`viewer ${viewer.id}: ${message}`);
         fallBack();
       },
+      preview: text === undefined ? undefined : this.previewRequests(doc, () => panel),
     });
     const panel: TokenPanel = { doc, owner, host };
     this.panel = panel;
@@ -451,7 +466,7 @@ export class Pane {
       theme: this.host.theme.active.variables,
     };
     if (text !== undefined) {
-      host.start({ ...base, size: text.length, text });
+      host.start({ ...base, size: text.length, text, readOnly: doc.state?.readOnly ?? true });
       return;
     }
     void this.host.backend
@@ -468,6 +483,83 @@ export class Pane {
         this.host.report(error);
         fallBack();
       });
+  }
+
+  /** What a Markdown preview of `doc` may ask (spec 2026-11-14 md-preview). `panel` is the view
+   * asking: a request that comes after it was closed, or that another view replaced, does nothing. */
+  private previewRequests(doc: Doc, panel: () => TokenPanel): PreviewRequests {
+    const onShow = () => this.panel === panel() && this.tabs.active === doc;
+    return {
+      toggleTask: (index, drawn) => void this.toggleTask(doc, index, drawn, onShow),
+      highlight: (blocks, stale) =>
+        colorCode(this.host.highlight, this.host.registry, blocks, stale),
+      openLink: (href) => void this.openLink(doc, href, onShow),
+    };
+  }
+
+  /** Flips the box of the `index`-th task of the text the preview was drawn from, in the tab's
+   * text: an edit of its own, undone with ⌘Z in the editor and saved as any other. Nothing changes
+   * in a tab that takes no edits, nor when the text is not the one drawn any more — the preview is
+   * drawn again from the text as it is. */
+  private async toggleTask(
+    doc: Doc,
+    index: number,
+    drawn: string,
+    onShow: () => boolean,
+  ): Promise<void> {
+    const start = doc.state;
+    if (!onShow() || !start || start.readOnly) return;
+    const status = this.host.statusOf(this);
+    const text = start.doc.toString();
+    const viewer = this.panel?.host as ViewerHost;
+    if (text !== drawn) {
+      viewer.update(text);
+      status?.setMessage(TASK_STALE, "error");
+      return;
+    }
+    // Loaded on the first press: marked stays out of the window's first bundle.
+    const { toggleTask } = await import("../viewer/tasks");
+    if (!onShow() || doc.state !== start) return;
+    const change = toggleTask(text, index, drawn);
+    if (!change) {
+      status?.setMessage(TASK_NOT_FOUND, "error");
+      return;
+    }
+    // Not through the editor, which is hidden: an update from it would show a cursor position over
+    // the preview. The editor takes the state up when it shows the tab again.
+    const { state } = start.update({
+      changes: change,
+      userEvent: "input.toggle",
+      // An undo step of its own: typing before or after must not join it.
+      annotations: isolateHistory.of("full"),
+    });
+    doc.update({ state, startState: start, docChanged: true, selectionSet: false });
+    viewer.update(state.doc.toString());
+  }
+
+  /** A link pressed in the preview (spec 2026-11-14 md-preview 「링크」). */
+  private async openLink(doc: Doc, href: string, onShow: () => boolean): Promise<void> {
+    if (!onShow()) return;
+    const status = this.host.statusOf(this);
+    const target = classifyLink(href);
+    try {
+      switch (target.kind) {
+        case "web":
+          return await this.host.backend.openLink(target.url);
+        case "anchor":
+          return; // the viewer scrolls to it
+        case "refused":
+          return status?.setMessage(`${LINK_REFUSED}: ${href}`, "error");
+        case "file": {
+          const dir = doc instanceof ExternalDoc ? parentOf(doc.path) : null;
+          const problem = await this.host.openLinkedMemo(target.path, dir);
+          if (problem) status?.setMessage(problem, "error");
+          return;
+        }
+      }
+    } catch (error) {
+      this.host.report(error);
+    }
   }
 
   /** The read-only large text viewer (spec 「크기별 단계」). Its token lives as long as the view. */
@@ -519,4 +611,9 @@ export class Pane {
   private revoke(owner: string): void {
     void this.host.backend.revokeFileTokens(owner).catch((error: unknown) => console.warn(error));
   }
+}
+
+/** The folder holding the file at `path`. */
+function parentOf(path: string): string {
+  return path.slice(0, path.lastIndexOf("/")) || "/";
 }

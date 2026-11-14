@@ -96,6 +96,7 @@ import {
   type SwitcherItem,
 } from "../ui/workspace-switcher";
 import type { LargeTextViewer } from "../viewer/large-text";
+import { LINK_OUTSIDE, linkMissing, memoOfLink } from "../viewer/links";
 import {
   asksAboutFile,
   CHOOSE_VERSION_FIRST,
@@ -1129,6 +1130,17 @@ export class AppController implements DocHost, PaneHost {
 
   memoInfo(id: string): MemoInfo | undefined {
     return this.memoList.get(id);
+  }
+
+  /** A preview's link to a memo (spec 2026-11-14 md-preview 「링크」): `dir` is the folder of the
+   * linking file, null for a memo — the workspace's own. */
+  async openLinkedMemo(path: string, dir: string | null): Promise<string | null> {
+    const found = memoOfLink(path, dir ?? this.workspacePath, this.workspacePath);
+    if (found.kind === "outside") return LINK_OUTSIDE;
+    const memo = this.memoList.byFile(found.name);
+    if (!memo) return linkMissing(found.name);
+    await this.openMemo(memo.id);
+    return null;
   }
 
   /** `line` (a search result) is the line a large text viewer opens at: set on the pane the tab

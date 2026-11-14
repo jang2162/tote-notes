@@ -3,6 +3,7 @@ import { basename, splitName } from "../core/names";
 import { parseSessionFile, type SessionTab } from "../core/session";
 import { parseSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
 import { scanBytes } from "../viewer/large-text";
+import { isOpenableLink } from "../viewer/links";
 import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
@@ -197,6 +198,9 @@ export interface FakeData {
   backups?: Record<string, { snapshot: string; file: string; text: string }[]>;
   /** `revealBackups` calls. Absent in old seeds. */
   revealed?: number;
+  /** Every URL `openLink` was called with, taken ones and refused ones alike, in order. Absent in
+   * old seeds. */
+  openedLinks?: string[];
   /** External path → how many `watchExternal` calls are not yet undone. Absent in old seeds. */
   watched?: Record<string, number>;
   /** The place registry: `memo:<id>` or `external:<path>` → the label of the window holding the
@@ -1563,6 +1567,12 @@ export class FakeBackend implements Backend {
   async revealBackups() {
     this.data.revealed = (this.data.revealed ?? 0) + 1;
     this.commit();
+  }
+
+  async openLink(url: string) {
+    (this.data.openedLinks ??= []).push(url);
+    this.commit();
+    if (!isOpenableLink(url)) throw new BackendError("bad-request", `열 수 없는 링크: ${url}`);
   }
 
   async windowFrame(): Promise<WindowFrame | null> {
