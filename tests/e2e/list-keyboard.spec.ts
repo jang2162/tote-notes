@@ -184,6 +184,33 @@ test("⇧F10 and the menu key open the row's context menu, as a right click does
   await expect(memoList(page)).toBeFocused();
 });
 
+/** Where the last pop-up menu was asked to show: a point in the window, or null for the pointer. */
+const lastMenuAt = (page: Page) =>
+  page.evaluate(() => window.__tote.backend.data.popupMenuAts?.at(-1));
+
+/** The point a menu opened from the keys shows at: the row's bottom left corner. */
+async function underRow(row: ReturnType<typeof option>): Promise<{ x: number; y: number }> {
+  const box = await row.boundingBox();
+  if (!box) throw new Error("the row is not drawn");
+  return { x: box.x, y: box.y + box.height };
+}
+
+test("a menu opened from the keys shows under the current row, one from a click at the pointer", async ({
+  page,
+}) => {
+  await start(page, { ...three(), popupMenuPick: null });
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  expect(await current(page)).toBe("나.md");
+  await page.keyboard.press("Shift+F10");
+  await expect.poll(() => lastMenuAt(page)).toEqual(await underRow(option(page, "나.md")));
+
+  await option(page, "다.md").click({ button: "right" });
+  await expect.poll(async () => (await data(page)).popupMenus?.length).toBe(2);
+  expect(await lastMenuAt(page)).toBeNull();
+});
+
 test("a memo open in a tab trashed from ⇧F10 leaves the keys on the list", async ({ page }) => {
   await start(page, { ...three(), popupMenuPick: "trash" });
   await option(page, "나.md").click();
@@ -418,6 +445,9 @@ test("the trash list: the keys move, Enter opens read-only with the keys kept", 
   await expect(trashList(page)).toBeFocused();
   await page.keyboard.press("Shift+F10");
   await expect.poll(() => lastMenu(page)).toEqual(["복구", "Finder 에서 보기", "", "영구 삭제"]);
+  await expect
+    .poll(() => lastMenuAt(page))
+    .toEqual(await underRow(page.getByRole("option", { name: "다른.md", exact: true })));
 });
 
 test("⌘⌫ in the trash list asks before it removes for good, and the keys come back to the list", async ({

@@ -15,7 +15,7 @@ use tauri::menu::{
     CheckMenuItem, CheckMenuItemBuilder, IsMenuItem, Menu, MenuBuilder, MenuEvent, MenuId,
     MenuItem, MenuItemBuilder, PredefinedMenuItem, Submenu, SubmenuBuilder,
 };
-use tauri::{AppHandle, Emitter, EventTarget, Manager, WebviewWindow, Wry};
+use tauri::{AppHandle, Emitter, EventTarget, LogicalPosition, Manager, WebviewWindow, Wry};
 use tauri_plugin_dialog::DialogExt;
 
 use super::flush::FlushGoal;
@@ -747,6 +747,20 @@ pub struct PopupMenuItem {
     pub items: Option<Vec<PopupMenuItem>>,
 }
 
+/// A point in the window, in logical pixels from its top left corner (the page's CSS pixels: the
+/// page fills the window, title bar too): where a pop-up menu opened from the keys shows.
+#[derive(Debug, Clone, Copy, PartialEq, Deserialize)]
+pub struct MenuPoint {
+    pub x: f64,
+    pub y: f64,
+}
+
+impl MenuPoint {
+    fn position(self) -> LogicalPosition<f64> {
+        LogicalPosition::new(self.x, self.y)
+    }
+}
+
 /// The item picked in the pop-up menu on show. One at a time: macOS shows one context menu at once.
 #[derive(Default)]
 pub struct PopupMenu {
@@ -768,20 +782,25 @@ impl PopupMenu {
     }
 }
 
-/// Shows `items` as a context menu at the pointer in `window` and returns the id of the one
-/// picked, `None` when the menu closed without a pick. Blocks until the menu closes: call it off
-/// the main thread.
+/// Shows `items` as a context menu in `window`, at `at` or else at the pointer, and returns the id
+/// of the one picked, `None` when the menu closed without a pick. Blocks until the menu closes:
+/// call it off the main thread.
 pub fn show_popup_menu(
     app: &AppHandle,
     window: &WebviewWindow,
     items: &[PopupMenuItem],
+    at: Option<MenuPoint>,
 ) -> tauri::Result<Option<String>> {
     let picks = app.state::<PopupMenu>();
     picks.begin();
     let built = popup_items(app, items)?;
     let refs: Vec<&dyn IsMenuItem<Wry>> = built.iter().map(Box::as_ref).collect();
+    let menu = Menu::with_items(app, &refs)?;
     // Returns once the menu has closed.
-    window.popup_menu(&Menu::with_items(app, &refs)?)?;
+    match at {
+        Some(at) => window.popup_menu_at(&menu, at.position())?,
+        None => window.popup_menu(&menu)?,
+    }
     // The pick's event was queued on the event loop while the menu was open, ahead of this task:
     // once the task has run, `on_event` has recorded it.
     let (done, ran) = mpsc::channel();
@@ -903,6 +922,12 @@ mod tests {
         ] {
             assert!(app_command(id).is_none(), "{id}");
         }
+    }
+
+    #[test]
+    fn a_menu_point_reads_as_a_logical_position() {
+        let at: MenuPoint = serde_json::from_str(r#"{"x":12,"y":40.5}"#).unwrap();
+        assert_eq!(at.position(), LogicalPosition::new(12.0, 40.5));
     }
 
     #[test]

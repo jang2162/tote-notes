@@ -1,15 +1,17 @@
-import type { TrashedInfo } from "../backend/types";
+import type { MenuPoint, TrashedInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import { modalOpen } from "./dialogs";
 import { h } from "./dom";
 import { ListSelection, listKey } from "./list-selection";
+import { belowRow } from "./memo-list";
 
 /** What the trash list asks of the window. */
 export interface TrashListHost {
   /** A row was pressed, or Enter: the trashed memo, read-only. */
   open(id: string): Promise<void>;
-  /** The context menu of the rows picked (right click, ⌃click, ⇧F10): 복구, 영구 삭제. */
-  menu(ids: string[]): Promise<void>;
+  /** The context menu of the rows picked (right click, ⌃click, ⇧F10): 복구, 영구 삭제. At `at`
+   * from the keys, at the pointer without it. */
+  menu(ids: string[], at?: MenuPoint): Promise<void>;
   /** ⌘⌫: the rows picked removed for good, once the person said so. */
   purge(ids: string[]): Promise<void>;
   /** The keys to the focused pane's tab. */
@@ -172,7 +174,7 @@ export class TrashList {
     const ids = this.picks.menuFor(this.picks.cursor);
     this.paint();
     if (ids.length === 0) return;
-    await this.host.menu(ids);
+    await this.host.menu(ids, belowRow(this.box, optionId(this.picks.cursor ?? "")));
     if (!modalOpen()) this.box.focus({ preventScroll: true });
   }
 

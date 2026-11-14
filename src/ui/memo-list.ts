@@ -1,4 +1,4 @@
-import type { ContentHit, MemoInfo, MemoSort } from "../backend/types";
+import type { ContentHit, MemoInfo, MemoSort, MenuPoint } from "../backend/types";
 import { splitName } from "../core/names";
 import { modalOpen } from "./dialogs";
 import { h, placeChildren } from "./dom";
@@ -24,12 +24,20 @@ export function visibleRows(
   return [start, end];
 }
 
+/** Where a menu opened from the keys shows: under the left end of the row whose option has `id`,
+ * else under the list's top (list keyboard spec 「문맥 메뉴」). In window CSS pixels. */
+export function belowRow(list: HTMLElement, id: string): MenuPoint {
+  const row = list.querySelector(`[id="${id}"]`)?.getBoundingClientRect();
+  const box = list.getBoundingClientRect();
+  return row ? { x: row.left, y: row.bottom } : { x: box.left, y: box.top };
+}
+
 /** What the memo list asks of the window. */
 export interface MemoListHost {
   open(id: string): Promise<void>;
   /** The context menu of the rows picked (right click, ⌃click, ⇧F10): what it picks applies to
-   * every one of them. */
-  menu(ids: string[]): Promise<void>;
+   * every one of them. At `at` from the keys, at the pointer without it. */
+  menu(ids: string[], at?: MenuPoint): Promise<void>;
   /** ⌘⌫: the memos to the trash, without asking. */
   trash(ids: string[]): Promise<void>;
   /** The keys to the focused pane's tab. */
@@ -442,7 +450,7 @@ export class MemoList {
     const ids = this.picks.menuFor(this.picks.cursor);
     this.render();
     if (ids.length === 0) return;
-    await this.host.menu(ids);
+    await this.host.menu(ids, belowRow(this.box, optionId(this.picks.cursor ?? "")));
     this.keepKeys();
   }
 

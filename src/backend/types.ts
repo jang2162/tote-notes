@@ -86,6 +86,12 @@ export interface PopupMenuItem {
   items?: PopupMenuItem[];
 }
 
+/** A point in the window, in CSS pixels from its top left corner. */
+export interface MenuPoint {
+  x: number;
+  y: number;
+}
+
 /** The line between a pop-up menu's items. */
 export const MENU_SEPARATOR: PopupMenuItem = { id: "", text: "", separator: true };
 
@@ -656,9 +662,10 @@ export interface Backend {
    * window opens with its top-left corner there. A new window's tab has its place and its line in
    * the session before the window is made; when it cannot be made the tab stays here. */
   tearOffTab(tab: string, ref: TabRef, at?: { x: number; y: number }): Promise<"moved" | "window">;
-  /** A native pop-up menu at the pointer (a tab's, a memo row's, the sort's): the `id` of the item
-   * picked, `null` when it closed without a pick. */
-  showPopupMenu(items: PopupMenuItem[]): Promise<string | null>;
+  /** A native pop-up menu (a tab's, a memo row's, the sort's) at `at`, or at the pointer without
+   * it: the `id` of the item picked, `null` when it closed without a pick. A menu opened from the
+   * keys gives `at`, as the pointer can be anywhere. */
+  showPopupMenu(items: PopupMenuItem[], at?: MenuPoint): Promise<string | null>;
 
   openExternal(path: string): Promise<ExternalInfo>;
   readExternal(path: string): Promise<Uint8Array>;
