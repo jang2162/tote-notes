@@ -110,6 +110,8 @@ pub fn run() {
             commands::empty_trash,
             commands::import_memo,
             commands::import_file,
+            app::images::save_image,
+            app::images::import_image,
             commands::read_window_layout,
             commands::write_window_layout,
             commands::claim_tabs,
