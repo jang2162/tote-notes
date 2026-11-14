@@ -1,5 +1,6 @@
-import { foldable, foldedRanges, foldEffect } from "@codemirror/language";
-import { EditorState } from "@codemirror/state";
+import { foldable, foldAll, foldCode, foldedRanges } from "@codemirror/language";
+import { EditorState, type TransactionSpec } from "@codemirror/state";
+import type { Command, EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import { HIGHLIGHT_LIMIT_CHARS } from "../highlight/extension";
@@ -85,16 +86,28 @@ describe("the folding limit", () => {
   });
 
   it("drops a fold in a state that does not fold, whatever asks for it", () => {
-    const fold = (s: EditorState) =>
-      foldedRanges(s.update({ effects: foldEffect.of({ from: 1, to: 5 }) }).state).size;
+    // As the keys run it: `foldCode` adds the folding state field to a state that lacks it.
+    const fold = (s: EditorState, run: Command = foldCode) => {
+      let state = s.update({ selection: { anchor: 0 } }).state;
+      const at = state;
+      run({
+        state: at,
+        // One line a block: nothing wraps or is folded yet.
+        lineBlockAt: (pos: number) => at.doc.lineAt(pos),
+        dispatch: (spec: TransactionSpec) => {
+          state = at.update(spec).state;
+        },
+      } as unknown as EditorView);
+      return foldedRanges(state).size;
+    };
     expect(fold(state("a\n  b"))).toBe(1);
     const off = state("a\n  b", { foldFits: false });
     expect(foldAt(off, 1)).toBeNull();
     expect(fold(off)).toBe(0);
+    expect(fold(off, foldAll)).toBe(0);
     // Markdown's own folds too.
-    const md = state("# A\ntext", { fileName: "a.md", foldFits: false });
-    expect(foldedRanges(md.update({ effects: foldEffect.of({ from: 3, to: 8 }) }).state).size).toBe(
-      0,
-    );
+    const md = (foldFits: boolean) => state("# A\ntext", { fileName: "a.md", foldFits });
+    expect(fold(md(true))).toBe(1);
+    expect(fold(md(false))).toBe(0);
   });
 });
