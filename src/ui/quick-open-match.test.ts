@@ -182,6 +182,84 @@ describe("FileIndex at each keystroke (spec 「성능」)", () => {
     }
   });
 
+  // Searching among the last query's matches is right only when the new query goes on from it;
+  // each keystroke is held to a fresh search of every name, through edits that do not go on.
+  it("answers as a fresh search through random edits: ⌫, a middle changed, a paste, a syllable composed, NFD", () => {
+    const next = random(20261114);
+    const any = <T>(list: readonly T[]): T => list[Math.floor(next() * list.length)];
+    const WORDS = [
+      "회의",
+      "메모",
+      "장보기",
+      "가계부",
+      "각오",
+      "강의",
+      "notes",
+      "Meeting",
+      "todo",
+      "README",
+      "log-2026",
+      "a_b",
+      "plan",
+      "개발",
+      "감",
+      "🙂",
+      "x",
+    ];
+    const memos = Array.from({ length: 300 }, (_, i) => {
+      const words = Array.from({ length: 1 + Math.floor(next() * 3) }, () => any(WORDS));
+      const name = `${words.join(any([" ", "-", ""]))}${i % 7}.${any(["md", "txt", "sh"])}`;
+      // Some as Finder writes them: decomposed.
+      return memo(next() < 0.2 ? name.normalize("NFD") : name, {
+        viewedMs: Math.floor(next() * 50),
+      });
+    });
+    const externals = ["/x/회의.sh", "/y/메모 노트.md", "/z/todo.txt"];
+    const index = new FileIndex(memos, externals);
+    const LETTERS = [..."abcdegilmnoprstx0126 -._", ..."회의메모장가각강개감ㄱㅎㅁ"];
+    // A syllable as a Korean input method shows it while composing: its first consonant, then
+    // the syllable, then with its last consonant.
+    const COMPOSING = [
+      ["ㄱ", "가", "각"],
+      ["ㄱ", "가", "감"],
+      ["ㅎ", "회"],
+      ["ㅁ", "메"],
+      ["ㄱ", "개"],
+    ];
+    let query = "";
+    let changes = 0;
+    const check = () => {
+      changes++;
+      expect(index.rank(query), JSON.stringify(query)).toEqual(rankFiles(memos, externals, query));
+    };
+    for (let step = 0; step < 1500; step++) {
+      const chars = Array.from(query);
+      const at = Math.floor(next() * (chars.length + 1));
+      const kind = next();
+      if (kind < 0.3) query += any(LETTERS);
+      else if (kind < 0.45) query = chars.slice(0, -1).join("");
+      else if (kind < 0.6)
+        query = [...chars.slice(0, at), any(LETTERS), ...chars.slice(at + 1)].join("");
+      else if (kind < 0.7) {
+        const name = Array.from(any(memos).file.normalize("NFC"));
+        const from = Math.floor(next() * name.length);
+        const pasted = name.slice(from, from + 1 + Math.floor(next() * 4)).join("");
+        query = [...chars.slice(0, at), pasted, ...chars.slice(at)].join("");
+      } else if (kind < 0.85) {
+        const typed = query;
+        for (const shown of any(COMPOSING)) {
+          query = typed + shown;
+          check();
+        }
+        continue;
+      } else if (kind < 0.92) query = query.normalize(next() < 0.5 ? "NFD" : "NFC");
+      else if (kind < 0.96) query = "";
+      else query = chars.slice(0, at).join("");
+      check();
+    }
+    expect(changes).toBeGreaterThan(1500);
+  });
+
   it("finds the letters' places only for the rows it gives", () => {
     const index = new FileIndex(many);
     const ranked = index.rank("memo");
@@ -266,3 +344,12 @@ describe("⌘P", () => {
     );
   });
 });
+
+/** A small generator with a fixed seed: the same edits every run. */
+function random(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state * 1664525 + 1013904223) >>> 0;
+    return state / 2 ** 32;
+  };
+}
