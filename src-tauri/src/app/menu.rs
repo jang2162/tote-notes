@@ -761,6 +761,12 @@ impl MenuPoint {
     }
 }
 
+/// `text` as a menu item shows it: muda reads a lone `&` as a mnemonic mark and drops it on every
+/// platform (`strip_mnemonic`), so a workspace named `R&D` showed as `RD`. `&&` shows one `&`.
+fn menu_text(text: &str) -> String {
+    text.replace('&', "&&")
+}
+
 /// The item picked in the pop-up menu on show. One at a time: macOS shows one context menu at once.
 #[derive(Default)]
 pub struct PopupMenu {
@@ -825,17 +831,22 @@ fn popup_items(
         if let Some(children) = &each.items {
             let children = popup_items(app, children)?;
             let refs: Vec<&dyn IsMenuItem<Wry>> = children.iter().map(Box::as_ref).collect();
-            built.push(Box::new(Submenu::with_items(app, &each.text, true, &refs)?));
+            built.push(Box::new(Submenu::with_items(
+                app,
+                menu_text(&each.text),
+                true,
+                &refs,
+            )?));
             continue;
         }
         let id = format!("{POPUP_MENU}{}", each.id);
         match each.checked {
             Some(checked) => built.push(Box::new(
-                CheckMenuItemBuilder::with_id(id, &each.text)
+                CheckMenuItemBuilder::with_id(id, menu_text(&each.text))
                     .checked(checked)
                     .build(app)?,
             )),
-            None => built.push(Box::new(item(app, &id, &each.text, None)?)),
+            None => built.push(Box::new(item(app, &id, &menu_text(&each.text), None)?)),
         }
     }
     Ok(built)
@@ -928,6 +939,30 @@ mod tests {
     fn a_menu_point_reads_as_a_logical_position() {
         let at: MenuPoint = serde_json::from_str(r#"{"x":12,"y":40.5}"#).unwrap();
         assert_eq!(at.position(), LogicalPosition::new(12.0, 40.5));
+    }
+
+    /// muda's `strip_mnemonic` (0.20, `platform_impl/macos/util.rs`), which is not public: a lone
+    /// `&` is dropped, `&&` is one `&`.
+    fn shown(text: &str) -> String {
+        let mut out = String::new();
+        let mut chars = text.chars().peekable();
+        while let Some(c) = chars.next() {
+            if c != '&' {
+                out.push(c);
+            } else if chars.peek() == Some(&'&') {
+                chars.next();
+                out.push('&');
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn an_ampersand_in_a_popup_item_shows_as_written() {
+        assert_eq!(shown("R&D"), "RD");
+        for text in ["R&D", "a&&b", "&", "끝 &", "&&&", "없음"] {
+            assert_eq!(shown(&menu_text(text)), text);
+        }
     }
 
     #[test]
