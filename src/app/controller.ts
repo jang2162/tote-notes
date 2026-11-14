@@ -29,6 +29,7 @@ import {
 } from "../core/session";
 import { settleComposition } from "../editor/compose";
 import { runHistoryMenu } from "../editor/history-menu";
+import { isMarkdown, takeDroppedImages, type ImageHost } from "../editor/image-paste";
 import {
   languageData,
   parseLanguageConfiguration,
@@ -773,7 +774,10 @@ export class AppController implements DocHost, PaneHost {
     this.backend.onFlush((id, goal) => void this.onFlush(id, goal));
     this.backend.onStay(() => this.stay());
     this.backend.onPending(() => void this.drainPending());
-    this.backend.onFileDrop((paths) => void this.openExternals(paths));
+    // A Markdown memo's editor under the drop takes its images first (image paste spec).
+    this.backend.onFileDrop(
+      (paths, at) => void this.openExternals(at ? takeDroppedImages(paths, at) : paths),
+    );
     this.backend.onOutsideChange((change) => void this.onOutside(change));
     this.backend.onMemosChanged(() => this.memosChanged());
     this.backend.onReveal((tab) => void this.reveal(tab));
@@ -1023,8 +1027,46 @@ export class AppController implements DocHost, PaneHost {
       languageData: doc.languageData,
       highlight: this.highlightFor(doc, options.text.length),
       readOnly: doc.kind === "trashed",
+      images: doc instanceof MemoDoc ? this.imageHost(doc) : undefined,
       onUpdate: (update) => this.onUpdate(doc, update),
     });
+  }
+
+  /** What `doc`'s editor takes pasted and dropped images through (src/editor/image-paste.ts). */
+  private imageHost(doc: MemoDoc): ImageHost {
+    return {
+      accepts: () =>
+        isMarkdown(doc.fileName, this.languageOf(doc)?.id) &&
+        doc.mode === "edit" &&
+        !doc.leaving &&
+        !doc.problem &&
+        doc.state !== null &&
+        this.docs.includes(doc) &&
+        this.viewOf(doc).state === doc.state,
+      memoFile: () => doc.info.file,
+      saveImage: (fileName, bytes) => this.backend.saveImage(fileName, bytes),
+      importImage: (path) => this.backend.importImage(path),
+      apply: (make) => {
+        const start = doc.state;
+        if (!start || !this.docs.includes(doc)) return;
+        const spec = make(start);
+        if (!spec) return;
+        const view = this.viewOf(doc);
+        if (view.state === start) return view.dispatch(spec);
+        // Not on show (another tab of the pane, or its preview): the editor takes the state up
+        // when it shows the tab again, as a preview's task toggle does.
+        const tr = start.update(spec);
+        doc.update({
+          state: tr.state,
+          startState: start,
+          docChanged: tr.docChanged,
+          selectionSet: true,
+        });
+      },
+      added: (memo) => this.memoList.upsert(memo),
+      notice: (message) => this.statusBar.setMessage(message, "error"),
+      report: (error) => this.report(error),
+    };
   }
 
   /** The tab's highlighting for its current language: the same extension (and worker document)

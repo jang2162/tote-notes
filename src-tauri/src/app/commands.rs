@@ -53,6 +53,7 @@ impl From<WorkspaceError> for CommandError {
             WorkspaceError::AlreadyExists(_) => "already-exists",
             WorkspaceError::InvalidName(_) => "invalid-name",
             WorkspaceError::UnknownMemo(_) => "unknown-memo",
+            WorkspaceError::ImageTooLarge(_) => "too-large",
             WorkspaceError::Io(io) => io_code(io),
         };
         CommandError::new(code, err.to_string())

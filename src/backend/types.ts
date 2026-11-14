@@ -29,6 +29,14 @@ export interface WorkspaceInfo {
   deviceId: string;
 }
 
+/** A dropped image file as a Markdown memo links it (`workspace::images::ImportedImage`): the
+ * name in the root, and the memo info of the copy when one was made — none for a file directly
+ * in the root, which is linked as it is. */
+export interface ImportedImage {
+  file: string;
+  memo?: MemoInfo;
+}
+
 export interface ExternalInfo {
   path: string;
   exists: boolean;
@@ -577,6 +585,13 @@ export interface Backend {
   emptyTrash(): Promise<number>;
   importMemo(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
   importFile(path: string): Promise<MemoInfo>;
+  /** Pasted image bytes saved in the root as `fileName`, or the next free name (` 2`, …): over
+   * 20MB is `too-large`, a name that is not one plain image name `invalid-name` (image paste spec
+   * 「백엔드 명령」). */
+  saveImage(fileName: string, bytes: Uint8Array): Promise<MemoInfo>;
+  /** A dropped image file copied into the root (the file itself untouched), under the same rules
+   * as `saveImage`; a file directly in the root is not copied. */
+  importImage(path: string): Promise<ImportedImage>;
   /** A copy of the memo beside it, `<name> 2.<ext>`: a new ID, no automatic titles, its language
    * and not its pin. `bytes` is the text of its tab, unsaved edits and all; without it the file is
    * copied. Every window's memo list follows. */
@@ -767,7 +782,9 @@ export interface Backend {
    * be opened, another window shows it): the window stays as it was. */
   onStay(handler: () => void): void;
   onPending(handler: () => void): void;
-  onFileDrop(handler: (paths: string[]) => void): void;
+  /** Files dropped on the window from outside, with where they were let go in the page's CSS
+   * pixels (absent when the drop says nowhere). */
+  onFileDrop(handler: (paths: string[], at?: { x: number; y: number }) => void): void;
   /** Another app changed this window's workspace or one of its watched external files. */
   onOutsideChange(handler: (change: OutsideChange) => void): void;
   /** Another window changed the memo list of this window's workspace. */

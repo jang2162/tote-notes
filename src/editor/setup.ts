@@ -30,6 +30,7 @@ import { splitName } from "../core/names";
 import { altMouseSelection } from "./alt-mouse";
 import { folding, foldFits } from "./folding";
 import { historyStaysWithTheKeys } from "./history-menu";
+import { imageInput, type ImageHost } from "./image-paste";
 import { multiRangeIme, redoWithCursors, undoWithCursors } from "./ime";
 import { DEFAULT_LANGUAGE_DATA, type LanguageData } from "./language-config";
 import { lineNumberGutter } from "./line-select";
@@ -284,6 +285,8 @@ export interface EditorOptions {
   highlight?: Extension;
   /** A trashed memo: nothing edits the text, whatever key, paste, drop or command tries. */
   readOnly?: boolean;
+  /** A memo's: pasted and dropped images go into its workspace (src/editor/image-paste.ts). */
+  images?: ImageHost;
 }
 
 /** CodeMirror's read-only flag turns away typing, paste, drop and its own commands; the filter
@@ -326,6 +329,7 @@ export function editorExtensions(options: EditorOptions): Extension[] {
     highlightSlot.of(options.highlight ?? []),
     appTheme,
     options.readOnly ? readOnly : [],
+    options.images ? imageInput(options.images) : [],
     EditorView.updateListener.of(options.onUpdate),
   ];
 }

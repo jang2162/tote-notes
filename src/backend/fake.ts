@@ -1,4 +1,5 @@
 import { BINARY_PROBE_BYTES } from "../core/codec";
+import { isImageName, MAX_IMAGE_BYTES } from "../core/images";
 import { basename, splitName } from "../core/names";
 import { parseSessionFile, type SessionTab } from "../core/session";
 import { parseSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
@@ -30,6 +31,7 @@ import {
   type FileSource,
   type FileTarget,
   type FlushGoal,
+  type ImportedImage,
   type MemoInfo,
   type MoveOutcome,
   type OutsideChange,
@@ -247,6 +249,9 @@ export interface FakeData {
   moveRequests?: { label: string; id: string; workspace: string }[];
   /** Every `duplicateMemo` call, in order: whether it brought the tab's text. Absent until one. */
   duplicateCalls?: { id: string; withText: boolean }[];
+  /** Every `saveImage` and `importImage` call, in order: the name asked for, the path dropped.
+   * Recorded before the call is looked at. Absent until one. */
+  imageCalls?: ({ save: string } | { import: string })[];
   /** The paths `revealInFinder` showed and `copyFilePath` put on the clipboard, in order. Absent
    * until one. */
   revealedFiles?: string[];
@@ -509,7 +514,7 @@ export class FakeBackend implements Backend {
     flush: [] as ((id: number, goal: FlushGoal) => void)[],
     stay: [] as (() => void)[],
     pending: [] as (() => void)[],
-    drop: [] as ((paths: string[]) => void)[],
+    drop: [] as ((paths: string[], at?: { x: number; y: number }) => void)[],
     config: [] as (() => void)[],
     outside: [] as ((change: OutsideChange) => void)[],
     memos: [] as (() => void)[],
@@ -786,8 +791,9 @@ export class FakeBackend implements Backend {
     const item = this.data.trash?.[id];
     return item ? decode(item.data) : null;
   }
-  dropFiles(paths: string[]): void {
-    for (const handler of this.handlers.drop) handler(paths);
+  /** Files dropped from outside, let go at `at` (the page's CSS pixels) when given. */
+  dropFiles(paths: string[], at?: { x: number; y: number }): void {
+    for (const handler of this.handlers.drop) handler(paths, at);
   }
   memoText(id: string): string | null {
     const memo = this.data.memos[id];
@@ -1028,6 +1034,39 @@ export class FakeBackend implements Backend {
     const data = this.data.files[path];
     if (data === undefined) throw new BackendError("not-found", path);
     return this.importMemo(basename(path), fromBase64(data));
+  }
+
+  /** As `Workspace::save_image`: one plain image name, at most 20MB, the next free name. */
+  async saveImage(fileName: string, bytes: Uint8Array) {
+    (this.data.imageCalls ??= []).push({ save: fileName });
+    this.commit();
+    this.refuseWhileSwitching();
+    if (!validName(fileName) || !isImageName(fileName))
+      throw new BackendError("invalid-name", fileName);
+    if (bytes.length > MAX_IMAGE_BYTES) throw new BackendError("too-large", fileName);
+    const { stem, ext } = splitName(fileName);
+    return this.add(this.freeName(stem, ext), false, bytes);
+  }
+
+  /** As `Workspace::import_image`: a file of `files` copied in by `saveImage`'s rules, or one
+   * directly in the workspace's folder linked as it is. */
+  async importImage(path: string): Promise<ImportedImage> {
+    (this.data.imageCalls ??= []).push({ import: path });
+    this.commit();
+    this.refuseWhileSwitching();
+    const name = basename(path);
+    if (!validName(name) || !isImageName(name)) throw new BackendError("invalid-name", name);
+    if (path === `${this.data.workspace.path}/${name}`) {
+      const memo = Object.values(this.data.memos).find((m) => m.file === name);
+      if (memo) return { file: memo.file };
+    }
+    const data = this.data.files[path];
+    if (data === undefined) throw new BackendError("not-found", path);
+    const bytes = fromBase64(data);
+    if (bytes.length > MAX_IMAGE_BYTES) throw new BackendError("too-large", name);
+    const { stem, ext } = splitName(name);
+    const memo = this.add(this.freeName(stem, ext), false, bytes);
+    return { file: memo.file, memo };
   }
 
   /** As `Workspace::duplicate_memo`: the next free name, a new ID, its language, not its pin. */
@@ -2123,7 +2162,7 @@ export class FakeBackend implements Backend {
   onPending(handler: () => void) {
     this.handlers.pending.push(handler);
   }
-  onFileDrop(handler: (paths: string[]) => void) {
+  onFileDrop(handler: (paths: string[], at?: { x: number; y: number }) => void) {
     this.handlers.drop.push(handler);
   }
   onOutsideChange(handler: (change: OutsideChange) => void) {
