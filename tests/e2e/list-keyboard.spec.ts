@@ -179,6 +179,22 @@ test("⇧F10 and the menu key open the row's context menu, as a right click does
   await input.fill("라.md");
   await input.press("Enter");
   await expect(option(page, "라.md")).toHaveCount(1);
+  // The rename gave the keys to the editor as it closed; they come back to the list.
+  await expect(memoList(page)).toBeFocused();
+});
+
+test("a memo open in a tab trashed from ⇧F10 leaves the keys on the list", async ({ page }) => {
+  await start(page, { ...three(), popupMenuPick: "trash" });
+  await option(page, "나.md").click();
+  await expect(page.locator(".cm-content")).toBeFocused();
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Shift+F10");
+  await expect(option(page, "나.md")).toHaveCount(0);
+  await expect(page.locator(".tab")).toHaveCount(0);
+  await expect(memoList(page)).toBeFocused();
+  expect(await current(page)).toBe("다.md");
 });
 
 test("⌘click adds and takes out, ⇧click picks a run, and neither opens", async ({ page }) => {

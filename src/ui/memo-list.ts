@@ -427,7 +427,16 @@ export class MemoList {
       this.render();
     } else if (key.kind === "open") void this.openCurrent(key.toEditor);
     else if (key.kind === "delete") void this.trashPicked();
-    else this.openMenu(this.picks.menuFor(this.picks.cursor));
+    else void this.menuFromKeys();
+  }
+
+  /** ⇧F10: the menu of what is picked; whatever it did, the keys come back here. */
+  private async menuFromKeys(): Promise<void> {
+    const ids = this.picks.menuFor(this.picks.cursor);
+    this.render();
+    if (ids.length === 0) return;
+    await this.host.menu(ids);
+    this.keepKeys();
   }
 
   /** Rows a key moves: one, or a page of the list below the pinned zone less one row. */

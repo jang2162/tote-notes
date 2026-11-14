@@ -163,7 +163,16 @@ export class TrashList {
       this.paint();
     } else if (key.kind === "open") void this.openCurrent(key.toEditor);
     else if (key.kind === "delete") void this.purgePicked();
-    else this.openMenu(this.picks.menuFor(this.picks.cursor));
+    else void this.menuFromKeys();
+  }
+
+  /** ⇧F10: as the memo list's, the keys come back here once the menu's work is done. */
+  private async menuFromKeys(): Promise<void> {
+    const ids = this.picks.menuFor(this.picks.cursor);
+    this.paint();
+    if (ids.length === 0) return;
+    await this.host.menu(ids);
+    if (!modalOpen()) this.box.focus({ preventScroll: true });
   }
 
   private stepOf(to: "up" | "down" | "page-up" | "page-down"): number {
