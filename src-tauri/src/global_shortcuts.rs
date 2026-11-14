@@ -359,6 +359,26 @@ mod tests {
         }
     }
 
+    /// `src/backend/fake-global-shortcuts.test.ts` holds the fake backend's table against this file.
+    /// `UPDATE_FIXTURES=1 cargo test` writes it anew.
+    #[test]
+    fn the_global_shortcut_table_fixture_is_current() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("tests/fixtures/global-shortcut-table.json");
+        let none = Overrides::new();
+        let current =
+            serde_json::to_string_pretty(&table(&none, &none, &BTreeSet::new())).unwrap() + "\n";
+        if std::env::var_os("UPDATE_FIXTURES").is_some() {
+            std::fs::write(&path, &current).unwrap();
+        }
+        let saved = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            saved == current,
+            "{} is stale: run `UPDATE_FIXTURES=1 cargo test` in src-tauri",
+            path.display()
+        );
+    }
+
     #[test]
     fn a_media_key_is_not_a_global_shortcut() {
         assert!(Shortcut::from_str("Ctrl+MediaPlayPause").is_ok());

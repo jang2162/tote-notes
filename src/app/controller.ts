@@ -2086,6 +2086,9 @@ export class AppController implements DocHost, PaneHost {
         void openUpdateDialog(this.backend, open);
       } else if (open.kind === "updateFound") {
         this.updateButton.show(open.version);
+      } else if (open.kind === "newMemo") {
+        // 빠른 메모: ⌘N's way, a dialog up included (global quick note spec 「빠른 메모」).
+        await this.onMenu("new-memo");
       } else {
         notices.push(open.message);
       }

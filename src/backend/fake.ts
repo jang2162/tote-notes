@@ -4,6 +4,11 @@ import { parseSessionFile, type SessionTab } from "../core/session";
 import { parseSidebarWidth, SIDEBAR_WIDTH } from "../core/sidebar-width";
 import { scanBytes } from "../viewer/large-text";
 import { isOpenableLink } from "../viewer/links";
+import {
+  globalShortcutTable,
+  refusedGlobalShortcut,
+  sanitizeGlobalShortcuts,
+} from "./fake-global-shortcuts";
 import { FakeHub, type HubEvent, type HubState } from "./fake-hub";
 import fakeRegistry from "./fake-registry.json" with { type: "json" };
 import {
@@ -47,6 +52,7 @@ import {
   type Settings,
   type WorkspaceRoots,
   type SettingsPatch,
+  type GlobalShortcutTable,
   type ShortcutTable,
   type TextMatch,
   type TextQuery,
@@ -272,6 +278,8 @@ export interface FakeData {
   suspendShortcutCalls?: boolean[];
   /** The app commands `runMenuCommand` ran, in order. Absent until it is first called. */
   menuCommandRuns?: string[];
+  /** Keys macOS will not register as a global shortcut, as when another app holds them. */
+  refusedGlobalKeys?: string[];
   /** The window's title bar is overlaid, as on macOS. Absent in old seeds. */
   macTitlebar?: boolean;
   /** The window is in macOS full screen (`fullscreen` changes it). Absent in old seeds. */
@@ -350,6 +358,7 @@ export function defaultFakeData(): FakeData {
       updates: { autoCheck: true },
       sidebar: { preview: true, sort: "modified-desc" },
       trash: { retentionDays: 60 },
+      tray: { visible: false },
     },
     userExtensions: [],
     packages: {},
@@ -711,6 +720,13 @@ export class FakeBackend implements Backend {
   /** The next restart is refused: another window is closing, switching or quitting. */
   busyNextRestart(): void {
     this.nextRestart = "busy";
+  }
+  /** 빠른 메모 — its global shortcut or the menu bar icon's item — as the native side leaves it
+   * for the window focused last (`quick_note::run`). */
+  quickNote(): void {
+    this.data.pending.push({ kind: "newMemo" });
+    this.commit();
+    this.poke();
   }
   /** A `tote` request that failed, as the native side queues it for this window. */
   notice(message: string): void {
@@ -1774,6 +1790,16 @@ export class FakeBackend implements Backend {
       settings.shortcuts = sanitizeShortcuts(settings.shortcuts);
       if (Object.keys(settings.shortcuts).length === 0) delete settings.shortcuts;
     }
+    // As `Settings::load_with_aside`: a global entry an app command's key beats goes.
+    if (settings.globalShortcuts) {
+      settings.globalShortcuts = sanitizeGlobalShortcuts(
+        settings.globalShortcuts,
+        settings.shortcuts ?? {},
+      );
+      if (Object.keys(settings.globalShortcuts).length === 0) delete settings.globalShortcuts;
+    }
+    // An old seed has no `tray`; Rust reads a missing one as off.
+    settings.tray ??= { visible: false };
     return settings;
   }
 
@@ -1788,6 +1814,15 @@ export class FakeBackend implements Backend {
     const refused = patch.shortcuts === undefined ? null : refusedShortcut(patch.shortcuts);
     if (refused !== null)
       throw new BackendError("bad-request", `단축키를 저장할 수 없습니다: ${refused}`);
+    // `global_shortcuts::validate` on the two maps the patch leaves.
+    if (patch.shortcuts !== undefined || patch.globalShortcuts !== undefined) {
+      const global = refusedGlobalShortcut(
+        patch.globalShortcuts ?? this.data.settings.globalShortcuts ?? {},
+        patch.shortcuts ?? this.data.settings.shortcuts ?? {},
+      );
+      if (global !== null)
+        throw new BackendError("bad-request", `전역 단축키를 저장할 수 없습니다: ${global}`);
+    }
     // Rust refuses a patch whose theme is neither a mode nor an extension and label (`ThemeChoice`).
     if (patch.themeMode != null && !isThemeChoice(patch.themeMode))
       throw new BackendError("bad-request", "themeMode: data did not match any variant");
@@ -1824,6 +1859,12 @@ export class FakeBackend implements Backend {
         settings.shortcuts = structuredClone(patch.shortcuts);
       else delete settings.shortcuts;
     }
+    if (patch.globalShortcuts !== undefined) {
+      if (Object.keys(patch.globalShortcuts).length > 0)
+        settings.globalShortcuts = structuredClone(patch.globalShortcuts);
+      else delete settings.globalShortcuts;
+    }
+    if (patch.trayVisible !== undefined) settings.tray = { visible: patch.trayVisible };
     this.commit();
     this.configTouched();
   }
@@ -1839,6 +1880,15 @@ export class FakeBackend implements Backend {
       })),
       fixed: structuredClone(FAKE_FIXED_SHORTCUTS),
     };
+  }
+
+  async globalShortcutTable(): Promise<GlobalShortcutTable> {
+    const { settings } = this.data;
+    return globalShortcutTable(
+      settings.globalShortcuts ?? {},
+      settings.shortcuts ?? {},
+      this.data.refusedGlobalKeys ?? [],
+    );
   }
 
   async suspendShortcuts(on: boolean) {

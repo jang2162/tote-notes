@@ -1,6 +1,8 @@
 import {
   errorCode,
   type Backend,
+  type GlobalShortcutCommand,
+  type GlobalShortcutTable,
   type ShortcutCommand,
   type ShortcutTable,
 } from "../backend/types";
@@ -25,7 +27,16 @@ export interface ShortcutsSectionOptions {
 type Note =
   | { kind: "taken"; id: string; label: string; accelerator: string }
   | { kind: "fixed"; name: string }
-  | { kind: "error"; message: string };
+  | { kind: "error"; message: string }
+  /** A global row's key an app command has: no swap (global quick note spec 「막는 키」). */
+  | { kind: "app"; label: string }
+  /** An app row's key a global shortcut has: caught before the menu, in tote too. */
+  | { kind: "global"; label: string };
+
+/** What a global row's id is prefixed with where it shares a map with the app commands' ids: the
+ * row recording, the notes. */
+const GLOBAL = "global:";
+const globalKey = (id: string) => `${GLOBAL}${id}`;
 
 type Shortcuts = Record<string, string | null>;
 
@@ -67,6 +78,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
 } {
   const { backend } = options;
   let table: ShortcutTable | null = null;
+  let global: GlobalShortcutTable | null = null;
   /** The command whose row listens for keys now. */
   let recording: string | null = null;
   const notes = new Map<string, Note>();
@@ -75,7 +87,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
   /** What the rows were last drawn from: a table read again that is the same still redraws them
    * when a note or the row saved last changed since, as when the change was heard (and the table
    * read) before the save returned. */
-  const drawing = () => JSON.stringify([table, [...notes], announced]);
+  const drawing = () => JSON.stringify([table, global, [...notes], announced]);
   let drawn = "";
 
   const search = h("input", { type: "search", name: "shortcutSearch", placeholder: "명령 검색" });
@@ -85,6 +97,13 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
   problem.setAttribute("aria-live", "polite");
   const list = h("div", { class: "shortcut-list" });
   const none = h("p", { class: "settings-note", textContent: "맞는 명령이 없습니다" });
+  const globalRows = h("div", { class: "shortcut-list shortcut-global-list" });
+  const globalGroup = h(
+    "section",
+    { class: "shortcut-global" },
+    h("h2", { class: "shortcut-global-title", textContent: "전역" }),
+    globalRows,
+  );
   const fixedRows = h("div", { class: "shortcut-fixed-list" });
   const fixedGroup = h(
     "section",
@@ -98,8 +117,14 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     problem.textContent = describeError(error);
   };
   const keysOf = (id: string) =>
-    list.querySelector<HTMLButtonElement>(`.shortcut-row[data-command="${id}"] .shortcut-keys`);
+    id.startsWith(GLOBAL)
+      ? globalRows.querySelector<HTMLButtonElement>(
+          `.shortcut-row[data-global="${id.slice(GLOBAL.length)}"] .shortcut-keys`,
+        )
+      : list.querySelector<HTMLButtonElement>(`.shortcut-row[data-command="${id}"] .shortcut-keys`);
   const commandOf = (id: string) => table?.commands.find((command) => command.id === id);
+  const globalOf = (key: string) =>
+    global?.commands.find((command) => globalKey(command.id) === key);
 
   /** The codes of the main keys that ended a recording and are still down. */
   const pressed = new Set<string>();
@@ -136,7 +161,8 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     window.addEventListener("keyup", onRelease, true);
     window.addEventListener("blur", onReleaseAll);
     if (result === "cancel") return;
-    take(id, result === "clear" ? null : result);
+    if (id.startsWith(GLOBAL)) takeGlobal(id, result === "clear" ? null : result);
+    else take(id, result === "clear" ? null : result);
   };
   const onOutside = (event: Event) => {
     if (recording === null) return;
@@ -178,7 +204,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     document.removeEventListener("focusin", onFocus, true);
     void backend.suspendShortcuts(false).catch(fail);
     const keys = keysOf(id);
-    const command = commandOf(id);
+    const command = commandOf(id) ?? globalOf(id);
     if (keys && command) {
       keys.textContent = shown(command.current);
       keys.classList.remove("recording");
@@ -205,7 +231,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     const command = commandOf(id);
     if (!table || !command || same(accelerator, command.current)) return;
     const clash = accelerator === null ? null : conflict(table, id, accelerator);
-    if (clash?.kind === "fixed") notes.set(id, { kind: "fixed", name: clash.name });
+    const globalClash = global?.commands.find((g) => same(g.current, accelerator));
+    if (accelerator !== null && globalClash)
+      notes.set(id, { kind: "global", label: globalClash.label });
+    else if (clash?.kind === "fixed") notes.set(id, { kind: "fixed", name: clash.name });
     else if (clash?.kind === "command")
       notes.set(id, { kind: "taken", id: clash.id, label: clash.label, accelerator: accelerator! });
     else return void commit(id, { [id]: accelerator });
@@ -240,8 +269,52 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     await load();
   };
 
+  /** The global map as saved: the rows whose shortcut is not their default, a default that gave
+   * way left out as `savedMap` leaves it. */
+  const globalMap = (changes: Shortcuts = {}): Shortcuts => {
+    const map: Shortcuts = {};
+    for (const command of global?.commands ?? []) {
+      const changed = Object.hasOwn(changes, command.id);
+      if (!changed && command.yielded === true) continue;
+      const keys = changed ? changes[command.id] : command.current;
+      if (!same(keys, command.default)) map[command.id] = keys;
+    }
+    return map;
+  };
+
+  /** A key recorded for global row `key` (`null`: none): saved, unless an app command or a fixed
+   * shortcut has it, which the row says instead. An editor key is saved with a warning. */
+  const takeGlobal = (key: string, accelerator: string | null) => {
+    const command = globalOf(key);
+    if (!table || !command || same(accelerator, command.current)) return;
+    const clash = accelerator === null ? null : conflict(table, key, accelerator);
+    if (clash?.kind === "fixed") notes.set(key, { kind: "fixed", name: clash.name });
+    else if (clash?.kind === "command") notes.set(key, { kind: "app", label: clash.label });
+    else return void commitGlobal(key, { [command.id]: accelerator });
+    render();
+  };
+
+  const commitGlobal = async (key: string, changes: Shortcuts) => {
+    try {
+      await backend.patchSettings({ globalShortcuts: globalMap(changes) });
+    } catch (error) {
+      notes.set(key, { kind: "error", message: describeError(error) });
+      render();
+      return;
+    }
+    notes.delete(key);
+    announced = key;
+    await load();
+  };
+
   const note = (command: ShortcutCommand): HTMLElement | null => {
     const said = notes.get(command.id);
+    if (said?.kind === "global")
+      return h("div", {
+        class: "shortcut-note error",
+        role: "status",
+        textContent: `전역 단축키 ${said.label} 에 쓰고 있습니다`,
+      });
     if (said?.kind === "taken") {
       const swap = h("button", { textContent: "바꾸기" });
       swap.addEventListener(
@@ -306,16 +379,88 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     );
   };
 
+  const globalNote = (command: GlobalShortcutCommand): HTMLElement | null => {
+    const key = globalKey(command.id);
+    const said = notes.get(key);
+    if (said?.kind === "app")
+      return h("div", {
+        class: "shortcut-note error",
+        role: "status",
+        textContent: `${said.label} 에 쓰고 있는 단축키입니다`,
+      });
+    if (said?.kind === "fixed")
+      return h("div", {
+        class: "shortcut-note error",
+        role: "status",
+        textContent: `${said.name} 에 고정된 단축키입니다`,
+      });
+    if (said?.kind === "error")
+      return h("div", { class: "shortcut-note error", role: "status", textContent: said.message });
+    // macOS refused the key: said for as long as it is so, not only after a save.
+    if (command.problem)
+      return h("div", {
+        class: "shortcut-note error",
+        role: "status",
+        textContent: command.problem,
+      });
+    const clash = table && command.current ? conflict(table, key, command.current) : null;
+    if (clash?.kind !== "editor") return null;
+    const warning = h("div", { class: "shortcut-note warning", textContent: masked(clash.name) });
+    if (announced === key) warning.setAttribute("role", "status");
+    return warning;
+  };
+
+  const globalRow = (command: GlobalShortcutCommand): HTMLElement => {
+    const key = globalKey(command.id);
+    const nameId = `shortcut-name-global-${command.id}`;
+    const keys = h("button", {
+      class: "shortcut-keys",
+      id: `shortcut-keys-global-${command.id}`,
+      textContent: recording === key ? "키를 누르세요" : shown(command.current),
+    });
+    keys.classList.toggle("recording", recording === key);
+    keys.setAttribute("aria-labelledby", `${nameId} ${keys.id}`);
+    keys.addEventListener("click", () => start(key));
+    const changed = !same(command.current, command.default);
+    let reset: HTMLButtonElement | null = null;
+    if (changed) {
+      reset = h("button", { class: "shortcut-reset", textContent: "되돌리기" });
+      reset.addEventListener("click", () => takeGlobal(key, command.default));
+    }
+    return h(
+      "div",
+      { class: `shortcut-row${changed ? " changed" : ""}`, data: { global: command.id } },
+      h(
+        "span",
+        { class: "shortcut-label" },
+        h("span", { class: "shortcut-name", id: nameId, textContent: command.label }),
+        h("span", { class: "shortcut-menu", textContent: "다른 앱에서도" }),
+      ),
+      keys,
+      h("span", {
+        class: "shortcut-default",
+        textContent: changed ? `기본값 ${shown(command.default)}` : "기본값",
+      }),
+      reset,
+      globalNote(command),
+    );
+  };
+
   function render() {
     if (!table) return;
     drawn = drawing();
     // A rebuilt row takes the focus its old one had, or its reset button that is gone now.
     const active = document.activeElement;
+    const activeRow =
+      active instanceof HTMLElement && (list.contains(active) || globalRows.contains(active))
+        ? active.closest<HTMLElement>(".shortcut-row")
+        : null;
     const focused =
-      active instanceof HTMLElement && list.contains(active)
-        ? active.closest<HTMLElement>(".shortcut-row")?.dataset.command
-        : undefined;
+      activeRow?.dataset.global !== undefined
+        ? globalKey(activeRow.dataset.global)
+        : activeRow?.dataset.command;
     list.replaceChildren(...table.commands.map(row));
+    globalRows.replaceChildren(...(global?.commands ?? []).map(globalRow));
     fixedRows.replaceChildren(
       ...table.fixed.map((fixed) =>
         h(
@@ -329,7 +474,9 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
         ),
       ),
     );
-    resetAll.disabled = table.commands.every((command) => same(command.current, command.default));
+    resetAll.disabled =
+      table.commands.every((command) => same(command.current, command.default)) &&
+      Object.keys(globalMap()).length === 0;
     filter();
     if (focused) keysOf(focused)?.focus();
   }
@@ -349,8 +496,15 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
       (fixedRows.children[at] as HTMLElement).hidden = !hit;
       anyFixed ||= hit;
     });
-    none.hidden = any || anyFixed;
+    let anyGlobal = false;
+    (global?.commands ?? []).forEach((command, at) => {
+      const hit = matches(query, command.label, command.current && shown(command.current));
+      (globalRows.children[at] as HTMLElement).hidden = !hit;
+      anyGlobal ||= hit;
+    });
+    none.hidden = any || anyFixed || anyGlobal;
     fixedGroup.hidden = !anyFixed;
+    globalGroup.hidden = !anyGlobal;
   }
   search.addEventListener("input", filter);
 
@@ -369,16 +523,20 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
   const read = async () => {
     const at = ++loads;
     try {
-      const next = await backend.shortcutTable();
+      const [next, nextGlobal] = await Promise.all([
+        backend.shortcutTable(),
+        backend.globalShortcutTable(),
+      ]);
       if (at !== loads) return;
       problem.textContent = "";
-      if (table && JSON.stringify(next) === JSON.stringify(table)) {
+      if (table && JSON.stringify([next, nextGlobal]) === JSON.stringify([table, global])) {
         if (drawing() !== drawn) render();
         return;
       }
       stop();
       if (table) notes.clear();
       table = next;
+      global = nextGlobal;
       render();
     } catch (error) {
       if (at === loads) fail(error);
@@ -390,7 +548,10 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     stop();
     if (!(await confirm("모든 단축키를 기본값으로 되돌릴까요?", "되돌리기"))) return;
     try {
-      await backend.patchSettings({ shortcuts: {}, shortcutsExpected: savedMap() });
+      // The global ones too, in the same save: an app default coming back may be a saved global
+      // key, which a save of the app map alone would be refused for.
+      const globalReset = Object.keys(globalMap()).length > 0 ? { globalShortcuts: {} } : {};
+      await backend.patchSettings({ shortcuts: {}, shortcutsExpected: savedMap(), ...globalReset });
     } catch (error) {
       if (!isStale(error)) return fail(error);
       void load();
@@ -407,6 +568,7 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     { class: "shortcut-settings" },
     search,
     problem,
+    globalGroup,
     list,
     none,
     fixedGroup,

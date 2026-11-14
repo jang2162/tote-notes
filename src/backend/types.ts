@@ -46,7 +46,9 @@ export type PendingOpen =
   | { kind: "external"; path: string }
   | { kind: "notice"; message: string }
   | ({ kind: "update" } & UpdateOffer)
-  | { kind: "updateFound"; version: string };
+  | { kind: "updateFound"; version: string }
+  /** 빠른 메모: a new memo as ⌘N makes one (src-tauri/src/app/quick_note.rs). */
+  | { kind: "newMemo" };
 
 /** A release newer than this one (`UpdateOffer` in src-tauri/src/app/update.rs). */
 export interface UpdateOffer {
@@ -296,6 +298,11 @@ export interface Settings {
   /** Command id → the shortcut it has instead of its default, `null` for none. Rust leaves it out
    * of the JSON when nothing is saved. Read the shortcuts from `Backend.shortcutTable()`. */
   shortcuts?: Record<string, string | null>;
+  /** Global command id → its shortcut instead of the default, `null` for none. Rust leaves it out
+   * when nothing is saved. Read them from `Backend.globalShortcutTable()`. */
+  globalShortcuts?: Record<string, string | null>;
+  /** The menu bar icon (`TraySettings` in src-tauri/src/appdata.rs). Absent in an old fake seed. */
+  tray?: { visible: boolean };
 }
 
 /** The memo list's order (`SortOrder` in src-tauri/src/appdata.rs). */
@@ -359,6 +366,11 @@ export interface SettingsPatch {
   /** The saved map `shortcuts` was made from. When it is no longer the saved one (another window
    * saved meanwhile), the whole patch is refused with `bad-request` "shortcuts changed". */
   shortcutsExpected?: Record<string, string | null>;
+  /** The whole global map: a command left out goes back to its default. Refused (`bad-request`)
+   * when an entry cannot stand beside the app shortcuts the patch leaves
+   * (`global_shortcuts::validate` in src-tauri/src/global_shortcuts.rs). */
+  globalShortcuts?: Record<string, string | null>;
+  trayVisible?: boolean;
 }
 
 /** `ShortcutTable` in src-tauri/src/shortcuts.rs. Shortcuts are Tauri accelerators
@@ -389,6 +401,24 @@ export interface ShortcutCommand {
 export interface FixedShortcut {
   name: string;
   accelerator: string;
+}
+
+/** `GlobalShortcutTable` in src-tauri/src/global_shortcuts.rs: the shortcuts heard while another
+ * app is in front. */
+export interface GlobalShortcutTable {
+  commands: GlobalShortcutCommand[];
+}
+
+export interface GlobalShortcutCommand {
+  id: string;
+  label: string;
+  default: string;
+  /** The shortcut it has now: a saved one, else the default unless that gave way. */
+  current: string | null;
+  /** Set when its default is not in force because an app command has the key. */
+  yielded?: true;
+  /** Why macOS has not taken its shortcut; absent when it has. */
+  problem?: string;
 }
 
 export interface WorkspaceListItem {
@@ -665,6 +695,8 @@ export interface Backend {
   patchSettings(patch: SettingsPatch): Promise<void>;
   /** The app commands with their shortcuts as the saved settings make them. */
   shortcutTable(): Promise<ShortcutTable>;
+  /** The global shortcuts as the saved settings make them, and whether macOS took them. */
+  globalShortcutTable(): Promise<GlobalShortcutTable>;
   /** Takes the menu's shortcuts off while this window records one (`on`), and puts them back.
    * The app also puts them back once this window loses focus or closes. */
   suspendShortcuts(on: boolean): Promise<void>;

@@ -133,6 +133,9 @@ export function openSettings(options: SettingsOptions): Promise<void> {
     rootInput.spellcheck = false;
     const autoCheck = h("input", { type: "checkbox", name: "updatesAutoCheck" });
     autoCheck.addEventListener("change", () => void save({ updatesAutoCheck: autoCheck.checked }));
+    // Global quick note spec 「메뉴 막대 아이콘」: off by default.
+    const trayVisible = h("input", { type: "checkbox", name: "trayVisible" });
+    trayVisible.addEventListener("change", () => void save({ trayVisible: trayVisible.checked }));
     // Memo trash spec 「자동 비우기」. Under 1 goes back rather than up to 1 day: a 0 typed to mean
     // 「never」 would otherwise empty the trash of everything a day old.
     const trashDays = h("input", { type: "number", name: "trashRetentionDays" });
@@ -172,6 +175,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         label,
         h("div", { class: "settings-row" }, rootInput, pick, apply),
         ...field("실행할 때 업데이트 확인", autoCheck),
+        ...field("메뉴 막대에 아이콘 보이기", trayVisible),
         field("휴지통 자동 비우기", trashDays)[0],
         h(
           "div",
@@ -348,6 +352,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         lineNumbers.checked = current.editor.lineNumbers;
         preview.checked = current.sidebar.preview;
         autoCheck.checked = current.updates.autoCheck;
+        trayVisible.checked = current.tray?.visible ?? false;
         sync(fontSize, String(current.editor.fontSize));
         // Off, the field keeps the days it shows, for when it is on again.
         const days = current.trash.retentionDays;

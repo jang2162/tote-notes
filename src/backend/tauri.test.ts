@@ -169,6 +169,7 @@ describe("TauriBackend", () => {
       ],
       [() => backend.settings(), "get_settings", undefined],
       [() => backend.shortcutTable(), "shortcut_table", undefined],
+      [() => backend.globalShortcutTable(), "global_shortcut_table", undefined],
       [() => backend.suspendShortcuts(true), "suspend_shortcuts", { on: true }],
       [() => backend.runMenuCommand("close-tab"), "run_menu_command", { id: "close-tab" }],
       [
