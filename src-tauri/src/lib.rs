@@ -4,6 +4,7 @@ pub mod backup;
 pub mod cli;
 pub mod extensions;
 pub mod files;
+pub mod global_shortcuts;
 pub mod perf;
 pub mod persist;
 pub mod search;
@@ -39,6 +40,8 @@ pub fn run() {
         }))
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(app::quick_note::plugin())
+        .manage(app::quick_note::GlobalKeys::default())
         .manage(<app::update::Updates>::default())
         .manage(requests::EarlyOpens::default())
         .register_asynchronous_uri_scheme_protocol("tote-file", |ctx, request, responder| {
@@ -79,6 +82,8 @@ pub fn run() {
             menu::follow_settings(app.handle());
             // Before any window opens, so none is drawn in the other appearance first.
             app::appearance::follow_settings(app.handle());
+            app::quick_note::follow_settings(app.handle());
+            app::tray::follow_settings(app.handle());
             perf::mark("core-loaded");
             #[cfg(target_os = "macos")]
             app::lifecycle::hook_system_quit(app.handle());
@@ -153,6 +158,7 @@ pub fn run() {
             commands::workspace_roots,
             commands::patch_settings,
             commands::shortcut_table,
+            commands::global_shortcut_table,
             commands::suspend_shortcuts,
             commands::run_menu_command,
             commands::issue_file_token,

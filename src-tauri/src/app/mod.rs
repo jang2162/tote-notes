@@ -13,9 +13,11 @@ pub mod lifecycle;
 pub mod links;
 pub mod menu;
 pub mod places;
+pub mod quick_note;
 pub mod requests;
 #[cfg(target_os = "macos")]
 pub mod traffic_lights;
+pub mod tray;
 pub mod update;
 pub mod windows;
 
@@ -82,6 +84,9 @@ pub enum PendingOpen {
     UpdateFound {
         version: String,
     },
+    /// A new memo in the focused pane, as ⌘N makes one: 빠른 메모 pressed while the window may not
+    /// be up yet (src/app/quick_note.rs).
+    NewMemo,
 }
 
 /// What a window asked to switch to calls for (`AppCore::switch_target`).

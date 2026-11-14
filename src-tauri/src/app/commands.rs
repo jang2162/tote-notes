@@ -13,6 +13,8 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
+use super::quick_note::{self, GlobalKeys};
+use super::tray;
 use super::{appearance, lifecycle, links, lock, menu, update, windows, AppCore, PendingOpen};
 use crate::appdata::{shown_from_home, Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
@@ -22,6 +24,7 @@ use crate::extensions::install::{self, InstallError};
 use crate::extensions::registry::{ExtensionSummary, Registry};
 use crate::files::text::{self, SearchError, TextQuery, TextScan, TextSearch};
 use crate::files::{self, FileSource};
+use crate::global_shortcuts::GlobalShortcutTable;
 use crate::perf::{self, PerfConfig};
 use crate::persist::external::ExternalInfo;
 use crate::search::{self, SearchEvent, SearchQuery};
@@ -1158,6 +1161,9 @@ pub async fn patch_settings(
     if shortcuts_changed {
         menu::follow_settings(&app);
     }
+    // An app shortcut can take the default global key, which then gives way: both follow.
+    quick_note::follow_settings(&app);
+    tray::follow_settings(&app);
     broadcast_config(&app);
     if root_changed {
         // Each root has its own order file: the switchers list the new root's workspaces.
@@ -1169,6 +1175,15 @@ pub async fn patch_settings(
 #[tauri::command]
 pub fn shortcut_table(core: State<'_, AppCore>) -> ShortcutTable {
     shortcuts::table(&core.settings().shortcuts)
+}
+
+/// The settings screen's 「전역」 group: the global shortcuts and whether macOS took them.
+#[tauri::command]
+pub fn global_shortcut_table(
+    core: State<'_, AppCore>,
+    keys: State<'_, GlobalKeys>,
+) -> GlobalShortcutTable {
+    keys.table(&core)
 }
 
 /// The settings screen of `window` records a shortcut (`on`) or is done: the menu's shortcuts come
