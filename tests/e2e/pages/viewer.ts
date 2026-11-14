@@ -5,11 +5,14 @@ const log = document.getElementById("log")!;
 // `?preview=1`: a preview viewer's host, its requests written down in `previewCalls`; `?text=`
 // is the text it is given, `?readonly` makes the tab read-only.
 const previewCalls: unknown[][] = [];
+/** Each `highlight` request's `stale`, in order: `highlightStale()` asks every one of them now. */
+const stales: (() => boolean)[] = [];
 const preview: PreviewRequests | undefined = params.has("preview")
   ? {
       toggleTask: (index, drawn) => void previewCalls.push(["toggleTask", index, drawn]),
-      highlight: async (blocks) => {
+      highlight: async (blocks, stale) => {
         previewCalls.push(["highlight", blocks]);
+        stales.push(stale);
         return [{ index: 0, lines: [[{ text: "a", color: "#ff0000", fontStyle: 0 }]] }];
       },
       openLink: (href) => void previewCalls.push(["openLink", href]),
@@ -43,7 +46,7 @@ host.start(
         theme: { "--bg": "rgb(1, 2, 3)" },
       },
 );
-Object.assign(window, { previewCalls });
+Object.assign(window, { previewCalls, highlightStale: () => stales.map((stale) => stale()) });
 Object.assign(window, { viewerHost: host });
 
 // `forge()`: another frame posts a theme to the viewer frame, as the host would, then says so.
