@@ -12,7 +12,8 @@ const { invoke, Channel } = vi.hoisted(() => ({
   },
 }));
 vi.mock("@tauri-apps/api/core", () => ({ invoke, Channel }));
-vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({}) }));
+const onDragDropEvent = vi.fn(async (_handler: (event: { payload: unknown }) => void) => () => {});
+vi.mock("@tauri-apps/api/webview", () => ({ getCurrentWebview: () => ({ onDragDropEvent }) }));
 const startDragging = vi.fn();
 const toggleMaximize = vi.fn();
 const isFullscreen = vi.fn();
@@ -70,6 +71,7 @@ describe("TauriBackend", () => {
       [() => backend.purgeTrashed("m"), "purge_trashed", { id: "m" }],
       [() => backend.emptyTrash(), "empty_trash", undefined],
       [() => backend.importFile("/a.sh"), "import_file", { path: "/a.sh" }],
+      [() => backend.importImage("/a b.png"), "import_image", { path: "/a b.png" }],
       [() => backend.moveMemoTo("m", "/w/업무"), "move_memo_to", { id: "m", workspace: "/w/업무" }],
       [
         () => backend.revealInFinder({ kind: "memo", id: "m" }),
@@ -263,6 +265,10 @@ describe("TauriBackend", () => {
     expect(invoke).toHaveBeenLastCalledWith("duplicate_memo", bytes, {
       headers: { "x-memo-id": "id%201", "x-with-text": "1" },
     });
+    await backend.saveImage("회의 이미지.png", bytes);
+    expect(invoke).toHaveBeenLastCalledWith("save_image", bytes, {
+      headers: { "x-file-name": "%ED%9A%8C%EC%9D%98%20%EC%9D%B4%EB%AF%B8%EC%A7%80.png" },
+    });
     await backend.duplicateMemo("id 1");
     expect(invoke).toHaveBeenLastCalledWith("duplicate_memo", new Uint8Array(), {
       headers: { "x-memo-id": "id%201" },
@@ -425,5 +431,20 @@ describe("TauriBackend move events", () => {
     expect(listen.mock.calls.map(([event]) => event)).toEqual(["tote://move-memo"]);
     listen.mock.calls[0][1]({ payload: { id: "m", workspace: "/w/업무" } });
     expect(heard).toEqual(["m → /w/업무"]);
+  });
+});
+
+// Tauri's file drop (`onDragDropEvent`): wry takes Finder's drop in the native window, so the
+// paths and where they were let go come only this way (image paste spec 「끌어 놓기의 길」).
+describe("TauriBackend file drop", () => {
+  it("hands over the paths of a drop with the place it was let go, and nothing of a hover", () => {
+    const backend = new TauriBackend();
+    const heard: unknown[] = [];
+    onDragDropEvent.mockClear();
+    backend.onFileDrop((paths, at) => heard.push({ paths, at }));
+    const handler = onDragDropEvent.mock.calls[0][0];
+    handler({ payload: { type: "over", position: { x: 1, y: 2 } } });
+    handler({ payload: { type: "drop", paths: ["/a.png", "/b.sh"], position: { x: 30, y: 40 } } });
+    expect(heard).toEqual([{ paths: ["/a.png", "/b.sh"], at: { x: 30, y: 40 } }]);
   });
 });
