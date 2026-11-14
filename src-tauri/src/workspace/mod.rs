@@ -3,6 +3,7 @@
 //! rename files, and sync must still recognise a renamed file as the same memo.
 
 pub mod id;
+pub mod images;
 pub mod index;
 pub mod memo;
 pub mod names;
@@ -44,6 +45,8 @@ pub enum WorkspaceError {
     InvalidName(String),
     #[error("no memo with id {0}")]
     UnknownMemo(String),
+    #[error("image over 20MB: {0}")]
+    ImageTooLarge(String),
     #[error(transparent)]
     Io(#[from] io::Error),
 }
