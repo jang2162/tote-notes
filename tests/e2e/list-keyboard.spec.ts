@@ -554,7 +554,13 @@ test("with nothing typed the picker's Enter keeps the language, and ↓ moves of
 test("a trashed tab's language cannot be pressed, and the status bar's message is a status", async ({
   page,
 }) => {
-  await openTrash(page, { t: trashed("회의록.md", "옛것", 9) });
+  await start(page, {
+    memos: { a: fakeMemo("script.sh", "echo hi") },
+    trash: { t: trashed("회의록.md", "옛것", 9) },
+  });
+  await option(page, "script.sh").click();
+  await expect(page.getByRole("button", { name: "언어: Shell Script" })).toBeEnabled();
+  await page.getByRole("button", { name: "휴지통" }).click();
   await option(page, "회의록.md").click();
   await expect(page.getByRole("button", { name: "언어: Markdown" })).toBeDisabled();
   await expect(status(page)).toHaveClass(/\bstatus-message\b/);
