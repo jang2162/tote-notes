@@ -420,6 +420,7 @@ export class MemoList {
     const key = listKey(event);
     if (!key) return;
     event.preventDefault();
+    if (key.kind === "held") return;
     if (key.kind === "move") {
       if (key.to === "up" && !key.extend && this.picks.index === 0) {
         this.filter.focus();

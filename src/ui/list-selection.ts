@@ -14,7 +14,10 @@ export type ListKey =
   | { kind: "open"; toEditor: boolean }
   | { kind: "delete" }
   | { kind: "menu" }
-  | { kind: "all" };
+  | { kind: "all" }
+  /** A key held down repeating one that acts: taken, and nothing done — a held ⌘⌫ would move
+   * memo after memo to the trash, the next row being current after each. */
+  | { kind: "held" };
 
 const MOVES: Record<string, Extract<ListKey, { kind: "move" }>["to"]> = {
   ArrowUp: "up",
@@ -25,14 +28,23 @@ const MOVES: Record<string, Extract<ListKey, { kind: "move" }>["to"]> = {
   PageDown: "page-down",
 };
 
+/** The key by its place (`code`), as the shortcut recorder reads it (`acceleratorFromEvent`,
+ * src/shortcuts/keys.ts): the Korean input method sends ⌘A as `ㅁ`. */
 export function listKey(event: KeyboardEvent): ListKey | null {
   if (isCompositionKey(event) || event.altKey || event.ctrlKey) return null;
-  const { key, metaKey: meta, shiftKey: shift } = event;
+  const { metaKey: meta, shiftKey: shift } = event;
+  const key = event.code || event.key;
   const to = MOVES[key];
+  // Held down, a move goes on moving.
   if (to) return meta ? null : { kind: "move", to, extend: shift };
-  if (key === "Enter" && !shift) return { kind: "open", toEditor: meta };
+  const action = actionOf(key, meta, shift);
+  return action && event.repeat ? { kind: "held" } : action;
+}
+
+function actionOf(key: string, meta: boolean, shift: boolean): ListKey | null {
+  if ((key === "Enter" || key === "NumpadEnter") && !shift) return { kind: "open", toEditor: meta };
   if (key === "Backspace" && meta && !shift) return { kind: "delete" };
-  if (key.toLowerCase() === "a" && meta && !shift) return { kind: "all" };
+  if (key === "KeyA" && meta && !shift) return { kind: "all" };
   if ((key === "F10" && shift && !meta) || (key === "ContextMenu" && !meta))
     return { kind: "menu" };
   return null;

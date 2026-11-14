@@ -151,6 +151,7 @@ export class TrashList {
     const key = listKey(event);
     if (!key) return;
     event.preventDefault();
+    if (key.kind === "held") return;
     if (key.kind === "move") {
       if (key.to === "first" || key.to === "last") this.picks.to(key.to, key.extend);
       else this.picks.step(this.stepOf(key.to), key.extend);

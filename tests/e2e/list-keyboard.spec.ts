@@ -565,3 +565,131 @@ test("a trashed tab's language cannot be pressed, and the status bar's message i
   await expect(page.getByRole("button", { name: "언어: Markdown" })).toBeDisabled();
   await expect(status(page)).toHaveClass(/\bstatus-message\b/);
 });
+
+// Review round (2026-11-14): a key held down, the Korean input method, a composition in the filter,
+// and rows kept as the picks change.
+
+/** The memos `trashMemo` was asked to move, in order, noted as each call comes in. */
+async function noteTrashCalls(page: Page): Promise<() => Promise<string[]>> {
+  await page.evaluate(() => {
+    const { backend } = window.__tote;
+    const trashMemo = backend.trashMemo.bind(backend);
+    const calls: string[] = [];
+    (window as unknown as { trashCalls: string[] }).trashCalls = calls;
+    backend.trashMemo = async (...args) => {
+      calls.push(args[0]);
+      return trashMemo(...args);
+    };
+  });
+  return () => page.evaluate(() => (window as unknown as { trashCalls: string[] }).trashCalls);
+}
+
+test("⌘⌫ held down moves one memo, however long the key repeats", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "", { modifiedMs: 5 }),
+      b: fakeMemo("나.md", "", { modifiedMs: 4 }),
+      c: fakeMemo("다.md", "", { modifiedMs: 3 }),
+      d: fakeMemo("라.md", "", { modifiedMs: 2 }),
+      e: fakeMemo("마.md", "", { modifiedMs: 1 }),
+    },
+  });
+  const trashCalls = await noteTrashCalls(page);
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.down("Meta");
+  await page.keyboard.down("Backspace");
+  await expect(option(page, "가.md")).toHaveCount(0);
+  expect(await current(page)).toBe("나.md");
+  // The key repeats while it is held: each of these is `repeat: true`.
+  await page.keyboard.down("Backspace");
+  await page.keyboard.down("Backspace");
+  await page.keyboard.up("Backspace");
+  // A press of its own moves the next one, and nothing came between.
+  await page.keyboard.press("Backspace");
+  await page.keyboard.up("Meta");
+  await expect(option(page, "나.md")).toHaveCount(0);
+  expect(await trashCalls()).toEqual(["a", "b"]);
+  await expect(page.getByRole("option")).toHaveCount(3);
+});
+
+test("⌘⌫ held down in the trash list asks once", async ({ page }) => {
+  await openTrash(page, {
+    t: trashed("회의록.md", "옛것", 9),
+    u: trashed("다른.md", "x", 5),
+  });
+  await trashList(page).focus();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.down("Meta");
+  await page.keyboard.down("Backspace");
+  await page.keyboard.down("Backspace");
+  await page.keyboard.down("Backspace");
+  await page.keyboard.up("Backspace");
+  await page.keyboard.up("Meta");
+  await expect(page.getByRole("dialog")).toHaveCount(1);
+  await expect(page.getByRole("dialog").getByRole("button", { name: "취소" })).toBeFocused();
+  await page.keyboard.press("Escape");
+  await expect(page.getByRole("dialog")).toHaveCount(0);
+  expect(Object.keys((await data(page)).trash ?? {}).sort()).toEqual(["t", "u"]);
+});
+
+test("⌘A picks every row with the Korean input method on, which sends ㅁ", async ({ page }) => {
+  await start(page, three());
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  const taken = await memoList(page).evaluate((list) => {
+    const event = new KeyboardEvent("keydown", {
+      key: "ㅁ",
+      code: "KeyA",
+      metaKey: true,
+      bubbles: true,
+      cancelable: true,
+    });
+    list.dispatchEvent(event);
+    return event.defaultPrevented;
+  });
+  expect(taken).toBe(true);
+  expect(await pickedNames(page)).toEqual(["가.md", "나.md", "다.md"]);
+});
+
+test("↓ in the filter while a syllable is composed stays with the composition", async ({
+  page,
+}) => {
+  await start(page, three());
+  await filter(page).focus();
+  const passed = await filter(page).evaluate((input) =>
+    [{ isComposing: true }, { keyCode: 229 }].map((how) => {
+      const event = new KeyboardEvent("keydown", {
+        key: "ArrowDown",
+        code: "ArrowDown",
+        bubbles: true,
+        cancelable: true,
+        isComposing: "isComposing" in how,
+      });
+      if ("keyCode" in how) Object.defineProperty(event, "keyCode", { value: how.keyCode });
+      input.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  );
+  expect(passed).toEqual([false, false]);
+  await expect(filter(page)).toBeFocused();
+  expect(await memoList(page).getAttribute("aria-activedescendant")).toBeNull();
+});
+
+test("picking and moving the current row keep each row's element", async ({ page }) => {
+  await start(page, three());
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  const rows = await page.getByRole("option").elementHandles();
+  await page.keyboard.press("ArrowDown");
+  await page.keyboard.press("Shift+ArrowDown");
+  await page.keyboard.press("Meta+a");
+  await option(page, "가.md").click({ modifiers: ["Meta"] });
+  await option(page, "나.md").click({ modifiers: ["Shift"] });
+  // ⌘ took 가 out of all three; ⇧ ran from the last row added to 나.
+  expect(await pickedNames(page)).toEqual(["나.md"]);
+  const now = await page.getByRole("option").elementHandles();
+  expect(now).toHaveLength(rows.length);
+  for (const [i, row] of rows.entries())
+    expect(await row.evaluate((el, other) => el === other, now[i])).toBe(true);
+});

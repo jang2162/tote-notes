@@ -195,9 +195,12 @@ describe("ListSelection follows the rows", () => {
   });
 });
 
+/** A key as WebKit sends it on a US layout: a letter\x27s `code` is its place, `KeyA`. */
 const key = (key: string, more: Partial<KeyboardEvent> = {}) =>
   ({
     key,
+    code: /^[a-z]$/i.test(key) ? `Key${key.toUpperCase()}` : key,
+    repeat: false,
     metaKey: false,
     shiftKey: false,
     altKey: false,
@@ -243,5 +246,23 @@ describe("listKey", () => {
     expect(listKey(key("ArrowDown", { altKey: true }))).toBeNull();
     expect(listKey(key("Backspace", { metaKey: true, shiftKey: true }))).toBeNull();
     expect(listKey(key("Enter", { keyCode: 229 }))).toBeNull();
+  });
+
+  it("reads ⌘A by the key\x27s place, so the Korean input method\x27s ㅁ is ⌘A too", () => {
+    expect(listKey(key("ㅁ", { code: "KeyA", metaKey: true }))).toEqual({ kind: "all" });
+    expect(listKey(key("ㅁ", { code: "KeyA" }))).toBeNull();
+  });
+
+  it("swallows a key held down but for the moves: one ⌘⌫ moves one memo", () => {
+    expect(listKey(key("Backspace", { metaKey: true, repeat: true }))).toEqual({ kind: "held" });
+    expect(listKey(key("Enter", { repeat: true }))).toEqual({ kind: "held" });
+    expect(listKey(key("F10", { shiftKey: true, repeat: true }))).toEqual({ kind: "held" });
+    expect(listKey(key("a", { metaKey: true, repeat: true }))).toEqual({ kind: "held" });
+    expect(listKey(key("ArrowDown", { repeat: true }))).toEqual({
+      kind: "move",
+      to: "down",
+      extend: false,
+    });
+    expect(listKey(key("Backspace", { repeat: true }))).toBeNull();
   });
 });
