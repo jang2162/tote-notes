@@ -545,6 +545,8 @@ export const BACKEND_ERROR_CODES = [
   "installing",
   // A workspace a window shows or is opening is not renamed or trashed (src-tauri/src/app/conveniences.rs).
   "workspace-open",
+  // A memo does not move into a workspace a window is being opened on (the same file).
+  "workspace-opening",
 ] as const;
 export type BackendErrorCode = (typeof BACKEND_ERROR_CODES)[number];
 

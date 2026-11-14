@@ -32,6 +32,19 @@ impl std::fmt::Display for WorkspaceInUse {
 
 impl std::error::Error for WorkspaceInUse {}
 
+/// A window is being opened on the workspace a memo would move to: the move waits for nothing and
+/// is refused. The command answers `workspace-opening`, which the frontend words.
+#[derive(Debug)]
+pub struct WorkspaceOpening(PathBuf);
+
+impl std::fmt::Display for WorkspaceOpening {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "a window is opening {}", self.0.display())
+    }
+}
+
+impl std::error::Error for WorkspaceOpening {}
+
 /// A memo moved by `AppCore::move_memo_out`: as the target lists it, the target's name, and the
 /// windows that show the target, to read their memo list again.
 #[derive(Debug)]
@@ -172,9 +185,9 @@ impl AppCore {
                 continue;
             }
             if inner.reserved.contains_key(&to) {
-                return Err(WorkspaceError::Io(io::Error::other(
-                    "a window is opening that workspace",
-                )));
+                return Err(WorkspaceError::Io(io::Error::other(WorkspaceOpening(
+                    to.clone(),
+                ))));
             }
             let mut target = Workspace::open(&to)?;
             break source.move_memo_to(id, &mut target, ops)?;
@@ -225,14 +238,17 @@ fn same_file(a: &Path, b: &Path) -> bool {
     a == b
 }
 
-/// `CommandError::from`, with its own code for a workspace a window holds.
+/// `CommandError::from`, with codes of their own for a workspace a window holds and one a window
+/// is being opened on.
 fn command_error(err: WorkspaceError) -> CommandError {
     if let WorkspaceError::Io(io) = &err {
-        if io
-            .get_ref()
-            .is_some_and(|inner| inner.is::<WorkspaceInUse>())
-        {
-            return CommandError::new("workspace-open", err.to_string());
+        if let Some(inner) = io.get_ref() {
+            if inner.is::<WorkspaceInUse>() {
+                return CommandError::new("workspace-open", err.to_string());
+            }
+            if inner.is::<WorkspaceOpening>() {
+                return CommandError::new("workspace-opening", err.to_string());
+            }
         }
     }
     err.into()
@@ -739,6 +755,31 @@ mod tests {
             .unwrap();
         assert_eq!(back.windows, vec![here.clone()]);
         assert!(lock(&target).list_memos().unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_memo_does_not_move_into_a_workspace_a_window_is_opening_and_says_so_with_a_code() {
+        let dir = tempfile::tempdir().unwrap();
+        let core = core(dir.path());
+        let a = create(&core, "가");
+        let b = create(&core, "나");
+        let label = show(&core, &a);
+        let memo = lock(&core.workspace(&label).unwrap())
+            .import_memo("a.md", b"text")
+            .unwrap();
+        let opening = core.reserve(&b).unwrap();
+        let err = core
+            .move_memo_out(&label, &memo.id, &b, &FileOps::SYSTEM)
+            .unwrap_err();
+        // A code of its own: the frontend words it, and an `io` would show the English message.
+        assert_eq!(command_error(err).code, "workspace-opening");
+        assert!(lock(&core.workspace(&label).unwrap())
+            .memo_info(&memo.id)
+            .is_ok());
+        core.release(&opening);
+        assert!(core
+            .move_memo_out(&label, &memo.id, &b, &FileOps::SYSTEM)
+            .is_ok());
     }
 
     #[test]
