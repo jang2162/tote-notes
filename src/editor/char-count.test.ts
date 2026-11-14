@@ -120,6 +120,19 @@ describe("CharCounter", () => {
     expect(shown).toEqual(["1자"]);
   });
 
+  it("gives the thread back inside one long line too, cutting it at spaces only", () => {
+    const { counts, shown } = counter();
+    // One line of 100,000 characters: two-unit emoji and Hangul between spaces.
+    const line = Array.from({ length: 20_000 }, () => "👍🏽한 ").join("");
+    counts.request(state(line), { edited: true });
+    vi.advanceTimersByTime(CHAR_COUNT_DELAY_MS);
+    expect(shown).toEqual([]);
+    vi.runAllTimers();
+    // Cut at spaces, so no grapheme was split: the same count as all at once.
+    expect(shown).toEqual([charCountLabel(countChars(state(line))!)]);
+    expect(countChars(state(line))!.count).toBe(60_000);
+  });
+
   it("keeps the document's count as the cursor moves, without counting again", () => {
     const { counts, shown } = counter();
     const first = state("가나다");

@@ -29,12 +29,29 @@ export interface CharCount {
   count: number;
 }
 
-/** The text between `from` and `to`, line by line without the line breaks. A grapheme never spans
- * a line break in a CodeMirror document, so the pieces count apart. */
+/** About how long a piece of one line is, so a long line hands the thread back inside it. */
+const PIECE = 4096;
+
+/** `text` in pieces of about `PIECE`, each cut just before a space. A space starts a grapheme of its
+ * own (unless a rare prepending mark stands before it), so the pieces count apart; a run with no
+ * space stays whole. */
+function* cut(text: string) {
+  let start = 0;
+  while (text.length - start > PIECE) {
+    const at = text.indexOf(" ", start + PIECE);
+    if (at < 0) break;
+    yield text.slice(start, at);
+    start = at;
+  }
+  yield start ? text.slice(start) : text;
+}
+
+/** The text between `from` and `to`, without the line breaks, in pieces that count apart: a
+ * grapheme never spans a line break in a CodeMirror document, and a long line is `cut`. */
 function* pieces(doc: Text, ranges: readonly { from: number; to: number }[]) {
   for (const { from, to } of ranges) {
     for (const iter = doc.iterRange(from, to); !iter.next().done;)
-      if (!iter.lineBreak) yield iter.value;
+      if (!iter.lineBreak) yield* cut(iter.value);
   }
 }
 

@@ -4,7 +4,7 @@ import type { Command, EditorView } from "@codemirror/view";
 import { describe, expect, it } from "vitest";
 
 import { HIGHLIGHT_LIMIT_CHARS } from "../highlight/extension";
-import { FOLD_SCAN_LINES, foldsAt, indentFold } from "./folding";
+import { FOLD_LOOKAHEAD_LINES, foldsAt, indentFold, probeFold } from "./folding";
 import { editorExtensions, type EditorOptions } from "./setup";
 
 function state(doc: string, options: Partial<EditorOptions> = {}) {
@@ -52,10 +52,32 @@ describe("indentFold", () => {
     expect(foldAt(state("    a\n\tb"), 1)).toBeNull();
   });
 
-  it("gives up on a block it cannot end within the scan", () => {
-    const block = (n: number) => `a\n${"  x\n".repeat(n)}b`;
-    expect(foldAt(state(block(FOLD_SCAN_LINES - 1)), 1)).not.toBeNull();
-    expect(foldAt(state(block(FOLD_SCAN_LINES + 1)), 1)).toBeNull();
+  it("folds a block however long, and not a head whose next text is too far below", () => {
+    const block = `a\n${"  x\n".repeat(FOLD_LOOKAHEAD_LINES * 20)}b`;
+    expect(foldAt(state(block), 1)).toBe(
+      `\n${"  x\n".repeat(FOLD_LOOKAHEAD_LINES * 20).slice(0, -1)}`,
+    );
+    const gap = (blank: number) => `a\n${"\n".repeat(blank)}  x`;
+    expect(foldAt(state(gap(FOLD_LOOKAHEAD_LINES - 2)), 1)).not.toBeNull();
+    expect(foldAt(state(gap(FOLD_LOOKAHEAD_LINES)), 1)).toBeNull();
+  });
+
+  it("tells the gutter a line folds without looking for its block's end", () => {
+    const s = state(`a\n  b\n${"    c\n".repeat(50_000)}d`);
+    expect(indentFold(s, 0, 1)).toEqual({ from: 1, to: s.doc.line(50_002).to });
+    // As the gutter asks: the range stops at the first deeper line, nothing below it is read.
+    expect(probeFold(s, 0, 1)).toEqual({ from: 1, to: 5 });
+    // It agrees with the whole range on what folds.
+    for (const doc of ["a\nb", "a\n\n  b", "  a\nb", "a\n  b\n\nc", "", "a", "# A\ntext"])
+      for (const fileName of ["a.txt", "a.md"]) {
+        const t = state(doc, { fileName });
+        for (let n = 1; n <= t.doc.lines; n++) {
+          const line = t.doc.line(n);
+          expect(probeFold(t, line.from, line.to) !== null, `${fileName} ${doc} ${n}`).toBe(
+            foldAt(t, n) !== null,
+          );
+        }
+      }
   });
 
   it("is the service the editor folds with in every language", () => {
