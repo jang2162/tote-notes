@@ -12,10 +12,10 @@ use super::names::{is_valid_file_name, split_name};
 use super::{MemoInfo, Workspace, WorkspaceError};
 
 /// One image may be this large and no larger (spec 「크기 제한」). `MAX_IMAGE_BYTES` in
-/// src/editor/image-paste.ts must agree.
+/// src/core/images.ts must agree.
 pub const MAX_IMAGE_BYTES: u64 = 20 * 1024 * 1024;
 
-/// The extensions an image is known by. `IMAGE_EXTENSIONS` in src/editor/image-paste.ts must
+/// The extensions an image is known by. `IMAGE_EXTENSIONS` in src/core/images.ts must
 /// agree.
 const IMAGE_EXTENSIONS: &[&str] = &["png", "jpg", "jpeg", "gif", "webp", "svg"];
 
