@@ -13,7 +13,7 @@ use tauri::ipc::{Channel, InvokeBody, Request, Response};
 use tauri::{AppHandle, Emitter, EventTarget, Manager, State, WebviewWindow};
 
 use super::places::TabRef;
-use super::{appearance, lifecycle, lock, menu, update, windows, AppCore, PendingOpen};
+use super::{appearance, lifecycle, links, lock, menu, update, windows, AppCore, PendingOpen};
 use crate::appdata::{shown_from_home, Settings, SettingsPatch};
 use crate::backup::versions::{self, Version};
 use crate::backup::BackupDir;
@@ -537,6 +537,16 @@ pub async fn read_version(
 ) -> CmdResult<Response> {
     let dir = backup_dir(&core, &window)?;
     Ok(Response::new(versions::read(&dir, &snapshot, &file)?))
+}
+
+/// A link pressed in the Markdown preview (spec 2026-11-14 md-preview 「링크」): `http`, `https` or
+/// `mailto` alone, else `bad-request`.
+#[tauri::command]
+pub async fn open_link(url: String) -> CmdResult<()> {
+    if let Some(why) = links::check_url(&url) {
+        return Err(CommandError::new("bad-request", format!("{why}: {url}")));
+    }
+    Ok(links::open_url(&url)?)
 }
 
 #[tauri::command]

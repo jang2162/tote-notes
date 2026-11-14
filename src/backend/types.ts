@@ -634,6 +634,9 @@ export interface Backend {
   readVersion(snapshot: string, file: string): Promise<Uint8Array>;
   /** Shows this workspace's backup folder in Finder. */
   revealBackups(): Promise<void>;
+  /** Opens `url` with the system's own app for it — the browser, the mail app (spec 2026-11-14
+   * md-preview 「링크」). `bad-request` for any scheme but `http`, `https` and `mailto`. */
+  openLink(url: string): Promise<void>;
 
   /** Where this window is, for the session; `null` where there is no native window. */
   windowFrame(): Promise<WindowFrame | null>;

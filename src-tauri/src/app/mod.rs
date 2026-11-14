@@ -10,6 +10,7 @@ pub mod flush;
 #[cfg(target_os = "macos")]
 pub mod key_equivalents;
 pub mod lifecycle;
+pub mod links;
 pub mod menu;
 pub mod places;
 pub mod requests;
