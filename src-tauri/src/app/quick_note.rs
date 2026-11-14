@@ -214,7 +214,7 @@ fn with_registered(app: &AppHandle, change: impl FnOnce(&mut Registered, &mut Pl
         return;
     };
     let manager = app.global_shortcut();
-    change(&mut lock(&keys.0), &mut Plugin(&manager));
+    change(&mut lock(&keys.0), &mut Plugin(manager));
 }
 
 /// Runs `job` on the main thread and waits for it; at once when this is the main thread. Jobs run
