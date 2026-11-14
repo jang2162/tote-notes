@@ -1,4 +1,4 @@
-import { Lexer, marked, type Token } from "marked";
+import { Lexer, type Token } from "marked";
 
 /** A box as a list item's head has it: what a press may change, one character between brackets. */
 const BOX_OR_LINE_END = /\r\n|\r|\n|\[[ xX]\]/g;
@@ -12,8 +12,12 @@ const MAX_TRIES = 64;
  * ↔ 원본 줄」). Read with the same `marked` and the same options as the viewer, so a `- [ ]` in a
  * code block or an HTML block, which marked draws no checkbox for, is not counted. */
 export function taskLines(text: string): number[] {
+  return linesOf(Lexer.lex(text));
+}
+
+function linesOf(tokens: readonly Token[]): number[] {
   const lines: number[] = [];
-  walk(Lexer.lex(text), 0, lines);
+  walk(tokens, 0, lines);
   return lines;
 }
 
@@ -52,10 +56,30 @@ function count(raw: string): number {
 /** Whether each box marked draws for `text` is checked, in the order it draws them — the order of
  * marked's own walk, which is its renderer's. */
 export function boxStates(text: string): boolean[] {
-  const states: boolean[] = [];
-  marked.walkTokens(Lexer.lex(text), (token) => {
-    if (token.type === "checkbox") states.push(token.checked);
-  });
+  return statesOf(Lexer.lex(text));
+}
+
+/** marked's `walkTokens` order (table header cells, then rows, then a list's items, then any other
+ * token's children), walked here because `marked.walkTokens` gathers its callback's answers with
+ * `Array.concat` at every level: its cost grows with the square of the tokens, about 1 s for a
+ * 300,000-character memo (`toggleTask`'s cost test in `tasks.test.ts`). The extensions'
+ * `childTokens` that marked's walk also follows are left out: the host's `marked` has none. */
+function statesOf(tokens: readonly Token[], states: boolean[] = []): boolean[] {
+  for (const token of tokens) {
+    switch (token.type) {
+      case "checkbox":
+        states.push(token.checked);
+        break;
+      case "table":
+        for (const cell of token.header) statesOf(cell.tokens, states);
+        for (const row of token.rows) for (const cell of row) statesOf(cell.tokens, states);
+        continue;
+      case "list":
+        statesOf(token.items, states);
+        continue;
+    }
+    if ("tokens" in token && token.tokens) statesOf(token.tokens, states);
+  }
   return states;
 }
 
@@ -88,10 +112,11 @@ export function toggleTask(
   drawn: string = text,
 ): { from: number; to: number; insert: string } | null {
   if (drawn !== text || !Number.isInteger(index) || index < 0) return null;
-  const before = boxStates(text);
+  const tokens = Lexer.lex(text);
+  const before = statesOf(tokens);
   if (index >= before.length) return null;
   const tries = Math.min(MAX_TRIES, Math.max(1, Math.floor(READ_BUDGET_CHARS / (text.length + 1))));
-  for (const box of boxesNear(text, taskLines(text)[index] ?? 0).slice(0, tries)) {
+  for (const box of boxesNear(text, linesOf(tokens)[index] ?? 0).slice(0, tries)) {
     const at = box + 1;
     const insert = text[at] === " " ? "x" : " ";
     const after = boxStates(text.slice(0, at) + insert + text.slice(at + 1));

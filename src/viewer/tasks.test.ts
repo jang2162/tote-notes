@@ -1,7 +1,7 @@
-import { Marked, marked } from "marked";
+import { Lexer, Marked, marked } from "marked";
 import { describe, expect, it } from "vitest";
 
-import { taskLines, toggleTask } from "./tasks";
+import { boxStates, taskLines, toggleTask } from "./tasks";
 
 /** How many checkboxes `marked` draws for `text`: what the viewer numbers. */
 function drawn(text: string): number {
@@ -339,5 +339,69 @@ describe("pressing every box of many generated documents", () => {
     if (process.env.TASKS_FUZZ_REPORT) console.log({ presses, refused });
     // Synchronous: a time-out here measures the machine, not the presses (docs/guides/development.md
     // 「부하에서만 실패하는 테스트는 …」).
+  }, 60_000);
+});
+
+describe("boxStates", () => {
+  it("reads the boxes in marked's own walk order, tables and nested lists too", () => {
+    const next = random(1114);
+    const marked_ = (text: string) => {
+      const states: boolean[] = [];
+      marked.walkTokens(Lexer.lex(text), (token) => {
+        if (token.type === "checkbox") states.push(token.checked);
+      });
+      return states;
+    };
+    for (let doc = 0; doc < 1000; doc++) {
+      const lines = Array.from(
+        { length: 2 + Math.floor(next() * 12) },
+        () => PIECES[Math.floor(next() * PIECES.length)],
+      );
+      const text = lines.join("\n");
+      expect(boxStates(text), text).toEqual(marked_(text));
+    }
+  });
+});
+
+/** A long memo of the shape people keep: headings, a paragraph, a short task list, a code block
+ * and a quoted task, `sections` times over. 600 sections are 9,600 lines and 3,000 tasks. */
+function longMemo(sections: number): string {
+  const out: string[] = [];
+  for (let s = 0; s < sections; s++) {
+    out.push(
+      `## 구역 ${s}`,
+      "",
+      `이 구역은 **할 일** 과 [링크](a${s}.md) 를 담는다. \`code\`.`,
+      "",
+    );
+    for (let t = 0; t < 4; t++) out.push(`- [${(s + t) % 3 === 0 ? "x" : " "}] 할 일 ${s}-${t}`);
+    out.push("", "```ts", `const x${s} = ${s};`, "```", "", "> 인용", "> - [ ] 인용 안 할 일", "");
+  }
+  return out.join("\n");
+}
+
+/** The fastest of a few runs: the least the machine's load adds. */
+function fastest(run: () => void): number {
+  let best = Infinity;
+  for (let i = 0; i < 3; i++) {
+    const start = performance.now();
+    run();
+    best = Math.min(best, performance.now() - start);
+  }
+  return best;
+}
+
+describe("the cost of a press", () => {
+  // A press reads the text a few times (the boxes before, the boxes after the change). Reading
+  // the boxes with marked.walkTokens grew with the square of the tokens (it gathers the callback's
+  // answers with Array.concat), so a press on a 12,000-line memo held the window for seconds.
+  // Timed against the lexer on the same text, so the machine's load cancels out.
+  it("on a long memo is a few readings of the text, not many", () => {
+    const text = longMemo(600);
+    const lex = fastest(() => Lexer.lex(text));
+    const press = fastest(() => {
+      if (!toggleTask(text, 1500)) throw new Error("no box");
+    });
+    expect(press / lex).toBeLessThan(10);
   }, 60_000);
 });
