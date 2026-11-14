@@ -319,7 +319,9 @@ test("a theme an older build saved for an appearance is neither offered nor draw
   });
   const panel = await openSection(page, "모양");
   const shown = panel.getByRole("tabpanel");
-  await expect(shown.getByRole("combobox")).toHaveCount(1);
+  // The one theme picker, and the editor's indent picker: no picker for an appearance.
+  await expect(shown.getByRole("combobox")).toHaveCount(2);
+  await expect(shown.getByRole("combobox", { name: "들여쓰기" })).toHaveCount(1);
   await expect(shown.getByRole("combobox", { name: "테마" })).toHaveValue("dark");
   await expect(shown.getByRole("combobox", { name: "테마" }).locator("option")).toHaveText([
     "자동",
@@ -749,13 +751,19 @@ test("the editor section saves line numbers, font size and font at once", async 
   await expect(font).toHaveAttribute("placeholder", "기본 글꼴");
 
   await lineNumbers.uncheck();
-  await expect.poll(editor).toEqual({ lineNumbers: false, fontSize: 14, fontFamily: "" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: false, fontSize: 14, fontFamily: "" });
   await size.fill("18");
   await size.press("Enter");
-  await expect.poll(editor).toEqual({ lineNumbers: false, fontSize: 18, fontFamily: "" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: false, fontSize: 18, fontFamily: "" });
   await font.fill("Menlo");
   await font.press("Tab");
-  await expect.poll(editor).toEqual({ lineNumbers: false, fontSize: 18, fontFamily: "Menlo" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: false, fontSize: 18, fontFamily: "Menlo" });
   expect(await patches()).toEqual([
     { editorLineNumbers: false },
     { editorFontSize: 18 },
@@ -766,7 +774,9 @@ test("the editor section saves line numbers, font size and font at once", async 
   await size.fill("30");
   await size.press("Enter");
   await expect(size).toHaveValue("24");
-  await expect.poll(editor).toEqual({ lineNumbers: false, fontSize: 24, fontFamily: "Menlo" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: false, fontSize: 24, fontFamily: "Menlo" });
   expect((await patches()).at(-1)).toEqual({ editorFontSize: 24 });
   // A field left empty is no size: it goes back to the saved one and nothing is sent.
   await size.fill("");
@@ -824,7 +834,9 @@ test("a font size or font whose save failed is sent again as it is", async ({ pa
   await expect(error).toHaveText("오류: 디스크가 가득 찼습니다");
   // The same value again goes out once more and is saved.
   await size.press("Enter");
-  await expect.poll(editor).toEqual({ lineNumbers: true, fontSize: 18, fontFamily: "" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: true, fontSize: 18, fontFamily: "" });
   await expect(error).toHaveText("");
 
   await failOnce();
@@ -832,7 +844,9 @@ test("a font size or font whose save failed is sent again as it is", async ({ pa
   await font.press("Enter");
   await expect(error).toHaveText("오류: 디스크가 가득 찼습니다");
   await font.press("Enter");
-  await expect.poll(editor).toEqual({ lineNumbers: true, fontSize: 18, fontFamily: "Menlo" });
+  await expect
+    .poll(editor)
+    .toEqual({ ...DEFAULT_EDITOR_SETTINGS, lineNumbers: true, fontSize: 18, fontFamily: "Menlo" });
   expect(await patches()).toEqual([
     { editorFontSize: 18 },
     { editorFontSize: 18 },
@@ -897,8 +911,12 @@ test("the 모양 section holds the theme, editor and sidebar settings, each unde
       shown.getByRole("combobox", { name: "테마" }),
       shown.getByRole("heading", { name: "편집기" }),
       shown.getByRole("checkbox", { name: "줄번호 표시" }),
+      shown.getByRole("checkbox", { name: "접기 표시" }),
+      shown.getByRole("checkbox", { name: "줄 바꿈" }),
+      shown.getByRole("combobox", { name: "들여쓰기" }),
       shown.getByRole("spinbutton", { name: "글꼴 크기" }),
       shown.getByRole("textbox", { name: "글꼴" }),
+      shown.getByRole("checkbox", { name: "글자 수 보이기" }),
       shown.getByRole("heading", { name: "사이드바" }),
       shown.getByRole("checkbox", { name: "메모 목록에 내용 미리보기" }),
     ].map(async (control) => (await control.boundingBox())!.y),
@@ -906,7 +924,8 @@ test("the 모양 section holds the theme, editor and sidebar settings, each unde
   expect(tops).toEqual([...tops].sort((a, b) => a - b));
   // One picker for the theme: no mode radios, no theme per appearance (user request 2026-11-02).
   await expect(shown.getByRole("radio")).toHaveCount(0);
-  await expect(shown.getByRole("combobox")).toHaveCount(1);
+  // The other picker is the editor's indent.
+  await expect(shown.getByRole("combobox")).toHaveCount(2);
   const picker = shown.getByRole("combobox", { name: "테마" });
   // The modes, then the registry's themes under their own group (theme picker spec 「고르개」).
   await expect(picker.locator("option")).toHaveText(["자동", "라이트", "다크", "Light+", "Dark+"]);
