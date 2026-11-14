@@ -47,13 +47,42 @@ pub fn item_of(id: &str) -> Option<&str> {
     id.strip_prefix(TRAY_MENU)
 }
 
+/// What the icon's menu does, apart from the app: the tests stand in a recording one.
+pub trait Actions {
+    fn quick_note(&self);
+    fn open(&self);
+    /// A round that writes every window first (`lifecycle::begin`).
+    fn begin(&self, goal: FlushGoal);
+}
+
 pub fn on_menu(app: &AppHandle, item: &str) {
+    act(item, &App(app));
+}
+
+/// 「종료」 is the menu bar's Tote Notes 종료: pending edits are written first. Quitting outright
+/// (`AppHandle::exit`) would lose them.
+fn act(item: &str, actions: &impl Actions) {
     match item {
-        "quick-note" => quick_note::run(app),
-        "open" => open(app),
-        // The menu bar's Tote Notes 종료: pending edits are written first.
-        "quit" => lifecycle::begin(app, FlushGoal::Quit),
+        "quick-note" => actions.quick_note(),
+        "open" => actions.open(),
+        "quit" => actions.begin(FlushGoal::Quit),
         _ => {}
+    }
+}
+
+struct App<'a>(&'a AppHandle);
+
+impl Actions for App<'_> {
+    fn quick_note(&self) {
+        quick_note::run(self.0);
+    }
+
+    fn open(&self) {
+        open(self.0);
+    }
+
+    fn begin(&self, goal: FlushGoal) {
+        lifecycle::begin(self.0, goal);
     }
 }
 
@@ -69,18 +98,46 @@ fn open(app: &AppHandle) {
 /// Puts the icon in the menu bar or takes it out, as the settings say. On the main thread, in turn:
 /// two settings changes at once would otherwise both find no icon and put up two.
 pub fn follow_settings(app: &AppHandle) {
-    quick_note::on_main_thread(app, show_or_hide);
+    quick_note::on_main_thread(app, |app| {
+        show_or_hide(
+            app.state::<AppCore>().settings().tray.visible,
+            &MenuBar(app),
+        );
+    });
 }
 
-fn show_or_hide(app: &AppHandle) {
-    let visible = app.state::<AppCore>().settings().tray.visible;
-    let shown = app.tray_by_id(TRAY_ID).is_some();
+/// The icon in the menu bar, apart from the app: the tests stand in a recording one.
+pub trait Icon {
+    fn shown(&self) -> bool;
+    fn show(&self) -> Result<(), String>;
+    fn hide(&self);
+}
+
+fn show_or_hide(visible: bool, icon: &impl Icon) {
+    let shown = icon.shown();
     if visible && !shown {
-        if let Err(err) = build(app) {
+        if let Err(err) = icon.show() {
             eprintln!("tote: cannot put the icon in the menu bar: {err}");
         }
     } else if !visible && shown {
-        let _ = app.remove_tray_by_id(TRAY_ID);
+        icon.hide();
+    }
+}
+
+struct MenuBar<'a>(&'a AppHandle);
+
+impl Icon for MenuBar<'_> {
+    fn shown(&self) -> bool {
+        self.0.tray_by_id(TRAY_ID).is_some()
+    }
+
+    fn show(&self) -> Result<(), String> {
+        build(self.0).map_err(|e| e.to_string())
+    }
+
+    fn hide(&self) {
+        // Dropped here, the last handle to it: the icon leaves the menu bar.
+        let _ = self.0.remove_tray_by_id(TRAY_ID);
     }
 }
 
@@ -152,6 +209,75 @@ mod tests {
         for id in ["quit", "new-memo", "popup-menu:tray:quit", "settings"] {
             assert_eq!(item_of(id), None, "{id}");
         }
+    }
+
+    #[derive(Default)]
+    struct Recorded(std::cell::RefCell<Vec<String>>, std::cell::Cell<bool>);
+
+    impl Recorded {
+        fn calls(&self) -> Vec<String> {
+            self.0.borrow().clone()
+        }
+    }
+
+    impl Actions for Recorded {
+        fn quick_note(&self) {
+            self.0.borrow_mut().push("quick-note".into());
+        }
+        fn open(&self) {
+            self.0.borrow_mut().push("open".into());
+        }
+        fn begin(&self, goal: FlushGoal) {
+            self.0.borrow_mut().push(format!("begin {goal:?}"));
+        }
+    }
+
+    impl Icon for Recorded {
+        fn shown(&self) -> bool {
+            self.1.get()
+        }
+        fn show(&self) -> Result<(), String> {
+            self.1.set(true);
+            self.0.borrow_mut().push("show".into());
+            Ok(())
+        }
+        fn hide(&self) {
+            self.1.set(false);
+            self.0.borrow_mut().push("hide".into());
+        }
+    }
+
+    /// 「종료」 writes what is pending first, as the menu bar's Tote Notes 종료 does.
+    #[test]
+    fn quit_writes_every_window_first() {
+        let actions = Recorded::default();
+        act("quit", &actions);
+        assert_eq!(actions.calls(), ["begin Quit"]);
+    }
+
+    #[test]
+    fn each_item_does_its_own() {
+        for (item, call) in [("quick-note", "quick-note"), ("open", "open")] {
+            let actions = Recorded::default();
+            act(item, &actions);
+            assert_eq!(actions.calls(), [call], "{item}");
+        }
+        let actions = Recorded::default();
+        act("nope", &actions);
+        assert!(actions.calls().is_empty());
+    }
+
+    #[test]
+    fn the_icon_comes_and_goes_with_the_setting() {
+        let icon = Recorded::default();
+        show_or_hide(false, &icon);
+        assert!(icon.calls().is_empty());
+        show_or_hide(true, &icon);
+        show_or_hide(true, &icon);
+        assert_eq!(icon.calls(), ["show"]);
+        show_or_hide(false, &icon);
+        assert_eq!(icon.calls(), ["show", "hide"]);
+        assert!(!icon.shown());
     }
 
     #[test]

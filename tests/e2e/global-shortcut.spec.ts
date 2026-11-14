@@ -91,6 +91,25 @@ test.describe("빠른 메모", () => {
     await expect(page.locator(".cm-content")).toBeFocused();
     expect(await memoCount(page)).toBe(1);
   });
+  test("a window that wrote its tabs to close drops it, and one that stays makes it", async ({
+    page,
+  }) => {
+    await start(page);
+    // The native side passes over a leaving window (`quick_note::target`); this is one it chose a
+    // moment before its close round began.
+    await page.evaluate(() => window.__tote.backend.requestFlush(1, "close"));
+    await expect
+      .poll(() => page.evaluate(() => window.__tote.backend.data.flushed))
+      .toEqual([{ id: 1 }]);
+    await quickNote(page);
+    await expect.poll(() => page.evaluate(() => window.__tote.backend.data.pending.length)).toBe(0);
+    // The close is off: the next one makes the only memo.
+    await page.evaluate(() => window.__tote.backend.stay());
+    await quickNote(page);
+    await expect(page.locator(".tab")).toHaveCount(1);
+    await expect(page.locator(".cm-content")).toBeFocused();
+    expect(await memoCount(page)).toBe(1);
+  });
 });
 
 test.describe("설정 › 단축키 › 전역", () => {
@@ -176,6 +195,21 @@ test.describe("설정 › 단축키 › 전역", () => {
     await page.keyboard.press("Control+Alt+Shift+N");
     await expect(globalKeys(panel)).toHaveText("⌃⌥⇧N");
     await expect(note).toHaveCount(0);
+  });
+
+  // The native side takes the global keys off while a row records and puts them back after
+  // (`quick_note::suspend`); another app may have taken one meanwhile.
+  test("a global key refused as the recording ends is said in its row", async ({ page }) => {
+    const panel = await openShortcuts(page);
+    await appRow(panel, "rename").locator(".shortcut-keys").click();
+    await expect(appRow(panel, "rename").locator(".shortcut-keys")).toHaveText("키를 누르세요");
+    await page.evaluate(() => {
+      window.__tote.backend.data.refusedGlobalKeys = ["Ctrl+Alt+N"];
+    });
+    await page.keyboard.press("Escape");
+    await expect(globalRow(panel).locator(".shortcut-note")).toHaveText(
+      "다른 앱이 쓰고 있어 등록하지 못했습니다",
+    );
   });
 
   test("the search finds the global row by name and by key", async ({ page }) => {

@@ -375,6 +375,7 @@ pub fn on_event(window: &Window, event: &WindowEvent) {
         if let Some(shortcuts) = app.try_state::<MenuShortcuts>() {
             shortcuts.resume_if(window.label());
         }
+        super::quick_note::resume_if(app, window.label());
     }
     let Some(core) = app.try_state::<AppCore>() else {
         return;
@@ -408,6 +409,7 @@ pub fn on_page_load(webview: &Webview, payload: &PageLoadPayload<'_>) {
     if payload.event() == PageLoadEvent::Started {
         let label = webview.label().to_string();
         webview.app_handle().state::<AppCore>().page_loading(&label);
+        super::quick_note::resume_if(webview.app_handle(), &label);
         change_shortcuts(webview.app_handle(), move |menu| menu.resume_if(&label));
     }
 }

@@ -202,7 +202,12 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
     window.removeEventListener("pagehide", onLeave);
     document.removeEventListener("pointerdown", onOutside, true);
     document.removeEventListener("focusin", onFocus, true);
-    void backend.suspendShortcuts(false).catch(fail);
+    // The global keys come back too, and macOS may refuse one another app took meanwhile: the
+    // global rows are read again for their problem, the notes left as they are.
+    void backend
+      .suspendShortcuts(false)
+      .then(() => reloadGlobal())
+      .catch(fail);
     const keys = keysOf(id);
     const command = commandOf(id) ?? globalOf(id);
     if (keys && command) {
@@ -542,6 +547,13 @@ export function shortcutsSection(options: ShortcutsSectionOptions): {
       if (at === loads) fail(error);
     }
   };
+  /** Reads the global rows again alone, keeping the notes a full read would clear. */
+  async function reloadGlobal() {
+    const next = await backend.globalShortcutTable();
+    if (!table || JSON.stringify(next) === JSON.stringify(global)) return;
+    global = next;
+    render();
+  }
   options.onConfigChanged(() => void load());
 
   resetAll.addEventListener("click", async () => {

@@ -1192,6 +1192,8 @@ pub fn global_shortcut_table(
 #[tauri::command]
 pub fn suspend_shortcuts(app: AppHandle, window: WebviewWindow, on: bool) {
     let label = window.label().to_string();
+    // The global ones too: the hot key would take the key before the recorder.
+    quick_note::suspend(&app, &label, on);
     menu::change_shortcuts(&app, move |menu| {
         if on {
             menu.suspend(&label);
