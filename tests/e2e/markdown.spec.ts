@@ -362,6 +362,34 @@ test("a press in the preview of a tab that takes no edits changes nothing", asyn
   await expect(boxes.nth(0)).not.toBeChecked();
 });
 
+test("a preview viewer of another extension is not given the Markdown preview's requests", async ({
+  page,
+}) => {
+  // It asks for everything a preview may ask (tests/e2e/pages/viewers/requests.html).
+  await start(page, {
+    memos: { a: fakeMemo("할일.mdx", "- [ ] a") },
+    extraViewers: [
+      {
+        info: {
+          extension: "someone.preview",
+          id: "mdx",
+          kind: "preview",
+          extensions: ["mdx"],
+          entry: "viewer.html",
+        },
+        url: "/tests/e2e/pages/viewers/requests.html",
+      },
+    ],
+  });
+  await preview(page, "할일");
+  // Answered after the host has taken every request it sent.
+  await expect(frame(page).locator("body")).toHaveAttribute("data-resolved", "9");
+  expect(await page.evaluate(() => window.__tote.backend.data.openedLinks)).toBeUndefined();
+  expect(
+    await page.evaluate(() => window.__tote.app.focused.tabs.active!.state!.doc.toString()),
+  ).toBe("- [ ] a");
+});
+
 test("a trashed memo's read-only tab shows no preview, so no box to press", async ({ page }) => {
   await start(page, { trash: { t: { ...fakeMemo("할일.md", "- [ ] 하나"), deletedMs: 5 } } });
   await page.getByRole("button", { name: "휴지통", exact: true }).click();

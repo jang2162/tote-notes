@@ -61,6 +61,12 @@ interface TokenPanel {
   host: { destroy(): void; setTheme?(theme: Record<string, string>): void };
 }
 
+/** The bundled Markdown preview: the one viewer given a preview's requests (spec 2026-11-14
+ * md-preview 「뷰어 API 추가」). They change the tab's text and open links, so a preview viewer of
+ * any other extension — none can be installed yet (registry: bundled viewers only) — gets none. */
+const isMarkdownPreview = (viewer: ViewerInfo) =>
+  viewer.extension === "tote.markdown-preview" && viewer.id === "markdown";
+
 /** What a pane needs from its window. */
 export interface PaneHost {
   readonly backend: Backend;
@@ -454,7 +460,10 @@ export class Pane {
         console.warn(`viewer ${viewer.id}: ${message}`);
         fallBack();
       },
-      preview: text === undefined ? undefined : this.previewRequests(doc, () => panel),
+      preview:
+        text !== undefined && isMarkdownPreview(viewer)
+          ? this.previewRequests(doc, () => panel)
+          : undefined,
     });
     const panel: TokenPanel = { doc, owner, host };
     this.panel = panel;
