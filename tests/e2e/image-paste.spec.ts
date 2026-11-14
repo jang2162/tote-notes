@@ -215,6 +215,35 @@ test("image files dropped on the editor are copied in and linked where they were
   await expect(frame(page).locator(".blocked-image")).toHaveCount(0);
 });
 
+test("a dropped image over 20MB stays out with its name in the status bar; the rest go in", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: fakeMemo("a.md", "") },
+    files: { "/x/큰.png": fakeFile(PNG), "/x/작은.png": fakeFile(PNG) },
+  });
+  // A file over 20MB does not fit the fake's storage: the backend refuses this one as it would.
+  await page.evaluate(async () => {
+    const backend = window.__tote.backend;
+    const importImage = backend.importImage.bind(backend);
+    const refusal = await importImage("/x/없음.png").catch((error: unknown) => error);
+    const BackendError = (refusal as object).constructor as new (code: string, m: string) => Error;
+    backend.importImage = async (...args) => {
+      if (args[0] === "/x/큰.png") throw new BackendError("too-large", "image over 20MB");
+      return importImage(...args);
+    };
+  });
+  await openMemo(page, "a", "");
+  const at = await endOfLine(page, 1);
+  await page.evaluate(
+    (point) => window.__tote.backend.dropFiles(["/x/큰.png", "/x/작은.png"], point),
+    at,
+  );
+  await expect(page.locator(".cm-content")).toHaveText("![](작은.png)");
+  await expect(page.locator(".status-message")).toHaveText(`${IMAGE_TOO_LARGE}: 큰.png`);
+  await expect(titles(page)).toHaveText(["a"]);
+});
+
 test("an image already in the workspace is linked as it is, not copied", async ({ page }) => {
   await start(page, {
     memos: {

@@ -127,6 +127,10 @@ export function clipboardImage(data: DataTransfer | null): File | null {
   return Array.from(data.files).find((file) => file.type in PASTED_IMAGE_TYPES) ?? null;
 }
 
+/** The backend's refusal of an image over the limit, which the person is told in the image's own
+ * words rather than as the editor's size limit `describeError` gives `too-large`. */
+const tooLarge = (error: unknown) => error instanceof BackendError && error.code === "too-large";
+
 async function pasteImage(view: EditorView, host: ImageHost, image: File): Promise<void> {
   if (image.size > MAX_IMAGE_BYTES) return host.notice(IMAGE_TOO_LARGE);
   const name = pastedImageName(host.memoFile(), image.type);
@@ -137,7 +141,8 @@ async function pasteImage(view: EditorView, host: ImageHost, image: File): Promi
     host.added(memo);
     file = memo.file;
   } catch (error) {
-    host.report(error);
+    if (tooLarge(error)) host.notice(IMAGE_TOO_LARGE);
+    else host.report(error);
   }
   placeLinks(host, id, file === null ? [] : [file], "input.paste");
 }
@@ -168,8 +173,7 @@ async function importImages(host: ImageHost, id: number, paths: readonly string[
       if (imported.memo) host.added(imported.memo);
       files.push(imported.file);
     } catch (error) {
-      if (error instanceof BackendError && error.code === "too-large")
-        host.notice(`${IMAGE_TOO_LARGE}: ${basename(path)}`);
+      if (tooLarge(error)) host.notice(`${IMAGE_TOO_LARGE}: ${basename(path)}`);
       else host.report(error);
     }
   }
