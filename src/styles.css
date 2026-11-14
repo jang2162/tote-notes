@@ -554,6 +554,45 @@ html:not(.sidebar-collapsed) .tab-lead {
   text-overflow: ellipsis;
 }
 
+/* The memo list's two zones in the one box the keys go to; the trash list and the versions list
+   take the keys the same way (list keyboard spec). The current row has the ring while the box has
+   the keys; the box has it only until a row is current. */
+.memo-listbox {
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.memo-listbox,
+.trash-scroller,
+.version-list {
+  outline: none;
+}
+
+.memo-listbox:focus-visible:not([aria-activedescendant]),
+.trash-scroller:focus-visible:not([aria-activedescendant]),
+.version-list:focus-visible:not([aria-activedescendant]),
+.memo-listbox:focus .memo-row.current,
+.trash-scroller:focus .trash-row.current,
+.version-list:focus li.current {
+  outline: 1px solid var(--accent);
+  outline-offset: -1px;
+}
+
+/* One row picked is coloured only while the list has the keys: a plain press picks the row it
+   opens, whose colour as the active row says it all. */
+.memo-listbox:focus .memo-row.picked,
+.memo-listbox.several .memo-row.picked,
+.trash-scroller:focus .trash-row.picked,
+.trash-scroller.several .trash-row.picked {
+  background: var(--selection);
+}
+
+.picker-list li[aria-selected="true"] {
+  background: var(--active-bg);
+}
+
 .memo-ext {
   color: var(--muted);
   font-size: 11px;
@@ -1112,6 +1151,15 @@ html:not(.sidebar-collapsed) .tab-lead {
 
 .status-message.error {
   color: var(--danger);
+}
+
+/* A button for the keys and for assistive technology (list keyboard spec 「상태 표시줄」), drawn as
+   the text it was. */
+.status-language {
+  padding: 0 4px;
+  border: none;
+  border-radius: 4px;
+  background: none;
 }
 
 .status-language.clickable {

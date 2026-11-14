@@ -14,6 +14,7 @@ import type {
   TabRef,
   TrashedInfo,
   WindowStart,
+  WorkspaceListItem,
 } from "../backend/types";
 import { errorCode } from "../backend/types";
 import { decodeText } from "../core/codec";
@@ -118,6 +119,7 @@ import {
   movePick,
   moveTargets,
   PIN,
+  pinsAll,
   PURGE,
   RENAME,
   RESTORE,
@@ -126,6 +128,14 @@ import {
   TRASH,
   trashRowMenu,
 } from "./context-menus";
+import {
+  duplicatedManyText,
+  eachInTurn,
+  moveSummary,
+  purgeManyQuestion,
+  trashSummary,
+  type TrashOutcome,
+} from "./list-actions";
 import { editorFontStack } from "./editor-font";
 import { describeError } from "./errors";
 import {
@@ -368,11 +378,13 @@ export class AppController implements DocHost, PaneHost {
   /** Numbers the memo list's content filters (`findInMemos`). */
   private memoFilters = 0;
   private readonly memoList = new MemoList({
-    open: (id) => void this.openMemo(id),
-    menu: (id) => void this.memoMenu(id).catch((error: unknown) => this.report(error)),
+    open: (id) => this.openMemo(id),
+    menu: (ids) => this.memoMenu(ids).catch((error: unknown) => this.report(error)),
+    trash: (ids) => this.trashMemos(ids).catch((error: unknown) => this.report(error)),
+    toEditor: () => this.focused.takeKeys(),
     sort: () => void this.sortMenu().catch((error: unknown) => this.report(error)),
     openAt: (id, line, column) =>
-      void this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
+      this.openMatch(id, line, column).catch((error: unknown) => this.report(error)),
     // The query in both normalization forms: a file of either holds the match (`literal_any`).
     find: (query) =>
       this.backend.findInMemos(
@@ -399,8 +411,10 @@ export class AppController implements DocHost, PaneHost {
       void this.showSettings("workspaces").catch((error: unknown) => this.report(error)),
   });
   private readonly trashList = new TrashList({
-    open: (id) => void this.openTrashed(id).catch((error: unknown) => this.report(error)),
-    menu: (id) => void this.trashMenu(id).catch((error: unknown) => this.report(error)),
+    open: (id) => this.openTrashed(id).catch((error: unknown) => this.report(error)),
+    menu: (ids) => this.trashMenu(ids).catch((error: unknown) => this.report(error)),
+    purge: (ids) => this.purgeMany(ids).catch((error: unknown) => this.report(error)),
+    toEditor: () => this.focused.takeKeys(),
     back: () => this.showMemoList(),
     empty: () => void this.emptyTrash().catch((error: unknown) => this.report(error)),
   });
@@ -676,6 +690,7 @@ export class AppController implements DocHost, PaneHost {
   showing(pane: Pane, doc: Doc | null): void {
     if (pane !== this.focused) return;
     this.memoList.setActive(doc instanceof MemoDoc ? doc.info.id : null);
+    this.trashList.setActive(doc instanceof TrashDoc ? doc.info.id : null);
     if (doc) this.showLanguage(doc);
     else this.statusBar.setLanguage("");
   }
@@ -1195,15 +1210,15 @@ export class AppController implements DocHost, PaneHost {
    * showing the memo is saved and closed first, so the trash gets its last text; when that fails or
    * a conflict waits for its answer, nothing moves and the status bar says so. A memo another
    * window has open is left to that window, which hears `onTrashRequest` and comes back here. */
-  async trashMemo(id: string): Promise<void> {
+  async trashMemo(id: string): Promise<TrashOutcome> {
     let target = id;
     const doc = this.memoTab(id);
     if (doc) {
       await settleComposition(this.viewOf(doc));
-      if (!this.docs.includes(doc)) return;
+      if (!this.docs.includes(doc)) return "other";
       if (!(await this.closeDoc(doc))) {
         this.statusBar.setMessage(NOT_TRASHED);
-        return;
+        return "unsaved";
       }
       // A save that recovered a vanished memo wrote the text under a new ID.
       target = doc.info.id;
@@ -1215,11 +1230,21 @@ export class AppController implements DocHost, PaneHost {
       // Gone already: an empty new memo its close deleted, or a file another app removed.
       if (errorCode(error) !== "unknown-memo") throw error;
       this.memoList.remove(target);
-      return;
+      return "other";
     }
-    if (outcome.kind !== "trashed") return;
+    if (outcome.kind !== "trashed") return "other";
     this.memoList.remove(target);
     await this.refreshTrash();
+    return "trashed";
+  }
+
+  /** The memo list's 「휴지통으로 이동」 and ⌘⌫, for every row picked: the status bar counts what
+   * went (list keyboard spec 「문맥 메뉴」). */
+  private async trashMemos(ids: string[]): Promise<void> {
+    const { results, error } = await eachInTurn(ids, (id) => this.trashMemo(id));
+    const said = trashSummary(results);
+    if (said) this.statusBar.setMessage(said.text, said.tone);
+    if (error !== undefined) throw error;
   }
 
   /** Another window changed the trash: read the way the memo list's changes are, a burst once. */
@@ -1330,12 +1355,31 @@ export class AppController implements DocHost, PaneHost {
     this.sidebar.show("memos");
   }
 
-  /** A trashed row's context menu: 복구, Finder, or 영구 삭제 after asking. */
-  private async trashMenu(id: string): Promise<void> {
-    const picked = await this.backend.showPopupMenu(trashRowMenu());
-    if (picked === RESTORE) await this.restoreTrashed(id);
-    if (picked === REVEAL_IN_FINDER) await revealFile(this.conveniences, { kind: "trashed", id });
-    if (picked === PURGE) await this.purgeTrashed(id);
+  /** The context menu of the trashed rows picked: 복구, Finder for one alone, or 영구 삭제 after
+   * asking once. */
+  private async trashMenu(ids: string[]): Promise<void> {
+    const picked = await this.backend.showPopupMenu(trashRowMenu(ids.length));
+    if (picked === RESTORE) await this.restoreMany(ids);
+    if (picked === REVEAL_IN_FINDER)
+      await revealFile(this.conveniences, { kind: "trashed", id: ids[0] });
+    if (picked === PURGE) await this.purgeMany(ids);
+  }
+
+  private async restoreMany(ids: string[]): Promise<void> {
+    if (ids.length === 1) return this.restoreTrashed(ids[0]);
+    const { results, error } = await eachInTurn(ids, (id) => this.backend.restoreMemo(id));
+    for (const info of results) this.memoList.upsert(info);
+    await this.refreshTrash();
+    if (error !== undefined) throw error;
+  }
+
+  /** The trash list's ⌘⌫ and 「영구 삭제」 for the rows picked: one question for all of them. */
+  private async purgeMany(ids: string[]): Promise<void> {
+    if (ids.length === 1) return this.purgeTrashed(ids[0]);
+    if (!(await confirm(purgeManyQuestion(ids.length), "영구 삭제", "danger"))) return;
+    const { error } = await eachInTurn(ids, (id) => this.backend.purgeTrashed(id));
+    await this.refreshTrash();
+    if (error !== undefined) throw error;
   }
 
   /** Back into the memo list, under the next free name when its own is taken; not opened. */
@@ -2307,9 +2351,9 @@ export class AppController implements DocHost, PaneHost {
   /** A memo row's context menu (spec 2026-10-30 「이름 바꾸기」·「고정」, conveniences spec
    * 「메뉴」). The workspaces to move to are read as it opens, so one another window made or hid
    * is as the switcher has it. */
-  private async memoMenu(id: string): Promise<void> {
-    const info = this.memoList.get(id);
-    if (!info) return;
+  private async memoMenu(ids: string[]): Promise<void> {
+    const infos = ids.flatMap((id) => this.memoList.get(id) ?? []);
+    if (infos.length === 0) return;
     const targets = await this.backend.listWorkspaces().then(
       (list) => moveTargets(list, this.workspacePath),
       (error: unknown) => {
@@ -2317,20 +2361,58 @@ export class AppController implements DocHost, PaneHost {
         return [];
       },
     );
-    const picked = await this.backend.showPopupMenu(memoRowMenu(info, targets));
+    const picked = await this.backend.showPopupMenu(memoRowMenu(infos, targets));
+    const { id } = infos[0];
+    if (picked === TRASH) await this.trashMemos(infos.map((info) => info.id));
+    if (picked === PIN) await this.pinMemos(infos);
+    if (infos.length > 1) return this.actOnMany(infos, picked, targets);
     if (picked === RENAME) await this.renameMemo(id);
-    if (picked === TRASH) await this.trashMemo(id);
     if (picked === DUPLICATE) await duplicateMemo(this.conveniences, id);
     if (picked === REVEAL_IN_FINDER) await revealFile(this.conveniences, { kind: "memo", id });
     if (picked === COPY_PATH) await copyPath(this.conveniences, { kind: "memo", id });
     const to = movePick(picked);
     if (to !== null) await moveMemo(this.conveniences, id, to);
-    if (picked !== PIN) return;
-    const pinned = await this.backend.setMemoPinned(id, !info.pinned);
-    this.memoList.upsert(pinned);
-    // An open tab's info goes back into the list with each change of its own.
-    const doc = this.memoTab(id);
-    doc?.follow(pinned, doc.infoChanges);
+  }
+
+  /** 「복제」 and 「다른 워크스페이스로 옮기기」 for several rows picked, one after another; the status
+   * bar counts them. */
+  private async actOnMany(
+    infos: MemoInfo[],
+    picked: string | null,
+    targets: WorkspaceListItem[],
+  ): Promise<void> {
+    const ids = infos.map((info) => info.id);
+    const to = movePick(picked);
+    if (picked === DUPLICATE) {
+      const { results, error } = await eachInTurn(ids, (id) =>
+        duplicateMemo(this.conveniences, id),
+      );
+      if (results.length) this.statusBar.setMessage(duplicatedManyText(results.length));
+      if (error !== undefined) throw error;
+    } else if (to !== null) {
+      const { results, error } = await eachInTurn(ids, (id) => moveMemo(this.conveniences, id, to));
+      const name = targets.find((item) => item.path === to)?.name ?? to;
+      const said = moveSummary(results, name);
+      if (said) this.statusBar.setMessage(said.text, said.tone);
+      if (error !== undefined) throw error;
+    }
+  }
+
+  /** 「맨 위에 고정」 pins every memo picked, 「고정 해제」 frees them (list keyboard spec 「문맥
+   * 메뉴」). */
+  private async pinMemos(infos: MemoInfo[]): Promise<void> {
+    const pin = pinsAll(infos);
+    const { error } = await eachInTurn(
+      infos.filter((info) => Boolean(info.pinned) !== pin).map((info) => info.id),
+      async (id) => {
+        const pinned = await this.backend.setMemoPinned(id, pin);
+        this.memoList.upsert(pinned);
+        // An open tab's info goes back into the list with each change of its own.
+        const doc = this.memoTab(id);
+        doc?.follow(pinned, doc.infoChanges);
+      },
+    );
+    if (error !== undefined) throw error;
   }
 
   /** The sidebar's rename: of a memo open in this window, through its tab (saved first, as the
