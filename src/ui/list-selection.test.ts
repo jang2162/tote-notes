@@ -195,7 +195,7 @@ describe("ListSelection follows the rows", () => {
   });
 });
 
-/** A key as WebKit sends it on a US layout: a letter\x27s `code` is its place, `KeyA`. */
+/** A key as WebKit sends it on a US layout: a letter's `code` is its place, `KeyA`. */
 const key = (key: string, more: Partial<KeyboardEvent> = {}) =>
   ({
     key,
@@ -248,9 +248,15 @@ describe("listKey", () => {
     expect(listKey(key("Enter", { keyCode: 229 }))).toBeNull();
   });
 
-  it("reads ⌘A by the key\x27s place, so the Korean input method\x27s ㅁ is ⌘A too", () => {
+  it("reads ⌘A by the key's place, so the Korean input method's ㅁ is ⌘A too", () => {
     expect(listKey(key("ㅁ", { code: "KeyA", metaKey: true }))).toEqual({ kind: "all" });
     expect(listKey(key("ㅁ", { code: "KeyA" }))).toBeNull();
+  });
+
+  it("reads a Latin letter by the letter, as the menus do: AZERTY's ⌘Q is not ⌘A", () => {
+    // AZERTY has Q where US has A, and A where US has Q.
+    expect(listKey(key("q", { code: "KeyA", metaKey: true }))).toBeNull();
+    expect(listKey(key("a", { code: "KeyQ", metaKey: true }))).toEqual({ kind: "all" });
   });
 
   it("swallows a key held down but for the moves: one ⌘⌫ moves one memo", () => {

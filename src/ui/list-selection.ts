@@ -28,12 +28,19 @@ const MOVES: Record<string, Extract<ListKey, { kind: "move" }>["to"]> = {
   PageDown: "page-down",
 };
 
-/** The key by its place (`code`), as the shortcut recorder reads it (`acceleratorFromEvent`,
- * src/shortcuts/keys.ts): the Korean input method sends ⌘A as `ㅁ`. */
+/** A Latin letter by the letter, as the native menus match their keys — on AZERTY, A sits where
+ * US has Q, and ⌘Q there must go on to quit. Any other key by its place (`code`), as the shortcut
+ * recorder reads it (`acceleratorFromEvent`, src/shortcuts/keys.ts): the Korean input method
+ * sends ⌘A as `ㅁ`. */
+function keyName(event: KeyboardEvent): string {
+  if (/^[a-z]$/i.test(event.key)) return `Key${event.key.toUpperCase()}`;
+  return event.code || event.key;
+}
+
 export function listKey(event: KeyboardEvent): ListKey | null {
   if (isCompositionKey(event) || event.altKey || event.ctrlKey) return null;
   const { metaKey: meta, shiftKey: shift } = event;
-  const key = event.code || event.key;
+  const key = keyName(event);
   const to = MOVES[key];
   // Held down, a move goes on moving.
   if (to) return meta ? null : { kind: "move", to, extend: shift };

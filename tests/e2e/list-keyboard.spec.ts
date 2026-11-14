@@ -652,6 +652,30 @@ test("⌘A picks every row with the Korean input method on, which sends ㅁ", as
   expect(await pickedNames(page)).toEqual(["가.md", "나.md", "다.md"]);
 });
 
+test("on an AZERTY keyboard ⌘Q, where US has A, is left to the menu", async ({ page }) => {
+  await start(page, three());
+  await filter(page).focus();
+  await page.keyboard.press("ArrowDown");
+  const taken = await memoList(page).evaluate((list) =>
+    [
+      { key: "q", code: "KeyA" },
+      { key: "a", code: "KeyQ" },
+    ].map((how) => {
+      const event = new KeyboardEvent("keydown", {
+        ...how,
+        metaKey: true,
+        bubbles: true,
+        cancelable: true,
+      });
+      list.dispatchEvent(event);
+      return event.defaultPrevented;
+    }),
+  );
+  // ⌘Q goes on to quit; ⌘ with the letter A picks every row.
+  expect(taken).toEqual([false, true]);
+  expect(await pickedNames(page)).toEqual(["가.md", "나.md", "다.md"]);
+});
+
 test("↓ in the filter while a syllable is composed stays with the composition", async ({
   page,
 }) => {
