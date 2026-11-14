@@ -154,7 +154,9 @@
         if (/^data:/i.test(src)) return;
         if (/^[a-z][a-z0-9+.-]*:/i.test(src) || src.startsWith("/") || src.startsWith("//"))
           return blocked(img, "원격 이미지");
-        const url = await resolve(src);
+        // marked hands the address over through encodeURI: `<회의 준비.png>` comes as
+        // `%ED%9A%8C…%20…png`, which names no file until it is decoded.
+        const url = await resolve(decoded(src));
         if (url) img.src = url;
         else blocked(img, "찾을 수 없음");
       }

@@ -16,6 +16,7 @@ import {
   type FileSource,
   type FileTarget,
   type FlushGoal,
+  type ImportedImage,
   type MemoInfo,
   type MoveOutcome,
   type OutsideChange,
@@ -165,6 +166,12 @@ export class TauriBackend implements Backend {
   }
   importFile(path: string) {
     return call<MemoInfo>("import_file", { path });
+  }
+  saveImage(fileName: string, bytes: Uint8Array) {
+    return call<MemoInfo>("save_image", bytes, { "x-file-name": enc(fileName) });
+  }
+  importImage(path: string) {
+    return call<ImportedImage>("import_image", { path });
   }
   duplicateMemo(id: string, bytes?: Uint8Array) {
     const headers: Record<string, string> = { "x-memo-id": enc(id) };
@@ -470,9 +477,13 @@ export class TauriBackend implements Backend {
   onWorkspacesChanged(handler: () => void) {
     void this.window.listen("tote://workspaces", () => handler());
   }
-  onFileDrop(handler: (paths: string[]) => void) {
+  onFileDrop(handler: (paths: string[], at?: { x: number; y: number }) => void) {
     void getCurrentWebview().onDragDropEvent((event) => {
-      if (event.payload.type === "drop") handler(event.payload.paths);
+      if (event.payload.type !== "drop") return;
+      // Typed as physical, but on macOS it is wry's `draggingLocation` in points from the
+      // webview's top left, which Tauri passes on unchanged: the page's CSS pixels at zoom 1.
+      const { x, y } = event.payload.position;
+      handler(event.payload.paths, { x, y });
     });
   }
 }

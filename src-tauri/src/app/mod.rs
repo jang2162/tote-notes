@@ -7,6 +7,7 @@ pub mod appearance;
 pub mod commands;
 pub mod conveniences;
 pub mod flush;
+pub mod images;
 #[cfg(target_os = "macos")]
 pub mod key_equivalents;
 pub mod lifecycle;
