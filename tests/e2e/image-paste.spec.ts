@@ -58,7 +58,7 @@ async function endOfLine(page: Page, line: number): Promise<{ x: number; y: numb
 }
 
 async function openMemo(page: Page, name: string, text: string): Promise<void> {
-  await page.locator(".memo-row", { hasText: name }).click();
+  await page.locator(".memo-row .memo-name").getByText(name, { exact: true }).click();
   await expect(page.locator(".cm-content")).toBeFocused();
   await expect(page.locator(".cm-content")).toHaveText(text);
 }
@@ -110,6 +110,35 @@ test("a paste replaces the selection, and one undo takes the link back out", asy
   await expect(page.locator(".cm-content")).toHaveText("가나![](<a 이미지.gif>)");
   await page.keyboard.press("Meta+z");
   await expect(page.locator(".cm-content")).toHaveText("가나다");
+});
+
+test("a link goes where the cursor was, past edits made while the image is saved, even with another tab on show", async ({
+  page,
+}) => {
+  await start(page, { memos: { a: fakeMemo("a.md", "앞\n뒤"), b: fakeMemo("b.md", "비") } });
+  // The save waits until the test lets it go.
+  await page.evaluate(() => {
+    const backend = window.__tote.backend;
+    const save = backend.saveImage.bind(backend);
+    let release = () => {};
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    Object.assign(window, { releaseSave: release });
+    backend.saveImage = async (...args) => {
+      await gate;
+      return save(...args);
+    };
+  });
+  await openMemo(page, "a", "앞뒤");
+  await page.keyboard.press("End");
+  await paste(page, { image: { type: "image/png" } });
+  await page.keyboard.press("Home");
+  await page.keyboard.insertText("X");
+  await openMemo(page, "b", "비");
+  await page.evaluate(() => (window as unknown as { releaseSave: () => void }).releaseSave());
+  await expect.poll(() => memoText(page, "a.md")).toBe("X앞![](<a 이미지.png>)\n뒤");
+  expect(await memoText(page, "b.md")).toBe("비");
+  await expect(page.locator(".cm-content")).toHaveText("비");
+  await openMemo(page, "a", "X앞![](<a 이미지.png>)뒤");
 });
 
 test("with text on the clipboard as well, a paste puts the text in and saves no image", async ({
