@@ -116,7 +116,8 @@ const view = new EditorView({
       fileName,
       lineNumbers: !!params.get("linenumbers"),
       // As the app decides it (`setText` in src/app/docs.ts), so the measurement sees its setting.
-      wrap: !params.get("nowrap") && longestLine(doc) <= WRAP_LIMIT,
+      wrap: !params.get("nowrap"),
+      wrapFits: longestLine(doc) <= WRAP_LIMIT,
       onUpdate: () => {},
       languageData: languageData(config),
       highlight,

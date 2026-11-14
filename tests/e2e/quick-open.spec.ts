@@ -162,7 +162,7 @@ test("> lists the app commands with their keys, and Enter runs one as its menu i
   await openQuick(page);
   await input(page).fill(">");
   // Every app command but quick open itself; only the rows in view are drawn.
-  await expect(rows(page).first()).toHaveAttribute("aria-setsize", "26");
+  await expect(rows(page).first()).toHaveAttribute("aria-setsize", "27");
   await expect(rows(page).first().locator(".quick-open-name")).toHaveText("업데이트 확인…");
   await input(page).fill(">탭을새창");
   await expect(rows(page).first().locator(".quick-open-name")).toHaveText("탭을 새 창으로 옮기기");

@@ -1159,6 +1159,7 @@ pub async fn patch_settings(
     if shortcuts_changed {
         menu::follow_settings(&app);
     }
+    menu::follow_checks(&app);
     broadcast_config(&app);
     if root_changed {
         // Each root has its own order file: the switchers list the new root's workspaces.
