@@ -187,6 +187,8 @@ test("the trash button swaps the memo list for the trash and back", async ({ pag
   await expect(page.locator(".trash-heading")).toHaveText("휴지통 2");
   await expect(trashNames(page)).toHaveText(["최근", "옛것"]);
   await expect(page.locator(".trash-row .memo-ext")).toHaveText(["txt", "md"]);
+  // A text memo's row has no kind mark, as in the memo list.
+  await expect(page.locator(".trash-row .memo-icon")).toHaveCount(0);
   await expect(page.locator(".trash-row .trash-when").first()).toHaveText(
     /^\d{4}-\d\d-\d\d \d\d:\d\d$/,
   );
@@ -621,6 +623,8 @@ test("a memo restored in another window turns the tab here into the memo", async
 test("a trashed picture is not handed to a viewer", async ({ page }) => {
   await start(page, { trash: { p: trashed("점.png", "not a picture", 5) } });
   await trashButton(page).click();
+  // The memo list's mark of a picture (`kindIcon`).
+  await expect(trashRow(page, "점").locator(".memo-icon svg")).toHaveCount(1);
   await trashRow(page, "점").click();
   await expect(page.locator(".tab.active .tab-title")).toHaveText("점.png");
   // No file a viewer could read: the placeholder of a file the editor cannot show.

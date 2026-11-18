@@ -2,6 +2,7 @@ import type { MenuPoint, TrashedInfo } from "../backend/types";
 import { splitName } from "../core/names";
 import { modalOpen } from "./dialogs";
 import { h } from "./dom";
+import { kindIcon } from "./icons";
 import { ListSelection, listKey } from "./list-selection";
 import { belowRow } from "./memo-list";
 
@@ -214,7 +215,7 @@ export class TrashList {
         id: optionId(item.id),
         data: { id: item.id },
       },
-      h("span", { class: "memo-icon" }),
+      kindIcon(item.kind),
       h(
         "span",
         { class: "memo-text" },

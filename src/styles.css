@@ -437,7 +437,7 @@ html:not(.sidebar-collapsed) .tab-lead {
   align-items: center;
   gap: 6px;
   box-sizing: border-box;
-  padding: 0 12px;
+  padding: 0 12px 0 14px;
   white-space: nowrap;
   cursor: default;
 }
@@ -480,11 +480,16 @@ html:not(.sidebar-collapsed) .tab-lead {
   overflow: auto;
 }
 
-.memo-pinned-divider {
+/* 「고정」 and 「메모」 over the two zones, only while a memo is pinned. */
+.memo-zone {
   flex: none;
-  height: 1px;
-  margin: 2px 8px;
-  background: var(--border);
+  padding: 8px 12px 4px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 14px;
+  letter-spacing: 0.02em;
+  user-select: none;
 }
 
 .memo-pin {
@@ -505,7 +510,7 @@ html:not(.sidebar-collapsed) .tab-lead {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 0 12px;
+  padding: 0 12px 0 14px;
   white-space: nowrap;
   cursor: default;
 }
@@ -605,30 +610,16 @@ html:not(.sidebar-collapsed) .tab-lead {
   font-size: 11px;
 }
 
+/* The kind's mark (`kindIcon`); a text memo's row has none, nor room for one. */
 .memo-icon {
+  display: grid;
+  flex: none;
   width: 14px;
   color: var(--muted);
-  text-align: center;
 }
 
-.memo-icon::before {
-  content: "✎";
-}
-
-.kind-image .memo-icon::before {
-  content: "▣";
-}
-
-.kind-video .memo-icon::before {
-  content: "▶";
-}
-
-.kind-audio .memo-icon::before {
-  content: "♪";
-}
-
-.kind-document .memo-icon::before {
-  content: "▤";
+.memo-icon svg {
+  display: block;
 }
 
 .search-bar {

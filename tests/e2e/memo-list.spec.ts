@@ -1,4 +1,4 @@
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test, type Locator, type Page } from "@playwright/test";
 
 import { defaultFakeData, fakeMemo } from "../../src/backend/fake";
 import {
@@ -16,6 +16,8 @@ import {
 
 const row = (page: Page, name: string) => page.locator(".memo-row", { hasText: name });
 const names = (page: Page) => page.locator(".memo-scroller .memo-row .memo-name");
+/** The zones' names on show (「고정」, 「메모」). */
+const zones = (page: Page) => page.locator(".memo-zone:visible");
 const lastMenu = (page: Page) =>
   page.evaluate(() => window.__tote.backend.data.popupMenus?.at(-1) ?? null);
 
@@ -124,13 +126,101 @@ test("pinning a memo moves it to the zone above the list", async ({ page }) => {
     ["trash", "휴지통으로 이동"],
   ]);
   expect(await page.evaluate(() => window.__tote.backend.data.memos.b.pinned)).toBe(true);
-  await expect(page.locator(".memo-pinned-divider")).toBeVisible();
+  await expect(zones(page)).toHaveText(["고정", "메모"]);
 
   await row(page, "나").click({ button: "right" });
   expect((await lastMenu(page))?.[1].text).toBe("고정 해제");
   await expect(names(page)).toHaveText(["가", "나"]);
   await expect(page.locator(".memo-pinned")).toBeHidden();
-  await expect(page.locator(".memo-pinned-divider")).toBeHidden();
+  await expect(zones(page)).toHaveCount(0);
+});
+
+test("the zones' names sit above their rows and are not options", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: { ...fakeMemo("가.md", "", { modifiedMs: 3 }), pinned: true },
+      b: fakeMemo("나.md", "", { modifiedMs: 2 }),
+      c: fakeMemo("다.md", "", { modifiedMs: 1 }),
+    },
+  });
+  const list = page.getByRole("listbox", { name: "메모 목록" });
+  await expect(zones(page)).toHaveText(["고정", "메모"]);
+  // Hidden from assistive technology: each zone is a named group of options instead.
+  for (const zone of await zones(page).all())
+    await expect(zone).toHaveAttribute("aria-hidden", "true");
+  await expect(list.getByRole("option")).toHaveCount(3);
+  const look = await zones(page)
+    .first()
+    .evaluate((el) => {
+      const { fontSize, fontWeight, color } = getComputedStyle(el);
+      const probe = document.body.appendChild(document.createElement("div"));
+      probe.style.color = "var(--muted)";
+      const muted = getComputedStyle(probe).color;
+      probe.remove();
+      return { fontSize, fontWeight, muted: color === muted };
+    });
+  expect(look).toEqual({ fontSize: "11px", fontWeight: "600", muted: true });
+  await expect(list.getByRole("group", { name: "고정" }).getByRole("option")).toHaveCount(1);
+  await expect(list.getByRole("group", { name: "메모" }).getByRole("option")).toHaveCount(2);
+  // Each name above its zone's first row, not over it.
+  const [pinnedName, restName] = await zones(page).all();
+  const pinnedRow = page.locator(".memo-pinned .memo-row").first();
+  const restRow = page.locator(".memo-scroller .memo-row").first();
+  const below = async (head: Locator, first: Locator) => {
+    const [a, b] = [await head.boundingBox(), await first.boundingBox()];
+    return b!.y - (a!.y + a!.height);
+  };
+  expect(await below(pinnedName, pinnedRow)).toBeGreaterThanOrEqual(0);
+  expect(await below(restName, restRow)).toBeGreaterThanOrEqual(0);
+  expect(await below(restName, restRow)).toBeLessThan(1);
+  // ↓ goes from the last pinned row to the first one below, past the name between them.
+  await pinnedRow.click({ modifiers: ["Meta"] });
+  await expect(list).toBeFocused();
+  await page.keyboard.press("ArrowDown");
+  await expect(list).toHaveAttribute("aria-activedescendant", "memo-option-b");
+  await page.keyboard.press("Shift+ArrowUp");
+  await expect(list.locator('[aria-selected="true"]')).toHaveCount(2);
+});
+
+test("the list has no zone names while nothing is pinned", async ({ page }) => {
+  await start(page, { memos: { a: fakeMemo("가.md", ""), b: fakeMemo("나.md", "") } });
+  await expect(names(page)).toHaveCount(2);
+  await expect(zones(page)).toHaveCount(0);
+  await expect(page.getByRole("listbox", { name: "메모 목록" }).getByRole("group")).toHaveCount(0);
+});
+
+test("a text memo's row has no mark and the other kinds have a drawn one", async ({ page }) => {
+  await start(page, {
+    memos: {
+      a: fakeMemo("가.md", "", { modifiedMs: 6 }),
+      b: fakeMemo("나.txt", "", { modifiedMs: 5 }),
+      c: fakeMemo("사진.png", "", { modifiedMs: 4 }),
+      d: fakeMemo("영상.mp4", "", { modifiedMs: 3 }),
+      e: fakeMemo("소리.mp3", "", { modifiedMs: 2 }),
+      f: fakeMemo("문서.pdf", "", { modifiedMs: 1 }),
+    },
+  });
+  await expect(names(page)).toHaveText(["가", "나", "사진", "영상", "소리", "문서"]);
+  await expect(row(page, "가").locator(".memo-icon")).toHaveCount(0);
+  await expect(row(page, "나").locator(".memo-icon")).toHaveCount(0);
+  // The name starts where the row's padding ends: no room is kept for a mark.
+  const [rowBox, nameBox] = [
+    await row(page, "가").boundingBox(),
+    await row(page, "가").locator(".memo-name").boundingBox(),
+  ];
+  expect(nameBox!.x - rowBox!.x).toBe(14);
+  const marks = page.locator(".memo-row .memo-icon svg");
+  await expect(marks).toHaveCount(4);
+  for (const mark of await marks.all()) {
+    await expect(mark).toHaveAttribute("aria-hidden", "true");
+    expect(await mark.boundingBox()).toMatchObject({ width: 14, height: 14 });
+  }
+  // Drawn marks, not glyphs: nothing written in the box.
+  expect(
+    await page.locator(".memo-icon").evaluateAll((els) => els.map((el) => el.textContent)),
+  ).toEqual(["", "", "", ""]);
+  const shapes = await marks.evaluateAll((els) => els.map((el) => el.innerHTML));
+  expect(new Set(shapes).size).toBe(4);
 });
 
 test("the pinned zone stays put while the list scrolls", async ({ page }) => {
@@ -162,7 +252,7 @@ test("the pinned zone hides when no pinned memo matches the filter", async ({ pa
   await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);
   await page.locator(".memo-filter").fill("나머");
   await expect(page.locator(".memo-pinned")).toBeHidden();
-  await expect(page.locator(".memo-pinned-divider")).toBeHidden();
+  await expect(zones(page)).toHaveCount(0);
   await expect(names(page)).toHaveText(["나머지"]);
   await page.locator(".memo-filter").fill("고정");
   await expect(page.locator(".memo-pinned .memo-row")).toHaveCount(1);

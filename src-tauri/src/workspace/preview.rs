@@ -48,7 +48,7 @@ pub fn preview_of(head: &[u8]) -> Option<String> {
     // The title line, and the blank lines before it.
     lines.find(|line| !line.trim().is_empty());
     let joined = lines
-        .map(without_marks)
+        .filter_map(cleaned)
         .filter(|line| !line.is_empty())
         .collect::<Vec<_>>()
         .join(" ");
@@ -56,9 +56,21 @@ pub fn preview_of(head: &[u8]) -> Option<String> {
     Some(folded.chars().take(PREVIEW_CHARS).collect())
 }
 
+/// `line` as the preview shows it: its marks taken off (`without_marks`) and the strong marks
+/// (`**`, `__`) in it; `None` for a code fence's line (```` ``` ````, `~~~`), whose language name
+/// says nothing — the code between two fences stays.
+fn cleaned(line: &str) -> Option<String> {
+    let rest = without_marks(line);
+    if rest.starts_with("```") || rest.starts_with("~~~") {
+        return None;
+    }
+    Some(without_strong(rest))
+}
+
 /// `line` without its leading Markdown marks — headings and quotes (`#`, `>`), list bullets
-/// (`-`, `*`, `+`) and numbers (`1.`) — and the spaces around them. A bullet or a number counts
-/// as one only with a space after it, so `-1` and `3.5` stay.
+/// (`-`, `*`, `+`) and numbers (`1.`), a task box (`[ ]`, `[x]`, `[X]`) after a bullet or a
+/// number — and the spaces around them. A bullet, a number or a box counts as one only with a
+/// space after it (or, for a box, the line's end), so `-1`, `3.5` and `[x]y` stay.
 fn without_marks(line: &str) -> &str {
     let mut rest = line.trim_start();
     loop {
@@ -68,16 +80,56 @@ fn without_marks(line: &str) -> &str {
             .strip_prefix(['-', '*', '+'])
             .filter(|after| after.starts_with(char::is_whitespace))
         {
-            after
+            without_box(after.trim_start())
         } else {
             let digits = rest.len() - rest.trim_start_matches(|c: char| c.is_ascii_digit()).len();
             match rest[digits..].strip_prefix('.') {
-                Some(after) if digits > 0 && after.starts_with(char::is_whitespace) => after,
+                Some(after) if digits > 0 && after.starts_with(char::is_whitespace) => {
+                    without_box(after.trim_start())
+                }
                 _ => return rest.trim_end(),
             }
         };
         rest = next.trim_start();
     }
+}
+
+/// `item` without the task box it starts with, if it does.
+fn without_box(item: &str) -> &str {
+    ["[ ]", "[x]", "[X]"]
+        .iter()
+        .find_map(|mark| item.strip_prefix(mark))
+        .filter(|after| after.is_empty() || after.starts_with(char::is_whitespace))
+        .unwrap_or(item)
+}
+
+/// `text` without `**` anywhere and without `__` but between two letters or digits, where
+/// Markdown does not read it as a mark either (`a__b`). A lone `*` or `_` stays: `snake_case`,
+/// `2 * 3`.
+fn without_strong(text: &str) -> String {
+    let chars: Vec<char> = text.chars().collect();
+    let mut out = String::with_capacity(text.len());
+    let mut i = 0;
+    while i < chars.len() {
+        let pair = chars.get(i + 1) == Some(&chars[i]);
+        if pair && chars[i] == '*' {
+            i += 2;
+            continue;
+        }
+        if pair && chars[i] == '_' {
+            let before = i.checked_sub(1).map(|at| chars[at]);
+            let after = chars.get(i + 2).copied();
+            let inside = before.is_some_and(char::is_alphanumeric)
+                && after.is_some_and(char::is_alphanumeric);
+            if !inside {
+                i += 2;
+                continue;
+            }
+        }
+        out.push(chars[i]);
+        i += 1;
+    }
+    out
 }
 
 #[cfg(test)]
@@ -122,6 +174,42 @@ mod tests {
             "소제목 가 나 다 라 마 바"
         );
         assert_eq!(preview("t\n-1 도\n3.5 점\n*강조*"), "-1 도 3.5 점 *강조*");
+    }
+
+    #[test]
+    fn task_boxes_after_a_bullet_or_a_number_go() {
+        assert_eq!(
+            preview("장보기\n- [ ] 우유\n- [x] 계란\n* [X] 두부\n1. [ ] 사과\n> - [ ] 빵"),
+            "우유 계란 두부 사과 빵"
+        );
+        // An empty task, a box with no bullet, and one not followed by a space.
+        assert_eq!(
+            preview("t\n- [ ]\n[ ] 그냥\n- [x]y\n- [-] 다른 것"),
+            "[ ] 그냥 [x]y [-] 다른 것"
+        );
+    }
+
+    #[test]
+    fn strong_marks_go_and_single_ones_stay() {
+        assert_eq!(
+            preview("t\n배포: **릴리스 노트** 정리\n__굵게__ 끝"),
+            "배포: 릴리스 노트 정리 굵게 끝"
+        );
+        assert_eq!(
+            preview("t\nsnake_case *기울임* _밑줄_ 2 * 3 a__b"),
+            "snake_case *기울임* _밑줄_ 2 * 3 a__b"
+        );
+        assert_eq!(preview("t\n- **가**"), "가");
+    }
+
+    #[test]
+    fn code_fence_lines_go_and_the_code_stays() {
+        assert_eq!(
+            preview("회의\n리뷰\n```ts\nconst release = 1;\n```\n~~~\n끝\n  ~~~"),
+            "리뷰 const release = 1; 끝"
+        );
+        // A fence inside a quote or a list item, too.
+        assert_eq!(preview("t\n> ```sh\nls\n- ```"), "ls");
     }
 
     #[test]
