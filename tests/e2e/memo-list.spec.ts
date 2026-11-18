@@ -182,6 +182,29 @@ test("the zones' names sit above their rows and are not options", async ({ page 
   await expect(list.locator('[aria-selected="true"]')).toHaveCount(2);
 });
 
+test("the 메모 zone loses its name and its group while the filter leaves it no row", async ({
+  page,
+}) => {
+  await start(page, {
+    memos: { a: { ...fakeMemo("고정.md", ""), pinned: true }, b: fakeMemo("나머지.md", "") },
+  });
+  const list = page.getByRole("listbox", { name: "메모 목록" });
+  await expect(zones(page)).toHaveText(["고정", "메모"]);
+  await expect(list.getByRole("group")).toHaveCount(2);
+  await page.locator(".memo-filter").fill("고정");
+  await expect(names(page)).toHaveCount(0);
+  await expect(zones(page)).toHaveText(["고정"]);
+  // Only the pinned zone is a group: no group 「메모」 with nothing in it.
+  await expect(list.getByRole("group")).toHaveCount(1);
+  await expect(list.getByRole("group", { name: "고정" }).getByRole("option")).toHaveCount(1);
+  await expect(page.locator(".memo-scroller")).not.toHaveAttribute("role", /./);
+  await expect(page.locator(".memo-scroller")).not.toHaveAttribute("aria-label", /./);
+  // Back when a row is: the name and the group.
+  await page.locator(".memo-filter").fill("");
+  await expect(zones(page)).toHaveText(["고정", "메모"]);
+  await expect(list.getByRole("group", { name: "메모" }).getByRole("option")).toHaveCount(1);
+});
+
 test("the list has no zone names while nothing is pinned", async ({ page }) => {
   await start(page, { memos: { a: fakeMemo("가.md", ""), b: fakeMemo("나.md", "") } });
   await expect(names(page)).toHaveCount(2);

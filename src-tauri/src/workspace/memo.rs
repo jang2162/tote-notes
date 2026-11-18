@@ -9,7 +9,7 @@ use serde::Serialize;
 
 use super::index::{self, MemoEntry};
 use super::names::split_name;
-use super::preview::read_preview;
+use super::preview::{is_markdown, read_preview};
 use super::{CachedPreview, Workspace, WorkspaceError};
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -151,7 +151,7 @@ impl Workspace {
             .map_or(0, |d| d.as_millis() as u64);
         let kind = kind_for(&entry.file);
         let preview = (kind == FileKind::Text)
-            .then(|| self.preview(id, &entry.file, modified_ms, meta.len()))
+            .then(|| self.preview(id, entry, modified_ms, meta.len()))
             .flatten();
         Ok(MemoInfo {
             id: id.to_string(),
@@ -167,20 +167,27 @@ impl Workspace {
         })
     }
 
-    /// The memo's preview, read only when its file changed since it was last read. A file that
-    /// cannot be read has none.
-    fn preview(&self, id: &str, file: &str, modified_ms: u64, size: u64) -> Option<String> {
+    /// The memo's preview, read only when its file or its being Markdown changed since it was last
+    /// read. A file that cannot be read has none.
+    fn preview(&self, id: &str, entry: &MemoEntry, modified_ms: u64, size: u64) -> Option<String> {
+        let file = entry.file.as_str();
+        let markdown = is_markdown(file, entry.language.as_deref());
         let mut cache = self.previews.borrow_mut();
         if let Some(cached) = cache.get(id) {
-            if cached.file == file && cached.modified_ms == modified_ms && cached.size == size {
+            if cached.file == file
+                && cached.markdown == markdown
+                && cached.modified_ms == modified_ms
+                && cached.size == size
+            {
                 return cached.preview.clone();
             }
         }
-        let preview = read_preview(&self.root.join(file)).ok().flatten();
+        let preview = read_preview(&self.root.join(file), markdown).ok().flatten();
         cache.insert(
             id.to_string(),
             CachedPreview {
                 file: file.to_string(),
+                markdown,
                 modified_ms,
                 size,
                 preview: preview.clone(),
@@ -323,6 +330,23 @@ mod tests {
         assert_eq!(image.preview, None);
         let json = serde_json::to_string(&image).unwrap();
         assert!(!json.contains("preview"), "{json}");
+    }
+
+    #[test]
+    fn only_a_markdown_memo_loses_its_markdown_marks() {
+        let root = tempfile::tempdir().unwrap();
+        let mut ws = Workspace::create(root.path(), "w").unwrap();
+        let body = b"t\n- [ ] **\xea\xb0\x80** 2**10";
+        let md = ws.import_memo("a.md", body).unwrap();
+        let py = ws.import_memo("b.py", body).unwrap();
+        assert_eq!(md.preview.as_deref(), Some("가 2**10"));
+        assert_eq!(py.preview.as_deref(), Some("[ ] **가** 2**10"));
+        // Read again as Markdown once that is its chosen language, the file untouched.
+        let txt = ws.import_memo("c.txt", body).unwrap();
+        assert_eq!(txt.preview.as_deref(), Some("[ ] **가** 2**10"));
+        let txt = ws.set_language(&txt.id, "markdown", "txt", false).unwrap();
+        assert_eq!(txt.file, "c.txt");
+        assert_eq!(txt.preview.as_deref(), Some("가 2**10"));
     }
 
     #[test]

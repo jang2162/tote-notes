@@ -391,10 +391,12 @@ export class MemoList {
     this.list.items = rest;
     this.pinned.el.hidden = pinned.length === 0;
     const zones = pinned.length > 0;
+    // The rest named only while it has rows: an empty group would still be read out.
+    const restZone = zones && rest.length > 0;
     this.pinnedHead.hidden = !zones;
-    this.restHead.hidden = !zones || rest.length === 0;
+    this.restHead.hidden = !restZone;
     zone(this.pinned.el, zones && "고정");
-    zone(this.list.el, zones && "메모");
+    zone(this.list.el, restZone && "메모");
     // As tall as its rows, up to the stylesheet's share of the pane; past it, it scrolls.
     this.pinned.el.style.height = `${pinned.length * this.rowHeight}px`;
     this.render();
