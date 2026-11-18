@@ -157,12 +157,24 @@ export function openSettings(options: SettingsOptions): Promise<void> {
       { min: TRASH_DAYS_MIN, max: TRASH_DAYS_MAX, below: "revert" },
       (days) => ({ trashRetentionDays: days }),
     );
-    const trashNever = h("input", { type: "checkbox", name: "trashNever" });
-    trashNever.id = "settings-trashNever";
-    trashNever.addEventListener("change", () => {
-      trashDays.disabled = trashNever.checked;
+    // On empties the trash after the days below; off is 「안 비움」 (`trashRetentionDays: null`).
+    const trashAuto = h("input", { type: "checkbox", name: "trashAuto" });
+    const trashDaysText = h("span", {
+      id: "settings-trashDaysText",
+      class: "trash-days-unit",
+      textContent: "일이 지난 메모를 영구 삭제",
+    });
+    trashDays.setAttribute("aria-labelledby", trashDaysText.id);
+    const trashDaysRow = h("div", { class: "settings-row trash-days" }, trashDays, trashDaysText);
+    const showTrashAuto = (on: boolean) => {
+      trashAuto.checked = on;
+      trashDays.disabled = !on;
+      trashDaysRow.classList.toggle("off", !on);
+    };
+    trashAuto.addEventListener("change", () => {
+      showTrashAuto(trashAuto.checked);
       // Back on, the days the field shows count again.
-      const days = trashNever.checked ? null : Number(synced.get(trashDays) ?? TRASH_DAYS_DEFAULT);
+      const days = trashAuto.checked ? Number(synced.get(trashDays) ?? TRASH_DAYS_DEFAULT) : null;
       void save({ trashRetentionDays: days });
     });
     const generalSection = () => {
@@ -189,15 +201,8 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         h("div", { class: "settings-row" }, rootInput, pick, apply),
         ...field("실행할 때 업데이트 확인", autoCheck),
         ...field("메뉴 막대에 아이콘 보이기", trayVisible),
-        field("휴지통 자동 비우기", trashDays)[0],
-        h(
-          "div",
-          { class: "settings-row" },
-          trashDays,
-          h("span", { class: "trash-days-unit", textContent: "일 지난 메모" }),
-          trashNever,
-          h("label", { htmlFor: trashNever.id, textContent: "안 비움" }),
-        ),
+        ...field("휴지통 자동 비우기", trashAuto),
+        trashDaysRow,
       );
     };
 
@@ -396,8 +401,7 @@ export function openSettings(options: SettingsOptions): Promise<void> {
         const days = current.trash.retentionDays;
         if (days !== null) sync(trashDays, String(days));
         else if (!synced.has(trashDays)) sync(trashDays, String(TRASH_DAYS_DEFAULT));
-        trashNever.checked = days === null;
-        trashDays.disabled = days === null;
+        showTrashAuto(days !== null);
         sync(fontFamily, current.editor.fontFamily);
         // Rust always sends one; an old fake backend seed has none, which is auto.
         showThemes(current.theme.mode, registry);
