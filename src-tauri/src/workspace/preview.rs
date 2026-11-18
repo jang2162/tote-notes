@@ -25,7 +25,9 @@ pub fn read_preview(path: &Path, markdown: bool) -> io::Result<Option<String>> {
 /// language when there is one, else the extension, `md` or `markdown` in any case — the rule of
 /// `isMarkdown` in src/editor/image-paste.ts and `languageFor` in src/editor/setup.ts, and the
 /// extensions the bundled Markdown language claims (src-tauri/resources/extensions/
-/// tote.languages/package.json).
+/// tote.languages/package.json). The extension registry is not seen here: an extension an
+/// installed one adds to Markdown, or a chosen language whose extension is gone, reads as not
+/// Markdown, and such a memo's preview may keep its marks.
 pub fn is_markdown(file: &str, language: Option<&str>) -> bool {
     match language {
         Some(language) => language == "markdown",
@@ -286,8 +288,12 @@ mod tests {
             "** 띄움** 과 *** 과 ****"
         );
         assert_eq!(preview("t\n**가** 2**10 **나**"), "가 2**10 나");
-        // `__` between two letters neither opens nor closes.
+        // `__` between two letters neither opens nor closes, though another would pair it.
         assert_eq!(preview("t\nsnake__case 와 __굵게__"), "snake__case 와 굵게");
+        assert_eq!(preview("t\na__b__c"), "a__b__c");
+        assert_eq!(preview("t\n__가__나__다__"), "가__나__다");
+        // A run of three is no strong mark, paired or not.
+        assert_eq!(preview("t\n***가***"), "***가***");
     }
 
     #[test]
