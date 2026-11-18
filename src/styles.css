@@ -298,9 +298,12 @@ html.sidebar-collapsed .sidebar {
 }
 
 /* A grid item is at least as wide as its content: without this, many tabs widen the pane past the
- * window instead of scrolling the tab bar in it. */
+ * window instead of scrolling the tab bar in it. The line is drawn inside the row, not as its
+ * border, so the active tab can cover it (`.tabbar`); it stays where the sidebar head's is. */
 .pane-head {
   min-width: 0;
+  border-bottom: 0;
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 /* The space between the app's name and the button is the row's own: free, it drags the window. */
@@ -801,9 +804,14 @@ html:not(.sidebar-collapsed) .tab-lead {
     height 100ms;
 }
 
-/* With panes side by side, the focused one's active tab is marked. */
-.panes.split .pane.focused .tab.active {
+/* The active tab's line on top; with panes side by side only the focused one's, which says which
+ * pane has the keys. */
+.tab.active {
   box-shadow: inset 0 2px 0 var(--accent);
+}
+
+.panes.split .pane:not(.focused) .tab.active {
+  box-shadow: none;
 }
 
 /* Fills the pane's top row (`.pane-head`), whose line it sits on, and scrolls sideways. Positioned:
@@ -816,11 +824,12 @@ html:not(.sidebar-collapsed) .tab-lead {
   min-width: 0;
   overflow-x: auto;
   background: var(--sidebar-bg);
+  box-shadow: inset 0 -1px 0 var(--border);
   user-select: none;
 }
 
 /* A dragged tab's landing place in a pane with no tabs: the whole bar. In a bar with tabs, they
- * move aside for it. */
+ * move aside for it. It takes the place of the bar's line. */
 .tabbar.drop-into {
   box-shadow: inset 0 -2px 0 var(--accent);
 }
@@ -850,8 +859,13 @@ html:not(.sidebar-collapsed) .tab-lead {
   padding: 6px 0 6px 12px;
 }
 
+/* Its background covers the bar's line, so the tab runs into the editor below. */
 .tab.active {
   background: var(--bg);
+  color: var(--fg);
+}
+
+.tab:not(.active):hover {
   color: var(--fg);
 }
 
@@ -861,8 +875,10 @@ html:not(.sidebar-collapsed) .tab-lead {
   transition: none;
 }
 
+/* Opaque over the tabs it passes, and so over the bar's line, which it draws again. */
 .tab.dragging:not(.active) {
   background: var(--sidebar-bg);
+  box-shadow: inset 0 -1px 0 var(--border);
 }
 
 @media (prefers-reduced-motion: reduce) {
