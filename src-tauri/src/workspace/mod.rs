@@ -81,6 +81,8 @@ pub struct Workspace {
 
 struct CachedPreview {
     file: String,
+    /// Read as Markdown (`preview::is_markdown`): a chosen language changes it, not the file.
+    markdown: bool,
     modified_ms: u64,
     size: u64,
     preview: Option<String>,

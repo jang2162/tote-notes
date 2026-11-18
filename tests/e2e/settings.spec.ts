@@ -1138,14 +1138,23 @@ test("the general section sets the trash retention", async ({ page }) => {
   const patches = () => page.evaluate(() => (window as unknown as { patches: object[] }).patches);
   const trash = () => page.evaluate(() => window.__tote.backend.data.settings.trash);
   const panel = await openSection(page, "일반");
-  const days = panel.getByRole("spinbutton", { name: "휴지통 자동 비우기" });
-  const never = panel.getByRole("checkbox", { name: "안 비움" });
+  // On is emptying (사용자 결정(2026-11-18): UI 점검 시안), the days under it — and no line of
+  // help, the sections holding no notes (user request 2026-11-02).
+  const auto = panel.getByRole("checkbox", { name: "휴지통 자동 비우기", exact: true });
+  const days = panel.getByRole("spinbutton", { name: "일이 지난 메모를 영구 삭제" });
+  const daysRow = panel.locator(".trash-days");
+  await expect(auto).toBeChecked();
   await expect(days).toHaveValue("60");
   await expect(days).toBeEnabled();
   await expect(days).toHaveAttribute("min", "1");
   await expect(days).toHaveAttribute("max", "3650");
-  await expect(panel.locator(".trash-days-unit")).toHaveText("일 지난 메모");
-  await expect(never).not.toBeChecked();
+  await expect(panel.locator(".trash-days-unit")).toHaveText("일이 지난 메모를 영구 삭제");
+  await expect(daysRow).not.toHaveClass(/\boff\b/);
+  // The switch on the label's line, the days below it in the controls' column; the checkbox's own
+  // margin sets it a little in from the column's edge.
+  const [switchBox, rowBox] = await Promise.all([auto.boundingBox(), daysRow.boundingBox()]);
+  expect(rowBox!.y).toBeGreaterThan(switchBox!.y + switchBox!.height);
+  expect(Math.abs(switchBox!.x - rowBox!.x)).toBeLessThan(4);
 
   await days.fill("30");
   await days.press("Enter");
@@ -1171,18 +1180,31 @@ test("the general section sets the trash retention", async ({ page }) => {
   await expect.poll(trash).toEqual({ retentionDays: 3650 });
   expect((await patches()).at(-1)).toEqual({ trashRetentionDays: 3650 });
 
-  await never.check();
+  await auto.uncheck();
   await expect.poll(trash).toEqual({ retentionDays: null });
   expect((await patches()).at(-1)).toEqual({ trashRetentionDays: null });
   await expect(days).toBeDisabled();
   await expect(days).toHaveValue("3650");
+  await expect(daysRow).toHaveClass(/\boff\b/);
+  // The words dimmed with the field.
+  expect(
+    await panel.locator(".trash-days-unit").evaluate((el) => {
+      const probe = document.body.appendChild(document.createElement("div"));
+      probe.style.color = "var(--muted)";
+      const muted = getComputedStyle(probe).color;
+      probe.remove();
+      return getComputedStyle(el).color === muted;
+    }),
+  ).toBe(true);
 
   await page.keyboard.press("Escape");
   await openSection(page, "일반");
-  await expect(never).toBeChecked();
+  await expect(auto).not.toBeChecked();
   await expect(days).toBeDisabled();
-  await never.uncheck();
+  await expect(daysRow).toHaveClass(/\boff\b/);
+  await auto.check();
   await expect(days).toBeEnabled();
+  await expect(daysRow).not.toHaveClass(/\boff\b/);
   await expect.poll(trash).toEqual({ retentionDays: 60 });
   expect((await patches()).at(-1)).toEqual({ trashRetentionDays: 60 });
   expect(await patches()).toHaveLength(4);

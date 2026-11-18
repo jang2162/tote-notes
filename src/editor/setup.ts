@@ -202,6 +202,9 @@ const LINE_NUMBER_SCALE = 0.85;
 /** Colours come from the CSS variables in styles.css, which the theme manager fills from the selected theme. */
 const appTheme = EditorView.theme({
   "&": { height: "100%", color: "var(--fg)", backgroundColor: "var(--bg)" },
+  // CodeMirror's own theme draws a dotted ring round the focused editor, right under the tab bar;
+  // the cursor and the current line already say where the keys go.
+  "&.cm-focused": { outline: "none" },
   ".cm-scroller": { lineHeight: String(LINE_HEIGHT) },
   ".cm-gutters": {
     backgroundColor: "var(--bg)",

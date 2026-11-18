@@ -2,6 +2,7 @@ import type { ContentHit, MemoInfo, MemoSort, MenuPoint } from "../backend/types
 import { splitName } from "../core/names";
 import { modalOpen } from "./dialogs";
 import { h, placeChildren } from "./dom";
+import { kindIcon } from "./icons";
 import { ListSelection, listKey } from "./list-selection";
 import { filterMemos, snippet, sortMemos, splitPinned } from "./memo-order";
 import { SEARCH_DEBOUNCE_MS } from "./search-panel";
@@ -155,6 +156,17 @@ class RowSection {
   }
 }
 
+/** `el` as a named group of the listbox's options while the list has zones, or a plain box. */
+function zone(el: HTMLElement, name: string | false): void {
+  if (name) {
+    el.setAttribute("role", "group");
+    el.setAttribute("aria-label", name);
+  } else {
+    el.removeAttribute("role");
+    el.removeAttribute("aria-label");
+  }
+}
+
 /** A memo row's element ID, which the list's `aria-activedescendant` names. */
 const optionId = (id: string) => `memo-option-${id}`;
 
@@ -177,7 +189,11 @@ export class MemoList {
     (id, el) => this.paint(id, el),
     () => this.painted(),
   );
-  private readonly divider = h("div", { class: "memo-pinned-divider" });
+  /** The zones' names, shown only while a memo is pinned: with none the list is one zone. Not
+   * options — the keys, the picks and a screen reader's count go by the rows alone — and hidden
+   * from assistive technology, which hears each zone's name from its group instead (`refilter`). */
+  private readonly pinnedHead = h("div", { class: "memo-zone", textContent: "고정" });
+  private readonly restHead = h("div", { class: "memo-zone", textContent: "메모" });
   private readonly list = new RowSection(
     "memo-scroller",
     (memo) => this.row(memo),
@@ -191,8 +207,9 @@ export class MemoList {
   private readonly box = h(
     "div",
     { class: "memo-listbox", tabIndex: 0 },
+    this.pinnedHead,
     this.pinned.el,
-    this.divider,
+    this.restHead,
     this.list.el,
   );
   readonly el = h(
@@ -229,7 +246,7 @@ export class MemoList {
     this.box.setAttribute("role", "listbox");
     this.box.setAttribute("aria-label", "메모 목록");
     this.box.setAttribute("aria-multiselectable", "true");
-    this.divider.setAttribute("role", "none");
+    for (const head of [this.pinnedHead, this.restHead]) head.setAttribute("aria-hidden", "true");
     this.box.addEventListener("keydown", (event) => this.onKey(event));
   }
 
@@ -373,7 +390,13 @@ export class MemoList {
     this.pinned.items = pinned;
     this.list.items = rest;
     this.pinned.el.hidden = pinned.length === 0;
-    this.divider.hidden = pinned.length === 0;
+    const zones = pinned.length > 0;
+    // The rest named only while it has rows: an empty group would still be read out.
+    const restZone = zones && rest.length > 0;
+    this.pinnedHead.hidden = !zones;
+    this.restHead.hidden = !restZone;
+    zone(this.pinned.el, zones && "고정");
+    zone(this.list.el, restZone && "메모");
     // As tall as its rows, up to the stylesheet's share of the pane; past it, it scrolls.
     this.pinned.el.style.height = `${pinned.length * this.rowHeight}px`;
     this.render();
@@ -511,7 +534,7 @@ export class MemoList {
     const row = h(
       "div",
       { class: `memo-row kind-${memo.kind}${active}`, title: memo.file, id: optionId(memo.id) },
-      h("span", { class: "memo-icon" }),
+      kindIcon(memo.kind),
       h(
         "span",
         { class: "memo-text" },
